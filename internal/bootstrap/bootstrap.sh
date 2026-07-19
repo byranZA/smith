@@ -16,9 +16,10 @@
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# The `packages`, `smith-user`, `smith-keys`, `firewall`, `fail2ban`, and
-# `auto-updates` phases are implemented so far; the remaining ordered phases
-# (ssh-hardening, access) land in later issues.
+# All eight ordered phases are implemented: packages, smith-user, smith-keys,
+# firewall, ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries
+# the on-box self-reverting self-test (the base layer's only lock-out gate); the
+# access phase is a no-op in public mode and grows the tailscale branch later.
 set -Eeuo pipefail
 
 SMITH_BOOTSTRAP_VERSION=1
@@ -29,8 +30,9 @@ MARKER="${SMITH_MARKER:-/etc/smith/bootstrap.json}"
 MARKER_DIR="$(dirname "$MARKER")"
 
 # The ordered mutating phases. The names are load-bearing: they are the marker's
-# completed_phases values. Later issues extend this list.
-PHASES=(packages smith-user smith-keys firewall fail2ban auto-updates)
+# completed_phases values. This is the full base-layer sequence; the access phase
+# is where the tailscale mode's behavior lands, not a new phase.
+PHASES=(packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -45,6 +47,13 @@ SMITH_SUDOERS_DIR="${SMITH_SUDOERS_DIR:-/etc/sudoers.d}"
 # The apt drop-in that enables unattended security upgrades. SMITH_AUTO_UPGRADES_CONF
 # overrides it for tests; production always uses the apt.conf.d default.
 SMITH_AUTO_UPGRADES_CONF="${SMITH_AUTO_UPGRADES_CONF:-/etc/apt/apt.conf.d/20auto-upgrades}"
+
+# The sshd drop-in that hardens SSH (PermitRootLogin no, PasswordAuthentication
+# no). SMITH_SSHD_DROPIN overrides it for tests; production always uses the
+# sshd_config.d default. The 01- prefix sorts it ahead of distro drop-ins (e.g.
+# cloud-init's 50-cloud-init.conf) so sshd's first-match-wins honors the hardened
+# values.
+SMITH_SSHD_DROPIN="${SMITH_SSHD_DROPIN:-/etc/ssh/sshd_config.d/01-smith-hardening.conf}"
 
 # Run parameters, filled by parse_setup_args.
 ACCESS="public"
@@ -275,6 +284,61 @@ phase_firewall() {
   as_root ufw --force enable
 }
 
+# reload_sshd asks systemd to reload the ssh service so a changed sshd config
+# takes effect without dropping the connections smith is reaching the box over.
+reload_sshd() {
+  as_root systemctl reload ssh
+}
+
+# ssh_hardening_selftest proves the hardened sshd config is safe before the phase
+# trusts it: validate the merged config with `sshd -t`, reload sshd, then
+# loopback-probe that smith can still log in (`ssh smith@localhost true`). Any
+# step failing returns non-zero so the caller reverts the drop-in.
+ssh_hardening_selftest() {
+  as_root sshd -t || return 1
+  reload_sshd || return 1
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+    smith@localhost true || return 1
+}
+
+# phase_ssh_hardening applies PermitRootLogin no and PasswordAuthentication no via
+# an sshd drop-in — full hardening, no prohibit-password softening and no
+# surviving-root backstop. It is the only base-layer phase that closes a door, so
+# it never trusts the hardened config blind: it writes the drop-in, then an on-box
+# self-test (validate -> reload -> loopback `ssh smith@localhost`) proves smith can
+# still log in. On any failure it removes the drop-in, reloads sshd back to the
+# working config, and fails the phase without recording success, leaving the box
+# reachable as smith — so a mid-sequence failure is never a lock-out. Smith's
+# admin-side `ssh smith@host` reconnect is a post-confirm, not this gate. It is
+# check-before-change: an already-applied drop-in is a no-op that reports
+# already-satisfied and runs no reload or probe.
+phase_ssh_hardening() {
+  local dropin="$SMITH_SSHD_DROPIN"
+  local want='# Managed by smith — hardened sshd. Removing this file reverts the hardening.
+PermitRootLogin no
+PasswordAuthentication no'
+
+  if [ "$(as_root cat "$dropin" 2>/dev/null || true)" = "$want" ]; then
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  local dropin_dir tmp
+  dropin_dir="$(dirname "$dropin")"
+  as_root mkdir -p "$dropin_dir"
+  tmp="$(mktemp)"
+  printf '%s\n' "$want" >"$tmp"
+  as_root install -m 0644 "$tmp" "$dropin"
+  rm -f "$tmp"
+
+  if ! ssh_hardening_selftest; then
+    as_root rm -f "$dropin"
+    reload_sshd || true
+    echo "ssh-hardening: self-test failed; reverted the hardening drop-in, box left reachable as smith" >&2
+    return 1
+  fi
+}
+
 # phase_fail2ban ensures the fail2ban service (installed by the packages phase)
 # is enabled and running. It is check-before-change: an already active+enabled
 # service is left untouched and reports already-satisfied.
@@ -310,6 +374,23 @@ APT::Periodic::Unattended-Upgrade "1";'
   # One-time patch at handoff. unattended-upgrade only pulls the configured
   # (security) origins, so this is not a blanket apt upgrade.
   as_root unattended-upgrade
+}
+
+# phase_access is the terminal access-layer phase: it leaves the box reachable
+# per the chosen access mode. In public mode the base layer already left the box
+# reachable as smith over public SSH, so this phase changes nothing and reports
+# already-satisfied. The tailscale access mode (#18) slots its enroll-then-close
+# branch in here; an unrecognised mode is a hard error rather than a silent no-op.
+phase_access() {
+  case "$ACCESS" in
+    public)
+      PHASE_STATUS="satisfied"
+      ;;
+    *)
+      echo "access: unsupported access mode: ${ACCESS}" >&2
+      return 1
+      ;;
+  esac
 }
 
 # parse_setup_args reads the setup subcommand's flags: the access mode and the
