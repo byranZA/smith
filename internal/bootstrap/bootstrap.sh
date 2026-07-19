@@ -5,21 +5,27 @@
 # The version below is load-bearing: once the marker exists it records which
 # schema provisioned the box and gates schema skew.
 #
-# Two subcommands are implemented:
+# Subcommands:
 #   preflight — a non-recorded, read-only gate. It reports the box's privilege
 #               level and raw /etc/os-release so the Go OS support gate can
 #               decide, and mutates nothing.
 #   setup     — writes the marker early, then runs the ordered mutating phases.
 #               Each phase is check-before-change and appends itself to the
 #               marker only on success; progress streams live to the operator.
+#   enroll    — tailscale mode only: joins the box to the tailnet as a tag:smith
+#               Tailscale SSH node (auth key on stdin) and prints its tailnet IP.
+#   close-public-ssh — tailscale mode only: closes public port 22 and records the
+#               access phase, run by smith after a live tailnet probe proves reach.
 #
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# All eight ordered phases are implemented: packages, smith-user, smith-keys,
-# firewall, ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries
-# the on-box self-reverting self-test (the base layer's only lock-out gate); the
-# access phase is a no-op in public mode and grows the tailscale branch later.
+# The ordered phases are: packages, smith-user, smith-keys, firewall,
+# ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries the on-box
+# self-reverting self-test (the base layer's only lock-out gate). In public mode
+# the access phase is a no-op; in tailscale mode the access layer is driven from
+# the admin side (enroll + probe-gated close-public-ssh) rather than as a
+# box-side streamed phase.
 set -Eeuo pipefail
 
 SMITH_BOOTSTRAP_VERSION=1
@@ -58,6 +64,17 @@ SMITH_SSHD_DROPIN="${SMITH_SSHD_DROPIN:-/etc/ssh/sshd_config.d/01-smith-hardenin
 # Run parameters, filled by parse_setup_args.
 ACCESS="public"
 SMITH_VERSION="unknown"
+# PUBLIC_SSH is the firewall target for public port 22, derived admin-side by
+# smith from the access mode and the door it connected over ("open" keeps 22
+# reachable, "closed" removes the allow rule so default-deny drops it). The Go
+# side owns the derivation; the firewall phase just obeys it.
+PUBLIC_SSH="open"
+
+# The tailscale apt keyring and sources list. SMITH_TS_KEYRING and SMITH_TS_LIST
+# override them for tests; production uses the apt defaults. The keyring is the
+# binary .noarmor.gpg blob, so no gnupg is needed to install it.
+SMITH_TS_KEYRING="${SMITH_TS_KEYRING:-/usr/share/keyrings/tailscale-archive-keyring.gpg}"
+SMITH_TS_LIST="${SMITH_TS_LIST:-/etc/apt/sources.list.d/tailscale.list}"
 
 # COMPLETED_PHASES accumulates the phases that have succeeded this run; it is
 # rendered into the marker after each one. PHASE_STATUS carries a phase's
@@ -158,17 +175,16 @@ run_phase() {
   mark_complete "$name"
 }
 
-# phase_packages ensures the base package set is installed. It does not probe
-# for presence itself — it ensures, it does not assume: a single apt-get update
-# then an idempotent apt-get install. It is fatal if either apt-get step fails.
-# already-satisfied is read from apt's own report of what it changed, so a
-# re-run on a provisioned box is a no-op.
-phase_packages() {
-  as_root env DEBIAN_FRONTEND=noninteractive apt-get update
-
+# apt_install runs an idempotent apt-get install of the given packages, streaming
+# apt's live output, and reports whether it changed anything in the APT_RESULT
+# global ("changed" or "satisfied", read from apt's own newly-installed/upgraded
+# counts). The result travels by global rather than stdout so apt's progress
+# still streams live to the operator.
+APT_RESULT="satisfied"
+apt_install() {
   local log
   log="$(mktemp)"
-  as_root env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y "${BASE_PACKAGES[@]}" 2>&1 | tee "$log"
+  as_root env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y "$@" 2>&1 | tee "$log"
 
   local newly upgraded
   newly="$(grep -oE '[0-9]+ newly installed' "$log" | grep -oE '^[0-9]+' | tail -n1 || true)"
@@ -176,6 +192,60 @@ phase_packages() {
   rm -f "$log"
 
   if [ "${newly:-1}" = "0" ] && [ "${upgraded:-1}" = "0" ]; then
+    APT_RESULT="satisfied"
+  else
+    APT_RESULT="changed"
+  fi
+}
+
+# ensure_tailscale_repo pins Tailscale's official apt repo for the box's Ubuntu
+# codename, using the binary .noarmor.gpg keyring so no gnupg is required. It is
+# check-before-change: an already-present keyring and sources list are left as
+# they are. It assumes curl and ca-certificates are already installed.
+ensure_tailscale_repo() {
+  local codename="" base
+  if [ -r /etc/os-release ]; then
+    codename="$( . /etc/os-release 2>/dev/null; printf '%s' "${VERSION_CODENAME:-}" )"
+  fi
+  base="https://pkgs.tailscale.com/stable/ubuntu"
+
+  if [ ! -s "$SMITH_TS_KEYRING" ]; then
+    as_root mkdir -p -m 0755 "$(dirname "$SMITH_TS_KEYRING")"
+    curl -fsSL "${base}/${codename}.noarmor.gpg" | as_root tee "$SMITH_TS_KEYRING" >/dev/null
+  fi
+  if [ ! -s "$SMITH_TS_LIST" ]; then
+    as_root mkdir -p "$(dirname "$SMITH_TS_LIST")"
+    curl -fsSL "${base}/${codename}.tailscale-keyring.list" | as_root tee "$SMITH_TS_LIST" >/dev/null
+  fi
+}
+
+# phase_packages ensures the base package set is installed, plus tailscale (from
+# its pinned apt repo) in tailscale mode. It does not probe for presence itself —
+# it ensures, it does not assume: an apt-get update then an idempotent apt-get
+# install. It is fatal if any apt-get step fails. already-satisfied is read from
+# apt's own report of what it changed, so a re-run on a provisioned box is a
+# no-op. In tailscale mode curl + ca-certificates are ensured first so the repo
+# keyring can be fetched.
+phase_packages() {
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+
+  local base_pkgs=("${BASE_PACKAGES[@]}")
+  if [ "$ACCESS" = "tailscale" ]; then
+    base_pkgs+=(curl ca-certificates)
+  fi
+
+  local base_result ts_result="satisfied"
+  apt_install "${base_pkgs[@]}"
+  base_result="$APT_RESULT"
+
+  if [ "$ACCESS" = "tailscale" ]; then
+    ensure_tailscale_repo
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+    apt_install tailscale
+    ts_result="$APT_RESULT"
+  fi
+
+  if [ "$base_result" = "satisfied" ] && [ "$ts_result" = "satisfied" ]; then
     PHASE_STATUS="satisfied"
   else
     PHASE_STATUS="changed"
@@ -241,32 +311,30 @@ phase_smith_keys() {
   as_root chown -R "${SMITH_USER}:${SMITH_USER}" "$dest_dir"
 }
 
-# public_ssh_target reports whether public SSH (port 22) should stay open,
-# derived from the door smith connected over. Only public mode exists in this
-# slice, so port 22 stays open; the tailscale access mode (#18) slots its branch
-# in here to keep public 22 closed once tailnet reach is proven. This is the
-# seam that makes the firewall phase access-aware.
-public_ssh_target() {
-  case "$ACCESS" in
-    *) echo "open" ;;
-  esac
-}
-
-# phase_firewall brings up ufw as a default-deny-inbound firewall, allowing SSH
-# on port 22 when the connect door is public. It is check-before-change: an
-# already-active firewall with the expected default policy and SSH rule is left
-# untouched and reports already-satisfied. SSH is allowed before the firewall is
-# enabled so activating default-deny never severs the bootstrap connection.
+# phase_firewall brings up ufw as a default-deny-inbound firewall whose public
+# port-22 target is the access-aware PUBLIC_SSH value smith derived: "open" keeps
+# an allow-22 rule, "closed" ensures there is none so default-deny drops public
+# SSH. This is the seam that makes the firewall access-aware — a tailnet re-run
+# (PUBLIC_SSH=closed) never transiently re-opens public 22. It is
+# check-before-change: an already-active firewall whose default policy and 22
+# rule already match the target is left untouched and reports already-satisfied.
+# When the target is open, SSH is allowed before the firewall is enabled so
+# activating default-deny never severs the bootstrap connection.
 phase_firewall() {
-  local want_public_ssh
-  want_public_ssh="$(public_ssh_target)"
+  local want_public_ssh="$PUBLIC_SSH"
 
   local status
   status="$(as_root ufw status verbose 2>/dev/null || true)"
 
+  local has_ssh_rule=1
+  printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW' || has_ssh_rule=0
+
   local ssh_ok=1
-  if [ "$want_public_ssh" = "open" ]; then
-    printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW' || ssh_ok=0
+  if [ "$want_public_ssh" = "open" ] && [ "$has_ssh_rule" -eq 0 ]; then
+    ssh_ok=0
+  fi
+  if [ "$want_public_ssh" = "closed" ] && [ "$has_ssh_rule" -eq 1 ]; then
+    ssh_ok=0
   fi
 
   if printf '%s\n' "$status" | grep -qi 'Status: active' \
@@ -278,6 +346,8 @@ phase_firewall() {
 
   if [ "$want_public_ssh" = "open" ]; then
     as_root ufw allow 22/tcp
+  else
+    as_root ufw delete allow 22/tcp >/dev/null 2>&1 || true
   fi
   as_root ufw --force default deny incoming
   as_root ufw --force default allow outgoing
@@ -376,11 +446,12 @@ APT::Periodic::Unattended-Upgrade "1";'
   as_root unattended-upgrade
 }
 
-# phase_access is the terminal access-layer phase: it leaves the box reachable
-# per the chosen access mode. In public mode the base layer already left the box
-# reachable as smith over public SSH, so this phase changes nothing and reports
-# already-satisfied. The tailscale access mode (#18) slots its enroll-then-close
-# branch in here; an unrecognised mode is a hard error rather than a silent no-op.
+# phase_access is the terminal access-layer phase for public mode: the base layer
+# already left the box reachable as smith over public SSH, so it changes nothing
+# and reports already-satisfied. Tailscale mode does not run this phase — its
+# enroll-then-close sequence is gated on an admin-side tailnet probe, so smith
+# drives it via the enroll and close-public-ssh subcommands instead. An
+# unrecognised mode is a hard error rather than a silent no-op.
 phase_access() {
   case "$ACCESS" in
     public)
@@ -406,6 +477,10 @@ parse_setup_args() {
         SMITH_VERSION="${2:-}"
         shift 2
         ;;
+      --public-ssh)
+        PUBLIC_SSH="${2:-}"
+        shift 2
+        ;;
       *)
         echo "smith bootstrap setup: unknown argument: $1" >&2
         exit 64
@@ -414,15 +489,92 @@ parse_setup_args() {
   done
 }
 
-# setup writes the marker early, then runs each ordered phase.
+# setup writes the marker early, then runs each ordered phase. In tailscale mode
+# the terminal access phase is not a box-side streamed phase: enrolling the node
+# and closing public SSH are gated on a live tailnet probe run from the admin
+# side, so smith drives them separately (enroll, then close-public-ssh once the
+# probe proves reach) and records the access phase then.
 setup() {
   parse_setup_args "$@"
   COMPLETED_PHASES=()
   write_marker
+  local phases=("${PHASES[@]}")
+  if [ "$ACCESS" = "tailscale" ]; then
+    phases=(packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates)
+  fi
   local name
-  for name in "${PHASES[@]}"; do
+  for name in "${phases[@]}"; do
     run_phase "$name"
   done
+}
+
+# load_marker_state restores the run parameters (access mode, smith version) and
+# completed phases from the existing marker, so a follow-up subcommand such as
+# close-public-ssh rewrites the marker without clobbering what setup recorded.
+load_marker_state() {
+  [ -f "$MARKER" ] || return 0
+  local am sv
+  am="$(grep -o '"access_mode":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  sv="$(grep -o '"smith_version":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  [ -n "$am" ] && ACCESS="$am"
+  [ -n "$sv" ] && SMITH_VERSION="$sv"
+
+  COMPLETED_PHASES=()
+  local arr item
+  arr="$(grep -o '"completed_phases":[[:space:]]*\[[^]]*\]' "$MARKER" || true)"
+  arr="${arr#*[}"
+  arr="${arr%]*}"
+  local IFS=','
+  for item in $arr; do
+    item="$(printf '%s' "$item" | tr -d ' "')"
+    [ -n "$item" ] && COMPLETED_PHASES+=("$item")
+  done
+}
+
+# enroll joins the box to the tailnet as a tag:smith Tailscale SSH node. The auth
+# key is read from stdin (never argv on the smith side, never written to the
+# box), and enrollment blocks until the node reaches Running — a missing tag:smith
+# tagOwners entry makes `tailscale up` fail here, which is how smith attributes
+# that prerequisite. On success it prints the box's tailnet IP for the admin side
+# to probe.
+enroll() {
+  local hostname=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --hostname)
+        hostname="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "smith bootstrap enroll: unknown argument: $1" >&2
+        exit 64
+        ;;
+    esac
+  done
+
+  local key
+  key="$(cat)"
+  key="$(printf '%s' "$key" | tr -d '[:space:]')"
+
+  as_root tailscale up --auth-key="$key" --hostname="$hostname" --advertise-tags=tag:smith --ssh
+
+  local ip
+  ip="$(as_root tailscale ip -4 2>/dev/null | head -n1 || true)"
+  if [ -z "$ip" ]; then
+    echo "enroll: node did not reach Running with a tailnet IP" >&2
+    exit 1
+  fi
+  printf 'tailscale-ip=%s\n' "$ip"
+}
+
+# close_public_ssh removes the public port-22 allow rule so default-deny drops
+# public SSH — the tailscale access layer's last mutating step, run by smith only
+# after the live tailnet probe proves the new door opens. It then records the
+# access phase in the marker, completing the tailscale phase set.
+close_public_ssh() {
+  as_root ufw delete allow 22/tcp >/dev/null 2>&1 || true
+  load_marker_state
+  mark_complete access
 }
 
 main() {
@@ -434,6 +586,13 @@ main() {
     setup)
       shift
       setup "$@"
+      ;;
+    enroll)
+      shift
+      enroll "$@"
+      ;;
+    close-public-ssh)
+      close_public_ssh
       ;;
     *)
       echo "smith bootstrap: unknown subcommand: ${sub:-<none>}" >&2

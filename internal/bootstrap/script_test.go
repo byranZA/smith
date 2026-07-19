@@ -419,10 +419,13 @@ func bootstrapTestEnv(t *testing.T, dir, binDir string) []string {
 		"SMITH_SUDOERS_DIR="+filepath.Join(dir, "sudoers.d"),
 		"SMITH_AUTO_UPGRADES_CONF="+filepath.Join(dir, "20auto-upgrades"),
 		"SMITH_SSHD_DROPIN="+filepath.Join(dir, "sshd_config.d", "01-smith-hardening.conf"),
+		"SMITH_TS_KEYRING="+filepath.Join(dir, "keyrings", "tailscale-archive-keyring.gpg"),
+		"SMITH_TS_LIST="+filepath.Join(dir, "sources.list.d", "tailscale.list"),
 		"APT_STATE="+filepath.Join(dir, "apt.installed"),
 		"APT_INSTALL_LOG="+filepath.Join(dir, "apt.install.log"),
 		"USER_STATE="+filepath.Join(dir, "user.created"),
 		"UFW_STATE="+filepath.Join(dir, "ufw.enabled"),
+		"UFW_SSH_RULE="+filepath.Join(dir, "ufw.ssh22.rule"),
 		"FAIL2BAN_STATE="+filepath.Join(dir, "fail2ban.running"),
 		"UU_LOG="+filepath.Join(dir, "unattended-upgrade.log"),
 	)
@@ -499,19 +502,26 @@ exit 0
 args=()
 for a in "$@"; do [ "$a" = "--force" ] || args+=("$a"); done
 set -- ${args[@]+"${args[@]}"}
-if [ "$1" = "status" ]; then
-  if [ -f "$UFW_STATE" ]; then
-    echo "Status: active"
-    echo "Default: deny (incoming), allow (outgoing), disabled (routed)"
-    echo "22/tcp                     ALLOW       Anywhere"
-  else
-    echo "Status: inactive"
-  fi
-  exit 0
-fi
-if [ "$1" = "enable" ]; then
-  touch "$UFW_STATE"
-fi
+case "$1" in
+  status)
+    if [ -f "$UFW_STATE" ]; then
+      echo "Status: active"
+      echo "Default: deny (incoming), allow (outgoing), disabled (routed)"
+      [ -f "$UFW_SSH_RULE" ] && echo "22/tcp                     ALLOW       Anywhere"
+    else
+      echo "Status: inactive"
+    fi
+    ;;
+  allow)
+    [ "$2" = "22/tcp" ] && touch "$UFW_SSH_RULE"
+    ;;
+  delete)
+    [ "$3" = "22/tcp" ] && rm -f "$UFW_SSH_RULE"
+    ;;
+  enable)
+    touch "$UFW_STATE"
+    ;;
+esac
 exit 0
 `)
 	// Fake systemctl tracks fail2ban's enabled+running state (FAIL2BAN_STATE):

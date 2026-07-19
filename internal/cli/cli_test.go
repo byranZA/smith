@@ -1,9 +1,26 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 )
+
+func TestSetupRejectsInvalidAccessMode(t *testing.T) {
+	root := newRootCmd()
+	root.SetArgs([]string{"machine", "setup", "root@box", "--access", "vpn"})
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want an error rejecting the unknown access mode")
+	}
+	if code := codeFromError(err); code == 0 {
+		t.Errorf("exit code = 0, want non-zero for an invalid --access value")
+	}
+}
 
 func TestParseTarget(t *testing.T) {
 	tests := []struct {

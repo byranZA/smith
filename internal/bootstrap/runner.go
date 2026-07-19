@@ -2,10 +2,12 @@
 // the embedded bootstrap.sh to a box, invokes a subcommand, and turns the
 // script's output into a decision plus a process exit code.
 //
-// For issue #11 only the non-recorded preflight gate is wired: it probes the
-// box's privilege level and OS (mutating nothing), applies the OS support gate,
-// and reports whether setup may proceed. The ordered mutating phases land in
-// later issues.
+// Preflight runs the non-recorded gate (privilege + OS support, mutating
+// nothing). Setup ships and drives the ordered mutating phases, streaming live
+// progress and mapping a mid-run failure to a recovery report. In tailscale
+// mode the caller derives the access-aware public-SSH firewall target from
+// SSHConnection and drives the admin-side access layer (see the tailscale
+// package) around Setup.
 package bootstrap
 
 import (
@@ -27,8 +29,10 @@ import (
 //go:embed bootstrap.sh
 var Script string
 
-// remoteScriptPath is where bootstrap.sh is placed on the box before it runs.
-const remoteScriptPath = "/tmp/smith-bootstrap.sh"
+// RemoteScriptPath is where bootstrap.sh is placed on the box before it runs.
+// The tailscale access layer drives the same shipped script's enroll and
+// close-public-ssh subcommands, so it reads this path too.
+const RemoteScriptPath = "/tmp/smith-bootstrap.sh"
 
 // Conn is the narrow slice of a connection the runner needs: ship a file and
 // run a remote command with streamed output.
@@ -123,7 +127,7 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 	}
 
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s preflight", remoteScriptPath)
+	cmd := fmt.Sprintf("bash %s preflight", RemoteScriptPath)
 	if err := r.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Result{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
@@ -139,12 +143,17 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 }
 
 // SetupOptions carries the run parameters bootstrap.sh's setup needs: how the
-// box is reached and which smith version to stamp into the marker.
+// box is reached, which smith version to stamp into the marker, and the
+// access-aware public-SSH firewall target.
 type SetupOptions struct {
 	// AccessMode is the access layer to record and drive: "public" or "tailscale".
 	AccessMode string
 	// SmithVersion is the smith build recorded in the marker.
 	SmithVersion string
+	// PublicSSH is the firewall target for public port 22 ("open" or "closed"),
+	// derived by the caller from the access mode and the door smith connected
+	// over. Empty defaults to "open".
+	PublicSSH string
 }
 
 // SetupResult is the terminal result of a setup run: its Outcome (which maps to
@@ -177,8 +186,12 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 	teeOut := io.MultiWriter(stdout, &outBuf)
 	teeErr := io.MultiWriter(stderr, &errBuf)
 
-	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s",
-		remoteScriptPath, shellArg(opts.AccessMode), shellArg(opts.SmithVersion))
+	publicSSH := opts.PublicSSH
+	if publicSSH == "" {
+		publicSSH = "open"
+	}
+	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s",
+		RemoteScriptPath, shellArg(opts.AccessMode), shellArg(opts.SmithVersion), shellArg(publicSSH))
 	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return SetupResult{Outcome: OutcomeConnectFailed}, nil
@@ -189,6 +202,18 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 		return SetupResult{Outcome: OutcomePartial, Failure: &report}, nil
 	}
 	return SetupResult{Outcome: OutcomePassed}, nil
+}
+
+// SSHConnection reports the box's SSH_CONNECTION for the connection smith is
+// reached over ("clientip clientport serverip serverport"), so the caller can
+// tell whether smith connected over the tailnet and derive the access-aware
+// public-SSH firewall target before setup runs.
+func (r *Runner) SSHConnection(ctx context.Context) (string, error) {
+	var out bytes.Buffer
+	if err := r.conn.Run(ctx, `printf '%s' "$SSH_CONNECTION"`, &out, io.Discard); err != nil {
+		return "", fmt.Errorf("probe SSH_CONNECTION: %w", err)
+	}
+	return strings.TrimSpace(out.String()), nil
 }
 
 // shellArg single-quotes s so it interpolates safely as one argument in the
@@ -212,7 +237,7 @@ func (r *Runner) ship(ctx context.Context) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temp script: %w", err)
 	}
-	if err := r.conn.Copy(ctx, f.Name(), remoteScriptPath); err != nil {
+	if err := r.conn.Copy(ctx, f.Name(), RemoteScriptPath); err != nil {
 		return fmt.Errorf("copy script to box: %w", err)
 	}
 	return nil
