@@ -49,10 +49,13 @@ const (
 	OutcomeRejected
 	// OutcomeConnectFailed means smith could not reach the box.
 	OutcomeConnectFailed
+	// OutcomePartial means a mutating phase failed after setup began: the box is
+	// left partial but reachable over the door setup connected on.
+	OutcomePartial
 )
 
-// ExitCode maps an outcome to smith's process exit code: 0 pass, 2 gate
-// rejection, 3 connect failure.
+// ExitCode maps an outcome to smith's process exit code: 0 pass, 1
+// partial-but-reachable, 2 gate rejection, 3 connect failure.
 func (o Outcome) ExitCode() int {
 	switch o {
 	case OutcomePassed:
@@ -61,6 +64,8 @@ func (o Outcome) ExitCode() int {
 		return 2
 	case OutcomeConnectFailed:
 		return 3
+	case OutcomePartial:
+		return 1
 	default:
 		return 1
 	}
@@ -131,6 +136,48 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("parse preflight output: %w", err)
 	}
 	return decide(facts), nil
+}
+
+// SetupOptions carries the run parameters bootstrap.sh's setup needs: how the
+// box is reached and which smith version to stamp into the marker.
+type SetupOptions struct {
+	// AccessMode is the access layer to record and drive: "public" or "tailscale".
+	AccessMode string
+	// SmithVersion is the smith build recorded in the marker.
+	SmithVersion string
+}
+
+// Setup runs the ordered mutating phases on the box: it ships bootstrap.sh,
+// invokes its setup subcommand, and streams each phase's live progress to
+// stdout and stderr as it happens. A connect failure and a phase failure are
+// reported as Outcomes rather than Go errors, so the caller can map them to an
+// exit code; a Go error is returned only for unexpected infrastructure
+// failures. Setup assumes the preflight gate has already passed.
+func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io.Writer) (Outcome, error) {
+	if err := r.ship(ctx); err != nil {
+		if errors.Is(err, connection.ErrConnect) {
+			return OutcomeConnectFailed, nil
+		}
+		return OutcomePassed, fmt.Errorf("ship bootstrap script: %w", err)
+	}
+
+	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s",
+		remoteScriptPath, shellArg(opts.AccessMode), shellArg(opts.SmithVersion))
+	if err := r.conn.Run(ctx, cmd, stdout, stderr); err != nil {
+		if errors.Is(err, connection.ErrConnect) {
+			return OutcomeConnectFailed, nil
+		}
+		// The phase stream already reported the failure to the operator; a
+		// non-connect error means a phase ran and failed, leaving a partial box.
+		return OutcomePartial, nil
+	}
+	return OutcomePassed, nil
+}
+
+// shellArg single-quotes s so it interpolates safely as one argument in the
+// remote shell command, keeping values out of any shell-special interpretation.
+func shellArg(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // ship writes the embedded script to a local temp file and scp's it to the box.

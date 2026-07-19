@@ -1,7 +1,9 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -11,14 +13,18 @@ import (
 )
 
 // fakeConn stands in for a real ssh/scp connection. It answers the preflight
-// command with canned output and lets each step's error be injected.
+// and setup commands with canned output and lets each step's error be injected.
 type fakeConn struct {
 	preflightOut string
 	preflightErr error
 	probeErr     error
 	copyErr      error
 
-	copied bool
+	setupOut string
+	setupErr error
+
+	copied      bool
+	setupRunCmd string
 }
 
 func (f *fakeConn) Copy(_ context.Context, _, _ string) error {
@@ -27,13 +33,21 @@ func (f *fakeConn) Copy(_ context.Context, _, _ string) error {
 }
 
 func (f *fakeConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
-	if strings.Contains(cmd, "preflight") {
+	switch {
+	case strings.Contains(cmd, "preflight"):
 		if _, err := io.WriteString(stdout, f.preflightOut); err != nil {
 			return err
 		}
 		return f.preflightErr
+	case strings.Contains(cmd, "setup"):
+		f.setupRunCmd = cmd
+		if _, err := io.WriteString(stdout, f.setupOut); err != nil {
+			return err
+		}
+		return f.setupErr
+	default:
+		return f.probeErr // the reachability probe
 	}
-	return f.probeErr // the reachability probe
 }
 
 func preflightOutput(privilege, id, version, versionID string) string {
@@ -124,11 +138,70 @@ func TestReportMentionsReason(t *testing.T) {
 	}
 }
 
-func TestEmbeddedScriptIsPreflightOnly(t *testing.T) {
-	if !strings.Contains(Script, "set -Eeuo pipefail") {
-		t.Error("embedded bootstrap.sh must set -Eeuo pipefail")
-	}
-	if !strings.Contains(Script, "preflight") {
-		t.Error("embedded bootstrap.sh must contain the preflight gate")
+func TestEmbeddedScriptHasPhaseFramework(t *testing.T) {
+	for _, want := range []string{"set -Eeuo pipefail", "preflight", "setup", "packages", "bootstrap.json", "apt-get"} {
+		if !strings.Contains(Script, want) {
+			t.Errorf("embedded bootstrap.sh must contain %q", want)
+		}
 	}
 }
+
+func TestSetupStreamsAndPasses(t *testing.T) {
+	conn := &fakeConn{setupOut: "▶ packages\n✓ packages\n"}
+	var out bytes.Buffer
+	outcome, err := NewRunner(conn).Setup(
+		context.Background(),
+		SetupOptions{AccessMode: "public", SmithVersion: "1.2.3"},
+		&out, io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if outcome != OutcomePassed {
+		t.Errorf("Outcome = %v, want Passed", outcome)
+	}
+	if outcome.ExitCode() != 0 {
+		t.Errorf("ExitCode = %d, want 0", outcome.ExitCode())
+	}
+	if !conn.copied {
+		t.Error("Setup must ship the script to the box")
+	}
+	if !strings.Contains(out.String(), "▶ packages") {
+		t.Errorf("Setup did not stream phase progress to stdout: %q", out.String())
+	}
+	if !strings.Contains(conn.setupRunCmd, "--access 'public'") || !strings.Contains(conn.setupRunCmd, "--smith-version '1.2.3'") {
+		t.Errorf("setup command = %q, want it to pass access mode and smith version", conn.setupRunCmd)
+	}
+}
+
+func TestSetupPhaseFailureIsPartial(t *testing.T) {
+	conn := &fakeConn{setupErr: fmt.Errorf("phase packages: %w", errRemote)}
+	outcome, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if outcome != OutcomePartial {
+		t.Fatalf("Outcome = %v, want Partial", outcome)
+	}
+	if outcome.ExitCode() != 1 {
+		t.Errorf("ExitCode = %d, want 1", outcome.ExitCode())
+	}
+}
+
+func TestSetupConnectFailureIsConnectFailed(t *testing.T) {
+	conn := &fakeConn{copyErr: fmt.Errorf("scp: %w", connection.ErrConnect)}
+	outcome, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if outcome != OutcomeConnectFailed {
+		t.Fatalf("Outcome = %v, want ConnectFailed", outcome)
+	}
+	if outcome.ExitCode() != 3 {
+		t.Errorf("ExitCode = %d, want 3", outcome.ExitCode())
+	}
+}
+
+// errRemote is a stand-in for a remote command that ran and failed (as opposed
+// to a connection failure).
+var errRemote = errors.New("remote command failed")

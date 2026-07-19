@@ -21,13 +21,14 @@ func newMachineCmd() *cobra.Command {
 	return cmd
 }
 
-// newSetupCmd builds `smith machine setup <login>@<host>`. For the walking
-// skeleton it connects, runs the preflight gate, and reports the outcome
-// without mutating the box.
+// newSetupCmd builds `smith machine setup <login>@<host>`. It connects, runs
+// the preflight gate, and on a pass runs the ordered mutating phases, streaming
+// their live progress. Access mode is public for now; the tailscale access
+// layer lands in a later issue.
 func newSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup <login>@<host>",
-		Short: "Provision, secure, and make a fresh box reachable (preflight only for now)",
+		Short: "Provision, secure, and make a fresh box reachable",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := parseTarget(args[0])
@@ -36,16 +37,27 @@ func newSetupCmd() *cobra.Command {
 			}
 
 			conn := connection.New(target, connection.System())
-			res, err := bootstrap.NewRunner(conn).Preflight(cmd.Context())
+			runner := bootstrap.NewRunner(conn)
+			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
+
+			res, err := runner.Preflight(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("preflight: %w", err)
 			}
-
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), res.Report()); err != nil {
+			if _, err := fmt.Fprint(stdout, res.Report()); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			if res.Outcome != bootstrap.OutcomePassed {
 				return &exitError{code: res.Outcome.ExitCode()}
+			}
+
+			opts := bootstrap.SetupOptions{AccessMode: "public", SmithVersion: buildVersion}
+			outcome, err := runner.Setup(cmd.Context(), opts, stdout, stderr)
+			if err != nil {
+				return fmt.Errorf("setup: %w", err)
+			}
+			if outcome != bootstrap.OutcomePassed {
+				return &exitError{code: outcome.ExitCode()}
 			}
 			return nil
 		},

@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// buildVersion is the smith build version stamped into the on-box marker. It is
+// a var so a release build can override it via -ldflags "-X".
+var buildVersion = "0.0.0-dev"
+
 // exitError carries a process exit code out of a command's RunE. The command
 // has already reported the outcome to the user, so Execute does not print it
 // again.
