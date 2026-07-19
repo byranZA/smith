@@ -52,12 +52,17 @@ func newSetupCmd() *cobra.Command {
 			}
 
 			opts := bootstrap.SetupOptions{AccessMode: "public", SmithVersion: buildVersion}
-			outcome, err := runner.Setup(cmd.Context(), opts, stdout, stderr)
+			setupRes, err := runner.Setup(cmd.Context(), opts, stdout, stderr)
 			if err != nil {
 				return fmt.Errorf("setup: %w", err)
 			}
-			if outcome != bootstrap.OutcomePassed {
-				return &exitError{code: outcome.ExitCode()}
+			if setupRes.Failure != nil {
+				if _, err := fmt.Fprint(stderr, setupRes.Failure.Report()); err != nil {
+					return fmt.Errorf("write failure report: %w", err)
+				}
+			}
+			if setupRes.Outcome != bootstrap.OutcomePassed {
+				return &exitError{code: setupRes.Outcome.ExitCode()}
 			}
 			return nil
 		},

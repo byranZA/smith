@@ -20,8 +20,9 @@ type fakeConn struct {
 	probeErr     error
 	copyErr      error
 
-	setupOut string
-	setupErr error
+	setupOut    string
+	setupErrOut string
+	setupErr    error
 
 	copied      bool
 	setupRunCmd string
@@ -32,7 +33,7 @@ func (f *fakeConn) Copy(_ context.Context, _, _ string) error {
 	return f.copyErr
 }
 
-func (f *fakeConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
+func (f *fakeConn) Run(_ context.Context, cmd string, stdout, stderr io.Writer) error {
 	switch {
 	case strings.Contains(cmd, "preflight"):
 		if _, err := io.WriteString(stdout, f.preflightOut); err != nil {
@@ -42,6 +43,9 @@ func (f *fakeConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error
 	case strings.Contains(cmd, "setup"):
 		f.setupRunCmd = cmd
 		if _, err := io.WriteString(stdout, f.setupOut); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(stderr, f.setupErrOut); err != nil {
 			return err
 		}
 		return f.setupErr
@@ -149,7 +153,7 @@ func TestEmbeddedScriptHasPhaseFramework(t *testing.T) {
 func TestSetupStreamsAndPasses(t *testing.T) {
 	conn := &fakeConn{setupOut: "▶ packages\n✓ packages\n"}
 	var out bytes.Buffer
-	outcome, err := NewRunner(conn).Setup(
+	res, err := NewRunner(conn).Setup(
 		context.Background(),
 		SetupOptions{AccessMode: "public", SmithVersion: "1.2.3"},
 		&out, io.Discard,
@@ -157,11 +161,14 @@ func TestSetupStreamsAndPasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
-	if outcome != OutcomePassed {
-		t.Errorf("Outcome = %v, want Passed", outcome)
+	if res.Outcome != OutcomePassed {
+		t.Errorf("Outcome = %v, want Passed", res.Outcome)
 	}
-	if outcome.ExitCode() != 0 {
-		t.Errorf("ExitCode = %d, want 0", outcome.ExitCode())
+	if res.Outcome.ExitCode() != 0 {
+		t.Errorf("ExitCode = %d, want 0", res.Outcome.ExitCode())
+	}
+	if res.Failure != nil {
+		t.Errorf("Failure = %+v, want nil on a clean run", res.Failure)
 	}
 	if !conn.copied {
 		t.Error("Setup must ship the script to the box")
@@ -176,29 +183,82 @@ func TestSetupStreamsAndPasses(t *testing.T) {
 
 func TestSetupPhaseFailureIsPartial(t *testing.T) {
 	conn := &fakeConn{setupErr: fmt.Errorf("phase packages: %w", errRemote)}
-	outcome, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	res, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
-	if outcome != OutcomePartial {
-		t.Fatalf("Outcome = %v, want Partial", outcome)
+	if res.Outcome != OutcomePartial {
+		t.Fatalf("Outcome = %v, want Partial", res.Outcome)
 	}
-	if outcome.ExitCode() != 1 {
-		t.Errorf("ExitCode = %d, want 1", outcome.ExitCode())
+	if res.Outcome.ExitCode() != 1 {
+		t.Errorf("ExitCode = %d, want 1", res.Outcome.ExitCode())
+	}
+	if res.Failure == nil {
+		t.Fatal("Failure = nil, want a report on a partial run")
+	}
+}
+
+// TestSetupPhaseFailureReportsRecovery drives a mid-run phase failure and checks
+// the SetupResult carries a report that names the failed phase, lists the phases
+// already completed, states which door is open, and layers the interpreted
+// headline over the raw stderr the box streamed.
+func TestSetupPhaseFailureReportsRecovery(t *testing.T) {
+	conn := &fakeConn{
+		setupOut:    "▶ packages\n✓ packages\n▶ smith-user\n✓ smith-user\n▶ ssh-hardening\n",
+		setupErrOut: "ssh-hardening: self-test failed; reverted the hardening drop-in, box left reachable as smith\n",
+		setupErr:    fmt.Errorf("phase ssh-hardening: %w", errRemote),
+	}
+	res, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if res.Failure == nil {
+		t.Fatal("Failure = nil, want a report on a partial run")
+	}
+	if res.Failure.FailedPhase != "ssh-hardening" {
+		t.Errorf("FailedPhase = %q, want ssh-hardening", res.Failure.FailedPhase)
+	}
+	if got := strings.Join(res.Failure.CompletedPhases, ","); got != "packages,smith-user" {
+		t.Errorf("CompletedPhases = %q, want packages,smith-user", got)
+	}
+	report := res.Failure.Report()
+	for _, want := range []string{"ssh-hardening", "packages", "public SSH", "self-test failed", "resume"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("Report() missing %q; got:\n%s", want, report)
+		}
 	}
 }
 
 func TestSetupConnectFailureIsConnectFailed(t *testing.T) {
 	conn := &fakeConn{copyErr: fmt.Errorf("scp: %w", connection.ErrConnect)}
-	outcome, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	res, err := NewRunner(conn).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
-	if outcome != OutcomeConnectFailed {
-		t.Fatalf("Outcome = %v, want ConnectFailed", outcome)
+	if res.Outcome != OutcomeConnectFailed {
+		t.Fatalf("Outcome = %v, want ConnectFailed", res.Outcome)
 	}
-	if outcome.ExitCode() != 3 {
-		t.Errorf("ExitCode = %d, want 3", outcome.ExitCode())
+	if res.Outcome.ExitCode() != 3 {
+		t.Errorf("ExitCode = %d, want 3", res.Outcome.ExitCode())
+	}
+}
+
+// TestOutcomeExitCode pins the exit-code contract: success 0, partial-but-
+// reachable 1, gate rejection 2, connect failure 3.
+func TestOutcomeExitCode(t *testing.T) {
+	tests := []struct {
+		outcome Outcome
+		want    int
+	}{
+		{OutcomePassed, 0},
+		{OutcomePartial, 1},
+		{OutcomeRejected, 2},
+		{OutcomeConnectFailed, 3},
+	}
+	for _, tt := range tests {
+		if got := tt.outcome.ExitCode(); got != tt.want {
+			t.Errorf("Outcome(%d).ExitCode() = %d, want %d", tt.outcome, got, tt.want)
+		}
 	}
 }
 

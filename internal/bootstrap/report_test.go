@@ -1,0 +1,75 @@
+package bootstrap
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestNewFailureReportParsesStream(t *testing.T) {
+	stdout := "▶ packages\n✓ packages\n" +
+		"▶ smith-user\n✓ smith-user (already-satisfied)\n" +
+		"▶ smith-keys\n✓ smith-keys\n" +
+		"▶ firewall\n✓ firewall\n" +
+		"▶ ssh-hardening\n"
+	stderr := "ssh-hardening: self-test failed; reverted the hardening drop-in, box left reachable as smith\n"
+
+	r := newFailureReport(stdout, stderr)
+
+	if r.FailedPhase != "ssh-hardening" {
+		t.Errorf("FailedPhase = %q, want ssh-hardening", r.FailedPhase)
+	}
+	got := strings.Join(r.CompletedPhases, ",")
+	if want := "packages,smith-user,smith-keys,firewall"; got != want {
+		t.Errorf("CompletedPhases = %q, want %q", got, want)
+	}
+	if !strings.Contains(r.RawError, "self-test failed") {
+		t.Errorf("RawError = %q, want the raw underlying stderr", r.RawError)
+	}
+	if r.Headline == "" || !strings.Contains(r.Headline, "ssh-hardening") {
+		t.Errorf("Headline = %q, want an interpreted line naming the failed phase", r.Headline)
+	}
+}
+
+// TestFailureReportRendersRecovery checks the rendered report carries every part
+// the operator needs: the failed phase, the completed-phase list, which door is
+// open, the layered cause (headline + raw error), and the fix/re-run/resumes/
+// reachability guidance.
+func TestFailureReportRendersRecovery(t *testing.T) {
+	r := newFailureReport(
+		"▶ packages\n✓ packages\n▶ smith-user\n✓ smith-user\n▶ firewall\n",
+		"firewall: ufw refused to enable\n",
+	)
+	out := r.Report()
+
+	for _, want := range []string{
+		"firewall",              // failed phase
+		"packages",              // a completed phase
+		"smith-user",            // another completed phase
+		"public SSH",            // which door is open
+		"ufw refused to enable", // the raw underlying error
+		"re-run",                // fix and re-run guidance
+		"resume",                // states the re-run resumes
+		"reachable",             // states reachability
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Report() missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// TestNewFailureReportNoPhaseStarted covers a failure before any phase reported
+// (e.g. the early marker write): there is no failed phase to name, but the raw
+// error must still surface so the operator is not left blind.
+func TestNewFailureReportNoPhaseStarted(t *testing.T) {
+	r := newFailureReport("", "marker write failed: permission denied\n")
+
+	if r.FailedPhase != "" {
+		t.Errorf("FailedPhase = %q, want empty when no phase started", r.FailedPhase)
+	}
+	if len(r.CompletedPhases) != 0 {
+		t.Errorf("CompletedPhases = %v, want none", r.CompletedPhases)
+	}
+	if !strings.Contains(r.Report(), "marker write failed") {
+		t.Errorf("Report() should still surface the raw error; got:\n%s", r.Report())
+	}
+}

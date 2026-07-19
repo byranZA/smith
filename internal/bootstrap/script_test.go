@@ -298,6 +298,105 @@ exit 255
 	}
 }
 
+// TestScriptResumesPartialBoxAfterFix proves the marker-ledger + check-before-
+// change resume: a first run whose ssh-hardening self-test is locked out fails
+// partway, leaving the box partial (marker records only the phases before
+// ssh-hardening). After the cause is fixed — here the loopback login probe now
+// succeeds — a re-run reports the already-completed phases as already-satisfied
+// and drives the remaining phases to completion, so the marker ends up with the
+// full ordered phase set.
+func TestScriptResumesPartialBoxAfterFix(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProvisioningFakeBins(t, binDir)
+	env := bootstrapTestEnv(t, dir, binDir)
+	markerPath := filepath.Join(dir, "bootstrap.json")
+
+	run := func() (string, error) {
+		cmd := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test")
+		cmd.Env = append(os.Environ(), env...)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	// First run: the loopback login probe is denied, so ssh-hardening self-reverts
+	// and the run fails partway.
+	writeFakeBin(t, binDir, "ssh", `#!/usr/bin/env bash
+echo "smith@localhost: Permission denied (publickey)." >&2
+exit 255
+`)
+	out1, err := run()
+	if err == nil {
+		t.Fatalf("first run should fail at the locked-out ssh-hardening phase:\n%s", out1)
+	}
+
+	m1, _, err := decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker after partial run: %v", err)
+	}
+	if got := strings.Join(m1.CompletedPhases, ","); got != "packages,smith-user,smith-keys,firewall" {
+		t.Fatalf("partial marker CompletedPhases = %q, want the phases before ssh-hardening", got)
+	}
+
+	// Fix the cause: the loopback login probe now succeeds.
+	writeFakeBin(t, binDir, "ssh", `#!/usr/bin/env bash
+exit 0
+`)
+	out2, err := run()
+	if err != nil {
+		t.Fatalf("re-run after the fix should complete, but failed: %v\n%s", err, out2)
+	}
+
+	// The phases that completed before the failure are no-ops on the re-run.
+	for _, phase := range []string{
+		"✓ packages (already-satisfied)",
+		"✓ smith-user (already-satisfied)",
+		"✓ smith-keys (already-satisfied)",
+		"✓ firewall (already-satisfied)",
+	} {
+		if !strings.Contains(out2, phase) {
+			t.Errorf("re-run should report %q; got:\n%s", phase, out2)
+		}
+	}
+	// ssh-hardening now runs and succeeds (it was never recorded), and the run
+	// reaches the terminal access phase.
+	if !strings.Contains(out2, "✓ ssh-hardening") || strings.Contains(out2, "✓ ssh-hardening (already-satisfied)") {
+		t.Errorf("re-run should complete ssh-hardening as a change, not a no-op; got:\n%s", out2)
+	}
+
+	const wantPhases = "packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
+	m2, _, err := decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker after resumed run: %v", err)
+	}
+	if got := strings.Join(m2.CompletedPhases, ","); got != wantPhases {
+		t.Errorf("resumed marker CompletedPhases = %q, want the full set %q", got, wantPhases)
+	}
+}
+
+// decodeMarker reads and decodes the on-box marker written to path.
+func decodeMarker(t *testing.T, path string) (marker.Marker, marker.Skew, error) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return marker.Marker{}, 0, err
+	}
+	return marker.Decode(data)
+}
+
 // bootstrapTestEnv returns the environment that points the embedded script and
 // its fake binaries at writable temp paths under dir, so setup runs end to end
 // without root. It also seeds the bootstrap login's authorized_keys that the

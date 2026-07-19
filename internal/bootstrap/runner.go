@@ -147,31 +147,48 @@ type SetupOptions struct {
 	SmithVersion string
 }
 
+// SetupResult is the terminal result of a setup run: its Outcome (which maps to
+// the process exit code) and, when a phase failed mid-run, the FailureReport
+// telling the operator what happened and how to recover. Failure is non-nil only
+// when Outcome is OutcomePartial.
+type SetupResult struct {
+	Outcome Outcome
+	Failure *FailureReport
+}
+
 // Setup runs the ordered mutating phases on the box: it ships bootstrap.sh,
 // invokes its setup subcommand, and streams each phase's live progress to
 // stdout and stderr as it happens. A connect failure and a phase failure are
-// reported as Outcomes rather than Go errors, so the caller can map them to an
-// exit code; a Go error is returned only for unexpected infrastructure
+// reported in the SetupResult rather than as Go errors, so the caller can map
+// them to an exit code; a phase failure also carries a FailureReport built from
+// the captured stream. A Go error is returned only for unexpected infrastructure
 // failures. Setup assumes the preflight gate has already passed.
-func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io.Writer) (Outcome, error) {
+func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io.Writer) (SetupResult, error) {
 	if err := r.ship(ctx); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
-			return OutcomeConnectFailed, nil
+			return SetupResult{Outcome: OutcomeConnectFailed}, nil
 		}
-		return OutcomePassed, fmt.Errorf("ship bootstrap script: %w", err)
+		return SetupResult{}, fmt.Errorf("ship bootstrap script: %w", err)
 	}
+
+	// Tee the live streams into buffers: the operator still sees progress as it
+	// happens, and a phase failure can be reconstructed into a report afterward.
+	var outBuf, errBuf bytes.Buffer
+	teeOut := io.MultiWriter(stdout, &outBuf)
+	teeErr := io.MultiWriter(stderr, &errBuf)
 
 	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s",
 		remoteScriptPath, shellArg(opts.AccessMode), shellArg(opts.SmithVersion))
-	if err := r.conn.Run(ctx, cmd, stdout, stderr); err != nil {
+	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
-			return OutcomeConnectFailed, nil
+			return SetupResult{Outcome: OutcomeConnectFailed}, nil
 		}
-		// The phase stream already reported the failure to the operator; a
-		// non-connect error means a phase ran and failed, leaving a partial box.
-		return OutcomePartial, nil
+		// A non-connect error means a phase ran and failed, leaving a partial box.
+		// Build the failure report from the streams the phases just emitted.
+		report := newFailureReport(outBuf.String(), errBuf.String())
+		return SetupResult{Outcome: OutcomePartial, Failure: &report}, nil
 	}
-	return OutcomePassed, nil
+	return SetupResult{Outcome: OutcomePassed}, nil
 }
 
 // shellArg single-quotes s so it interpolates safely as one argument in the
