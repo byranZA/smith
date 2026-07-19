@@ -224,6 +224,14 @@ func shellArg(s string) string {
 
 // ship writes the embedded script to a local temp file and scp's it to the box.
 func (r *Runner) ship(ctx context.Context) error {
+	return ShipScript(ctx, r.conn)
+}
+
+// ShipScript writes the embedded bootstrap.sh to a local temp file and copies it
+// to the box at RemoteScriptPath over conn. Both the setup runner and the
+// read-only status prober ship the same script this way, then invoke a
+// subcommand on it.
+func ShipScript(ctx context.Context, conn Conn) error {
 	f, err := os.CreateTemp("", "smith-bootstrap-*.sh")
 	if err != nil {
 		return fmt.Errorf("create temp script: %w", err)
@@ -237,7 +245,7 @@ func (r *Runner) ship(ctx context.Context) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temp script: %w", err)
 	}
-	if err := r.conn.Copy(ctx, f.Name(), RemoteScriptPath); err != nil {
+	if err := conn.Copy(ctx, f.Name(), RemoteScriptPath); err != nil {
 		return fmt.Errorf("copy script to box: %w", err)
 	}
 	return nil

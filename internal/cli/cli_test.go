@@ -55,6 +55,37 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
+func TestParseStatusHost(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"bare host", "box", "box", false},
+		{"tailnet name", "smith-box", "smith-box", false},
+		{"login@host rejected", "root@box", "", true},
+		{"empty rejected", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseStatusHost(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseStatusHost(%q) err = nil, want error", tt.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseStatusHost(%q) err = %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("parseStatusHost(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCodeFromError(t *testing.T) {
 	tests := []struct {
 		name string

@@ -12,6 +12,7 @@ import (
 	"github.com/byran/smith/internal/bootstrap"
 	"github.com/byran/smith/internal/connection"
 	"github.com/byran/smith/internal/secret"
+	"github.com/byran/smith/internal/status"
 	"github.com/byran/smith/internal/tailscale"
 )
 
@@ -177,17 +178,59 @@ func establishTailscale(ctx context.Context, access *tailscale.Access, host, aut
 	return nil
 }
 
-// newStatusCmd builds `smith machine status <host>`. It is a stub until the
-// drift reconciler lands in a later issue.
+// newStatusCmd builds `smith machine status <host>`. It connects as smith@host
+// (the tailnet name in tailscale mode), gathers the box's live facts read-only,
+// reconciles them against the marker, prints the drift report, and maps the
+// verdict to an exit code (0 matches, 1 drifted, 2 not-provisioned, 3
+// unreachable). It never mutates the box — the marker's access_mode, not a flag,
+// sets probe expectations, so there is deliberately no --access flag.
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status <host>",
-		Short: "Report how a box has drifted from what setup established (not yet implemented)",
+		Short: "Report how a box has drifted from what setup established",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return errors.New("machine status is not yet implemented")
+		RunE: func(cmd *cobra.Command, args []string) error {
+			host, err := parseStatusHost(args[0])
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+
+			conn := connection.New("smith@"+host, connection.System())
+			admin := tailscale.NewAdmin(connection.System())
+			prober := status.NewProber(conn, admin)
+
+			gathered, err := prober.Gather(ctx)
+			if err != nil {
+				return fmt.Errorf("probe box: %w", err)
+			}
+
+			report := status.Unreachable(host)
+			if gathered.Reachable {
+				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), report.String()); err != nil {
+				return fmt.Errorf("write status report: %w", err)
+			}
+			if code := report.ExitCode(); code != 0 {
+				return &exitError{code: code}
+			}
+			return nil
 		},
 	}
+}
+
+// parseStatusHost validates the status host argument: a bare host (or tailnet
+// name), never a <login>@<host> — status always connects as the smith user, so a
+// login prefix is a mistake worth catching.
+func parseStatusHost(arg string) (string, error) {
+	if arg == "" {
+		return "", errors.New("invalid host: want a bare <host>")
+	}
+	if strings.Contains(arg, "@") {
+		return "", fmt.Errorf("invalid host %q: pass a bare <host>, not <login>@<host> — status connects as smith", arg)
+	}
+	return arg, nil
 }
 
 // parseTarget validates a bootstrap-login target of the form <login>@<host> and
