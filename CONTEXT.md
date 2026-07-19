@@ -57,10 +57,22 @@ _Avoid_: rollback, failsafe.
 
 ### State on the box
 
+**Phase**:
+One named, ordered, mutating step of the base-layer bootstrap sequence — `packages`,
+`smith-user`, `smith-keys`, `firewall`, `ssh-hardening`, `fail2ban`, `auto-updates`, `access`
+(preceded by a non-recorded `preflight` gate). The names *are* the marker's `completed_phases`
+values, so they are load-bearing. A phase appends itself to the marker only on success; the
+reachability-affecting phases (`firewall`, `ssh-hardening`, `access`) carry the lock-out gates,
+and only `ssh-hardening` closes a base-layer door — which it self-reverts on any local failure,
+so a mid-sequence failure is never a lock-out.
+_Avoid_: step, stage, task.
+
 **Marker**:
 The versioned on-box record of what bootstrap did — `/etc/smith/bootstrap.json` (schema + smith
 version + access mode + completed phases + timestamp). Lets `smith machine status` read state
-back and any admin machine re-run idempotently.
+back and any admin machine re-run idempotently. A **ledger, not a gate**: every `setup` run
+executes all phases and check-before-change makes done ones no-ops — `completed_phases` records
+progress (for failure reports and `status`), it never *skips* execution.
 _Avoid_: state file, lockfile, manifest.
 
 **Check-before-change**:
@@ -68,6 +80,12 @@ The rule that every bootstrap step verifies the box's current configured state b
 it, so re-runs converge instead of duplicating. Governs *configured state*, not the package
 manager (which is simply `ensure`d, not probed).
 _Avoid_: idempotency (as the term of art — check-before-change is *how* smith achieves it).
+
+**Drift**:
+Divergence between what the marker records and what smith re-probes live on the box.
+`smith machine setup` mutates to converge; `smith machine status` only *reports* drift and never
+remediates it — the read-only, state-oriented half of the setup/status seam.
+_Avoid_: skew (reserved for marker *schema* version mismatch), diff.
 
 ### Secrets
 
