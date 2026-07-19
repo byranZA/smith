@@ -16,9 +16,9 @@
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# The `packages`, `smith-user`, and `smith-keys` phases are implemented so far;
-# the remaining ordered phases (firewall, ssh-hardening, ...) land in later
-# issues.
+# The `packages`, `smith-user`, `smith-keys`, `firewall`, `fail2ban`, and
+# `auto-updates` phases are implemented so far; the remaining ordered phases
+# (ssh-hardening, access) land in later issues.
 set -Eeuo pipefail
 
 SMITH_BOOTSTRAP_VERSION=1
@@ -30,7 +30,7 @@ MARKER_DIR="$(dirname "$MARKER")"
 
 # The ordered mutating phases. The names are load-bearing: they are the marker's
 # completed_phases values. Later issues extend this list.
-PHASES=(packages smith-user smith-keys)
+PHASES=(packages smith-user smith-keys firewall fail2ban auto-updates)
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -41,6 +41,10 @@ BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
 SMITH_USER="smith"
 SMITH_HOME="${SMITH_HOME:-/home/smith}"
 SMITH_SUDOERS_DIR="${SMITH_SUDOERS_DIR:-/etc/sudoers.d}"
+
+# The apt drop-in that enables unattended security upgrades. SMITH_AUTO_UPGRADES_CONF
+# overrides it for tests; production always uses the apt.conf.d default.
+SMITH_AUTO_UPGRADES_CONF="${SMITH_AUTO_UPGRADES_CONF:-/etc/apt/apt.conf.d/20auto-upgrades}"
 
 # Run parameters, filled by parse_setup_args.
 ACCESS="public"
@@ -226,6 +230,86 @@ phase_smith_keys() {
   as_root chmod 0700 "$dest_dir"
   as_root chmod 0600 "$dest"
   as_root chown -R "${SMITH_USER}:${SMITH_USER}" "$dest_dir"
+}
+
+# public_ssh_target reports whether public SSH (port 22) should stay open,
+# derived from the door smith connected over. Only public mode exists in this
+# slice, so port 22 stays open; the tailscale access mode (#18) slots its branch
+# in here to keep public 22 closed once tailnet reach is proven. This is the
+# seam that makes the firewall phase access-aware.
+public_ssh_target() {
+  case "$ACCESS" in
+    *) echo "open" ;;
+  esac
+}
+
+# phase_firewall brings up ufw as a default-deny-inbound firewall, allowing SSH
+# on port 22 when the connect door is public. It is check-before-change: an
+# already-active firewall with the expected default policy and SSH rule is left
+# untouched and reports already-satisfied. SSH is allowed before the firewall is
+# enabled so activating default-deny never severs the bootstrap connection.
+phase_firewall() {
+  local want_public_ssh
+  want_public_ssh="$(public_ssh_target)"
+
+  local status
+  status="$(as_root ufw status verbose 2>/dev/null || true)"
+
+  local ssh_ok=1
+  if [ "$want_public_ssh" = "open" ]; then
+    printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW' || ssh_ok=0
+  fi
+
+  if printf '%s\n' "$status" | grep -qi 'Status: active' \
+    && printf '%s\n' "$status" | grep -qi 'deny (incoming)' \
+    && [ "$ssh_ok" -eq 1 ]; then
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  if [ "$want_public_ssh" = "open" ]; then
+    as_root ufw allow 22/tcp
+  fi
+  as_root ufw --force default deny incoming
+  as_root ufw --force default allow outgoing
+  as_root ufw --force enable
+}
+
+# phase_fail2ban ensures the fail2ban service (installed by the packages phase)
+# is enabled and running. It is check-before-change: an already active+enabled
+# service is left untouched and reports already-satisfied.
+phase_fail2ban() {
+  if as_root systemctl is-active --quiet fail2ban \
+    && as_root systemctl is-enabled --quiet fail2ban; then
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+  as_root systemctl enable --now fail2ban
+}
+
+# phase_auto_updates enables unattended *security* upgrades via the apt periodic
+# drop-in, then triggers one unattended-upgrades run so the box is patched at
+# handoff — no blanket apt upgrade. It is check-before-change: when the drop-in
+# already matches, the phase is a no-op that reports already-satisfied and does
+# not re-run the patch (the box was patched on the run that enabled it).
+phase_auto_updates() {
+  local want='APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";'
+
+  if [ "$(as_root cat "$SMITH_AUTO_UPGRADES_CONF" 2>/dev/null || true)" = "$want" ]; then
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  printf '%s\n' "$want" >"$tmp"
+  as_root install -m 0644 "$tmp" "$SMITH_AUTO_UPGRADES_CONF"
+  rm -f "$tmp"
+
+  # One-time patch at handoff. unattended-upgrade only pulls the configured
+  # (security) origins, so this is not a blanket apt upgrade.
+  as_root unattended-upgrade
 }
 
 # parse_setup_args reads the setup subcommand's flags: the access mode and the
