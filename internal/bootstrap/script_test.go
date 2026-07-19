@@ -11,9 +11,10 @@ import (
 )
 
 // TestScriptSetupWritesMarkerAndIsIdempotent runs the embedded bootstrap.sh end
-// to end against fake apt-get/sudo binaries and a temp marker path. It proves
-// the phase loop writes the marker, the packages phase reports its result, and
-// a re-run on an already-provisioned box is a no-op that reports
+// to end against fake privileged binaries and a temp marker path. It proves the
+// phase loop writes the marker, the base-layer phases (packages, smith-user,
+// smith-keys) each report their result and record themselves in order, and a
+// re-run on an already-provisioned box is a no-op that reports
 // already-satisfied — decoding the on-box marker with the marker package to
 // confirm the two sides agree on the schema.
 func TestScriptSetupWritesMarkerAndIsIdempotent(t *testing.T) {
@@ -56,36 +57,82 @@ else
 fi
 exit 0
 `)
+	// Fake getent: reports the smith user as absent until useradd stamps
+	// USER_STATE, so the smith-user phase's check-before-change sees the box
+	// transition from "no smith user" to "smith user present".
+	writeFakeBin(t, binDir, "getent", `#!/usr/bin/env bash
+if [ "$1" = "passwd" ] && [ "$2" = "smith" ]; then
+  if [ -f "$USER_STATE" ]; then
+    echo "smith:x:1001:1001::${SMITH_HOME}:/bin/bash"
+    exit 0
+  fi
+  exit 2
+fi
+exit 2
+`)
+	// Fake useradd stamps USER_STATE so the next getent reports the user present.
+	writeFakeBin(t, binDir, "useradd", `#!/usr/bin/env bash
+touch "$USER_STATE"
+exit 0
+`)
+	// Fake visudo accepts any syntax check, standing in for the real validator.
+	writeFakeBin(t, binDir, "visudo", `#!/usr/bin/env bash
+exit 0
+`)
+	// Fake chown is a no-op: the test user cannot chown to smith, and ownership
+	// is not what this behavior test asserts.
+	writeFakeBin(t, binDir, "chown", `#!/usr/bin/env bash
+exit 0
+`)
 
 	markerPath := filepath.Join(dir, "bootstrap.json")
 	aptState := filepath.Join(dir, "apt.installed")
+	userState := filepath.Join(dir, "user.created")
+	sudoersDir := filepath.Join(dir, "sudoers.d")
+	smithHome := filepath.Join(dir, "smith-home")
+	// The bootstrap login's home, holding the authorized_keys smith-keys copies.
+	loginHome := filepath.Join(dir, "login-home")
+	authKeys := "ssh-ed25519 AAAAC3NzaC1lZDI1 operator@laptop\n"
+	if err := os.MkdirAll(filepath.Join(loginHome, ".ssh"), 0o700); err != nil {
+		t.Fatalf("mkdir login .ssh: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(loginHome, ".ssh", "authorized_keys"), []byte(authKeys), 0o600); err != nil {
+		t.Fatalf("write login authorized_keys: %v", err)
+	}
+
 	run := func() (string, error) {
 		cmd := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test")
 		cmd.Env = append(os.Environ(),
 			"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"HOME="+loginHome,
 			"SMITH_MARKER="+markerPath,
+			"SMITH_HOME="+smithHome,
+			"SMITH_SUDOERS_DIR="+sudoersDir,
 			"APT_STATE="+aptState,
+			"USER_STATE="+userState,
 		)
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 
-	// First run: packages get installed, so the phase reports changed, not
-	// already-satisfied.
+	// First run: the base layer provisions the box, so every phase reports
+	// changed, not already-satisfied.
 	out1, err := run()
 	if err != nil {
 		t.Fatalf("first setup run failed: %v\n%s", err, out1)
 	}
-	if !strings.Contains(out1, "▶ packages") {
-		t.Errorf("first run missing live phase progress:\n%s", out1)
+	for _, phase := range []string{"▶ packages", "▶ smith-user", "▶ smith-keys"} {
+		if !strings.Contains(out1, phase) {
+			t.Errorf("first run missing live phase progress %q:\n%s", phase, out1)
+		}
 	}
 	if strings.Contains(out1, "already-satisfied") {
 		t.Errorf("first run should not be already-satisfied:\n%s", out1)
 	}
 
 	// The marker the script wrote must decode with the marker package (the two
-	// sides agree on schema), record the packages phase, and carry the run's
-	// access mode and smith version.
+	// sides agree on schema), record the base-layer phases in order, and carry
+	// the run's access mode and smith version.
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		t.Fatalf("read marker: %v", err)
@@ -103,18 +150,39 @@ exit 0
 	if m.SmithVersion != "9.9.9-test" {
 		t.Errorf("marker SmithVersion = %q, want %q", m.SmithVersion, "9.9.9-test")
 	}
-	if strings.Join(m.CompletedPhases, ",") != "packages" {
-		t.Errorf("marker CompletedPhases = %v, want [packages]", m.CompletedPhases)
+	if strings.Join(m.CompletedPhases, ",") != "packages,smith-user,smith-keys" {
+		t.Errorf("marker CompletedPhases = %v, want [packages smith-user smith-keys]", m.CompletedPhases)
 	}
 
-	// Second run: nothing to install, so the packages phase reports
-	// already-satisfied and the marker still lists exactly the packages phase.
+	// smith-user must have laid down the passwordless-sudo drop-in.
+	sudoers, err := os.ReadFile(filepath.Join(sudoersDir, "smith"))
+	if err != nil {
+		t.Fatalf("read smith sudoers drop-in: %v", err)
+	}
+	if strings.TrimSpace(string(sudoers)) != "smith ALL=(ALL) NOPASSWD:ALL" {
+		t.Errorf("smith sudoers drop-in = %q, want passwordless-sudo grant", string(sudoers))
+	}
+
+	// smith-keys must have copied the bootstrap login's authorized_keys onto
+	// smith verbatim.
+	gotKeys, err := os.ReadFile(filepath.Join(smithHome, ".ssh", "authorized_keys"))
+	if err != nil {
+		t.Fatalf("read smith authorized_keys: %v", err)
+	}
+	if string(gotKeys) != authKeys {
+		t.Errorf("smith authorized_keys = %q, want %q", string(gotKeys), authKeys)
+	}
+
+	// Second run: nothing to change, so every phase reports already-satisfied
+	// and the marker still lists exactly the base-layer phases in order.
 	out2, err := run()
 	if err != nil {
 		t.Fatalf("second setup run failed: %v\n%s", err, out2)
 	}
-	if !strings.Contains(out2, "already-satisfied") {
-		t.Errorf("re-run should report already-satisfied:\n%s", out2)
+	for _, phase := range []string{"✓ packages (already-satisfied)", "✓ smith-user (already-satisfied)", "✓ smith-keys (already-satisfied)"} {
+		if !strings.Contains(out2, phase) {
+			t.Errorf("re-run should report %q:\n%s", phase, out2)
+		}
 	}
 
 	data2, err := os.ReadFile(markerPath)
@@ -125,8 +193,8 @@ exit 0
 	if err != nil {
 		t.Fatalf("decode marker after re-run: %v", err)
 	}
-	if strings.Join(m2.CompletedPhases, ",") != "packages" {
-		t.Errorf("re-run marker CompletedPhases = %v, want [packages]", m2.CompletedPhases)
+	if strings.Join(m2.CompletedPhases, ",") != "packages,smith-user,smith-keys" {
+		t.Errorf("re-run marker CompletedPhases = %v, want [packages smith-user smith-keys]", m2.CompletedPhases)
 	}
 }
 

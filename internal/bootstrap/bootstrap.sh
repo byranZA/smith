@@ -16,8 +16,9 @@
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# Only the `packages` phase is implemented so far; the remaining ordered phases
-# (smith-user, smith-keys, firewall, ssh-hardening, ...) land in later issues.
+# The `packages`, `smith-user`, and `smith-keys` phases are implemented so far;
+# the remaining ordered phases (firewall, ssh-hardening, ...) land in later
+# issues.
 set -Eeuo pipefail
 
 SMITH_BOOTSTRAP_VERSION=1
@@ -29,10 +30,17 @@ MARKER_DIR="$(dirname "$MARKER")"
 
 # The ordered mutating phases. The names are load-bearing: they are the marker's
 # completed_phases values. Later issues extend this list.
-PHASES=(packages)
+PHASES=(packages smith-user smith-keys)
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
+
+# The smith user smith provisions and the operator lives in thereafter
+# (`ssh smith@host`). SMITH_HOME and SMITH_SUDOERS_DIR override the on-box
+# defaults for tests, matching SMITH_MARKER; production always uses the defaults.
+SMITH_USER="smith"
+SMITH_HOME="${SMITH_HOME:-/home/smith}"
+SMITH_SUDOERS_DIR="${SMITH_SUDOERS_DIR:-/etc/sudoers.d}"
 
 # Run parameters, filled by parse_setup_args.
 ACCESS="public"
@@ -126,7 +134,9 @@ run_phase() {
   local name="$1"
   printf '▶ %s\n' "$name"
   PHASE_STATUS="changed"
-  "phase_${name}"
+  # Phase names are hyphenated (they are the marker's values); the functions that
+  # implement them use underscores, since bash function names cannot contain '-'.
+  "phase_${name//-/_}"
   if [ "$PHASE_STATUS" = "satisfied" ]; then
     printf '✓ %s (already-satisfied)\n' "$name"
   else
@@ -157,6 +167,65 @@ phase_packages() {
   else
     PHASE_STATUS="changed"
   fi
+}
+
+# phase_smith_user creates the smith user with its home directory and grants it
+# passwordless sudo via a validated /etc/sudoers.d drop-in. It is
+# check-before-change: an existing user and an already-correct drop-in are left
+# untouched, so a re-run is a no-op that reports already-satisfied.
+phase_smith_user() {
+  local changed=0
+
+  # Create the user (with its home) only if it does not already exist.
+  if ! getent passwd "$SMITH_USER" >/dev/null 2>&1; then
+    as_root useradd --create-home --home-dir "$SMITH_HOME" --shell /bin/bash "$SMITH_USER"
+    changed=1
+  fi
+
+  # Ensure the passwordless-sudo drop-in matches the expected grant, validating
+  # it with visudo before it lands so a malformed file never reaches sudoers.d.
+  local sudoers_file="${SMITH_SUDOERS_DIR}/smith"
+  local sudoers_line="smith ALL=(ALL) NOPASSWD:ALL"
+  if [ "$(as_root cat "$sudoers_file" 2>/dev/null || true)" != "$sudoers_line" ]; then
+    local tmp
+    tmp="$(mktemp)"
+    printf '%s\n' "$sudoers_line" >"$tmp"
+    as_root visudo -cf "$tmp"
+    as_root mkdir -p "$SMITH_SUDOERS_DIR"
+    as_root install -m 0440 "$tmp" "$sudoers_file"
+    rm -f "$tmp"
+    changed=1
+  fi
+
+  if [ "$changed" -eq 0 ]; then
+    PHASE_STATUS="satisfied"
+  fi
+}
+
+# phase_smith_keys copies the bootstrap login's authorized_keys onto the smith
+# user — smith reuses the operator's existing SSH identity rather than minting a
+# CA of its own. It is check-before-change: if smith already carries exactly the
+# bootstrap login's keys, the phase is a no-op that reports already-satisfied.
+phase_smith_keys() {
+  local src="${HOME}/.ssh/authorized_keys"
+  local dest_dir="${SMITH_HOME}/.ssh"
+  local dest="${dest_dir}/authorized_keys"
+
+  if [ ! -f "$src" ]; then
+    echo "smith-keys: bootstrap login has no authorized_keys at ${src}" >&2
+    return 1
+  fi
+
+  if [ "$(as_root cat "$dest" 2>/dev/null || true)" = "$(cat "$src")" ]; then
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  as_root mkdir -p "$dest_dir"
+  as_root cp "$src" "$dest"
+  as_root chmod 0700 "$dest_dir"
+  as_root chmod 0600 "$dest"
+  as_root chown -R "${SMITH_USER}:${SMITH_USER}" "$dest_dir"
 }
 
 # parse_setup_args reads the setup subcommand's flags: the access mode and the
