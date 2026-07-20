@@ -58,16 +58,16 @@ func newSetupCmd() *cobra.Command {
 			// (smith could not then verify reach), and print the one-time tailnet
 			// prerequisites personalized to the operator.
 			var access *tailscale.Access
-			var authKey string
+			var acquireKey func() (string, error)
 			if accessMode == "tailscale" {
-				a, key, err := prepareTailscale(ctx, conn, host, authKeyRef, stdout)
+				a, acq, err := prepareTailscale(ctx, conn, host, authKeyRef, stdout)
 				if err != nil {
 					if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
 						return fmt.Errorf("write refusal: %w", werr)
 					}
 					return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
 				}
-				access, authKey = a, key
+				access, acquireKey = a, acq
 			}
 
 			res, err := runner.Preflight(ctx)
@@ -101,7 +101,7 @@ func newSetupCmd() *cobra.Command {
 			}
 
 			if accessMode == "tailscale" {
-				return establishTailscale(ctx, access, host, authKey, stdout, stderr)
+				return establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
 			}
 			return nil
 		},
@@ -113,32 +113,39 @@ func newSetupCmd() *cobra.Command {
 }
 
 // prepareTailscale performs the up-front, no-mutation tailscale steps: it
-// resolves the auth-key reference (prompting a terminal when omitted, failing
-// fast when there is nothing to prompt), refuses when the admin machine is not
-// on the tailnet, and prints the two one-time-per-tailnet prerequisites
-// personalized to the operator. It returns the Access orchestrator and the
-// resolved key for the post-setup enroll.
-func prepareTailscale(ctx context.Context, conn *connection.SSH, host, authKeyRef string, stdout io.Writer) (*tailscale.Access, string, error) {
-	key, err := secret.Acquire(authKeyRef, "Tailscale auth key: ", secret.NewStdTerminal())
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve tailscale auth key: %w", err)
+// refuses when the admin machine is not on the tailnet, fails fast when a key
+// would be needed but there is nothing to prompt and no reference to resolve,
+// and prints the two one-time-per-tailnet prerequisites personalized to the
+// operator. It returns the Access orchestrator and a key-acquiring closure the
+// enroll step calls only if the box actually needs enrolling — so a re-run of an
+// already-reachable box never resolves (or prompts for) a fresh auth key.
+func prepareTailscale(ctx context.Context, conn *connection.SSH, host, authKeyRef string, stdout io.Writer) (*tailscale.Access, func() (string, error), error) {
+	// Fail fast before mutating anything when the key could never be obtained:
+	// no reference to resolve and no interactive terminal to prompt. Acquisition
+	// itself is deferred to enroll, so an already-satisfied re-run needs no key.
+	term := secret.NewStdTerminal()
+	if authKeyRef == "" && !term.Interactive() {
+		return nil, nil, fmt.Errorf("resolve tailscale auth key: %w", secret.ErrNoReference)
 	}
 
 	admin := tailscale.NewAdmin(connection.System())
 	if err := tailscale.CheckAdminOnTailnet(ctx, admin); err != nil {
-		return nil, "", fmt.Errorf("tailnet preflight: %w", err)
+		return nil, nil, fmt.Errorf("tailnet preflight: %w", err)
 	}
 
 	status, err := admin.Status(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("read tailnet identity: %w", err)
+		return nil, nil, fmt.Errorf("read tailnet identity: %w", err)
 	}
 	if _, err := fmt.Fprint(stdout, tailscale.Prereqs(status.Identity, host)); err != nil {
-		return nil, "", fmt.Errorf("write prerequisites: %w", err)
+		return nil, nil, fmt.Errorf("write prerequisites: %w", err)
 	}
 
 	box := tailscale.NewBox(conn, bootstrap.RemoteScriptPath)
-	return tailscale.NewAccess(box, admin), key, nil
+	acquireKey := func() (string, error) {
+		return secret.Acquire(authKeyRef, "Tailscale auth key: ", term)
+	}
+	return tailscale.NewAccess(box, admin), acquireKey, nil
 }
 
 // publicSSHTarget derives the access-aware firewall target for public port 22:
@@ -160,19 +167,22 @@ func publicSSHTarget(ctx context.Context, runner *bootstrap.Runner, accessMode s
 // establishTailscale runs the probe-gated tailscale access sequence after the
 // base layer is in place: enroll the tag:smith node, prove reach with a live
 // tailnet ssh probe, and only then close public SSH. A failure leaves public SSH
-// open and reports which prerequisite to fix (exit 1, partial but reachable); on
-// success it tells the operator the tailnet name to re-run over.
-func establishTailscale(ctx context.Context, access *tailscale.Access, host, authKey string, stdout, stderr io.Writer) error {
-	result, err := access.Establish(ctx, tailscale.EstablishOptions{Host: host, AuthKey: authKey})
+// open and reports which prerequisite to fix (exit 1, partial but reachable). On
+// success it tells the operator the tailnet name to re-run over; a box already
+// enrolled and reachable is reported as an already-satisfied no-op.
+func establishTailscale(ctx context.Context, access *tailscale.Access, host string, acquireKey func() (string, error), stdout, stderr io.Writer) error {
+	result, err := access.Establish(ctx, tailscale.EstablishOptions{Host: host, AcquireKey: acquireKey})
 	if err != nil {
 		if _, werr := fmt.Fprintf(stderr, "tailscale access not established: %v\n", err); werr != nil {
 			return fmt.Errorf("write tailscale failure: %w", werr)
 		}
 		return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
 	}
-	if _, err := fmt.Fprintf(stdout,
-		"tailscale reach established over %s; public SSH closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n",
-		result.TailnetIP, result.ReRunHost); err != nil {
+	headline := "tailscale reach established over %s; public SSH closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n"
+	if result.AlreadySatisfied {
+		headline = "tailscale access already satisfied over %s; public SSH already closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n"
+	}
+	if _, err := fmt.Fprintf(stdout, headline, result.TailnetIP, result.ReRunHost); err != nil {
 		return fmt.Errorf("write success: %w", err)
 	}
 	return nil

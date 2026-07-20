@@ -11,6 +11,9 @@ import (
 // be made to fail, so a test can assert the verify order and that public SSH is
 // only ever closed after a successful probe.
 type fakeBox struct {
+	currentIP  string
+	currentErr error
+
 	enrollIP  string
 	enrollErr error
 
@@ -20,6 +23,13 @@ type fakeBox struct {
 	closed   bool
 	gotHost  string
 	gotKey   string
+}
+
+func (b *fakeBox) CurrentIP(_ context.Context) (string, error) {
+	if b.currentErr != nil {
+		return "", b.currentErr
+	}
+	return b.currentIP, nil
 }
 
 func (b *fakeBox) Enroll(_ context.Context, opts EnrollOptions) (string, error) {
@@ -61,7 +71,10 @@ func (a *fakeAdmin) Probe(_ context.Context, tailnetIP string) error {
 }
 
 func establishOpts() EstablishOptions {
-	return EstablishOptions{Host: "box.example.com", AuthKey: "tskey-abc123"}
+	return EstablishOptions{
+		Host:       "box.example.com",
+		AcquireKey: func() (string, error) { return "tskey-abc123", nil },
+	}
 }
 
 func TestEstablishClosesPublicSSHOnlyAfterProbe(t *testing.T) {
@@ -91,6 +104,86 @@ func TestEstablishClosesPublicSSHOnlyAfterProbe(t *testing.T) {
 	}
 	if box.gotHost != "box.example.com" || box.gotKey != "tskey-abc123" {
 		t.Errorf("enroll got host=%q key=%q, want the establish options passed through", box.gotHost, box.gotKey)
+	}
+}
+
+func TestEstablishAlreadyRunningAndReachableIsANoOp(t *testing.T) {
+	box := &fakeBox{currentIP: "100.101.102.103"}
+	admin := &fakeAdmin{}
+	acquired := false
+	opts := EstablishOptions{
+		Host: "box.example.com",
+		AcquireKey: func() (string, error) {
+			acquired = true
+			return "tskey-fresh", nil
+		},
+	}
+	res, err := NewAccess(box, admin).Establish(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Establish() error = %v", err)
+	}
+	if box.enrolled {
+		t.Error("re-enrolled a box already Running and reachable; enrollment is not check-before-change")
+	}
+	if acquired {
+		t.Error("acquired a fresh auth key for an already-satisfied box; a re-run must not need a new key")
+	}
+	if !admin.probed {
+		t.Error("skipped the tailnet probe; already-satisfied must be proven, not assumed")
+	}
+	if admin.probedIP != "100.101.102.103" {
+		t.Errorf("probed IP = %q, want the box's current tailnet IP", admin.probedIP)
+	}
+	if box.closed {
+		t.Error("closed public SSH again on an already-satisfied re-run")
+	}
+	if !res.AlreadySatisfied {
+		t.Error("Result.AlreadySatisfied = false, want true for an already-reachable box")
+	}
+	if res.PublicSSHClosed {
+		t.Error("Result.PublicSSHClosed = true, but this run closed nothing")
+	}
+	if res.TailnetIP != "100.101.102.103" {
+		t.Errorf("Result.TailnetIP = %q, want the box's current tailnet IP", res.TailnetIP)
+	}
+	if res.ReRunHost != "smith-box.example.com" {
+		t.Errorf("Result.ReRunHost = %q, want the tailnet node name", res.ReRunHost)
+	}
+}
+
+func TestEstablishEnrollsWhenNotYetRunning(t *testing.T) {
+	box := &fakeBox{currentIP: "", enrollIP: "100.64.0.9"}
+	admin := &fakeAdmin{}
+	res, err := NewAccess(box, admin).Establish(context.Background(), establishOpts())
+	if err != nil {
+		t.Fatalf("Establish() error = %v", err)
+	}
+	if !box.enrolled {
+		t.Error("an un-enrolled box was not enrolled")
+	}
+	if box.gotKey != "tskey-abc123" {
+		t.Errorf("enroll got key %q, want the freshly acquired key", box.gotKey)
+	}
+	if !box.closed {
+		t.Error("public SSH was never closed after a fresh enroll + probe")
+	}
+	if res.AlreadySatisfied {
+		t.Error("Result.AlreadySatisfied = true, want false for a fresh enroll")
+	}
+	if !res.PublicSSHClosed {
+		t.Error("Result.PublicSSHClosed = false, want true after a fresh enroll")
+	}
+}
+
+func TestEstablishReadingBoxStatusFailsBeforeEnrolling(t *testing.T) {
+	box := &fakeBox{currentErr: errors.New("ssh boom")}
+	admin := &fakeAdmin{}
+	_, err := NewAccess(box, admin).Establish(context.Background(), establishOpts())
+	if err == nil {
+		t.Fatal("Establish() error = nil, want the box-status read error surfaced")
+	}
+	if box.enrolled {
+		t.Error("enrolled despite being unable to read the box's tailscale status")
 	}
 }
 

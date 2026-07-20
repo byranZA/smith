@@ -75,8 +75,14 @@ type EnrollOptions struct {
 }
 
 // Box is the box-side surface the tailscale layer drives over smith's ssh
-// connection: enroll the node and, as the final mutating step, close public SSH.
+// connection: read the node's current tailnet state, enroll it, and — as the
+// final mutating step — close public SSH.
 type Box interface {
+	// CurrentIP reports the box's tailnet IP when the node is already enrolled
+	// and Running, or "" when it is not yet enrolled. It reads state without
+	// mutating, so the access layer can skip re-enrollment on a re-run of an
+	// already-reachable box rather than burning a fresh single-use auth key.
+	CurrentIP(ctx context.Context) (tailnetIP string, err error)
 	// Enroll runs tailscale up on the box with the auth key over stdin and
 	// returns the box's tailnet IP once it reaches Running. A box that never
 	// reaches Running is reported as ErrEnrollNotRunning.
@@ -112,17 +118,25 @@ type EstablishOptions struct {
 	// Host is the box's host — names the node smith-<host> and forms the tailnet
 	// name the operator re-runs over.
 	Host string
-	// AuthKey is the resolved tailnet auth key delivered to the box over stdin.
-	AuthKey string
+	// AcquireKey resolves the single-use tailnet auth key, delivered to the box
+	// over stdin. It is called only when the box actually needs enrolling, so an
+	// already-satisfied re-run never resolves (or prompts for) a fresh key.
+	AcquireKey func() (string, error)
 }
 
-// Result reports a successful establish: the box's tailnet IP, that public SSH
-// was closed, and the tailnet name the operator should re-run over.
+// Result reports a successful establish: the box's tailnet IP, whether this run
+// closed public SSH, whether the box was already satisfied, and the tailnet name
+// the operator should re-run over.
 type Result struct {
 	// TailnetIP is the box's 100.x tailnet address.
 	TailnetIP string
-	// PublicSSHClosed reports that public port 22 was closed after the probe.
+	// PublicSSHClosed reports that public port 22 was closed after the probe on
+	// this run. It is false on an already-satisfied re-run, which closes nothing.
 	PublicSSHClosed bool
+	// AlreadySatisfied reports that the box was already enrolled and reachable
+	// over the tailnet, so establish was a no-op — no enrollment, no fresh key,
+	// no firewall change.
+	AlreadySatisfied bool
 	// ReRunHost is the box's tailnet name — the host to pass on a re-run.
 	ReRunHost string
 }
@@ -160,8 +174,26 @@ func CheckAdminOnTailnet(ctx context.Context, admin Admin) error {
 // A failure at enrollment attributes the missing tagOwners prerequisite; a
 // denied probe attributes the missing ssh ACL prerequisite; both leave public
 // SSH open. Public SSH is never closed unless the probe succeeds first.
+//
+// Establish is check-before-change: a box already enrolled, Running, and
+// reachable over the tailnet is an already-satisfied no-op — no re-enrollment,
+// no fresh single-use key, and no firewall change. Only a box that is not yet
+// enrolled or not yet reachable acquires a key and runs tailscale up.
 func (a *Access) Establish(ctx context.Context, opts EstablishOptions) (Result, error) {
-	ip, err := a.box.Enroll(ctx, EnrollOptions(opts))
+	currentIP, err := a.box.CurrentIP(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("read box tailscale status: %w", err)
+	}
+	if currentIP != "" && a.admin.Probe(ctx, currentIP) == nil {
+		return Result{TailnetIP: currentIP, AlreadySatisfied: true, ReRunHost: nodeName(opts.Host)}, nil
+	}
+
+	key, err := opts.AcquireKey()
+	if err != nil {
+		return Result{}, fmt.Errorf("acquire tailscale auth key: %w", err)
+	}
+
+	ip, err := a.box.Enroll(ctx, EnrollOptions{Host: opts.Host, AuthKey: key})
 	if err != nil {
 		if errors.Is(err, ErrEnrollNotRunning) {
 			return Result{}, fmt.Errorf("enroll box: %w; add a tagOwners entry for tag:smith to the tailnet policy, then re-run (public SSH left open)", err)

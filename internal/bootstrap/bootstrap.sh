@@ -14,6 +14,8 @@
 #               marker only on success; progress streams live to the operator.
 #   enroll    — tailscale mode only: joins the box to the tailnet as a tag:smith
 #               Tailscale SSH node (auth key on stdin) and prints its tailnet IP.
+#   tailscale-status — tailscale mode only: prints the node's tailnet IP when it is
+#               already Running, so a re-run skips re-enrollment; mutates nothing.
 #   close-public-ssh — tailscale mode only: closes public port 22 and records the
 #               access phase, run by smith after a live tailnet probe proves reach.
 #
@@ -715,13 +717,36 @@ probe_services() {
   fi
 }
 
+# tailscale_backend_state echoes Tailscale's BackendState (e.g. Running), or
+# nothing when the daemon is unreachable or the field is absent. Read-only.
+tailscale_backend_state() {
+  tailscale status --json 2>/dev/null \
+    | grep -o '"BackendState":[[:space:]]*"[^"]*"' \
+    | sed 's/.*"\([^"]*\)"$/\1/' | head -n1 || true
+}
+
+# tailscale_status prints the box's tailnet IP as tailscale-ip=<ip> only when the
+# node is already enrolled and Running, and nothing otherwise. It lets smith's
+# access layer skip re-enrollment on a re-run of an already-reachable box instead
+# of burning a fresh single-use auth key. It is query-only: it mutates nothing.
+tailscale_status() {
+  if [ "$(tailscale_backend_state)" != "Running" ]; then
+    return 0
+  fi
+  local ip
+  ip="$(tailscale ip -4 2>/dev/null | head -n1 || true)"
+  if [ -n "$ip" ]; then
+    printf 'tailscale-ip=%s\n' "$ip"
+  fi
+}
+
 # probe_access emits the tailscale-mode access facts smith can read on the box:
 # the Tailscale backend state and the node's tailnet IP (used by the admin side
 # to run the live ssh-over-tailnet probe). Neither needs root. In public mode the
 # tailscale binary is absent, so this reports '?' and the reconciler ignores it.
 probe_access() {
   local state ip
-  state="$(tailscale status --json 2>/dev/null | grep -o '"BackendState":[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/' | head -n1 || true)"
+  state="$(tailscale_backend_state)"
   if [ "$state" = "Running" ]; then
     echo "tailscale-running=running"
   elif [ -n "$state" ]; then
@@ -781,6 +806,9 @@ main() {
     enroll)
       shift
       enroll "$@"
+      ;;
+    tailscale-status)
+      tailscale_status
       ;;
     close-public-ssh)
       close_public_ssh

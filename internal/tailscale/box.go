@@ -32,9 +32,23 @@ func NewBox(remote Remote, scriptPath string) Box {
 	return &boxDriver{remote: remote, scriptPath: scriptPath}
 }
 
-// enrolledIPPrefix is the line bootstrap.sh's enroll subcommand prints to report
-// the box's tailnet IP once it reaches Running.
+// enrolledIPPrefix is the line bootstrap.sh's enroll and tailscale-status
+// subcommands print to report the box's tailnet IP once it reaches Running.
 const enrolledIPPrefix = "tailscale-ip="
+
+// CurrentIP runs bootstrap.sh's tailscale-status subcommand, which prints the
+// box's tailnet IP only when the node is already enrolled and Running. An
+// un-enrolled box prints nothing, so this returns "" and the access layer
+// enrolls; a connect failure is surfaced so a re-run is not mistaken for a fresh
+// box. It reads state only — it never mutates the box.
+func (d *boxDriver) CurrentIP(ctx context.Context) (string, error) {
+	cmd := fmt.Sprintf("bash %s tailscale-status", d.scriptPath)
+	var out bytes.Buffer
+	if err := d.remote.Run(ctx, cmd, &out, io.Discard); err != nil {
+		return "", fmt.Errorf("run tailscale-status: %w", err)
+	}
+	return parseEnrolledIP(out.String()), nil
+}
 
 // Enroll runs bootstrap.sh's enroll subcommand with the auth key on stdin and
 // parses the reported tailnet IP. A non-connect failure means the node never
