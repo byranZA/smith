@@ -23,7 +23,11 @@ exit 0
 	// address, `status --json` reports Running.
 	writeFakeBin(t, binDir, "tailscale", `#!/usr/bin/env bash
 case "$1" in
-  up) exit 0 ;;
+  up)
+    # Record the full argv so tests can assert the auth key never lands here.
+    [ -n "${SMITH_TS_ARGV_LOG:-}" ] && printf '%s\n' "$*" >>"$SMITH_TS_ARGV_LOG"
+    exit 0
+    ;;
   ip) echo "100.101.102.103"; exit 0 ;;
   status) echo '{"BackendState":"Running"}'; exit 0 ;;
 esac
@@ -193,6 +197,75 @@ func TestScriptEnrollAndClosePublicSSHRecordsAccess(t *testing.T) {
 	const wantFull = "packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
 	if got := strings.Join(m.CompletedPhases, ","); got != wantFull {
 		t.Errorf("marker CompletedPhases = %q, want the full tailscale set %q", got, wantFull)
+	}
+}
+
+// TestScriptEnrollKeepsAuthKeyOffArgv proves the enroll step never places the
+// Tailscale auth key in the box's process argv: `tailscale up` is invoked with a
+// --auth-key=file:<path> reference (not the literal key), and the tmpfile that
+// carries the key is 0600 and removed on completion. The stdin design keeps the
+// key off argv on the smith side; this keeps it off argv on the box side too
+// (readable via ps / /proc/PID/cmdline otherwise) — ADR-0002's "either side".
+func TestScriptEnrollKeepsAuthKeyOffArgv(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProvisioningFakeBins(t, binDir)
+	writeTailscaleFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "ssh", "#!/usr/bin/env bash\nexit 0\n")
+
+	env := bootstrapTestEnv(t, dir, binDir)
+	argvLog := filepath.Join(dir, "tailscale.up.argv")
+
+	const key = "tskey-abc123secret"
+	enroll := exec.Command(bash, scriptPath, "enroll", "--hostname", "smith-box.example.com")
+	enroll.Env = append(os.Environ(), env...)
+	enroll.Stdin = strings.NewReader(key + "\n")
+	enrollOut, err := enroll.CombinedOutput()
+	if err != nil {
+		t.Fatalf("enroll failed: %v\n%s", err, enrollOut)
+	}
+
+	argv, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatalf("read tailscale up argv log: %v", err)
+	}
+	argvStr := strings.TrimSpace(string(argv))
+
+	// The literal key must never reach `tailscale up`'s argv.
+	if strings.Contains(argvStr, key) {
+		t.Errorf("auth key leaked into tailscale up argv:\n%s", argvStr)
+	}
+
+	// The key is passed by file: reference; extract the tmpfile path.
+	var keyfile string
+	for _, tok := range strings.Fields(argvStr) {
+		if ref, ok := strings.CutPrefix(tok, "--auth-key=file:"); ok {
+			keyfile = ref
+		}
+		if strings.HasPrefix(tok, "--auth-key=") && !strings.HasPrefix(tok, "--auth-key=file:") {
+			t.Errorf("auth key passed as a literal argv element, not file: reference:\n%s", argvStr)
+		}
+	}
+	if keyfile == "" {
+		t.Fatalf("tailscale up did not receive an --auth-key=file: reference:\n%s", argvStr)
+	}
+
+	// The tmpfile is cleaned up on the way out — no secret left on the box.
+	if _, err := os.Stat(keyfile); !os.IsNotExist(err) {
+		t.Errorf("enroll left the auth-key tmpfile %s behind, stat err = %v", keyfile, err)
 	}
 }
 

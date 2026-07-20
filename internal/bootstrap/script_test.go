@@ -428,6 +428,7 @@ func bootstrapTestEnv(t *testing.T, dir, binDir string) []string {
 		"UFW_SSH_RULE="+filepath.Join(dir, "ufw.ssh22.rule"),
 		"FAIL2BAN_STATE="+filepath.Join(dir, "fail2ban.running"),
 		"UU_LOG="+filepath.Join(dir, "unattended-upgrade.log"),
+		"SMITH_TS_ARGV_LOG="+filepath.Join(dir, "tailscale.up.argv"),
 	)
 }
 

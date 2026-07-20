@@ -532,8 +532,10 @@ load_marker_state() {
 }
 
 # enroll joins the box to the tailnet as a tag:smith Tailscale SSH node. The auth
-# key is read from stdin (never argv on the smith side, never written to the
-# box), and enrollment blocks until the node reaches Running — a missing tag:smith
+# key is read from stdin (never argv on the smith side), then handed to
+# `tailscale up` via its file: scheme so it never lands in the box's process argv
+# either — the short-lived tmpfile is 0600 and removed on every exit path.
+# Enrollment blocks until the node reaches Running — a missing tag:smith
 # tagOwners entry makes `tailscale up` fail here, which is how smith attributes
 # that prerequisite. On success it prints the box's tailnet IP for the admin side
 # to probe.
@@ -556,7 +558,20 @@ enroll() {
   key="$(cat)"
   key="$(printf '%s' "$key" | tr -d '[:space:]')"
 
-  as_root tailscale up --auth-key="$key" --hostname="$hostname" --advertise-tags=tag:smith --ssh
+  # Hand the key to `tailscale up` via a 0600 tmpfile and its file: scheme rather
+  # than --auth-key=<literal>, so the secret never appears in the box's process
+  # argv (ps / /proc/PID/cmdline). The trap removes it on any exit path.
+  local keyfile
+  keyfile="$(mktemp)"
+  chmod 600 "$keyfile"
+  # shellcheck disable=SC2064
+  trap "rm -f '$keyfile'" EXIT
+  printf '%s' "$key" >"$keyfile"
+
+  as_root tailscale up --auth-key="file:$keyfile" --hostname="$hostname" --advertise-tags=tag:smith --ssh
+
+  rm -f "$keyfile"
+  trap - EXIT
 
   local ip
   ip="$(as_root tailscale ip -4 2>/dev/null | head -n1 || true)"
