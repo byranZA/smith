@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  enable:
+    - revive
+    - wrapcheck
+    - errorlint
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+        - name: package-comments
+        - name: error-strings
+        - name: error-return
+    wrapcheck:
+      ignoreSigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+  exclusions:
+    rules:
+      # Test fakes wire I/O at the boundary; wrapping their errors adds noise.
+      - path: _test\.go
+        linters:
+          - wrapcheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
