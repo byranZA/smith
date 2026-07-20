@@ -115,7 +115,10 @@ func TestScriptTailscaleModeInstallsTailscaleAndSkipsAccessPhase(t *testing.T) {
 	if m.AccessMode != "tailscale" {
 		t.Errorf("marker AccessMode = %q, want tailscale", m.AccessMode)
 	}
-	const wantBase = "packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates"
+	// The recorded box-side sequence must be exactly Phases minus its trailing
+	// access element — the derivation bootstrap.sh setup() makes from PHASES. This
+	// fails if the tailscale-mode sequence ever diverges from PHASES minus access.
+	wantBase := strings.Join(Phases[:len(Phases)-1], ",")
 	if got := strings.Join(m.CompletedPhases, ","); got != wantBase {
 		t.Errorf("marker CompletedPhases = %q, want the base phases only %q", got, wantBase)
 	}

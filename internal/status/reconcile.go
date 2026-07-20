@@ -19,17 +19,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/byran/smith/internal/bootstrap"
 	"github.com/byran/smith/internal/marker"
 )
 
 // expectedPhases is the full base-layer phase set a fully-provisioned box
-// records, in order. The access phase completes it in both modes (public via
+// records, in order. It is the canonical sequence surfaced from bootstrap.sh's
+// PHASES array rather than a re-declared copy, so status stays in lockstep with
+// the box-side order. The access phase completes it in both modes (public via
 // phase_access, tailscale via close-public-ssh). A marker missing any of these
 // is partially bootstrapped, not merely drifted.
-var expectedPhases = []string{
-	"packages", "smith-user", "smith-keys", "firewall",
-	"ssh-hardening", "fail2ban", "auto-updates", "access",
-}
+var expectedPhases = bootstrap.Phases
 
 // Fact is one probed value that may be undeterminable. Known is false when smith
 // could not determine the value at all — the `?` marker that folds into a

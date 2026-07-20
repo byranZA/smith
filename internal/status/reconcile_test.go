@@ -4,8 +4,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byran/smith/internal/bootstrap"
 	"github.com/byran/smith/internal/marker"
 )
+
+// TestExpectedPhasesTracksBootstrapPhases proves status derives its expected
+// phase set from the canonical bootstrap.sh PHASES sequence rather than keeping a
+// parallel copy, so the two cannot drift out of order.
+func TestExpectedPhasesTracksBootstrapPhases(t *testing.T) {
+	if got, want := strings.Join(expectedPhases, ","), strings.Join(bootstrap.Phases, ","); got != want {
+		t.Errorf("expectedPhases = %q, want bootstrap.Phases %q", got, want)
+	}
+}
 
 // known is a determinable probed fact carrying value v.
 func known(v string) Fact { return Fact{Value: v, Known: true} }

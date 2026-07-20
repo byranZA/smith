@@ -500,7 +500,16 @@ setup() {
   write_marker
   local phases=("${PHASES[@]}")
   if [ "$ACCESS" = "tailscale" ]; then
-    phases=(packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates)
+    # The terminal access phase is admin-driven in tailscale mode (enroll +
+    # probe-gated close-public-ssh), so the box-side sequence is PHASES minus the
+    # trailing access element — derived here so the order is defined once, by the
+    # PHASES array above, rather than re-listed.
+    local last_index=$(( ${#phases[@]} - 1 ))
+    if [ "${phases[$last_index]}" != "access" ]; then
+      echo "smith bootstrap setup: expected PHASES to end with 'access', found '${phases[$last_index]}'" >&2
+      exit 70
+    fi
+    unset 'phases[last_index]'
   fi
   local name
   for name in "${phases[@]}"; do
