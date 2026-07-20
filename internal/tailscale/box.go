@@ -55,7 +55,7 @@ func (d *BoxDriver) CurrentIP(ctx context.Context) (string, error) {
 // reached Running, reported as ErrEnrollNotRunning so the caller can attribute
 // the missing tagOwners prerequisite.
 func (d *BoxDriver) Enroll(ctx context.Context, opts EnrollOptions) (string, error) {
-	cmd := fmt.Sprintf("bash %s enroll --hostname %s", d.scriptPath, shellArg(nodeName(opts.Host)))
+	cmd := fmt.Sprintf("bash %s enroll --hostname %s", d.scriptPath, connection.ShellArg(nodeName(opts.Host)))
 	var out bytes.Buffer
 	err := d.remote.RunWithInput(ctx, cmd, strings.NewReader(opts.AuthKey), &out, io.Discard)
 	if err != nil {
@@ -91,10 +91,4 @@ func parseEnrolledIP(output string) string {
 		}
 	}
 	return ip
-}
-
-// shellArg single-quotes s so it interpolates as one argument in the remote
-// shell command, keeping values out of any shell-special interpretation.
-func shellArg(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

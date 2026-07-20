@@ -191,7 +191,7 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 		publicSSH = "open"
 	}
 	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s",
-		RemoteScriptPath, shellArg(opts.AccessMode), shellArg(opts.SmithVersion), shellArg(publicSSH))
+		RemoteScriptPath, connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion), connection.ShellArg(publicSSH))
 	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return SetupResult{Outcome: OutcomeConnectFailed}, nil
@@ -215,12 +215,6 @@ func (r *Runner) SSHConnection(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("probe SSH_CONNECTION: %w", err)
 	}
 	return strings.TrimSpace(out.String()), nil
-}
-
-// shellArg single-quotes s so it interpolates safely as one argument in the
-// remote shell command, keeping values out of any shell-special interpretation.
-func shellArg(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // ship writes the embedded script to a local temp file and scp's it to the box.

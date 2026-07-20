@@ -122,3 +122,27 @@ func TestRunNonConnectFailureIsNotConnectError(t *testing.T) {
 		t.Errorf("Run() error = %v, should not be ErrConnect for a non-255 exit", err)
 	}
 }
+
+func TestShellArg(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "plain word", in: "public", want: `'public'`},
+		{name: "empty string", in: "", want: `''`},
+		{name: "spaces", in: "a b", want: `'a b'`},
+		{name: "embedded single quote", in: "a'b", want: `'a'\''b'`},
+		{name: "leading single quote", in: "'x", want: `''\''x'`},
+		{name: "shell metacharacters", in: "$(rm -rf /)", want: `'$(rm -rf /)'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ShellArg(tt.in); got != tt.want {
+				t.Errorf("ShellArg(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // ErrConnect indicates ssh could not establish a connection to the box, as
@@ -83,6 +84,14 @@ func (s *SSH) Copy(ctx context.Context, localPath, remotePath string) error {
 		return s.classify("scp", err)
 	}
 	return nil
+}
+
+// ShellArg single-quotes s so it interpolates as one argument in a remote shell
+// command, keeping the value out of any shell-special interpretation. It is the
+// escaping primitive callers use when building the command strings passed to
+// Run and RunWithInput.
+func ShellArg(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // classify maps a process error to ErrConnect when it carries ssh's connect
