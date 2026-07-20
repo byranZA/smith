@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -37,17 +38,17 @@ func (a *adminDriver) Status(ctx context.Context) (AdminStatus, error) {
 	return status, nil
 }
 
-// Probe runs `ssh smith@<tailnetIP> true` over the tailnet. A non-zero result
-// means the box did not admit the connection, reported as ErrProbeDenied so the
-// caller can attribute the missing ssh ACL prerequisite.
+// Probe runs `ssh smith@<tailnetIP> true` over the tailnet through the canonical
+// connection boundary, which owns the hardened ssh option set and ErrConnect
+// classification. A ran-and-denied result is reported as ErrProbeDenied so the
+// caller can attribute the missing ssh ACL prerequisite; a genuine connect
+// failure is left as connection.ErrConnect so it is not misattributed to it.
 func (a *adminDriver) Probe(ctx context.Context, tailnetIP string) error {
-	args := []string{
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
-		"-o", "ConnectTimeout=10",
-		"smith@" + tailnetIP, "true",
-	}
-	if err := a.exec.Run(ctx, "ssh", args, nil, io.Discard, io.Discard); err != nil {
+	conn := connection.New("smith@"+tailnetIP, a.exec)
+	if err := conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
+		if errors.Is(err, connection.ErrConnect) {
+			return fmt.Errorf("probe smith@%s over the tailnet: %w", tailnetIP, err)
+		}
 		return fmt.Errorf("%w: %w", ErrProbeDenied, err)
 	}
 	return nil
