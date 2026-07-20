@@ -197,8 +197,9 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 			return SetupResult{Outcome: OutcomeConnectFailed}, nil
 		}
 		// A non-connect error means a phase ran and failed, leaving a partial box.
-		// Build the failure report from the streams the phases just emitted.
-		report := newFailureReport(outBuf.String(), errBuf.String())
+		// Build the failure report from the streams the phases just emitted,
+		// attributing the still-open reach to the door setup connected over.
+		report := newFailureReport(outBuf.String(), errBuf.String(), openDoorForRun(opts))
 		return SetupResult{Outcome: OutcomePartial, Failure: &report}, nil
 	}
 	return SetupResult{Outcome: OutcomePassed}, nil

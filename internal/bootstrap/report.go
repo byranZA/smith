@@ -9,11 +9,21 @@ import (
 // each phase begins and succeeds. The Go side parses them back out to learn which
 // phase failed and which completed, without the box reporting that state itself.
 const (
-	phaseStartPrefix    = "▶ "
-	phaseDonePrefix     = "✓ "
-	satisfiedSuffix     = " (already-satisfied)"
-	publicSSHOpenDoor   = "public SSH on port 22 (log in as smith over the door setup connected on)"
-	recoveryReachedLine = "The box was left partial but is still reachable over " + publicSSHOpenDoor + "; no door was closed."
+	phaseStartPrefix = "▶ "
+	phaseDonePrefix  = "✓ "
+	satisfiedSuffix  = " (already-satisfied)"
+	// publicSSHOpenDoor and tailnetOpenDoor name the reach left open after a
+	// partial base-layer run — the door setup connected over, which a base-layer
+	// failure never closes. Public mode (and a tailscale first run, still reached
+	// over public SSH) leaves public port 22 open; a tailscale re-run reaches the
+	// box over the tailnet with public SSH already closed.
+	publicSSHOpenDoor = "public SSH on port 22 (log in as smith on the box's public IP)"
+	tailnetOpenDoor   = "the tailnet (log in as smith over the box's tailnet name)"
+	// publicSSHClosedTarget is the SetupOptions.PublicSSH value meaning public
+	// port 22 is kept closed — the firewall target a tailscale re-run carries. It
+	// mirrors tailscale.PublicSSHClosed.String(); SetupOptions.PublicSSH stays a
+	// plain string so the bootstrap runner need not depend on the access layer.
+	publicSSHClosedTarget = "closed"
 )
 
 // missingCapabilityPrefix is the sentinel bootstrap.sh's setup capability guard
@@ -45,10 +55,22 @@ type FailureReport struct {
 	RawError string
 }
 
+// openDoorForRun names the reach left open after a partial base-layer run,
+// derived from the door setup connected over rather than hardcoded: the tailnet
+// when public SSH was already closed on a tailscale re-run, and public SSH on
+// port 22 otherwise. A base-layer failure never closes the door it connected on.
+func openDoorForRun(opts SetupOptions) string {
+	if opts.PublicSSH == publicSSHClosedTarget {
+		return tailnetOpenDoor
+	}
+	return publicSSHOpenDoor
+}
+
 // newFailureReport reconstructs a FailureReport from a failed setup run's live
-// streams: bootstrap.sh's per-phase stdout (which phases started and succeeded)
-// and its stderr (the raw underlying error).
-func newFailureReport(stdout, stderr string) FailureReport {
+// streams — bootstrap.sh's per-phase stdout (which phases started and succeeded)
+// and its stderr (the raw underlying error) — attributing the still-open reach to
+// openDoor, the door setup connected over.
+func newFailureReport(stdout, stderr, openDoor string) FailureReport {
 	completed, failed := parseSetupStream(stdout)
 
 	headline := "setup failed before any phase completed"
@@ -65,7 +87,7 @@ func newFailureReport(stdout, stderr string) FailureReport {
 	return FailureReport{
 		FailedPhase:     failed,
 		CompletedPhases: completed,
-		OpenDoor:        publicSSHOpenDoor,
+		OpenDoor:        openDoor,
 		Headline:        headline,
 		RawError:        strings.TrimSpace(stderr),
 	}
@@ -139,7 +161,7 @@ func (r FailureReport) Report() string {
 	}
 	fmt.Fprintf(&b, "  still reachable over: %s\n\n", r.OpenDoor)
 
-	b.WriteString("  " + recoveryReachedLine + "\n")
+	fmt.Fprintf(&b, "  The box was left partial but is still reachable over %s; no door was closed.\n", r.OpenDoor)
 	b.WriteString("  Fix the cause and re-run setup — the re-run resumes: the completed phases above are no-ops.\n")
 
 	return b.String()

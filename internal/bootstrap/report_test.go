@@ -13,7 +13,7 @@ func TestNewFailureReportParsesStream(t *testing.T) {
 		"▶ ssh-hardening\n"
 	stderr := "ssh-hardening: self-test failed; reverted the hardening drop-in, box left reachable as smith\n"
 
-	r := newFailureReport(stdout, stderr)
+	r := newFailureReport(stdout, stderr, publicSSHOpenDoor)
 
 	if r.FailedPhase != "ssh-hardening" {
 		t.Errorf("FailedPhase = %q, want ssh-hardening", r.FailedPhase)
@@ -38,6 +38,7 @@ func TestFailureReportRendersRecovery(t *testing.T) {
 	r := newFailureReport(
 		"▶ packages\n✓ packages\n▶ smith-user\n✓ smith-user\n▶ firewall\n",
 		"firewall: ufw refused to enable\n",
+		publicSSHOpenDoor,
 	)
 	out := r.Report()
 
@@ -57,11 +58,53 @@ func TestFailureReportRendersRecovery(t *testing.T) {
 	}
 }
 
+// TestOpenDoorForRunFollowsTheDoorConnectedOver checks the reported open door is
+// derived from the door setup connected over, not hardcoded: a tailscale re-run
+// (public SSH already closed) is still reachable over the tailnet, while every
+// public-reached run names public SSH on port 22.
+func TestOpenDoorForRunFollowsTheDoorConnectedOver(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		publicSSH string
+		want      string
+	}{
+		{"public mode leaves public SSH open", "open", publicSSHOpenDoor},
+		{"tailscale re-run leaves only the tailnet", "closed", tailnetOpenDoor},
+		{"unset defaults to public SSH", "", publicSSHOpenDoor},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := openDoorForRun(SetupOptions{PublicSSH: tt.publicSSH}); got != tt.want {
+				t.Errorf("openDoorForRun(PublicSSH=%q) = %q, want %q", tt.publicSSH, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFailureReportNamesTailnetDoorOverTailnet covers the tailscale-re-run case
+// the hardcoded constant got wrong: when smith connected over the tailnet (public
+// SSH already closed), a base-phase failure must report the box as reachable over
+// the tailnet, never as public SSH on port 22.
+func TestFailureReportNamesTailnetDoorOverTailnet(t *testing.T) {
+	over := newFailureReport("▶ packages\n", "packages: apt-get failed\n", tailnetOpenDoor)
+	out := over.Report()
+	if !strings.Contains(out, "tailnet") {
+		t.Errorf("Report() should name the tailnet door; got:\n%s", out)
+	}
+	if strings.Contains(out, "public SSH") || strings.Contains(out, "port 22") {
+		t.Errorf("Report() must not name public SSH when reached over the tailnet; got:\n%s", out)
+	}
+
+	pub := newFailureReport("▶ packages\n", "packages: apt-get failed\n", publicSSHOpenDoor)
+	if out := pub.Report(); !strings.Contains(out, "public SSH") {
+		t.Errorf("Report() should still name public SSH for a public-reached run; got:\n%s", out)
+	}
+}
+
 // TestNewFailureReportNoPhaseStarted covers a failure before any phase reported
 // (e.g. the early marker write): there is no failed phase to name, but the raw
 // error must still surface so the operator is not left blind.
 func TestNewFailureReportNoPhaseStarted(t *testing.T) {
-	r := newFailureReport("", "marker write failed: permission denied\n")
+	r := newFailureReport("", "marker write failed: permission denied\n", publicSSHOpenDoor)
 
 	if r.FailedPhase != "" {
 		t.Errorf("FailedPhase = %q, want empty when no phase started", r.FailedPhase)
@@ -82,7 +125,7 @@ func TestNewFailureReportNoPhaseStarted(t *testing.T) {
 func TestNewFailureReportNamesMissingCapability(t *testing.T) {
 	stderr := "required capability missing: systemd (the systemctl command was not found on the box)\n"
 
-	r := newFailureReport("", stderr)
+	r := newFailureReport("", stderr, publicSSHOpenDoor)
 
 	if !strings.Contains(r.Headline, "systemd") {
 		t.Errorf("Headline = %q, want it to name the missing capability (systemd)", r.Headline)
