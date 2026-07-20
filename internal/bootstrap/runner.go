@@ -237,11 +237,19 @@ func ShipScript(ctx context.Context, conn Conn) error {
 	if err != nil {
 		return fmt.Errorf("create temp script: %w", err)
 	}
+	// Best-effort cleanup of the OS temp file: a failed remove is unrecoverable
+	// here and harmless (the OS reclaims its temp dir), so the error is
+	// deliberately not propagated.
 	defer func() { _ = os.Remove(f.Name()) }()
 
 	if _, err := f.WriteString(Script); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write temp script: %w", err)
+		writeErr := fmt.Errorf("write temp script: %w", err)
+		// The write already failed; close best-effort and join any close error
+		// so a failed close can't silently mask the underlying write failure.
+		if cerr := f.Close(); cerr != nil {
+			return errors.Join(writeErr, fmt.Errorf("close temp script: %w", cerr))
+		}
+		return writeErr
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temp script: %w", err)
