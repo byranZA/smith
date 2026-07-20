@@ -75,8 +75,9 @@ APT::Periodic::Unattended-Upgrade "1";
 }
 
 // TestScriptProbeMarksRootFactsUnknownWithoutSudo runs the probe as a non-root
-// user whose passwordless sudo is denied: it must report the lost sudo and emit
-// '?' for every root-only fact rather than guessing them.
+// user whose passwordless sudo is denied: it must report the lost sudo and omit
+// the root-only facts entirely rather than guessing them or emitting dead '?'
+// lines. The reconciler's lost-sudo branch owns their unverifiable verdict.
 func TestScriptProbeMarksRootFactsUnknownWithoutSudo(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
@@ -119,9 +120,13 @@ exit 1
 	if !strings.Contains(got, "passwordless-sudo=no") {
 		t.Errorf("probe should report lost sudo:\n%s", got)
 	}
-	for _, want := range []string{"ufw-active=?", "permit-root-login=?", "fail2ban=?", "auto-updates=?"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("root-only fact should be undeterminable without sudo, missing %q:\n%s", want, got)
+	// The root-only facts must not be emitted at all: dead '?' lines the
+	// reconciler never reads only mislead a reader and must stay in sync with the
+	// Facts set. Their absence leaves them undeterminable, which the reconciler's
+	// lost-sudo branch already marks unverifiable.
+	for _, unwanted := range []string{"ufw-active", "ufw-default-deny", "ufw-ssh-allow", "permit-root-login", "password-authentication", "fail2ban", "auto-updates"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("root-only fact %q must not be emitted without sudo:\n%s", unwanted, got)
 		}
 	}
 }

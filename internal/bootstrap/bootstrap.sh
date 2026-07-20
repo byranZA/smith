@@ -699,8 +699,9 @@ probe_access() {
 # probe emits the box's live, read-only facts for the drift reconciler: the
 # marker (in a delimited block), whether the smith user exists and still holds
 # passwordless sudo, and — only when sudo is available — the firewall, sshd,
-# fail2ban, and auto-updates facts. When passwordless sudo is lost, the
-# root-only facts are emitted as '?' so the reconciler marks them unverifiable.
+# fail2ban, and auto-updates facts. When passwordless sudo is lost, only
+# passwordless-sudo=no is emitted; the reconciler's lost-sudo branch owns the
+# unverifiable verdict for the root-only facts, which are simply absent.
 # It is query-only: it mutates nothing.
 probe() {
   echo "marker-begin"
@@ -720,13 +721,6 @@ probe() {
     probe_services
   else
     echo "passwordless-sudo=no"
-    echo "ufw-active=?"
-    echo "ufw-default-deny=?"
-    echo "ufw-ssh-allow=?"
-    echo "permit-root-login=?"
-    echo "password-authentication=?"
-    echo "fail2ban=?"
-    echo "auto-updates=?"
   fi
 
   probe_access
