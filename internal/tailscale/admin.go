@@ -12,21 +12,21 @@ import (
 	"github.com/byran/smith/internal/connection"
 )
 
-// adminDriver reads the admin machine's own tailnet state and runs the live
+// AdminDriver reads the admin machine's own tailnet state and runs the live
 // ssh-over-tailnet probe, both via local commands. It is the production Admin.
-type adminDriver struct {
+type AdminDriver struct {
 	exec connection.Exec
 }
 
-// NewAdmin returns an Admin that runs local tailscale/ssh commands through exec.
-// Pass connection.System() for the real binaries.
-func NewAdmin(exec connection.Exec) Admin {
-	return &adminDriver{exec: exec}
+// NewAdmin returns an AdminDriver that runs local tailscale/ssh commands through
+// exec. Pass connection.System() for the real binaries.
+func NewAdmin(exec connection.Exec) *AdminDriver {
+	return &AdminDriver{exec: exec}
 }
 
 // Status runs `tailscale status --json` on the admin machine and reports whether
 // this machine is a Running tailnet member and the operator's tailnet identity.
-func (a *adminDriver) Status(ctx context.Context) (AdminStatus, error) {
+func (a *AdminDriver) Status(ctx context.Context) (AdminStatus, error) {
 	var out bytes.Buffer
 	if err := a.exec.Run(ctx, "tailscale", []string{"status", "--json"}, nil, &out, io.Discard); err != nil {
 		return AdminStatus{}, fmt.Errorf("tailscale status: %w", err)
@@ -43,7 +43,7 @@ func (a *adminDriver) Status(ctx context.Context) (AdminStatus, error) {
 // classification. A ran-and-denied result is reported as ErrProbeDenied so the
 // caller can attribute the missing ssh ACL prerequisite; a genuine connect
 // failure is left as connection.ErrConnect so it is not misattributed to it.
-func (a *adminDriver) Probe(ctx context.Context, tailnetIP string) error {
+func (a *AdminDriver) Probe(ctx context.Context, tailnetIP string) error {
 	conn := connection.New("smith@"+tailnetIP, a.exec)
 	if err := conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
 		if errors.Is(err, connection.ErrConnect) {

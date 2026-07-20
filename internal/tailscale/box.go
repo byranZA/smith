@@ -19,17 +19,17 @@ type Remote interface {
 	RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
-// boxDriver drives the tailscale box-side steps through bootstrap.sh subcommands
+// BoxDriver drives the tailscale box-side steps through bootstrap.sh subcommands
 // over an ssh connection. It is the production Box.
-type boxDriver struct {
+type BoxDriver struct {
 	remote     Remote
 	scriptPath string
 }
 
-// NewBox returns a Box that drives bootstrap.sh at scriptPath on the box over
-// remote (smith's ssh connection).
-func NewBox(remote Remote, scriptPath string) Box {
-	return &boxDriver{remote: remote, scriptPath: scriptPath}
+// NewBox returns a BoxDriver that drives bootstrap.sh at scriptPath on the box
+// over remote (smith's ssh connection).
+func NewBox(remote Remote, scriptPath string) *BoxDriver {
+	return &BoxDriver{remote: remote, scriptPath: scriptPath}
 }
 
 // enrolledIPPrefix is the line bootstrap.sh's enroll and tailscale-status
@@ -41,7 +41,7 @@ const enrolledIPPrefix = "tailscale-ip="
 // un-enrolled box prints nothing, so this returns "" and the access layer
 // enrolls; a connect failure is surfaced so a re-run is not mistaken for a fresh
 // box. It reads state only — it never mutates the box.
-func (d *boxDriver) CurrentIP(ctx context.Context) (string, error) {
+func (d *BoxDriver) CurrentIP(ctx context.Context) (string, error) {
 	cmd := fmt.Sprintf("bash %s tailscale-status", d.scriptPath)
 	var out bytes.Buffer
 	if err := d.remote.Run(ctx, cmd, &out, io.Discard); err != nil {
@@ -54,7 +54,7 @@ func (d *boxDriver) CurrentIP(ctx context.Context) (string, error) {
 // parses the reported tailnet IP. A non-connect failure means the node never
 // reached Running, reported as ErrEnrollNotRunning so the caller can attribute
 // the missing tagOwners prerequisite.
-func (d *boxDriver) Enroll(ctx context.Context, opts EnrollOptions) (string, error) {
+func (d *BoxDriver) Enroll(ctx context.Context, opts EnrollOptions) (string, error) {
 	cmd := fmt.Sprintf("bash %s enroll --hostname %s", d.scriptPath, shellArg(nodeName(opts.Host)))
 	var out bytes.Buffer
 	err := d.remote.RunWithInput(ctx, cmd, strings.NewReader(opts.AuthKey), &out, io.Discard)
@@ -73,7 +73,7 @@ func (d *boxDriver) Enroll(ctx context.Context, opts EnrollOptions) (string, err
 
 // ClosePublicSSH runs bootstrap.sh's close-public-ssh subcommand, which closes
 // public port 22 and records the access phase as complete in the marker.
-func (d *boxDriver) ClosePublicSSH(ctx context.Context) error {
+func (d *BoxDriver) ClosePublicSSH(ctx context.Context) error {
 	cmd := fmt.Sprintf("bash %s close-public-ssh", d.scriptPath)
 	if err := d.remote.Run(ctx, cmd, io.Discard, io.Discard); err != nil {
 		return fmt.Errorf("run close-public-ssh: %w", err)
