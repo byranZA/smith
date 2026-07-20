@@ -72,6 +72,10 @@ func TestResolve(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// t.Setenv panics under t.Parallel(), so only the env-free cases parallelize.
+			if len(tt.env) == 0 {
+				t.Parallel()
+			}
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
@@ -105,6 +109,7 @@ func TestResolveTrimsWhitespace(t *testing.T) {
 	})
 
 	t.Run("file value is trimmed", func(t *testing.T) {
+		t.Parallel()
 		path := filepath.Join(t.TempDir(), "ts.key")
 		if err := os.WriteFile(path, []byte("\ttskey-padded\r\n"), 0o600); err != nil {
 			t.Fatalf("write: %v", err)

@@ -3,6 +3,7 @@ package osgate
 import "testing"
 
 func TestParse(t *testing.T) {
+	t.Parallel()
 	content := `NAME="Ubuntu"
 VERSION="24.04.1 LTS (Noble Numbat)"
 ID=ubuntu
@@ -18,6 +19,7 @@ PRETTY_NAME="Ubuntu 24.04.1 LTS"`
 }
 
 func TestEvaluate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		release       Release
@@ -57,6 +59,7 @@ func TestEvaluate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := Evaluate(tt.release)
 			if got.Supported != tt.wantSupported {
 				t.Errorf("Evaluate(%+v).Supported = %v, want %v (reason: %q)",
@@ -70,6 +73,7 @@ func TestEvaluate(t *testing.T) {
 }
 
 func TestEvaluateRejectionReasons(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		release Release
@@ -81,6 +85,7 @@ func TestEvaluateRejectionReasons(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := Evaluate(tt.release); got.Reason != tt.want {
 				t.Errorf("Evaluate(%+v).Reason = %q, want %q", tt.release, got.Reason, tt.want)
 			}

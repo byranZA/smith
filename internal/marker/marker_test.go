@@ -6,6 +6,7 @@ import (
 )
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
+	t.Parallel()
 	in := Marker{
 		SchemaVersion:   SchemaVersion,
 		SmithVersion:    "1.2.3",
@@ -35,12 +36,14 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 }
 
 func TestDecodeMalformedIsError(t *testing.T) {
+	t.Parallel()
 	if _, _, err := Decode([]byte("{not json")); err == nil {
 		t.Error("Decode(malformed) error = nil, want an error")
 	}
 }
 
 func TestDecodeSchemaSkew(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		schema         int
@@ -63,6 +66,7 @@ func TestDecodeSchemaSkew(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// A newer schema may carry fields this build does not model; it must
 			// still decode to the raw facts it recognizes.
 			m := Marker{SchemaVersion: tt.schema, AccessMode: "public", CompletedPhases: []string{"packages"}}
@@ -91,6 +95,7 @@ func TestDecodeSchemaSkew(t *testing.T) {
 }
 
 func TestAppendPhaseRecordsOnSuccess(t *testing.T) {
+	t.Parallel()
 	m := Marker{AccessMode: "public"}
 
 	m = AppendPhase(m, "packages")
@@ -105,6 +110,7 @@ func TestAppendPhaseRecordsOnSuccess(t *testing.T) {
 }
 
 func TestAppendPhaseIsIdempotent(t *testing.T) {
+	t.Parallel()
 	m := AppendPhase(Marker{}, "packages")
 	m = AppendPhase(m, "packages")
 	if len(m.CompletedPhases) != 1 {
@@ -113,6 +119,7 @@ func TestAppendPhaseIsIdempotent(t *testing.T) {
 }
 
 func TestAppendPhaseDoesNotMutateInput(t *testing.T) {
+	t.Parallel()
 	original := Marker{CompletedPhases: []string{"packages"}}
 	_ = AppendPhase(original, "smith-user")
 	if len(original.CompletedPhases) != 1 {
