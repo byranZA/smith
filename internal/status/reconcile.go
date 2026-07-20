@@ -218,28 +218,29 @@ func reconcileFacts(accessMode string, f Facts) []Group {
 			boolFinding("passwordless sudo", "present", "absent", f.PasswordlessSudo),
 		}},
 		{Phase: "firewall", Findings: []Finding{
-			rootFinding("ufw active", "active", f.UFWActive, sudoLost),
-			rootFinding("ufw default-deny incoming", "deny", f.UFWDefaultDeny, sudoLost),
-			rootFinding("public SSH (port 22)", expectedPublicSSH(accessMode), f.UFWSSHAllow, sudoLost),
+			factFinding("ufw active", "active", f.UFWActive, sudoLost),
+			factFinding("ufw default-deny incoming", "deny", f.UFWDefaultDeny, sudoLost),
+			factFinding("public SSH (port 22)", expectedPublicSSH(accessMode), f.UFWSSHAllow, sudoLost),
 		}},
 		{Phase: "ssh-hardening", Findings: []Finding{
-			rootFinding("PermitRootLogin", "no", f.PermitRootLogin, sudoLost),
-			rootFinding("PasswordAuthentication", "no", f.PasswordAuth, sudoLost),
+			factFinding("PermitRootLogin", "no", f.PermitRootLogin, sudoLost),
+			factFinding("PasswordAuthentication", "no", f.PasswordAuth, sudoLost),
 		}},
 		{Phase: "fail2ban", Findings: []Finding{
-			rootFinding("fail2ban service", "running", f.Fail2banRunning, sudoLost),
+			factFinding("fail2ban service", "running", f.Fail2banRunning, sudoLost),
 		}},
 		{Phase: "auto-updates", Findings: []Finding{
-			rootFinding("unattended security upgrades", "enabled", f.AutoUpdates, sudoLost),
+			factFinding("unattended security upgrades", "enabled", f.AutoUpdates, sudoLost),
 		}},
 	}
 
 	if accessMode == "tailscale" {
 		groups = append(groups, Group{Phase: "access", Findings: []Finding{
 			// The Tailscale backend state and the tailnet ssh probe do not need
-			// root, so they are checked even when passwordless sudo is lost.
-			rootFinding("tailscale node", "running", f.TailscaleRunning, false),
-			rootFinding("tailnet ssh reach", "reachable", f.TailnetReach, false),
+			// root, so they are never unverifiable — checked even when
+			// passwordless sudo is lost.
+			factFinding("tailscale node", "running", f.TailscaleRunning, false),
+			factFinding("tailnet ssh reach", "reachable", f.TailnetReach, false),
 		}})
 	}
 	return groups
@@ -263,12 +264,14 @@ func boolFinding(name, whenTrue, whenFalse string, actual bool) Finding {
 	return Finding{Fact: name, Expected: whenTrue, Actual: whenFalse, Status: StatusDrift}
 }
 
-// rootFinding reconciles a probed fact against expected. When sudoLost is set the
-// probe could not run at all, so the fact is unverifiable; an undeterminable fact
-// is unknown; otherwise it matches or drifts.
-func rootFinding(name, expected string, actual Fact, sudoLost bool) Finding {
+// factFinding reconciles a possibly-undeterminable Fact against expected. When
+// unverifiable is set the probe could not run at all — a caller-supplied
+// condition (e.g. the root-only probes gated on lost passwordless sudo) — so the
+// fact is marked unverifiable; an undeterminable fact is unknown; otherwise it
+// matches or drifts.
+func factFinding(name, expected string, actual Fact, unverifiable bool) Finding {
 	switch {
-	case sudoLost:
+	case unverifiable:
 		return Finding{Fact: name, Expected: expected, Actual: "unverifiable (sudo unavailable)", Status: StatusUnverifiable}
 	case !actual.Known:
 		return Finding{Fact: name, Expected: expected, Actual: "?", Status: StatusUnknown}
