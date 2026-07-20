@@ -73,3 +73,30 @@ func TestNewFailureReportNoPhaseStarted(t *testing.T) {
 		t.Errorf("Report() should still surface the raw error; got:\n%s", r.Report())
 	}
 }
+
+// TestNewFailureReportNamesMissingCapability covers the capability guard: a box
+// that clears the OS floor but lacks a capability smith depends on (here systemd)
+// fails before any phase mutates, and the report's headline must name the missing
+// capability — not the OS, and not a raw "command not found" surfaced from deep
+// inside a later phase. The raw underlying error still surfaces for detail.
+func TestNewFailureReportNamesMissingCapability(t *testing.T) {
+	stderr := "required capability missing: systemd (the systemctl command was not found on the box)\n"
+
+	r := newFailureReport("", stderr)
+
+	if !strings.Contains(r.Headline, "systemd") {
+		t.Errorf("Headline = %q, want it to name the missing capability (systemd)", r.Headline)
+	}
+	if strings.Contains(strings.ToLower(r.Headline), "ubuntu") || strings.Contains(strings.ToLower(r.Headline), "os") {
+		t.Errorf("Headline = %q, must name the capability, not the OS", r.Headline)
+	}
+	if strings.Contains(r.Headline, "systemctl") || strings.Contains(strings.ToLower(r.Headline), "not found") {
+		t.Errorf("Headline = %q, must be an interpreted capability name, not a raw command error", r.Headline)
+	}
+	if !strings.Contains(r.RawError, "systemctl") {
+		t.Errorf("RawError = %q, want the raw underlying detail preserved", r.RawError)
+	}
+	if out := r.Report(); !strings.Contains(out, "systemd") {
+		t.Errorf("Report() should name the missing capability; got:\n%s", out)
+	}
+}

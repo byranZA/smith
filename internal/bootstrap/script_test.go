@@ -387,6 +387,66 @@ exit 0
 	}
 }
 
+// TestScriptSetupFailsNamingMissingCapability drives the embedded bootstrap.sh
+// against a box that clears the OS floor but lacks a capability smith depends on:
+// systemd (no systemctl on PATH). It proves the setup capability guard fails up
+// front — before any phase runs and before the marker is written — naming the
+// missing capability on stderr rather than letting a later phase abort with a raw
+// "command not found". The named line is what the Go FailureReport lifts into a
+// capability headline.
+func TestScriptSetupFailsNamingMissingCapability(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	realDirname, err := exec.LookPath("dirname")
+	if err != nil {
+		t.Skip("dirname not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	// A minimal bin dir that is the *entire* PATH: dirname (the only external the
+	// script needs before the guard runs) and a fake apt-get so the apt capability
+	// passes — but deliberately no systemctl, so the systemd capability is missing.
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.Symlink(realDirname, filepath.Join(binDir, "dirname")); err != nil {
+		t.Fatalf("symlink dirname: %v", err)
+	}
+	writeFakeBin(t, binDir, "apt-get", `#!/usr/bin/env bash
+exit 0
+`)
+
+	markerPath := filepath.Join(dir, "bootstrap.json")
+	cmd := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test")
+	cmd.Env = []string{
+		"PATH=" + binDir,
+		"SMITH_MARKER=" + markerPath,
+	}
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("setup should exit non-zero when a required capability is missing, but it succeeded:\n%s", out)
+	}
+	if !strings.Contains(string(out), "required capability missing: systemd") {
+		t.Errorf("setup should name the missing capability (systemd) on failure; got:\n%s", out)
+	}
+	// The guard runs before any phase and before the marker write, so no phase
+	// progress streamed and nothing was mutated.
+	if strings.Contains(string(out), "▶ ") {
+		t.Errorf("no phase should start when the capability guard fails; got:\n%s", out)
+	}
+	if _, statErr := os.Stat(markerPath); !os.IsNotExist(statErr) {
+		t.Errorf("the marker must not be written when the capability guard fails; stat err = %v", statErr)
+	}
+}
+
 // decodeMarker reads and decodes the on-box marker written to path.
 func decodeMarker(t *testing.T, path string) (marker.Marker, marker.Skew, error) {
 	t.Helper()

@@ -16,6 +16,14 @@ const (
 	recoveryReachedLine = "The box was left partial but is still reachable over " + publicSSHOpenDoor + "; no door was closed."
 )
 
+// missingCapabilityPrefix is the sentinel bootstrap.sh's setup capability guard
+// prints on stderr when the box clears the OS floor but lacks a capability smith
+// depends on (apt, systemd). The Go side lifts the named capability out of it into
+// an interpreted headline, so a missing capability reads as a named failure rather
+// than a raw "command not found" surfaced from deep inside a later phase. Keep it
+// in sync with CAPABILITY_MISSING_PREFIX in bootstrap.sh.
+const missingCapabilityPrefix = "required capability missing: "
+
 // FailureReport describes a mid-run phase failure so the operator can recover:
 // the phase that failed, the phases that completed before it, which door is
 // still open, and a layered cause — an interpreted headline over the raw
@@ -47,6 +55,12 @@ func newFailureReport(stdout, stderr string) FailureReport {
 	if failed != "" {
 		headline = fmt.Sprintf("the %q phase failed", failed)
 	}
+	// A missing capability the box lacks is named explicitly, overriding the
+	// phase-based headline, so the operator sees the capability rather than a raw
+	// command error.
+	if capability := missingCapability(stderr); capability != "" {
+		headline = "required capability missing: " + capability
+	}
 
 	return FailureReport{
 		FailedPhase:     failed,
@@ -55,6 +69,23 @@ func newFailureReport(stdout, stderr string) FailureReport {
 		Headline:        headline,
 		RawError:        strings.TrimSpace(stderr),
 	}
+}
+
+// missingCapability scans a failed setup run's stderr for bootstrap.sh's
+// capability-guard sentinel and returns the named capability, or "" when the
+// failure was not a missing capability. It reads the capability token that
+// follows the sentinel prefix, stopping at the first space so a trailing
+// parenthetical detail (the probing command) is left out of the name.
+func missingCapability(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), missingCapabilityPrefix)
+		if !ok {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimSpace(rest), " ")
+		return name
+	}
+	return ""
 }
 
 // parseSetupStream reads bootstrap.sh's live phase stream and returns the phases

@@ -43,6 +43,21 @@ PHASES=(packages smith-user smith-keys firewall ssh-hardening fail2ban auto-upda
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
 
+# REQUIRED_CAPABILITIES lists the capabilities smith depends on that the OS floor
+# gate does not prove, paired with the command that proves each is present:
+#   apt      — drives the packages phase (apt-get)
+#   systemd  — drives the service phases and reloads (systemctl)
+# The setup guard checks these up front and fails naming the missing capability,
+# rather than letting a phase abort deep inside with a raw "command not found".
+# Each entry is a "capability:command" pair.
+REQUIRED_CAPABILITIES=("apt:apt-get" "systemd:systemctl")
+
+# CAPABILITY_MISSING_PREFIX is the sentinel the guard prints on stderr for a
+# missing capability. The Go side (bootstrap package's missingCapabilityPrefix)
+# parses it to lift the capability's name into an interpreted failure headline;
+# keep the two in sync.
+CAPABILITY_MISSING_PREFIX="required capability missing: "
+
 # The smith user smith provisions and the operator lives in thereafter
 # (`ssh smith@host`). SMITH_HOME and SMITH_SUDOERS_DIR override the on-box
 # defaults for tests, matching SMITH_MARKER; production always uses the defaults.
@@ -114,6 +129,25 @@ preflight() {
   echo "os-release-begin"
   cat /etc/os-release
   echo "os-release-end"
+}
+
+# require_capabilities checks that every capability smith depends on is present
+# before setup mutates anything, so a box that clears the OS floor but lacks a
+# needed capability fails early with the capability named — not a raw
+# "command not found" surfaced from deep inside a later phase. It is read-only: it
+# probes command presence and changes nothing, and returns non-zero (aborting
+# setup under set -e) after naming the first missing capability on stderr.
+require_capabilities() {
+  local entry cap cmd
+  for entry in "${REQUIRED_CAPABILITIES[@]}"; do
+    cap="${entry%%:*}"
+    cmd="${entry#*:}"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      printf '%s%s (the %s command was not found on the box)\n' \
+        "$CAPABILITY_MISSING_PREFIX" "$cap" "$cmd" >&2
+      return 1
+    fi
+  done
 }
 
 # json_phases renders COMPLETED_PHASES as a JSON array body (the phase names,
@@ -489,13 +523,18 @@ parse_setup_args() {
   done
 }
 
-# setup writes the marker early, then runs each ordered phase. In tailscale mode
+# setup guards the required capabilities, writes the marker early, then runs each
+# ordered phase. The capability guard runs before any mutation, so a box past the
+# OS floor that lacks a needed capability fails named and untouched. In tailscale mode
 # the terminal access phase is not a box-side streamed phase: enrolling the node
 # and closing public SSH are gated on a live tailnet probe run from the admin
 # side, so smith drives them separately (enroll, then close-public-ssh once the
 # probe proves reach) and records the access phase then.
 setup() {
   parse_setup_args "$@"
+  # Capability guard before any mutation: a box past the OS floor that still lacks
+  # a needed capability fails here, named, rather than deep inside a later phase.
+  require_capabilities
   COMPLETED_PHASES=()
   write_marker
   local phases=("${PHASES[@]}")

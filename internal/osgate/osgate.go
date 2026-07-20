@@ -1,12 +1,12 @@
 // Package osgate is the OS support gate: it decides whether a box's operating
 // system is one smith supports.
 //
-// The decision is floor + capability, never an enumeration of releases: a box
+// The decision here is the floor alone, never an enumeration of releases: a box
 // is supported when it is an Ubuntu LTS release at or above the 24.04 floor,
 // with no upper bound, so future LTS releases pass without a code change. The
-// capabilities smith actually needs (apt, systemd, ...) are not gated here —
-// a missing capability fails loudly at the phase that needs it, not
-// pre-emptively at the gate.
+// capabilities smith actually needs (apt, systemd, ...) are not gated here — a
+// missing capability fails loudly at bootstrap.sh's early setup guard, which
+// names the capability, rather than pre-emptively at this floor gate.
 package osgate
 
 import (
