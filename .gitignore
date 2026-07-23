@@ -19,6 +19,8 @@ profile.cov
 
 # Build output
 /bin/
+# GoReleaser cross-compiles every target here
+/dist/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -34,5 +36,10 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# OS
+.DS_Store
+
+# Throwaway git worktrees coding agents check out into the repo
+.claude/worktrees/
 
 ralph.log
