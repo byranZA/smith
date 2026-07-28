@@ -86,7 +86,7 @@ func newSetupCmd() *cobra.Command {
 				return fmt.Errorf("derive firewall target: %w", err)
 			}
 
-			opts := bootstrap.SetupOptions{AccessMode: accessMode, SmithVersion: buildVersion, PublicSSH: publicSSH}
+			opts := bootstrap.SetupOptions{AccessMode: accessMode, SmithVersion: resolveVersion(), PublicSSH: publicSSH}
 			setupRes, err := runner.Setup(ctx, opts, stdout, stderr)
 			if err != nil {
 				return fmt.Errorf("setup: %w", err)
