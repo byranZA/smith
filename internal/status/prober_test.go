@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byran/smith/internal/connection"
-	"github.com/byran/smith/internal/tailscale"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/tailscale"
 )
 
 func TestParseProbeReadsMarkerAndFacts(t *testing.T) {

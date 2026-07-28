@@ -1,4 +1,4 @@
-module github.com/byran/smith
+module github.com/byranZA/smith
 
 go 1.26
 

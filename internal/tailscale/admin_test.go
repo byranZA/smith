@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byran/smith/internal/connection"
+	"github.com/byranZA/smith/internal/connection"
 )
 
 // probeExec is a process-launch boundary fake for the admin probe tests: it

@@ -9,7 +9,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/byran/smith/internal/connection"
+	"github.com/byranZA/smith/internal/connection"
 )
 
 // AdminDriver reads the admin machine's own tailnet state and runs the live

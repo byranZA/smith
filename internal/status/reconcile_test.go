@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byran/smith/internal/bootstrap"
-	"github.com/byran/smith/internal/marker"
+	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/marker"
 )
 
 // TestExpectedPhasesTracksBootstrapPhases proves status derives its expected

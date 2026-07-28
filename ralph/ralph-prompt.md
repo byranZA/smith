@@ -8,7 +8,7 @@ Your task is issue **#{{ISSUE_NUMBER}} — {{ISSUE_TITLE}}**, a child of spec is
 - Read the parent spec for full context: `gh issue view {{SPEC_NUMBER}}`. The task body references the spec's scenarios rather than repeating them.
 - Read `AGENTS.md` for the project's design rules (`CLAUDE.md` just points at it) and `CONTEXT.md` for the domain glossary — the source of truth for naming. Domain types must use the canonical terms from the glossary so the code reads in the project's ubiquitous language.
 - Follow the project's coding standards before writing code — invoke the `coding-standards` skill if your agent supports skills, otherwise read `.claude/skills/coding-standards/SKILL.md` and its `GO.md` companion.
-- **Run every build/test/lint/vet command natively on the host.** This is a Go CLI (`github.com/byran/smith`, cobra + SQLite) with no containers. The `Makefile` at the module root wraps the common tasks.
+- **Run every build/test/lint/vet command natively on the host.** This is a Go CLI (`github.com/byranZA/smith`, cobra + SQLite) with no containers. The `Makefile` at the module root wraps the common tasks.
 - **Do not modify these files** — they are loop infrastructure or secrets:
   - `.claude/` (settings and skills — these are guardrails)
   - `ralph/` (the loop driver and this prompt)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byran/smith/internal/marker"
+	"github.com/byranZA/smith/internal/marker"
 )
 
 // TestScriptSetupWritesMarkerAndIsIdempotent runs the embedded bootstrap.sh end

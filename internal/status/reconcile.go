@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/byran/smith/internal/bootstrap"
-	"github.com/byran/smith/internal/marker"
+	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/marker"
 )
 
 // expectedPhases is the full base-layer phase set a fully-provisioned box
