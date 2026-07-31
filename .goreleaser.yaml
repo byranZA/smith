@@ -59,6 +59,10 @@ checksum:
 
 changelog:
   use: github
+  # Keep the author name but drop the author email. GoReleaser's default line
+  # falls back to "Name <email>" when it can't resolve a GitHub username, which
+  # leaks the committer's email into public release notes.
+  format: "{{ .SHA }}: {{ .Message }} ({{ .AuthorName }})"
   sort: asc
   filters:
     exclude:
