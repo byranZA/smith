@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byran/smith/internal/connection"
+	"github.com/byranZA/smith/internal/connection"
 )
 
 // fakeConn stands in for a real ssh/scp connection. It answers the preflight

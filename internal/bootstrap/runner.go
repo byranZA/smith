@@ -20,8 +20,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/byran/smith/internal/connection"
-	"github.com/byran/smith/internal/osgate"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/osgate"
 )
 
 // Script is the embedded bootstrap.sh, scp'd to the box and run there.

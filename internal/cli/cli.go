@@ -11,9 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// buildVersion is the smith build version stamped into the on-box marker. It is
-// a var so a release build can override it via -ldflags "-X".
-var buildVersion = "0.0.0-dev"
+// buildVersion is the smith version a release pipeline injects via
+// -ldflags "-X …/internal/cli.buildVersion=<version>". It is a var solely so
+// the linker can override it; the "dev" literal is the local-build fallback,
+// and resolveVersion turns it into the honest version for every provenance.
+var buildVersion = "dev"
 
 // exitError carries a process exit code out of a command's RunE. The command
 // has already reported the outcome to the user, so Execute does not print it
@@ -52,9 +54,10 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "smith",
 		Short:         "Provision a fresh VPS and run coding agents on it",
+		Version:       resolveVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newMachineCmd())
+	root.AddCommand(newMachineCmd(), newVersionCmd())
 	return root
 }

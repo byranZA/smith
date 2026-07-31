@@ -2,7 +2,7 @@
 
 ## Stack
 
-Go 1.26, module `github.com/byran/smith`. CLI built on cobra (`github.com/spf13/cobra`). Config via `github.com/BurntSushi/toml`. Persistence via `modernc.org/sqlite` (pure-Go, cgo-free). IDs via `github.com/google/uuid`. Tests use the standard `testing` package only — no third-party assertion or mocking frameworks.
+Go 1.26, module `github.com/byranZA/smith`. CLI built on cobra (`github.com/spf13/cobra`). Config via `github.com/BurntSushi/toml`. Persistence via `modernc.org/sqlite` (pure-Go, cgo-free). IDs via `github.com/google/uuid`. Tests use the standard `testing` package only — no third-party assertion or mocking frameworks.
 
 ## Project Structure
 

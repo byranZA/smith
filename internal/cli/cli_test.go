@@ -86,6 +86,48 @@ func TestParseStatusHost(t *testing.T) {
 	}
 }
 
+func TestModuleVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"tagged release strips the v", "v0.1.0", "0.1.0"},
+		{"prerelease tag strips the v", "v0.1.0-rc.1", "0.1.0-rc.1"},
+		{"already bare passes through", "0.2.0", "0.2.0"},
+		{"local devel is not a version", "(devel)", ""},
+		{"empty is not a version", "", ""},
+		{"pseudo-version is not a release", "v0.0.0-20260728155309-f8e683ead820", ""},
+		{"dirty pseudo-version is not a release", "v0.0.0-20260728155309-f8e683ead820+dirty", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := moduleVersion(tt.in); got != tt.want {
+				t.Errorf("moduleVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShortCommit(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"full revision trims to seven", "ef7c059abc1234def", "ef7c059"},
+		{"short revision untouched", "ef7c05", "ef7c05"},
+		{"empty untouched", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shortCommit(tt.in); got != tt.want {
+				t.Errorf("shortCommit(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCodeFromError(t *testing.T) {
 	tests := []struct {
 		name string

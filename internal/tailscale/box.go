@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/byran/smith/internal/connection"
+	"github.com/byranZA/smith/internal/connection"
 )
 
 // Remote is the box-side command surface the box driver needs: run a remote

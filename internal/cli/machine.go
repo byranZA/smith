@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/byran/smith/internal/bootstrap"
-	"github.com/byran/smith/internal/connection"
-	"github.com/byran/smith/internal/secret"
-	"github.com/byran/smith/internal/status"
-	"github.com/byran/smith/internal/tailscale"
+	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/secret"
+	"github.com/byranZA/smith/internal/status"
+	"github.com/byranZA/smith/internal/tailscale"
 )
 
 // newMachineCmd builds `smith machine` and its subcommands.
@@ -86,7 +86,7 @@ func newSetupCmd() *cobra.Command {
 				return fmt.Errorf("derive firewall target: %w", err)
 			}
 
-			opts := bootstrap.SetupOptions{AccessMode: accessMode, SmithVersion: buildVersion, PublicSSH: publicSSH}
+			opts := bootstrap.SetupOptions{AccessMode: accessMode, SmithVersion: resolveVersion(), PublicSSH: publicSSH}
 			setupRes, err := runner.Setup(ctx, opts, stdout, stderr)
 			if err != nil {
 				return fmt.Errorf("setup: %w", err)

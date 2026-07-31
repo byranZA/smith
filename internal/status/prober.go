@@ -8,10 +8,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/byran/smith/internal/bootstrap"
-	"github.com/byran/smith/internal/connection"
-	"github.com/byran/smith/internal/marker"
-	"github.com/byran/smith/internal/tailscale"
+	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/tailscale"
 )
 
 // Gathered is what a Prober reads off a box: whether it was reachable, whether

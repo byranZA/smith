@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: smith
+
+# OSS `before` hooks are a plain list of command strings, and a failing hook
+# aborts the release. Deliberately NO `go mod tidy`: it mutates go.mod/go.sum
+# after the clean-tree check has already passed, so the published binary could
+# be built from a tree that no longer matches the tag. Tidiness is enforced in
+# CI instead, where a diff can fail the build.
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: smith
+    main: ./cmd/smith
+    binary: smith
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # Replaces GoReleaser's default ldflags entirely — smith has no
+    # main.version/commit/date/builtBy symbols to fill; the git tag is injected
+    # into buildVersion in internal/cli, matching go.mod's module path exactly.
+    ldflags:
+      - -s -w -X github.com/byranZA/smith/internal/cli.buildVersion={{ .Version }}
+    # Reproducible builds: pin the binary mtime to the commit, not build time.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # 5 targets, not 6: no windows/arm64.
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: smith
+    # `formats` (plural) is the v2 key — `format` is deprecated. Default is
+    # ['tar.gz'], so only windows needs an override. No `name_template`: the v2
+    # default already renders smith_0.1.0_darwin_arm64.tar.gz for this matrix.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  # Default would be smith_0.1.0_checksums.txt; the attestation step needs this
+  # predictable path (subject-checksums: ./dist/checksums.txt).
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  # v0.1.0-rc.1 -> parsed semver prerelease "rc.1" -> marked prerelease.
+  prerelease: auto

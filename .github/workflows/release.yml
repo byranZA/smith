@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least privilege at the top; the release job widens what it needs.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload assets (GoReleaser)
+      id-token: write # mint the Sigstore OIDC token (attestation)
+      attestations: write # persist the attestation (attestation)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Required: GoReleaser needs full history + tags for the changelog and
+          # tag resolution.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          # Release with the toolchain the module declares, not "stable".
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          # Provided automatically by Actions; no hand-created secret needed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest build provenance
+        # actions/attest-build-provenance@v4 is an equivalent wrapper; its own
+        # README points new implementations here.
+        uses: actions/attest@v4
+        with:
+          # Every artifact listed in checksums.txt becomes a subject.
+          subject-checksums: ./dist/checksums.txt

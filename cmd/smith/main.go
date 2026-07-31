@@ -8,7 +8,7 @@ package main
 import (
 	"os"
 
-	"github.com/byran/smith/internal/cli"
+	"github.com/byranZA/smith/internal/cli"
 )
 
 func main() {
