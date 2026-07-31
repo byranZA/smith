@@ -7,6 +7,124 @@ architecture may change without notice.
 Smith turns a fresh VPS into a ready-to-use remote development machine and
 manages coding agents across the repositories on it.
 
+## Install
+
+`smith` ships as a single static binary. Grab the [latest
+release](https://github.com/byranZA/smith/releases/latest) with the one-liner
+for your platform — it fetches the `v0.1.0` archive, unpacks it in the current
+directory, and leaves the `smith` binary alongside its `LICENSE` and `README`.
+Move it onto your `PATH` afterwards (e.g. `sudo mv smith /usr/local/bin/`).
+
+> **Fetch with `curl`, not your browser.** smith is unsigned. A browser stamps
+> every download with a quarantine flag, so macOS Gatekeeper then refuses to run
+> it; `curl` and `wget` don't set that flag, so a curled binary runs untouched.
+> The commands below are the supported path for exactly this reason. If you did
+> download through a browser, see [Gatekeeper](#gatekeeper-macos) below.
+
+**macOS** (Apple silicon):
+
+```sh
+curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_arm64.tar.gz | tar xz
+```
+
+**macOS** (Intel):
+
+```sh
+curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_amd64.tar.gz | tar xz
+```
+
+**Linux** (x86-64):
+
+```sh
+curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_linux_amd64.tar.gz | tar xz
+```
+
+**Linux** (ARM64):
+
+```sh
+curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_linux_arm64.tar.gz | tar xz
+```
+
+**Windows** (x86-64) — download the zip, then extract it (modern `tar` on
+Windows 10+ handles zips):
+
+```sh
+curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_windows_amd64.zip
+tar -xf smith_0.1.0_windows_amd64.zip
+```
+
+Confirm it: `smith version` should print `0.1.0`.
+
+### Verify the checksum
+
+The `curl | tar` one-liners are the fast path. To verify first, download the
+archive to disk instead of piping it, check it against `checksums.txt`, then
+unpack — shown here for macOS Apple silicon (substitute your archive name):
+
+```sh
+curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_arm64.tar.gz
+curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.0/checksums.txt
+
+shasum -a 256 -c checksums.txt --ignore-missing   # macOS
+sha256sum   -c checksums.txt --ignore-missing      # Linux
+
+tar xzf smith_0.1.0_darwin_arm64.tar.gz
+```
+
+`--ignore-missing` verifies just the archive you downloaded and skips the rest.
+Expect a single `... : OK` line.
+
+### Install with `go install`
+
+If you have the Go toolchain (1.26+, matching smith's `go.mod`), build and
+install from the module tag directly:
+
+```sh
+go install github.com/byranZA/smith/cmd/smith@v0.1.0
+```
+
+This resolves the tag, builds from source, and stamps the version from the
+module path — `smith version` still reports `0.1.0`, with no ldflags involved.
+The binary lands in `$(go env GOBIN)` (or `$(go env GOPATH)/bin`); make sure
+that's on your `PATH`.
+
+### Build from source
+
+To build from a checkout instead:
+
+```sh
+make build   # produces ./bin/smith
+```
+
+A binary built this way reports `smith version` as `dev` — it carries no release
+tag. Use `curl` or `go install` for a version-stamped build.
+
+### Gatekeeper (macOS)
+
+If you downloaded through a browser and macOS refuses to open smith — *"smith
+cannot be opened because the developer cannot be verified"* — clear the
+quarantine flag the browser set, then run it:
+
+```sh
+xattr -d com.apple.quarantine ./smith
+```
+
+Or just re-fetch with the `curl` one-liner above, which never sets the flag in
+the first place.
+
+### Windows / SmartScreen
+
+The Windows story is weaker than the macOS one. SmartScreen keys off
+*reputation* as well as Mark-of-the-Web, so a freshly published unsigned binary
+can be flagged even when fetched with `curl`, and reputation only builds with
+downloads over time. If SmartScreen blocks it, choose **More info → Run anyway**.
+
+### Compatibility
+
+smith is **`v0.x` — there is no compatibility promise.** Flags, config, and
+behavior may change between releases without notice. Pin to an exact tag rather
+than tracking `latest`.
+
 ## Provisioning a VPS
 
 `smith machine setup` takes a fresh box and makes it a secure, reachable
@@ -17,11 +135,7 @@ before it changes anything.
 
 ### Prerequisites
 
-Build the binary:
-
-```sh
-make build   # produces ./bin/smith
-```
+You'll need the `smith` binary on your `PATH` — see [Install](#install) above.
 
 The box you're provisioning must be:
 
