@@ -21,10 +21,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Release with the toolchain the module declares, not a floating "stable".
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -44,3 +44,48 @@ jobs:
       # fmt-check + vet + lint + test — identical to the local gate.
       - name: make check
         run: make check
+
+  # Compile-check all five release targets on every PR. The `check` job only
+  # tests on Linux, but the release ships darwin/windows/linux binaries — a
+  # platform-specific break would otherwise surface at tag time. This runs the
+  # release's own build path (GoReleaser, same config and version as
+  # release.yml) so what CI compiles is exactly what a tag would ship.
+  build:
+    name: build all release targets (snapshot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # GoReleaser reads git state for snapshot version metadata.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: GoReleaser snapshot build
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: build --snapshot --clean
+
+  # Scan for known vulnerabilities reachable from smith's code. Its own job (not
+  # part of `make check`) so the fast local gate stays install-free; gates the
+  # PR since govulncheck only flags vulns actually reachable, so it rarely cries
+  # wolf. Runs under the module's toolchain so the stdlib analysis matches what
+  # we ship. Pinned for reproducible tooling; the vuln DB is still fetched live.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      - name: Run govulncheck
+        run: govulncheck ./...
