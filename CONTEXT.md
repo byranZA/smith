@@ -104,6 +104,16 @@ A secret *installed onto* the box for later use (e.g. the worker's env). Distinc
 surface from operational secrets; out of scope for the setup domain, deferred to a later map.
 _Avoid_: stored secret, deployed credential.
 
+**Probe key**:
+The throwaway keypair the `ssh-hardening` self-test mints to drive its loopback login — *born on
+the box, used on the box, scrubbed on the box, never transmitted*. Neither an operational nor a
+provisioned secret: it grants no durable access and mints nothing that outlives the probe. Its
+public half is appended to `smith`'s real `authorized_keys` (so the live handshake exercises that
+file's perms/ownership/StrictModes) and removed by marker afterward; its private half lives in a
+`mktemp -d` and drives one `ssh smith@localhost`. It exists so the gate can prove *a* pubkey login
+survives hardening without depending on the operator's key.
+_Avoid_: test key, temp credential, self-signed key.
+
 ### Tailscale access
 
 **tag:smith**:
