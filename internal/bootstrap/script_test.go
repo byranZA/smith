@@ -298,6 +298,73 @@ exit 255
 	}
 }
 
+// TestScriptSshHardeningProbeKeyLifecycle proves the ssh-hardening self-test's
+// probe-key contract: a throwaway key is appended to smith's real authorized_keys
+// *before* the loopback login runs (so the live handshake exercises that file), and
+// is stripped back out *after*, leaving authorized_keys byte-identical to the
+// operator's key alone. The fake ssh snapshots authorized_keys at probe time, which
+// pins the append→probe→strip ordering that a post-run check alone cannot.
+func TestScriptSshHardeningProbeKeyLifecycle(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProvisioningFakeBins(t, binDir)
+	// Fake ssh: the loopback login succeeds, but first snapshot the authorized_keys
+	// sshd would read at probe time — proving the probe key was authorized before the
+	// handshake, and that it is the probe key (not the operator's) driving the login.
+	snapshot := filepath.Join(dir, "probe.authkeys.snapshot")
+	writeFakeBin(t, binDir, "ssh", `#!/usr/bin/env bash
+cat "${SMITH_HOME}/.ssh/authorized_keys" >"`+snapshot+`" 2>/dev/null
+exit 0
+`)
+
+	env := bootstrapTestEnv(t, dir, binDir)
+	smithAuthKeys := filepath.Join(dir, "smith-home", ".ssh", "authorized_keys")
+	const operatorKeys = "ssh-ed25519 AAAAC3NzaC1lZDI1 operator@laptop\n"
+	const probeMarker = "smith-ssh-hardening-selftest-probe"
+
+	cmd := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test")
+	cmd.Env = append(os.Environ(), env...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	// At probe time authorized_keys must have carried the tagged probe line on top of
+	// the operator's key — the append happened before the loopback login.
+	snap, err := os.ReadFile(snapshot)
+	if err != nil {
+		t.Fatalf("read probe-time authorized_keys snapshot: %v", err)
+	}
+	if !strings.Contains(string(snap), probeMarker) {
+		t.Errorf("probe-time authorized_keys missing the tagged probe key %q:\n%s", probeMarker, snap)
+	}
+	if !strings.Contains(string(snap), operatorKeys) {
+		t.Errorf("probe-time authorized_keys dropped the operator's key:\n%s", snap)
+	}
+
+	// After the run the probe line must be scrubbed: authorized_keys is byte-identical
+	// to the operator's key alone, so the self-test left no durable access path.
+	final, err := os.ReadFile(smithAuthKeys)
+	if err != nil {
+		t.Fatalf("read smith authorized_keys after run: %v", err)
+	}
+	if string(final) != operatorKeys {
+		t.Errorf("authorized_keys after self-test = %q, want the operator's key alone %q (probe key not scrubbed)", string(final), operatorKeys)
+	}
+}
+
 // TestScriptResumesPartialBoxAfterFix proves the marker-ledger + check-before-
 // change resume: a first run whose ssh-hardening self-test is locked out fails
 // partway, leaving the box partial (marker records only the phases before
@@ -608,8 +675,30 @@ echo "ran" >>"$UU_LOG"
 exit 0
 `)
 	// Fake sshd: `sshd -t` validates the merged config, which is always well-formed
-	// here, so the ssh-hardening self-test's validate step succeeds.
+	// here, so the self-test's validate step succeeds; `sshd -T` dumps the effective
+	// config, which the self-test greps for pubkey auth being enabled for smith.
 	writeFakeBin(t, binDir, "sshd", `#!/usr/bin/env bash
+if [ "$1" = "-T" ]; then
+  echo "pubkeyauthentication yes"
+fi
+exit 0
+`)
+	// Fake ssh-keygen: the ssh-hardening self-test mints a throwaway "probe key" on
+	// the box. Parse -f <path> and -C <comment>, then write a stand-in private key
+	// and a PROBE_MARKER-tagged public key so the self-test's append/strip and the
+	// loopback probe run without real crypto.
+	writeFakeBin(t, binDir, "ssh-keygen", `#!/usr/bin/env bash
+out=""; comment="probe"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f) out="$2"; shift 2 ;;
+    -C) comment="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf 'FAKE PROBE PRIVATE KEY\n' >"$out"
+chmod 600 "$out"
+printf 'ssh-ed25519 AAAAFAKEPROBEKEY %s\n' "$comment" >"$out.pub"
 exit 0
 `)
 }
