@@ -514,6 +514,68 @@ exit 0
 	}
 }
 
+// TestScriptPackagesWaitsForAptLock proves the packages phase absorbs the
+// first-boot apt-lock race instead of aborting on it. The fake apt-get emits the
+// real /var/lib/apt/lists/lock error on its first `update` (as cloud-init /
+// unattended-upgrades would on a freshly booted cloud image) and succeeds
+// thereafter; the phase must retry, stream a "waiting for apt lock" progress line,
+// and complete — recording packages in the marker rather than leaving the box
+// partial-but-reachable.
+func TestScriptPackagesWaitsForAptLock(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProvisioningFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "ssh", `#!/usr/bin/env bash
+exit 0
+`)
+
+	// Arm the opt-in lock race: APT_LOCK_HELD points at a file that does not yet
+	// exist, so the first `apt-get update` fails on the held lists lock.
+	env := append(bootstrapTestEnv(t, dir, binDir),
+		"APT_LOCK_HELD="+filepath.Join(dir, "apt.lock.held"))
+	markerPath := filepath.Join(dir, "bootstrap.json")
+
+	cmd := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test")
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("setup should absorb the first-boot apt-lock race, but it failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "waiting for apt lock") {
+		t.Errorf("a held apt lock should stream a waiting-for-lock progress line; got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "✓ packages") {
+		t.Errorf("the packages phase should complete after the lock clears; got:\n%s", out)
+	}
+
+	m, _, err := decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	found := false
+	for _, p := range m.CompletedPhases {
+		if p == "packages" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("packages must be recorded in the marker after the lock clears; got %v", m.CompletedPhases)
+	}
+}
+
 // decodeMarker reads and decodes the on-box marker written to path.
 func decodeMarker(t *testing.T, path string) (marker.Marker, marker.Skew, error) {
 	t.Helper()
@@ -577,7 +639,19 @@ exec "$@"
 	// whose "newly installed" count is non-zero the first time and zero once the
 	// APT_STATE stamp exists, mimicking a box that becomes provisioned.
 	writeFakeBin(t, binDir, "apt-get", `#!/usr/bin/env bash
+# Drop apt's leading -o <option> pairs (smith passes DPkg::Lock::Timeout) so the
+# subcommand lands in $1 the same as a bare apt-get call.
+while [ "$1" = "-o" ]; do shift 2; done
 if [ "$1" = "update" ]; then
+  # Opt-in first-boot lock race: when APT_LOCK_HELD points at a not-yet-created
+  # file, the first update emits the real lists-lock error and fails, then stamps
+  # the file so the retry succeeds — mimicking cloud-init releasing the lock.
+  if [ -n "${APT_LOCK_HELD:-}" ] && [ ! -f "$APT_LOCK_HELD" ]; then
+    touch "$APT_LOCK_HELD"
+    echo "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 6771 (apt-get)" >&2
+    echo "E: Unable to lock directory /var/lib/apt/lists/" >&2
+    exit 100
+  fi
   echo "Reading package lists... Done"
   exit 0
 fi
