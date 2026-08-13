@@ -10,8 +10,10 @@ the *why* and the boundaries live in [`AGENTS.md`](./AGENTS.md), architectural d
 ### The machine and getting in
 
 **Box**:
-The fresh Ubuntu LTS VPS the user brings. Smith provisions it but does not own or manage its
-lifecycle — it *is* the sandbox, not a container smith runs.
+The Ubuntu LTS VPS smith turns into a dev machine — either one the operator brings and hands
+over, or one smith creates through a provider adapter. Smith provisions it and, given an adapter,
+orchestrates its lifecycle (create/destroy), but is not itself the provider. It *is* the sandbox,
+not a container smith runs.
 _Avoid_: server, host (except in `<login>@<host>`), instance, VM.
 
 **Bootstrap-in path**:
@@ -69,8 +71,9 @@ _Avoid_: step, stage, task.
 
 **Marker**:
 The versioned on-box record of what bootstrap did — `/etc/smith/bootstrap.json` (schema + smith
-version + access mode + completed phases + timestamp). Lets `smith machine status` read state
-back and any admin machine re-run idempotently. A **ledger, not a gate**: every `setup` run
+version + access mode + completed phases + timestamp, plus the box's self-record: which blueprint
+it was built from and the provider destroy reference to tear it down). Lets `smith machine status`
+read state back, any admin machine re-run idempotently, and smith recognise a box from just its IP. A **ledger, not a gate**: every `setup` run
 executes all phases and check-before-change makes done ones no-ops — `completed_phases` records
 progress (for failure reports and `status`), it never *skips* execution.
 _Avoid_: state file, lockfile, manifest.
@@ -134,3 +137,46 @@ How smith decides a box is supported: an LTS *floor* (`ID=ubuntu`, an `LTS` rele
 (apt, systemd, packages) — never a hardcoded enumeration of releases. Future LTS releases pass
 automatically; an unmet need fails loudly at the step, not pre-emptively at the gate.
 _Avoid_: version allowlist, supported-OS list.
+
+### Declaring and creating a box
+
+**Blueprint**:
+The reusable, declarative description of a dev box smith stands up — its repos, access mode,
+environment, seed data, toolchain, and terminal. One blueprint instantiates many boxes; it is
+the box's *desired state*, which setup converges to. The config surface smith gained when the
+provisioning map arrived — distinct from the marker, which records what a *particular* box did.
+_Avoid_: manifest (reserved, avoided for the marker), config file, template, profile.
+
+**Provider adapter**:
+The set of operator-supplied command references — `create`, `destroy`, `list` — through which
+smith orchestrates a box's lifecycle without embedding any provider SDK. Optional: absent an
+adapter, the operator creates the box and hands smith `<login>@<host>`. *Reference, not value*
+extended from secrets to lifecycle.
+_Avoid_: provider plugin, driver (reserved for a session's actor), integration.
+
+### Working on the box
+
+**Session**:
+A running `tmux` session in a worktree, with a driver (human or agent), that the operator
+attaches to read-only or writable. The unit of work on a box; many run at once. "HITL" and
+"AFK" are informal labels for its two common shapes, not domain types.
+_Avoid_: terminal, tab, pane.
+
+**Worktree**:
+A git worktree of a managed repo on the box — the unit of parallel work, one per session. Lets
+several sessions (human or agent) work a repo's branches side by side without colliding.
+_Avoid_: checkout, clone.
+
+**Driver**:
+Who acts in a session — a human at a terminal, or a coding agent. Orthogonal to attach mode: an
+agent-driven session can be observed or, when it needs a hand, jumped into.
+_Avoid_: actor, runner, operator (reserved for the human running smith).
+
+**Attach mode**:
+How the operator connects to a session: read-only (observe) or writable (interact). Observation
+and takeover are the same `tmux` session at two access levels — the mechanism behind watching an
+agent work and stepping in. Read-only is **advisory**, not enforced: it is `tmux attach -r`, so
+anyone who can SSH as `smith` can attach writable regardless. It guards against accidentally
+typing into an agent's session — it is not a permission boundary
+([ADR-0005](./docs/adr/0005-terminal-rides-the-ssh-door.md)).
+_Avoid_: view mode, permission.
