@@ -1,22 +1,30 @@
 [
   {
-    "id": 412345678,
-    "name": "smith-proto-abc",
+    "id": 593069736,
+    "name": "smith-proto-REDACTED",
     "status": "active",
+    "region": { "slug": "fra1", "name": "Frankfurt 1" },
     "networks": {
       "v4": [
-        { "ip_address": "10.114.0.2", "type": "private", "netmask": "255.255.240.0" },
-        { "ip_address": "164.92.10.5", "type": "public", "netmask": "255.255.240.0" }
-      ],
-      "v6": []
+        { "ip_address": "203.0.113.10", "netmask": "255.255.240.0", "type": "public" },
+        { "ip_address": "10.135.0.4", "netmask": "255.255.0.0", "type": "private" }
+      ]
     },
-    "tags": ["smith:abc"]
+    "tags": null,
+    "volume_ids": []
   },
   {
-    "id": 499999999,
-    "name": "someone-elses-droplet",
+    "id": 551149971,
+    "name": "an-unrelated-droplet",
     "status": "active",
-    "networks": { "v4": [{ "ip_address": "159.65.1.1", "type": "public" }], "v6": [] },
-    "tags": ["production"]
+    "region": { "slug": "fra1", "name": "Frankfurt 1" },
+    "networks": {
+      "v4": [
+        { "ip_address": "10.135.0.3", "netmask": "255.255.0.0", "type": "private" },
+        { "ip_address": "198.51.100.7", "netmask": "255.255.240.0", "type": "public" }
+      ]
+    },
+    "tags": null,
+    "volume_ids": []
   }
 ]

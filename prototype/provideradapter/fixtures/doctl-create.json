@@ -1,15 +1,20 @@
 [
   {
-    "id": 412345678,
-    "name": "smith-proto-abc",
+    "id": 593069736,
+    "name": "smith-proto-REDACTED",
+    "memory": 512,
+    "vcpus": 1,
+    "disk": 10,
     "status": "new",
+    "region": { "slug": "fra1", "name": "Frankfurt 1", "sizes": ["s-1vcpu-512mb-10gb"] },
+    "size_slug": "s-1vcpu-512mb-10gb",
     "networks": {
       "v4": [
-        { "ip_address": "10.114.0.2", "type": "private" },
-        { "ip_address": "164.92.10.5", "type": "public" }
-      ],
-      "v6": []
+        { "ip_address": "203.0.113.10", "netmask": "255.255.240.0", "gateway": "203.0.113.1", "type": "public" },
+        { "ip_address": "10.135.0.4", "netmask": "255.255.0.0", "gateway": "10.135.0.1", "type": "private" }
+      ]
     },
-    "tags": ["smith:abc"]
+    "tags": null,
+    "volume_ids": []
   }
 ]

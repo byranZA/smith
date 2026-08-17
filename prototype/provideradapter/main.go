@@ -49,6 +49,10 @@ type Adapter struct {
 	List    Command `json:"list"`
 	Destroy Command `json:"destroy"`
 
+	// Fixtures names the fixture prefix, when it differs from Name — variants
+	// of one provider share captured output.
+	Fixtures string `json:"fixtures"`
+
 	Notes string `json:"notes"`
 }
 
@@ -84,6 +88,7 @@ var (
 	keep        = flag.Bool("keep", false, "skip destroy (leaves a paid box running)")
 	raw         = flag.Bool("raw", false, "dump raw CLI JSON at every step")
 	pollFor     = flag.Duration("poll", 3*time.Minute, "how long to poll for IP and for port 22")
+	check       = flag.String("check", "", "run the list extractors over a captured JSON file and exit")
 )
 
 // leaked is true between a successful create and a confirmed destroy.
@@ -111,6 +116,12 @@ func main() {
 		showCommands(a)
 		return
 	}
+	if *check != "" {
+		if err := checkFile(a, *check); err != nil {
+			die(err)
+		}
+		return
+	}
 	if err := lifecycle(a); err != nil {
 		die(err)
 	}
@@ -128,14 +139,9 @@ func lifecycle(a *Adapter) error {
 	step(1, "create")
 	// Always dump create's raw output: from here on a real, billed box exists,
 	// and if an extractor path is wrong this is the only record of its id.
-	wasRaw := *raw
-	*raw = true
-	created, err := a.records(a.Create, vars)
-	*raw = wasRaw
-	if err != nil {
-		return fmt.Errorf("create: %w", err)
-	}
-	// Everything past this point may have left a running box behind.
+	// Arm the leak warning BEFORE create runs, not after it returns. A create
+	// that provisions a box and then fails to report it as JSON is exactly the
+	// case that leaks, and it surfaces as an error from records().
 	defer func() {
 		if leaked {
 			fmt.Fprintf(os.Stderr, "\n!! A BILLED BOX MAY STILL BE RUNNING. Check the raw create output above,\n"+
@@ -143,6 +149,15 @@ func lifecycle(a *Adapter) error {
 		}
 	}()
 	leaked = true
+	wasRaw := *raw
+	*raw = true
+	created, err := a.records(a.Create, vars)
+	*raw = wasRaw
+	if err != nil {
+		// Deliberately still "leaked": a create that errors may or may not have
+		// provisioned. A false warning costs a glance; a missed box costs money.
+		return fmt.Errorf("create: %w", err)
+	}
 	if len(created) != 1 {
 		return fmt.Errorf("create returned %d records, want 1 (record path %q wrong?)", len(created), a.Create.Record)
 	}
@@ -335,7 +350,11 @@ func extractorCheck(a *Adapter) error {
 		verb string
 		cmd  Command
 	}{{"create", a.Create}, {"list", a.List}} {
-		path := fmt.Sprintf("prototype/provideradapter/fixtures/%s-%s.json", a.Name, f.verb)
+		prefix := a.Fixtures
+		if prefix == "" {
+			prefix = a.Name
+		}
+		path := fmt.Sprintf("prototype/provideradapter/fixtures/%s-%s.json", prefix, f.verb)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -379,6 +398,29 @@ func showCommands(a *Adapter) {
 	fmt.Printf("\nexpected tag on the box: %q\n", expand(a.TagForm, map[string]string{"runid": *runID}))
 }
 
+// checkFile runs the list extractors over real captured CLI output. Unlike
+// -offline (which reads fixtures we wrote from docs), this is primary evidence.
+func checkFile(a *Adapter, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	recs := eval(doc, a.List.Record)
+	fmt.Printf("%s: %d record(s) via %q\n", path, len(recs), a.List.Record)
+	for _, r := range recs {
+		fmt.Printf("  %s\n", Box{
+			ID:  evalString(r, a.Fields.ID),
+			IP:  evalString(r, a.Fields.IP),
+			Tag: strings.Join(evalStrings(r, a.Fields.Tag), ","),
+		})
+	}
+	return nil
+}
+
 func loadAdapter(path string) (*Adapter, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -391,10 +433,24 @@ func loadAdapter(path string) (*Adapter, error) {
 	return a, nil
 }
 
+// expandAll fills the placeholders, and drops any argument whose placeholder
+// resolved to nothing — along with the flag in front of it.
+//
+// FINDING: a flat argv list cannot express "this argument is optional".
+// Without this rule, an unset --ssh-keys becomes `--ssh-keys ""` and the CLI
+// rejects it. The real contract needs either this convention or explicit
+// optional groups.
 func expandAll(argv []string, vars map[string]string) []string {
-	out := make([]string, len(argv))
-	for i, s := range argv {
-		out[i] = expand(s, vars)
+	var out []string
+	for _, s := range argv {
+		v := expand(s, vars)
+		if v == "" && strings.Contains(s, "{{") {
+			if n := len(out); n > 0 && strings.HasPrefix(out[n-1], "-") {
+				out = out[:n-1]
+			}
+			continue
+		}
+		out = append(out, v)
 	}
 	return out
 }

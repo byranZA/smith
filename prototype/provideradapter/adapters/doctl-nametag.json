@@ -1,0 +1,27 @@
+{
+  "name": "doctl-nametag",
+  "fixtures": "doctl",
+  "createIP": "synchronous",
+  "tagArg": "",
+  "tagForm": "smith-proto-{{runid}}",
+  "fields": {
+    "id": "id",
+    "ip": "networks.v4[type=public].ip_address",
+    "tag": "name"
+  },
+  "create": {
+    "argv": ["doctl", "compute", "droplet", "create", "{{name}}",
+             "--image", "{{image}}", "--size", "{{size}}", "--region", "{{region}}",
+             "--ssh-keys", "{{sshkey}}",
+             "--wait", "-o", "json"],
+    "record": "[*]"
+  },
+  "list": {
+    "argv": ["doctl", "compute", "droplet", "list", "-o", "json"],
+    "record": "[*]"
+  },
+  "destroy": {
+    "argv": ["doctl", "compute", "droplet", "delete", "{{id}}", "--force"]
+  },
+  "notes": "Same provider, no tag permission. The marker is the droplet NAME rather than a tag: the tag path reads 'name' and tagForm reproduces the name create used. Written to test whether the adapter contract can express a name-convention provider WITHOUT changing the harness — if it can, tag support is an adapter concern, not a smith concern."
+}
