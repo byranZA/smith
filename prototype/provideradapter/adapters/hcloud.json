@@ -1,0 +1,26 @@
+{
+  "name": "hcloud",
+  "createIP": "synchronous",
+  "tagArg": "smith={{runid}}",
+  "tagForm": "{{runid}}",
+  "fields": {
+    "id": "id",
+    "ip": "public_net.ipv4.ip",
+    "tag": "labels.smith"
+  },
+  "create": {
+    "argv": ["hcloud", "server", "create", "--name", "{{name}}",
+             "--image", "{{image}}", "--type", "{{size}}", "--location", "{{region}}",
+             "--ssh-key", "{{sshkey}}", "--label", "{{tag}}",
+             "-o", "json"],
+    "record": "server"
+  },
+  "list": {
+    "argv": ["hcloud", "server", "list", "-o", "json"],
+    "record": "[*]"
+  },
+  "destroy": {
+    "argv": ["hcloud", "server", "delete", "{{id}}"]
+  },
+  "notes": "UNVERIFIED until the live run. Hetzner labels are a key/value MAP, so the tag path yields the bare value and tagForm has no 'smith=' prefix — unlike doctl, where tags are opaque strings. That asymmetry is why tagArg and tagForm are separate fields. The create record path 'server' is a guess at hcloud's create envelope."
+}

@@ -1,0 +1,26 @@
+{
+  "name": "doctl",
+  "createIP": "synchronous",
+  "tagArg": "smith:{{runid}}",
+  "tagForm": "smith:{{runid}}",
+  "fields": {
+    "id": "id",
+    "ip": "networks.v4[type=public].ip_address",
+    "tag": "tags[*]"
+  },
+  "create": {
+    "argv": ["doctl", "compute", "droplet", "create", "{{name}}",
+             "--image", "{{image}}", "--size", "{{size}}", "--region", "{{region}}",
+             "--ssh-keys", "{{sshkey}}", "--tag-name", "{{tag}}",
+             "--wait", "-o", "json"],
+    "record": "[*]"
+  },
+  "list": {
+    "argv": ["doctl", "compute", "droplet", "list", "-o", "json"],
+    "record": "[*]"
+  },
+  "destroy": {
+    "argv": ["doctl", "compute", "droplet", "delete", "{{id}}", "--force"]
+  },
+  "notes": "UNVERIFIED until the live run. Two guesses to confirm: (1) DO tag names may reject '=', hence 'smith:<runid>' rather than #54's 'smith=<runid>'; (2) --wait is claimed to populate the public IPv4, making create IP-synchronous. The create record path assumes an array."
+}
