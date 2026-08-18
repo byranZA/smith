@@ -1,5 +1,9 @@
 # No local config file in v1 — flags + env only
 
+> **Amended by [ADR-0006](./0006-the-blueprint-config-surface.md).** The provisioning map this
+> ADR defers to has arrived, and smith now has a config surface — the Blueprint in `~/.smith/`.
+> The flag path below survives unchanged and stays first in precedence.
+
 ## Context
 
 A provisioning tool usually grows a local config file (declare your box, your secrets, your env
