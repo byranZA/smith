@@ -55,8 +55,26 @@ type Repo struct {
 
 // ---- semantic validation on top of the parser's structural pass ----
 
+// Schema field names, reserved inside the open maps (`tools`, `env`) so a
+// misindented `base:`/`url:` errors instead of becoming a phantom entry.
+// Case-sensitive on purpose: a real env var named URL or MODE is untouched.
+var reserved = map[string]bool{
+	"access": true, "terminal": true, "workspace": true, "provider": true,
+	"packages": true, "tools": true, "env": true, "placements": true,
+	"repos": true, "name": true, "url": true, "base": true,
+	"from": true, "to": true, "mode": true, "perms": true,
+}
+
 func validate(b *Blueprint) []string {
 	var errs []string
+
+	checkOpenMap := func(where string, m map[string]string) {
+		for k := range m {
+			if reserved[k] {
+				errs = append(errs, fmt.Sprintf("%s.%s: %q is a schema field name and is reserved here — check the indentation", where, k, k))
+			}
+		}
+	}
 
 	checkRef := func(where, v string, allowLiteral bool) {
 		scheme, _, ok := strings.Cut(v, ":")
@@ -71,29 +89,42 @@ func validate(b *Blueprint) []string {
 				where, scheme, map[bool]string{true: ", literal:", false: ""}[allowLiteral]))
 		}
 	}
-	checkPlacements := func(where string, ps []Placement) {
+	// Scope is by declaration site (#62). Make the convention a rule: a repo
+	// placement is worktree-relative, a box placement is absolute.
+	checkPlacements := func(where string, ps []Placement, repoScope bool) {
 		for i, p := range ps {
 			at := fmt.Sprintf("%s[%d]", where, i)
 			checkRef(at+".from", p.From, false)
+			abs := strings.HasPrefix(p.To, "/") || strings.HasPrefix(p.To, "~")
+			switch {
+			case repoScope && abs:
+				errs = append(errs, fmt.Sprintf("%s.to: %q is absolute, but a repo placement is worktree-relative — declare it at box scope to write outside the worktree", at, p.To))
+			case !repoScope && !abs:
+				errs = append(errs, fmt.Sprintf("%s.to: %q is relative, but a box placement needs an absolute or ~-relative path", at, p.To))
+			}
 			if p.Mode != "" && p.Mode != "converge" && p.Mode != "once" {
 				errs = append(errs, fmt.Sprintf("%s.mode: %q is not one of converge, once", at, p.Mode))
 			}
 		}
 	}
 
+	checkOpenMap("tools", b.Tools)
+	checkOpenMap("env", b.Env)
 	for k, v := range b.Env {
 		checkRef("env."+k, v, true)
 	}
-	checkPlacements("placements", b.Placements)
+	checkPlacements("placements", b.Placements, false)
 	for i, r := range b.Repos {
 		where := fmt.Sprintf("repos[%d]", i)
 		if r.URL == "" {
 			errs = append(errs, where+".url: required")
 		}
+		checkOpenMap(where+".tools", r.Tools)
+		checkOpenMap(where+".env", r.Env)
 		for k, v := range r.Env {
 			checkRef(fmt.Sprintf("%s.env.%s", where, k), v, true)
 		}
-		checkPlacements(where+".placements", r.Placements)
+		checkPlacements(where+".placements", r.Placements, true)
 	}
 	if b.Terminal != "" && b.Terminal != "tmux" {
 		errs = append(errs, fmt.Sprintf("terminal: %q is not recognized in v1 — only tmux (#64)", b.Terminal))
