@@ -1,0 +1,11 @@
+# ~/.smith/preferences — fixed-key fields only (#62)
+access:    tailscale
+terminal:  tmux
+workspace: ~/workspace
+provider:
+  create:  ["hcloud", "server", "create", "--name", "{{name}}", "--type", "cpx31", "--image", "ubuntu-24.04", "--label", "{{marker_arg}}", "-o", "json"]
+  list:    ["hcloud", "server", "list", "-o", "json"]
+  destroy: ["hcloud", "server", "delete", "{{id}}", "-o", "json"]
+  requires: [HCLOUD_TOKEN]
+  marker:  { arg: "smith={{value}}", read: "labels.smith" }
+  extract: { id: "id", ip: "public_net.ipv4.ip" }

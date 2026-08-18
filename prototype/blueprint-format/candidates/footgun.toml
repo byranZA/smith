@@ -1,0 +1,7 @@
+# The TOML ordering hazard: a key written after a table header belongs to that table.
+[[repos]]
+name = "acme-api"
+url  = "git@github.com:acme/api.git"
+  [repos.tools]
+  node = "22"
+base = "develop"      # <-- intended repo-level; TOML reads it as tools.base

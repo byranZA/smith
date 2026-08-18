@@ -1,0 +1,16 @@
+# PROTOTYPE — deliberately broken, four failure classes.
+access: tailscale
+tool:                              # (1) unknown key — typo for `tools`
+  node: "20"
+env:
+  GITHUB_TOKEN: "ghp_liveTokenPastedHere"   # (2) literal, no scheme
+placements:
+  - from: "literal:hunter2"        # (3) literal: illegal in a placement `from`
+    to:   "~/.pgpass"
+repos:
+  - url:  git@github.com:acme/api.git
+    ref:  develop                  # (4) unknown key — renamed to `base` by #62
+    placements:
+      - from: "file:~/.secrets/acme/api.env"
+        to:   "packages/api/.env"
+        mode: overwrite            # (5) not a member of {converge, once}

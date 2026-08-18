@@ -1,0 +1,3 @@
+access: tailscale
+repos:                             # blueprint-only collection (#62)
+  - url: git@github.com:acme/api.git

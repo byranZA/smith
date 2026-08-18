@@ -1,0 +1,7 @@
+# The YAML hazard: indentation. `base` slipped one level in.
+repos:
+  - name: acme-api
+    url:  git@github.com:acme/api.git
+    tools:
+      node: "22"
+      base: develop     # <-- intended repo-level, indented into tools

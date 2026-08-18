@@ -1,0 +1,55 @@
+# ~/.smith/blueprints/acme.yaml
+# PROTOTYPE — throwaway. Candidate A: YAML.
+
+access:    tailscale
+terminal:  tmux
+workspace: ~/workspace
+
+provider:
+  create:  ["hcloud", "server", "create", "--name", "{{name}}", "--type", "cpx31", "--image", "ubuntu-24.04", "--label", "{{marker_arg}}", "--ssh-key", "{{sshkey}}", "-o", "json"]
+  list:    ["hcloud", "server", "list", "-o", "json"]
+  destroy: ["hcloud", "server", "delete", "{{id}}", "-o", "json"]
+  requires: [HCLOUD_TOKEN]
+  marker:
+    arg:  "smith={{value}}"
+    read: "labels.smith"
+  extract:
+    id: "id"
+    ip: "public_net.ipv4.ip"
+
+packages: [ripgrep, jq, build-essential, postgresql-client]
+
+tools:
+  node: "20"
+  go:   "1.23"
+
+env:
+  GITHUB_TOKEN: "env:GH_TOKEN"
+  ANTHROPIC_API_KEY: "env:ANTHROPIC_API_KEY"
+
+placements:
+  - { from: "file:~/.secrets/acme/gitconfig",  to: "~/.gitconfig",            mode: once,     perms: "0644" }
+  - { from: "file:~/.secrets/acme/id_forge",   to: "~/.ssh/id_forge",         mode: converge, perms: "0600" }
+
+repos:
+  - name: acme-api
+    url:  git@github.com:acme/api.git
+    base: develop
+    tools:
+      node: "22"
+    env:
+      ACME_REGION: "env:ACME_REGION"
+      DATABASE_URL: "env:ACME_DATABASE_URL"
+    placements:
+      - { from: "file:~/.secrets/acme/api.env", to: "packages/api/.env",      mode: converge }
+      - { from: "file:~/fixtures/acme.sql",     to: "seed.sql",               mode: once, perms: "0644" }
+
+  - name: acme-web
+    url:  git@github.com:acme/web.git
+    placements:
+      - { from: "file:~/.secrets/acme/web.env", to: ".env.local",             mode: converge }
+
+  - url:  git@github.com:acme/infra.git
+    base: main
+    tools:
+      terraform: "1.9"
