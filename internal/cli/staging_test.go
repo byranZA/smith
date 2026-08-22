@@ -58,6 +58,18 @@ func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Re
 	return nil
 }
 
+// stagedOrFatal resolves the named blueprint from a config home rooted at dir,
+// as `machine setup` does before it touches the box, and fails the test if it
+// will not resolve.
+func stagedOrFatal(t *testing.T, dir, name string) *stagedConfig {
+	t.Helper()
+	staged, err := resolveStagedConfig(config.NewHome(dir), name, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveStagedConfig(%q) err = %v, want it to resolve", name, err)
+	}
+	return staged
+}
+
 func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
 	dir := t.TempDir()
 	document := "# acme\naccess: tailscale\nterminal: tmux\n"
@@ -65,7 +77,7 @@ func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
 	box := &fakeStagingBox{}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err != nil {
+	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 	if len(box.inputs) != 1 || box.inputs[0] != document {
@@ -80,7 +92,7 @@ func TestStageConfigStagesNothingWithoutABlueprint(t *testing.T) {
 	box := &fakeStagingBox{}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, config.NewHome(t.TempDir()), "", &out); err != nil {
+	if err := stageConfig(context.Background(), box, stagedOrFatal(t, t.TempDir(), ""), &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 	if len(box.commands) != 0 {
@@ -88,17 +100,20 @@ func TestStageConfigStagesNothingWithoutABlueprint(t *testing.T) {
 	}
 }
 
-func TestStageConfigRefusesAnInvalidBlueprintBeforeTouchingTheBox(t *testing.T) {
+func TestResolveStagedConfigRefusesAnInvalidBlueprint(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "terminals: tmux\n")
-	box := &fakeStagingBox{}
-	var out bytes.Buffer
+	var errOut bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err == nil {
-		t.Fatal("stageConfig() err = nil, want an invalid blueprint refused")
+	staged, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut)
+	if err == nil {
+		t.Fatal("resolveStagedConfig() err = nil, want an invalid blueprint refused")
 	}
-	if len(box.commands) != 0 {
-		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
+	if staged != nil {
+		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
+	}
+	if !strings.Contains(errOut.String(), "terminals") {
+		t.Errorf("resolveStagedConfig() reported %q, want it to name the unknown field", errOut.String())
 	}
 }
 
@@ -117,7 +132,7 @@ func TestStageConfigStagesABoxPlacementsBytesOverStdin(t *testing.T) {
 	box := &fakeStagingBox{}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err != nil {
+	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 	var delivered bool
@@ -139,20 +154,6 @@ func TestStageConfigStagesABoxPlacementsBytesOverStdin(t *testing.T) {
 	}
 }
 
-func TestStageConfigRefusesAnUnresolvableSourceBeforeTouchingTheBox(t *testing.T) {
-	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n")
-	box := &fakeStagingBox{}
-	var out bytes.Buffer
-
-	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err == nil {
-		t.Fatal("stageConfig() err = nil, want the unresolvable source refused")
-	}
-	if len(box.commands) != 0 {
-		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
-	}
-}
-
 func TestStageConfigReportsWhatItPruned(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: tailscale\n")
@@ -160,7 +161,7 @@ func TestStageConfigReportsWhatItPruned(t *testing.T) {
 	box := &fakeStagingBox{staged: []string{stray}}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err != nil {
+	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 	if !strings.Contains(out.String(), "pruned") || !strings.Contains(out.String(), stray) {
@@ -168,43 +169,41 @@ func TestStageConfigReportsWhatItPruned(t *testing.T) {
 	}
 }
 
-func TestStageConfigRefusesAnUnsetEnvSourceBeforeTouchingTheBox(t *testing.T) {
+func TestResolveStagedConfigRefusesAnUnsetEnvSource(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN_UNSET\n    to: /home/smith/.npmrc\n")
-	box := &fakeStagingBox{}
-	var out bytes.Buffer
+	var errOut bytes.Buffer
 
-	err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out)
+	staged, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut)
 	if err == nil {
-		t.Fatal("stageConfig() err = nil, want the unset variable refused")
+		t.Fatal("resolveStagedConfig() err = nil, want the unset variable refused")
 	}
-	if !strings.Contains(err.Error(), "NPM_TOKEN_UNSET") {
-		t.Errorf("stageConfig() err = %v, want it to name the unset variable", err)
+	if staged != nil {
+		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
 	}
-	if len(box.commands) != 0 {
-		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.code != 2 {
+		t.Errorf("resolveStagedConfig() err = %v, want a gate rejection (exit 2)", err)
+	}
+	if !strings.Contains(errOut.String(), "NPM_TOKEN_UNSET") {
+		t.Errorf("resolveStagedConfig() reported %q, want it to name the unset variable", errOut.String())
 	}
 }
 
-func TestStageConfigEnumeratesEveryUnresolvableSource(t *testing.T) {
+func TestResolveStagedConfigEnumeratesEveryUnresolvableSource(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme",
 		"placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n"+
 			"  - from: env:NPM_TOKEN_UNSET\n    to: /home/smith/.netrc\n")
-	box := &fakeStagingBox{}
-	var out bytes.Buffer
+	var errOut bytes.Buffer
 
-	err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out)
-	if err == nil {
-		t.Fatal("stageConfig() err = nil, want both unresolvable sources refused")
+	if _, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut); err == nil {
+		t.Fatal("resolveStagedConfig() err = nil, want both unresolvable sources refused")
 	}
 	for _, want := range []string{dir + "/missing", "NPM_TOKEN_UNSET"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("stageConfig() err = %v, want one refusal naming %q", err, want)
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("resolveStagedConfig() reported %q, want one refusal naming %q", errOut.String(), want)
 		}
-	}
-	if len(box.commands) != 0 {
-		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
 	}
 }
 
@@ -216,7 +215,7 @@ func TestStageConfigNamesTheWriteThatFailedPartwayThrough(t *testing.T) {
 	box := &fakeStagingBox{writeErrOn: placement}
 	var out bytes.Buffer
 
-	err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out)
+	err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out)
 	if err == nil {
 		t.Fatal("stageConfig() err = nil, want the failed write reported")
 	}
@@ -256,5 +255,26 @@ func TestCheckBlueprintPointerAllowsABoxThatRecordsNoBlueprint(t *testing.T) {
 	}
 	if errOut.String() != "" {
 		t.Errorf("checkBlueprintPointer() reported %q, want nothing said", errOut.String())
+	}
+}
+
+func TestResolveStagedConfigRefusesAnUnresolvableSourceAsAGateRejection(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n")
+	var errOut bytes.Buffer
+
+	staged, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut)
+	if err == nil {
+		t.Fatal("resolveStagedConfig() err = nil, want the unresolvable source refused")
+	}
+	if staged != nil {
+		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
+	}
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.code != 2 {
+		t.Errorf("resolveStagedConfig() err = %v, want a gate rejection (exit 2)", err)
+	}
+	if !strings.Contains(errOut.String(), dir+"/missing") {
+		t.Errorf("resolveStagedConfig() reported %q, want it to name the unresolvable reference", errOut.String())
 	}
 }
