@@ -90,6 +90,47 @@ So: a blueprint that names `provider` **at all** replaces the preference block
 entirely, and a blueprint silent on `provider` inherits it entirely. Nothing is
 taken from both.
 
+### The marker
+
+`marker` is how smith stamps a box it creates so an adapter can recognise it
+again. It has three fields, because all three differ across providers:
+
+```yaml
+marker:
+  arg:    "smith={{value}}"   # what create passes
+  read:   "labels.smith"      # where it reads back from
+  expect: "{{value}}"         # the form it reads back in
+```
+
+`{{value}}` is the box name you typed. In `arg` it renders and the result
+substitutes for `{{marker_arg}}` in the `create` template, so `smith machine
+create dev` passes `--label smith=dev`.
+
+Whether the marker is a label, a tag, or the box's own name is your adapter's
+business — smith requires no native tag support, because a provider token can
+be perfectly valid and still refuse to create tags:
+
+| provider | storage | `arg` | `read` | `expect` |
+|---|---|---|---|---|
+| hcloud | `labels{}` key/value map | `smith={{value}}` | `labels.smith` | `{{value}}` |
+| doctl | `tags[]` opaque strings | `smith:{{value}}` | `tags[*]` | `smith:{{value}}` |
+| doctl, no tag permission | the box's own name | *(empty)* | `name` | `{{value}}` |
+
+The third row needs no special handling: an empty `arg` renders empty, and an
+argument that renders empty drops itself and the flag before it, so `--label`
+never reaches the provider with nothing behind it.
+
+**`read` and `expect` are written now and read later.** smith writes a marker
+at create and, in this version, never reads one back — teardown and
+provider-side discovery are the readers, and neither has shipped. Both fields
+are accepted and validated so an adapter you write today stays correct when
+they do.
+
+**Consequence: two smith boxes cannot share a name at one provider.** The
+marker is the box name, and its only job is answering "did smith create this
+box". smith does not enforce this — nothing checks the provider for a name
+collision before creating a box.
+
 ## Checking before you build
 
 ```sh

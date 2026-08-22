@@ -231,8 +231,11 @@ _Avoid_: provider plugin, driver (reserved for a session's actor), integration.
 
 **Provider marker**:
 How an adapter recognises a box it created — a tag, a label, or the box's own name, the adapter's
-choice, since smith must not require native provider tags. Two fields, because what `create` passes
-and what the extractor reads back differ per provider. Unrelated to the on-box **marker**.
+choice, since smith must not require native provider tags. Three fields — `arg`, `read`, `expect` —
+because what `create` passes, where it reads back from and the form it reads back in all differ per
+provider. Its value is the operator-chosen box name, so two smith boxes cannot share a name at one
+provider; smith does not enforce that. v1 writes a marker and never reads one back, so `read` and
+`expect` are validated and unused. Unrelated to the on-box **marker**.
 _Avoid_: tag (the old name; it presumed native tag support).
 
 **Control surface / relay**:

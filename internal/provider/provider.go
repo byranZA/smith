@@ -41,6 +41,10 @@ const (
 	// idPlaceholder is the box id, supplied to the destroy template, which v1
 	// accepts as data and never executes.
 	idPlaceholder = "{{id}}"
+	// valuePlaceholder is the operator-chosen box name, and it belongs to the
+	// marker's own fields rather than to a template: the marker's only job is
+	// answering "did smith create this box", and the box already has a name.
+	valuePlaceholder = "{{value}}"
 )
 
 // placeholders is the set smith supplies, in the order an error lists them.
@@ -83,14 +87,33 @@ type Adapter struct {
 	Extract Extract
 }
 
-// Marker is how a smith-created box is stamped at the provider and read back
-// again: what create passes, and where the extractor reads it from. The two
-// differ per provider, which is why they are separate fields.
+// Marker is how a smith-created box is stamped at the provider and recognised
+// again: what create passes, where the extractor reads it back from, and the
+// form it reads back in. Three fields, because all three genuinely differ
+// across providers — an hcloud label is a key/value pair written as
+// "smith={{value}}" and read back from "labels.smith" as the bare name, while
+// a doctl tag is an opaque string that reads back exactly as it was written.
+//
+// Whether the marker is a label, a tag, or the box's own name is the adapter's
+// business: an adapter whose token lacks tag permission stamps nothing and
+// reads the marker from the box's name, and smith runs it through the same code
+// with no branch.
+//
+// Read and Expect have no consumer in v1: the marker was to be teardown's
+// reconciliation key, and destroy is out of scope, and provider-side discovery
+// is out of scope too. They are accepted and validated so adapters written
+// today stay correct when discovery ships — smith writes a marker at create and
+// never reads one back.
 type Marker struct {
-	// Arg is the value create stamps the box with.
+	// Arg is the value create stamps the box with, rendered with {{value}}
+	// bound to the box name. Empty stamps nothing.
 	Arg string
 	// Read is the path the marker is read back from in the provider's JSON.
+	// Nothing reads it in v1.
 	Read string
+	// Expect is the form the marker reads back in, rendered with {{value}}
+	// bound to the box name. Nothing reads it in v1.
+	Expect string
 }
 
 // Record is the path locating the box record inside a template's response.
@@ -138,7 +161,7 @@ func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (B
 	}
 	argv := render(adapter.Create, map[string]string{
 		namePlaceholder:      name,
-		markerArgPlaceholder: adapter.Marker.Arg,
+		markerArgPlaceholder: strings.ReplaceAll(adapter.Marker.Arg, valuePlaceholder, name),
 		sshKeyPlaceholder:    adapter.SSHKey,
 	})
 	doc, err := run(ctx, runner, argv)
@@ -167,15 +190,38 @@ func Validate(adapter Adapter) error {
 	}
 	for _, template := range templates {
 		for _, arg := range template.argv {
-			for _, found := range placeholderPattern.FindAllString(arg, -1) {
-				if !slices.Contains(placeholders, found) {
-					return fmt.Errorf("provider adapter's %s template uses unknown placeholder %s: smith supplies %s",
-						template.name, found, strings.Join(placeholders, ", "))
-				}
+			if found, ok := unknown(arg, placeholders); ok {
+				return fmt.Errorf("provider adapter's %s template uses unknown placeholder %s: smith supplies %s",
+					template.name, found, strings.Join(placeholders, ", "))
 			}
 		}
 	}
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"arg", adapter.Marker.Arg},
+		{"expect", adapter.Marker.Expect},
+	}
+	for _, field := range fields {
+		if found, ok := unknown(field.value, []string{valuePlaceholder}); ok {
+			return fmt.Errorf("provider adapter's marker %s uses unknown placeholder %s: smith supplies %s",
+				field.name, found, valuePlaceholder)
+		}
+	}
 	return nil
+}
+
+// unknown reports the first {{placeholder}} in text that is not one smith
+// supplies here. A template and a marker field draw on different vocabularies,
+// so the accepted set is a parameter.
+func unknown(text string, accepted []string) (string, bool) {
+	for _, found := range placeholderPattern.FindAllString(text, -1) {
+		if !slices.Contains(accepted, found) {
+			return found, true
+		}
+	}
+	return "", false
 }
 
 // render substitutes smith's placeholders into a template, leaving every other

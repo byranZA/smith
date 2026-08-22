@@ -38,8 +38,9 @@ provider:
     - HCLOUD_TOKEN
   ssh_key: acme-box
   marker:
-    arg:  smith={{value}}
-    read: labels.smith
+    arg:    smith={{value}}
+    read:   labels.smith
+    expect: "{{value}}"
   extract:
     id: id
     ip: public_net.ipv4.ip

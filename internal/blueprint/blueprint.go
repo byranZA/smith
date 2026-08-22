@@ -88,13 +88,18 @@ type Provider struct {
 	Extract ProviderExtract `yaml:"extract"`
 }
 
-// ProviderMarker is the two halves of a provider marker: what create passes
-// and what the extractor reads back, which differ across providers.
+// ProviderMarker is the three parts of a provider marker: what create passes,
+// where the extractor reads it back from, and the form it reads back in, all
+// of which differ across providers. Arg and Expect render with {{value}} bound
+// to the box name.
 type ProviderMarker struct {
-	// Arg is the value create stamps the box with.
+	// Arg is the value create stamps the box with. Empty stamps nothing,
+	// which is how an adapter marks a box by its own name.
 	Arg string `yaml:"arg"`
 	// Read is the path the marker is read back from in the provider's JSON.
 	Read string `yaml:"read"`
+	// Expect is the form the marker reads back in.
+	Expect string `yaml:"expect"`
 }
 
 // ProviderExtract is the paths a box's identity and address are read from in

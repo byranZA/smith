@@ -13,7 +13,7 @@ func Adapt(p blueprint.Provider) Adapter {
 		Destroy:  p.Destroy,
 		Requires: p.Requires,
 		SSHKey:   p.SSHKey,
-		Marker:   Marker{Arg: p.Marker.Arg, Read: p.Marker.Read},
+		Marker:   Marker{Arg: p.Marker.Arg, Read: p.Marker.Read, Expect: p.Marker.Expect},
 		Extract:  Extract{ID: p.Extract.ID, IP: p.Extract.IP},
 	}
 }

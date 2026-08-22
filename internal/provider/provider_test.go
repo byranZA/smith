@@ -137,7 +137,7 @@ func TestAdaptCarriesTheWholeProviderBlock(t *testing.T) {
 		Destroy:  []string{"hcloud", "server", "delete", "{{id}}"},
 		Requires: []string{"HCLOUD_TOKEN"},
 		SSHKey:   "my-laptop",
-		Marker:   blueprint.ProviderMarker{Arg: "smith={{value}}", Read: "labels.smith"},
+		Marker:   blueprint.ProviderMarker{Arg: "smith={{value}}", Read: "labels.smith", Expect: "{{value}}"},
 		Extract:  blueprint.ProviderExtract{ID: "id", IP: "public_net.ipv4.ip"},
 	}
 
@@ -149,7 +149,7 @@ func TestAdaptCarriesTheWholeProviderBlock(t *testing.T) {
 		Destroy:  declared.Destroy,
 		Requires: declared.Requires,
 		SSHKey:   "my-laptop",
-		Marker:   provider.Marker{Arg: "smith={{value}}", Read: "labels.smith"},
+		Marker:   provider.Marker{Arg: "smith={{value}}", Read: "labels.smith", Expect: "{{value}}"},
 		Extract:  provider.Extract{ID: "id", IP: "public_net.ipv4.ip"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -355,5 +355,86 @@ func TestValidateAcceptsTheFourPlaceholdersSmithSupplies(t *testing.T) {
 
 	if err := provider.Validate(adapter); err != nil {
 		t.Errorf("Validate() err = %v, want the placeholders smith supplies accepted", err)
+	}
+}
+
+// The three marker shapes the adapter contract has to carry with no branch in
+// smith's code: hcloud's key/value label, doctl's opaque tag, and — for a token
+// without tag permission — the box's own name, which passes no create argument
+// at all.
+func TestCreateStampsTheBoxWithTheMarkerArgumentRenderedFromTheBoxName(t *testing.T) {
+	tests := []struct {
+		name   string
+		marker provider.Marker
+		want   []string
+	}{
+		{
+			name:   "an hcloud label",
+			marker: provider.Marker{Arg: "smith={{value}}", Read: "labels.smith", Expect: "{{value}}"},
+			want:   []string{"server", "create", "--name", "dev", "--label", "smith=dev", "-o", "json"},
+		},
+		{
+			name:   "a doctl tag",
+			marker: provider.Marker{Arg: "smith:{{value}}", Read: "tags[*]", Expect: "smith:{{value}}"},
+			want:   []string{"server", "create", "--name", "dev", "--label", "smith:dev", "-o", "json"},
+		},
+		{
+			name:   "the box's own name, stamped by no argument at all",
+			marker: provider.Marker{Read: "name", Expect: "{{value}}"},
+			want:   []string{"server", "create", "--name", "dev", "-o", "json"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := optional()
+			adapter.SSHKey = "my-laptop"
+			adapter.Marker = tt.marker
+			runner := &fakeRunner{stdout: hetznerResponse}
+
+			if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+				t.Fatalf("Create() err = %v", err)
+			}
+
+			want := slices.Insert(slices.Clone(tt.want), 4, "--ssh-key", "my-laptop")
+			if !slices.Equal(runner.args, want) {
+				t.Errorf("args = %q, want %q", runner.args, want)
+			}
+		})
+	}
+}
+
+func TestValidateRefusesAMarkerFieldWithAnUnknownPlaceholder(t *testing.T) {
+	tests := []struct {
+		name   string
+		marker provider.Marker
+	}{
+		{"in arg", provider.Marker{Arg: "smith={{box}}"}},
+		{"in expect", provider.Marker{Arg: "smith={{value}}", Expect: "{{box}}"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := hetzner()
+			adapter.Marker = tt.marker
+
+			err := provider.Validate(adapter)
+
+			if err == nil {
+				t.Fatal("Validate() err = nil, want an unknown placeholder reported")
+			}
+			for _, want := range []string{"{{box}}", "{{value}}"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Validate() err = %v, want it to name %s", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsTheBoxNamePlaceholderInTheMarker(t *testing.T) {
+	adapter := hetzner()
+	adapter.Marker = provider.Marker{Arg: "smith:{{value}}", Read: "tags[*]", Expect: "smith:{{value}}"}
+
+	if err := provider.Validate(adapter); err != nil {
+		t.Errorf("Validate() err = %v, want {{value}} accepted in the marker", err)
 	}
 }

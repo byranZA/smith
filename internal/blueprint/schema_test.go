@@ -53,7 +53,7 @@ func TestParseDecodesEverySchemaField(t *testing.T) {
 	if p.SSHKey != "acme-box" {
 		t.Errorf("Provider.SSHKey = %q, want %q", p.SSHKey, "acme-box")
 	}
-	if p.Marker.Arg != "smith={{value}}" || p.Marker.Read != "labels.smith" {
+	if p.Marker.Arg != "smith={{value}}" || p.Marker.Read != "labels.smith" || p.Marker.Expect != "{{value}}" {
 		t.Errorf("Provider.Marker = %+v, want the declared marker", p.Marker)
 	}
 	if p.Extract.ID != "id" || p.Extract.IP != "public_net.ipv4.ip" {
