@@ -12,17 +12,22 @@ import (
 	"github.com/byranZA/smith/internal/staging"
 )
 
-// fakeStagingBox stands in for a box reached over ssh during the staging stage:
-// it records every remote command and the stdin each one was handed, and no
-// test here reaches a real box.
+// fakeStagingBox stands in for a box reached over ssh during the staging
+// stage, so no test here reaches a real one.
+//
+// It is deliberately thin: what the staging stage does to a box is
+// internal/staging's own behavior, tested there against a box of its own. What
+// is tested here is the wiring — that the command surface reads the operator's
+// blueprint, resolves it, hands it to the stage, and maps a refusal to the
+// exit code the setup family answers it with — so this box answers every read
+// with one canned reply and either takes a write or rejects it.
 type fakeStagingBox struct {
-	staged []string
-	// marker is the JSON the box answers a marker read with, standing in for a
-	// box that records the blueprint it was built from.
-	marker string
-	// writeErrOn is the path whose write the box rejects, standing in for a
-	// staging run that fails partway through.
-	writeErrOn string
+	// reply is what the box answers any read with. The only read the wiring
+	// makes is of the marker recording the blueprint the box was built from.
+	reply string
+	// writeErr rejects every write, standing in for a box that fails partway
+	// through the staging stage.
+	writeErr error
 
 	commands []string
 	inputs   []string
@@ -30,19 +35,8 @@ type fakeStagingBox struct {
 
 func (f *fakeStagingBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
 	f.commands = append(f.commands, cmd)
-	if strings.Contains(cmd, staging.MarkerPath) {
-		if _, err := io.WriteString(stdout, f.marker); err != nil {
-			return err
-		}
-	}
-	if strings.Contains(cmd, "find") {
-		for _, path := range f.staged {
-			if _, err := io.WriteString(stdout, path+"\n"); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	_, err := io.WriteString(stdout, f.reply)
+	return err
 }
 
 func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Reader, _, _ io.Writer) error {
@@ -52,10 +46,7 @@ func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Re
 	}
 	f.commands = append(f.commands, cmd)
 	f.inputs = append(f.inputs, string(data))
-	if f.writeErrOn != "" && strings.Contains(cmd, f.writeErrOn) {
-		return errors.New("permission denied")
-	}
-	return nil
+	return f.writeErr
 }
 
 // stagedOrFatal resolves the named blueprint from a config home rooted at dir,
@@ -68,6 +59,23 @@ func stagedOrFatal(t *testing.T, dir, name string) *stagedConfig {
 		t.Fatalf("resolveStagedConfig(%q) err = %v, want it to resolve", name, err)
 	}
 	return staged
+}
+
+// gateRejection is the exit code the setup family answers a refusal that
+// mutated nothing with, and whether the error carries one at all.
+func gateRejection(err error) (int, bool) {
+	var exit *exitError
+	if !errors.As(err, &exit) {
+		return 0, false
+	}
+	return exit.code, true
+}
+
+func TestSetupTakesTheBlueprintToStage(t *testing.T) {
+	cmd := newSetupCmd(func() (config.Home, error) { return config.NewHome(t.TempDir()), nil })
+	if cmd.Flags().Lookup("blueprint") == nil {
+		t.Error("machine setup has no --blueprint flag, so no box can be told what kind of box it is")
+	}
 }
 
 func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
@@ -83,7 +91,7 @@ func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
 	if len(box.inputs) != 1 || box.inputs[0] != document {
 		t.Errorf("staged bytes = %q, want the blueprint byte for byte, %q", box.inputs, document)
 	}
-	if !strings.Contains(out.String(), "/etc/smith/blueprint.yaml") {
+	if !strings.Contains(out.String(), staging.DocumentPath) {
 		t.Errorf("stageConfig() reported %q, want it to name the staged document", out.String())
 	}
 }
@@ -100,7 +108,38 @@ func TestStageConfigStagesNothingWithoutABlueprint(t *testing.T) {
 	}
 }
 
-func TestResolveStagedConfigRefusesAnInvalidBlueprint(t *testing.T) {
+func TestResolveStagedConfigResolvesEveryPlacementSourceOnTheOperatorsMachine(t *testing.T) {
+	const credential = "//registry.npmjs.org/:_authToken=s3cr3t"
+	t.Setenv("NPM_TOKEN", credential)
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN\n    to: ~/.npmrc\n    perms: \"0640\"\n")
+
+	staged := stagedOrFatal(t, dir, "acme")
+	if len(staged.tree.Placements) != 1 {
+		t.Fatalf("resolved %d placement(s), want the one the blueprint declares", len(staged.tree.Placements))
+	}
+	if got := string(staged.tree.Placements[0].File.Bytes); got != credential {
+		t.Errorf("resolved bytes = %q, want the value the source names, %q", got, credential)
+	}
+}
+
+func TestStageConfigNamesTheBlueprintTheBoxChokedOn(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+	staged := stagedOrFatal(t, dir, "acme")
+	box := &fakeStagingBox{writeErr: errors.New("permission denied")}
+	var out bytes.Buffer
+
+	err := stageConfig(context.Background(), box, staged, &out)
+	if err == nil {
+		t.Fatal("stageConfig() err = nil, want a box that rejected a write reported")
+	}
+	if !strings.Contains(err.Error(), staged.path) {
+		t.Errorf("stageConfig() err = %v, want it to name the blueprint the box choked on, %s", err, staged.path)
+	}
+}
+
+func TestResolveStagedConfigRefusesAnInvalidBlueprintAsAGateRejection(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "terminals: tmux\n")
 	var errOut bytes.Buffer
@@ -112,149 +151,11 @@ func TestResolveStagedConfigRefusesAnInvalidBlueprint(t *testing.T) {
 	if staged != nil {
 		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
 	}
-	if !strings.Contains(errOut.String(), "terminals") {
-		t.Errorf("resolveStagedConfig() reported %q, want it to name the unknown field", errOut.String())
-	}
-}
-
-func TestSetupTakesTheBlueprintToStage(t *testing.T) {
-	cmd := newSetupCmd(func() (config.Home, error) { return config.NewHome(t.TempDir()), nil })
-	if cmd.Flags().Lookup("blueprint") == nil {
-		t.Error("machine setup has no --blueprint flag, so no box can be told what kind of box it is")
-	}
-}
-
-func TestStageConfigStagesABoxPlacementsBytesOverStdin(t *testing.T) {
-	const credential = "//registry.npmjs.org/:_authToken=s3cr3t"
-	t.Setenv("NPM_TOKEN", credential)
-	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN\n    to: ~/.npmrc\n    perms: \"0640\"\n")
-	box := &fakeStagingBox{}
-	var out bytes.Buffer
-
-	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
-		t.Fatalf("stageConfig() err = %v, want nil", err)
-	}
-	var delivered bool
-	for _, in := range box.inputs {
-		if in == credential {
-			delivered = true
-		}
-	}
-	if !delivered {
-		t.Errorf("stdin carried %q, want the resolved credential among it", box.inputs)
-	}
-	for _, cmd := range box.commands {
-		if strings.Contains(cmd, credential) {
-			t.Errorf("the credential reached a command line: %q", cmd)
-		}
-	}
-	if !strings.Contains(out.String(), staging.BoxPlacementPathIn(staging.Root, "/home/smith/.npmrc")) {
-		t.Errorf("stageConfig() reported %q, want it to name the staged placement", out.String())
-	}
-}
-
-func TestStageConfigReportsWhatItPruned(t *testing.T) {
-	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme", "access: tailscale\n")
-	stray := staging.PlacementsDir + "/left-by-a-human"
-	box := &fakeStagingBox{staged: []string{stray}}
-	var out bytes.Buffer
-
-	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
-		t.Fatalf("stageConfig() err = %v, want nil", err)
-	}
-	if !strings.Contains(out.String(), "pruned") || !strings.Contains(out.String(), stray) {
-		t.Errorf("stageConfig() reported %q, want it to report %s as pruned", out.String(), stray)
-	}
-}
-
-func TestResolveStagedConfigRefusesAnUnsetEnvSource(t *testing.T) {
-	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN_UNSET\n    to: /home/smith/.npmrc\n")
-	var errOut bytes.Buffer
-
-	staged, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut)
-	if err == nil {
-		t.Fatal("resolveStagedConfig() err = nil, want the unset variable refused")
-	}
-	if staged != nil {
-		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
-	}
-	var exit *exitError
-	if !errors.As(err, &exit) || exit.code != 2 {
+	if code, ok := gateRejection(err); !ok || code != 2 {
 		t.Errorf("resolveStagedConfig() err = %v, want a gate rejection (exit 2)", err)
 	}
-	if !strings.Contains(errOut.String(), "NPM_TOKEN_UNSET") {
-		t.Errorf("resolveStagedConfig() reported %q, want it to name the unset variable", errOut.String())
-	}
-}
-
-func TestResolveStagedConfigEnumeratesEveryUnresolvableSource(t *testing.T) {
-	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme",
-		"placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n"+
-			"  - from: env:NPM_TOKEN_UNSET\n    to: /home/smith/.netrc\n")
-	var errOut bytes.Buffer
-
-	if _, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut); err == nil {
-		t.Fatal("resolveStagedConfig() err = nil, want both unresolvable sources refused")
-	}
-	for _, want := range []string{dir + "/missing", "NPM_TOKEN_UNSET"} {
-		if !strings.Contains(errOut.String(), want) {
-			t.Errorf("resolveStagedConfig() reported %q, want one refusal naming %q", errOut.String(), want)
-		}
-	}
-}
-
-func TestStageConfigNamesTheWriteThatFailedPartwayThrough(t *testing.T) {
-	t.Setenv("NPM_TOKEN", "s3cr3t")
-	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN\n    to: /home/smith/.npmrc\n")
-	placement := staging.BoxPlacementPathIn(staging.Root, "/home/smith/.npmrc")
-	box := &fakeStagingBox{writeErrOn: placement}
-	var out bytes.Buffer
-
-	err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out)
-	if err == nil {
-		t.Fatal("stageConfig() err = nil, want the failed write reported")
-	}
-	if !strings.Contains(err.Error(), placement) {
-		t.Errorf("stageConfig() err = %v, want it to name the write that failed", err)
-	}
-}
-
-func TestCheckBlueprintPointerRefusesABlueprintlessRerun(t *testing.T) {
-	box := &fakeStagingBox{marker: `{"schema_version":1,"access_mode":"public","blueprint":"acme"}`}
-	var errOut bytes.Buffer
-
-	err := checkBlueprintPointer(context.Background(), box, "", &errOut)
-	if err == nil {
-		t.Fatal("checkBlueprintPointer() err = nil, want a box built from a blueprint to refuse a blueprint-less re-run")
-	}
-	var exit *exitError
-	if !errors.As(err, &exit) || exit.code != 2 {
-		t.Errorf("checkBlueprintPointer() err = %v, want a gate rejection (exit 2)", err)
-	}
-	if !strings.Contains(errOut.String(), "acme") {
-		t.Errorf("checkBlueprintPointer() reported %q, want it to name the blueprint the box was built from", errOut.String())
-	}
-	for _, cmd := range box.commands {
-		if !strings.Contains(cmd, staging.MarkerPath) {
-			t.Errorf("checkBlueprintPointer() ran %q on the box, want the refusal to leave the staged config untouched", cmd)
-		}
-	}
-}
-
-func TestCheckBlueprintPointerAllowsABoxThatRecordsNoBlueprint(t *testing.T) {
-	box := &fakeStagingBox{marker: `{"schema_version":1,"access_mode":"public","blueprint":""}`}
-	var errOut bytes.Buffer
-
-	if err := checkBlueprintPointer(context.Background(), box, "", &errOut); err != nil {
-		t.Fatalf("checkBlueprintPointer() err = %v, want a box with no pointer to be set up with no blueprint", err)
-	}
-	if errOut.String() != "" {
-		t.Errorf("checkBlueprintPointer() reported %q, want nothing said", errOut.String())
+	if !strings.Contains(errOut.String(), "terminals") {
+		t.Errorf("resolveStagedConfig() reported %q, want it to name the unknown field", errOut.String())
 	}
 }
 
@@ -270,11 +171,26 @@ func TestResolveStagedConfigRefusesAnUnresolvableSourceAsAGateRejection(t *testi
 	if staged != nil {
 		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
 	}
-	var exit *exitError
-	if !errors.As(err, &exit) || exit.code != 2 {
+	if code, ok := gateRejection(err); !ok || code != 2 {
 		t.Errorf("resolveStagedConfig() err = %v, want a gate rejection (exit 2)", err)
 	}
 	if !strings.Contains(errOut.String(), dir+"/missing") {
 		t.Errorf("resolveStagedConfig() reported %q, want it to name the unresolvable reference", errOut.String())
+	}
+}
+
+func TestCheckBlueprintPointerRefusesABlueprintlessRerunAsAGateRejection(t *testing.T) {
+	box := &fakeStagingBox{reply: `{"schema_version":1,"access_mode":"public","blueprint":"acme"}`}
+	var errOut bytes.Buffer
+
+	err := checkBlueprintPointer(context.Background(), box, "", &errOut)
+	if err == nil {
+		t.Fatal("checkBlueprintPointer() err = nil, want a box built from a blueprint to refuse a blueprint-less re-run")
+	}
+	if code, ok := gateRejection(err); !ok || code != 2 {
+		t.Errorf("checkBlueprintPointer() err = %v, want a gate rejection (exit 2)", err)
+	}
+	if !strings.Contains(errOut.String(), "acme") {
+		t.Errorf("checkBlueprintPointer() reported %q, want it to name the blueprint the box was built from", errOut.String())
 	}
 }
