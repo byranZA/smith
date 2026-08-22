@@ -706,3 +706,51 @@ func TestCreateReportsABoxWithNoAddressAndNoListTemplateToPollWith(t *testing.T)
 		t.Errorf("ran %d commands, want only the create template", runner.runs())
 	}
 }
+
+func TestCreateRetriesTheAddressPollWhenTheAccountListIsEmpty(t *testing.T) {
+	// A provider that has not published the box yet answers the list with an
+	// empty array. The box exists and is billed, so that is a box to wait for
+	// rather than an adapter to complain about.
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress, `[]`, listedWithAnAddress}}
+
+	box, err := provider.Create(context.Background(), runner, &fakeClock{}, deferring(), "dev")
+	if err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	if box.IP != "203.0.113.10" {
+		t.Errorf("Create() ip = %q, want the address the second list reported", box.IP)
+	}
+}
+
+func TestCreateKeepsPollingWhenAnotherBoxHasNoAddressPath(t *testing.T) {
+	// Another operator's private-only box has an empty address list, so the
+	// address path matches nothing on it. That row is not the box smith made.
+	const listedBesideAPrivateBox = `[{"id": 111222333, "networks": {"v4": []}},
+	  {"id": 593069736, "networks": {"v4": [{"ip_address": "203.0.113.10", "type": "public"}]}}]`
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress, listedBesideAPrivateBox}}
+
+	box, err := provider.Create(context.Background(), runner, &fakeClock{}, deferring(), "dev")
+	if err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	want := provider.Box{ID: "593069736", IP: "203.0.113.10"}
+	if box != want {
+		t.Errorf("Create() = %+v, want %+v", box, want)
+	}
+}
+
+func TestCreateReportsAnAddressPathThatMissesOnTheMatchingListEntry(t *testing.T) {
+	const listedWithoutAnAddressPath = `[{"id": 593069736, "networks": {"v4": []}}]`
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress, listedWithoutAnAddressPath}}
+
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, deferring(), "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want the adapter's ip path reported against the matching entry")
+	}
+	if !strings.Contains(err.Error(), "networks.v4[type=public].ip_address") {
+		t.Errorf("Create() err = %v, want it to name the ip path that matched nothing", err)
+	}
+}

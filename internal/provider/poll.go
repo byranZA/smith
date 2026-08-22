@@ -86,6 +86,14 @@ func awaitAddress(ctx context.Context, runner Runner, clock Clock, adapter Adapt
 // zero box when the account holds no such entry. Matching is by the id the
 // create reported rather than by position, because a list is the whole account
 // and the box smith just made is not reliably first in it.
+//
+// Everything that is not the matching entry is a reason to poll again rather
+// than a reason to fail. An account the provider has not published the box into
+// yet answers with an empty list, and another operator's private-only box has
+// no address path at all; a create that gave up on either would lose a box that
+// exists and is billed. The address is read from the matching entry alone, so a
+// path that misses there — and only there — is still the adapter error naming
+// the path.
 func listed(ctx context.Context, runner Runner, adapter Adapter, id string) (Box, error) {
 	doc, err := run(ctx, runner, render(adapter.List, nil))
 	if err != nil {
@@ -95,17 +103,26 @@ func listed(ctx context.Context, runner Runner, adapter Adapter, id string) (Box
 	if adapter.Record.List != "" {
 		records, err = jsonpath.LookupAll(doc, adapter.Record.List)
 		if err != nil {
-			return Box{}, fmt.Errorf("provider adapter's record path: %w", err)
+			// The account holds no records to walk yet, which is a box still
+			// to appear rather than an adapter to complain about.
+			return Box{}, nil
 		}
 	}
 	for _, record := range records {
-		box, err := extractRecord(record, adapter.Extract)
+		found, err := jsonpath.Lookup(record, adapter.Extract.ID)
 		if err != nil {
-			return Box{}, err
+			// An entry without an id cannot be the box smith is waiting for,
+			// and another entry still can be.
+			continue
 		}
-		if box.ID == id {
-			return box, nil
+		if text(found) != id {
+			continue
 		}
+		ip, err := jsonpath.Lookup(record, adapter.Extract.IP)
+		if err != nil {
+			return Box{}, fmt.Errorf("provider adapter's ip path: %w", err)
+		}
+		return Box{ID: id, IP: text(ip)}, nil
 	}
 	return Box{}, nil
 }
