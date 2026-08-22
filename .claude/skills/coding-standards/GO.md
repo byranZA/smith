@@ -142,6 +142,13 @@ The project-wide "extract → test → wire" maps directly: pure logic in a doma
 
 Run from the module root. The `Makefile` wraps the common tasks; `make check` is the full quality gate.
 
+On a fresh machine, install the dev tools first — `make check` runs a weaker gate without them (see below):
+
+```bash
+make tools-install             # golangci-lint, govulncheck, goimports at the pinned versions
+export PATH="$PATH:$(go env GOPATH)/bin"   # where they land; add to your shell profile
+```
+
 ```bash
 make check                     # fmt-check + vet + lint + test — the gate (CI runs this)
 make build                     # compile the smith binary into ./bin
@@ -162,4 +169,6 @@ gofmt -l .                     # list files needing formatting (must be empty)
 go vet ./...                   # report suspicious constructs
 ```
 
-Linting uses `golangci-lint` v2, configured in `.golangci.yml`: `revive` enforces doc comments and naming, `wrapcheck`/`errorlint` enforce the error-handling rules above. Install it yourself (`make tools` prints how); if it isn't installed, run `gofmt -l .`, `go vet ./...`, and `go test ./...` at minimum.
+Linting uses `golangci-lint` v2, configured in `.golangci.yml`: `revive` enforces doc comments and naming, `wrapcheck`/`errorlint` enforce the error-handling rules above. `make tools-install` installs it at the version CI uses, and CI reads that same pin back out of the Makefile, so the linter that gates a PR is the one you ran.
+
+**`make lint` and `make vuln` skip with a note when their tool is absent, and skipping does not fail the target.** A machine without them runs `make check`, prints two skips, and reports green having linted nothing — CI then fails on lint errors the local gate never looked for. If you cannot install the tools, run `gofmt -l .`, `go vet ./...`, and `go test ./...` at minimum, and expect CI to be stricter than you were.

@@ -22,7 +22,7 @@ Your task is issue **#{{ISSUE_NUMBER}} — {{ISSUE_TITLE}}**, a child of spec is
 3. **Verify.** Run only the checks relevant to what you changed. These are the same checks CI runs; treat their output as authoritative — do NOT dismiss a failure as a "sandbox" or "pre-existing" artifact, and do NOT close the issue when a check fails.
 
    Always, for any code change:
-   - `make check` — the full gate (`gofmt` check + `go vet` + `golangci-lint` + `go test`). If `golangci-lint` isn't installed, run at least `gofmt -l .` (must report nothing on changed files), `go vet ./...`, and `go test ./...`.
+   - `make check` — the full gate (`gofmt` check + `go vet` + `golangci-lint` + `go test`). `make lint` **skips with a note rather than failing** when `golangci-lint` is absent, so a green `make check` on a machine without it has linted nothing. Read the output: if it says the lint skipped, run `make tools-install` and `make check` again, or at minimum `gofmt -l .` (must report nothing on changed files), `go vet ./...`, and `go test ./...`.
    - `go build ./...` must compile cleanly.
 
    Additionally:
