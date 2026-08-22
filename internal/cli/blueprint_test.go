@@ -312,3 +312,52 @@ func TestBlueprintCheckResolvesPreferencesWithNoBlueprintNamed(t *testing.T) {
 		t.Errorf("stdout = %q, want access resolved to tailscale from preferences", stdout)
 	}
 }
+
+// hetznerPreferences is a whole adapter written where a one-account operator
+// writes one: beside their preferences, complete.
+const hetznerPreferences = `provider:
+  create: [hcloud, server, create, --name, "{{name}}"]
+  list: [hcloud, server, list, -o, json]
+  destroy: [hcloud, server, delete, "{{id}}"]
+  requires: [HCLOUD_TOKEN]
+  ssh_key: byran@laptop
+  marker:
+    arg: smith
+    read: .labels.smith
+  extract:
+    id: .id
+    ip: .public_net.ipv4.ip
+`
+
+func TestBlueprintCheckReportsABlueprintProviderReplacingThePreference(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, hetznerPreferences)
+	writeBlueprint(t, dir, "acme", "provider:\n  create: [doctl, compute, droplet, create]\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "doctl (blueprint, replacing the preference)") {
+		t.Errorf("stdout = %q, want the adapter reported as the blueprint's, replacing the preference", stdout)
+	}
+	if strings.Contains(stdout, "hcloud") {
+		t.Errorf("stdout = %q, want no trace of the replaced Hetzner adapter", stdout)
+	}
+}
+
+func TestBlueprintCheckReportsAnInheritedPreferenceProvider(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, hetznerPreferences)
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "hcloud (preferences)") {
+		t.Errorf("stdout = %q, want the preference adapter inherited entire", stdout)
+	}
+}
