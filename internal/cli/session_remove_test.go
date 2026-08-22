@@ -2,10 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,8 +39,10 @@ func TestSessionRemoveReportsTheSessionItReclaimed(t *testing.T) {
 }
 
 // TestSessionRemoveRefusesADirtyWorktreeWithoutPrompting locks in the refusal
-// exit path: the enumeration and the force command go to stderr, the exit code
-// is non-zero, and nothing was ever asked of the terminal.
+// exit path: the refusal goes to stderr rather than stdout, it names the
+// session and the flag that overrides it, the exit code is non-zero, and
+// nothing was ever asked of the terminal. What the refusal enumerates is
+// internal/session's to prove.
 func TestSessionRemoveRefusesADirtyWorktreeWithoutPrompting(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
@@ -63,10 +62,13 @@ func TestSessionRemoveRefusesADirtyWorktreeWithoutPrompting(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero for a dirty worktree")
 	}
-	for _, want := range []string{"1 untracked", "smith session rm smith-spec-42 --force"} {
+	for _, want := range []string{"smith-spec-42", "--force"} {
 		if !strings.Contains(errOut.String(), want) {
 			t.Errorf("stderr = %q, want it to carry %q", errOut.String(), want)
 		}
+	}
+	if out.String() != "" {
+		t.Errorf("stdout = %q, want a refusal to say nothing on stdout", out.String())
 	}
 }
 
@@ -107,9 +109,8 @@ func TestSessionRemoveTakesNoFiltersOfItsOwn(t *testing.T) {
 	if code == 0 {
 		t.Fatal("exit code = 0, want --stopped rejected as an unknown flag")
 	}
-	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
-	if _, err := os.Stat(dir); err != nil {
-		t.Errorf("worktree at %s did not survive the rejected flag: %v", dir, err)
+	if got, want := listedNames(t, resolve, tmux), "smith-spec-42\n"; got != want {
+		t.Errorf("names after the rejected flag = %q, want %q still there", got, want)
 	}
 }
 
@@ -132,14 +133,8 @@ func TestSessionListNamesComposeIntoABatchRemoval(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("session rm exited %d (stderr: %s)", code, stderr)
 	}
-	for _, gone := range []string{filepath.Join("smith", "worktrees", "spec-42"), filepath.Join("web", "worktrees", "hotfix")} {
-		if _, err := os.Stat(filepath.Join(workspace, gone)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("worktree at %s survived the batch: %v", gone, err)
-		}
-	}
-	live := filepath.Join(workspace, "smith", "worktrees", "live-one")
-	if _, err := os.Stat(live); err != nil {
-		t.Errorf("the live session's worktree at %s did not survive: %v", live, err)
+	if got, want := listedNames(t, resolve, tmux), "smith-live-one\n"; got != want {
+		t.Errorf("names after the batch = %q, want only the live session %q", got, want)
 	}
 }
 

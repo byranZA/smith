@@ -49,7 +49,8 @@ func TestSessionListSaysSoWhenThereIsNothingToList(t *testing.T) {
 
 // TestSessionListExitsZeroWithUnpushedWork locks in that list reports what it
 // found rather than failing on it: a non-zero exit on "something is unpushed"
-// would conflate the command failing with the data having a property.
+// would conflate the command failing with the data having a property. How the
+// unpushed work is counted and worded is internal/session's to prove.
 func TestSessionListExitsZeroWithUnpushedWork(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
@@ -61,8 +62,8 @@ func TestSessionListExitsZeroWithUnpushedWork(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 with unpushed work present (stderr: %s)", code, stderr)
 	}
-	if !strings.Contains(stdout, "1 with unpushed commits") {
-		t.Errorf("stdout = %q, want the summary to report the unpushed work", stdout)
+	if !strings.Contains(stdout, "smith-spec-42") {
+		t.Errorf("stdout = %q, want the session with unpushed work listed", stdout)
 	}
 }
 

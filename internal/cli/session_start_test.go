@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,21 +34,24 @@ func TestSessionStartDetachedReportsTheSessionAndConnectsToNothing(t *testing.T)
 
 // TestSessionStartConnectsWritableUnlessDetached locks in the connect half of
 // start: standing a session up and being put in it is one command, and the
-// terminal is handed to tmux writable.
+// terminal is handed over the way `attach --interact` hands it over rather
+// than at the read-only access level. What that connection looks like is
+// internal/session's to prove, so the attach verb is read as the answer.
 func TestSessionStartConnectsWritableUnlessDetached(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
-	connect := &fakeExec{}
+	resolve := resolvedBox(workspace, "smith")
+	started, writable := &fakeExec{}, &fakeExec{}
 
-	_, stderr, code := runSessionOn(t,
-		onBoxWiring(t, resolvedBox(workspace, "smith"), &fakeTmux{}, connect),
+	_, stderr, code := runSessionOn(t, onBoxWiring(t, resolve, &fakeTmux{}, started),
 		"start", "--repo", "smith", "--branch", "spec-42")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if got, want := connect.line(t), "tmux attach-session -t smith/smith-spec-42"; got != want {
-		t.Errorf("exec argv = %q, want %q", got, want)
+	mustAttach(t, resolve, writable, "smith-spec-42", "--interact")
+	if got, want := started.line(t), writable.line(t); got != want {
+		t.Errorf("start connected as %q, want the writable connection %q", got, want)
 	}
 }
 
@@ -63,8 +64,8 @@ func TestSessionStartIsUnderTheRootCommand(t *testing.T) {
 // TestSessionStartCarriesTheStagedPlacementsIntoTheVerb locks in the wiring
 // only the command assembles: the placements declared in the blueprint this
 // box was built from, and the bytes `machine setup` staged under its state
-// directory, both reach the stand-up. Which files a placement converges is
-// internal/session's to prove.
+// directory, both reach the stand-up and land in the workspace. Where in the
+// workspace a placement lands is internal/session's to prove.
 func TestSessionStartCarriesTheStagedPlacementsIntoTheVerb(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
@@ -76,12 +77,7 @@ func TestSessionStartCarriesTheStagedPlacementsIntoTheVerb(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	placed := filepath.Join(workspace, "smith", "worktrees", "spec-42", "config", ".env")
-	data, err := os.ReadFile(placed)
-	if err != nil {
-		t.Fatalf("read the placed file: %v", err)
-	}
-	if string(data) != "TOKEN=staged\n" {
-		t.Errorf("placed file = %q, want the staged bytes", string(data))
+	if placed := findInWorkspace(t, workspace, "TOKEN=staged\n"); placed == "" {
+		t.Error("no file in the workspace holds the staged bytes, want the placement carried into the stand-up")
 	}
 }

@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,4 +277,53 @@ func stageRepoPlacement(t *testing.T, repo, to, content string) string {
 		t.Fatalf("stage %s: %v", path, err)
 	}
 	return root
+}
+
+// mustAttach connects to a session through the assembled command, recording
+// the connection on connect, and fails the test if the verb refuses.
+func mustAttach(t *testing.T, resolve boxResolver, connect session.Execer, args ...string) {
+	t.Helper()
+	_, stderr, code := runSessionOn(t, onBoxWiring(t, resolve, &fakeTmux{}, connect),
+		append([]string{"attach"}, args...)...)
+	if code != 0 {
+		t.Fatalf("session attach %s exited %d (stderr: %s)", strings.Join(args, " "), code, stderr)
+	}
+}
+
+// listedNames returns the bare names the listing reports for the box, which is
+// how a command test says which sessions survived without knowing where on
+// disk a session keeps its checkout.
+func listedNames(t *testing.T, resolve boxResolver, tmux session.Runner) string {
+	t.Helper()
+	stdout, stderr, code := runSessionOn(t, onBoxWiring(t, resolve, tmux, &fakeExec{}), "list", "--names")
+	if code != 0 {
+		t.Fatalf("session list --names exited %d (stderr: %s)", code, stderr)
+	}
+	return stdout
+}
+
+// findInWorkspace answers with the path of the first file under dir holding
+// exactly content, or an empty string when no file does. It lets a command
+// test say the bytes it staged reached the box without restating the layout
+// internal/session owns.
+func findInWorkspace(t *testing.T, dir, content string) string {
+	t.Helper()
+	found := ""
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || found != "" {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", path, readErr)
+		}
+		if string(data) == content {
+			found = path
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	return found
 }
