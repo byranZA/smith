@@ -21,6 +21,23 @@ var (
 // does not.
 const gitSuffix = ".git"
 
+// placementScope is what a placement's destination is anchored to, which
+// follows from where the placement is declared and nothing else: at the top
+// level a placement is box-scoped, under a repos[] entry it is repo-scoped.
+// The two read as the same shape at different indents, and the repos: header
+// that settles the question can be far above the line being read, so the
+// destination is made to state the scope it was declared in.
+type placementScope int
+
+const (
+	// boxScope anchors a destination to the box, so it is an absolute or
+	// ~-relative path.
+	boxScope placementScope = iota
+	// repoScope anchors a destination to the repo's worktree, so it is a
+	// relative path.
+	repoScope
+)
+
 // withDefaults fills in what the operator left implicit, so every later reader
 // sees one shape. Returning a new blueprint rather than editing one in place
 // keeps the defaults observable in a test.
@@ -56,7 +73,7 @@ func validate(b Blueprint) []Finding {
 	var report []Finding
 	report = append(report, choice("access", b.Access, accessModes)...)
 	report = append(report, choice("terminal", b.Terminal, terminals)...)
-	report = append(report, placementFindings("placements", b.Placements)...)
+	report = append(report, placementFindings("placements", b.Placements, boxScope)...)
 	report = append(report, repoFindings(b.Repos)...)
 	return report
 }
@@ -81,17 +98,18 @@ func repoFindings(repos []Repo) []Finding {
 		default:
 			claimed[r.Name] = true
 		}
-		report = append(report, placementFindings(at+".placements", r.Placements)...)
+		report = append(report, placementFindings(at+".placements", r.Placements, repoScope)...)
 	}
 	return report
 }
 
 // placementFindings checks the values a placement constrains, under the path
-// the placements were declared at.
-func placementFindings(path string, placements []Placement) []Finding {
+// the placements were declared at and in the scope that path puts them in.
+func placementFindings(path string, placements []Placement, scope placementScope) []Finding {
 	var report []Finding
 	for i, p := range placements {
 		at := fmt.Sprintf("%s[%d]", path, i)
+		report = append(report, destination(at+".to", p.To, scope)...)
 		report = append(report, choice(at+".mode", p.Mode, placementModes)...)
 		if p.Perms != "" && !octalPerms.MatchString(p.Perms) {
 			report = append(report, Finding{
@@ -101,6 +119,30 @@ func placementFindings(path string, placements []Placement) []Finding {
 		}
 	}
 	return report
+}
+
+// destination refuses a placement destination that disagrees with the scope
+// it was declared in — a box placement that names no anchor, or a repo
+// placement that names one outside the worktree. The repo case names box
+// scope as the alternative, because writing outside the worktree is what the
+// operator meant and declaring it one level up is how they get it.
+func destination(path, to string, scope placementScope) []Finding {
+	if to == "" {
+		return nil
+	}
+	anchored := strings.HasPrefix(to, "/") || strings.HasPrefix(to, "~")
+	switch {
+	case scope == boxScope && !anchored:
+		return []Finding{{Path: path, Message: fmt.Sprintf(
+			"%q is relative, but a box placement is anchored to the box: write an absolute path, or one starting with %q",
+			to, "~/")}}
+	case scope == repoScope && anchored:
+		return []Finding{{Path: path, Message: fmt.Sprintf(
+			"%q leaves the worktree, but a repo placement is worktree-relative: to write it outside the worktree, declare it at box scope in the top-level %q instead",
+			to, "placements")}}
+	default:
+		return nil
+	}
 }
 
 // choice refuses a value outside the set smith recognises for a field. An

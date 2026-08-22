@@ -14,8 +14,9 @@
 // top of the strict structural pass sit the semantic rules that catch a
 // document parsing cleanly while meaning nothing: a repo with no remote, two
 // repos that would collide in the workspace, a field whose value is outside
-// the set smith recognises, and a schema field name misindented into one of
-// the open maps, where it becomes a phantom tool or environment variable.
+// the set smith recognises, a schema field name misindented into one of the
+// open maps, where it becomes a phantom tool or environment variable, and a
+// placement destination that disagrees with the scope it was declared in.
 package blueprint
 
 import (
