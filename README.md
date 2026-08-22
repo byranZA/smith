@@ -152,21 +152,25 @@ The box you're provisioning must be:
 Point smith at the box as `<login>@<host>`:
 
 ```sh
-smith machine setup root@203.0.113.10
+smith machine setup root@203.0.113.10 --name dev
 # or a sudo-capable user:
-smith machine setup ubuntu@203.0.113.10
+smith machine setup ubuntu@203.0.113.10 --name dev
 ```
 
 When it finishes, the box is reachable as the `smith` user over hardened public
-SSH. Confirm it:
+SSH, and smith has written down the address it just proved — so you address the
+box by the name you gave it from now on:
 
 ```sh
-smith machine status 203.0.113.10
+smith machine status dev
 ```
 
-`status` connects as `smith` and reports how the box has drifted from what setup
-established (it never changes anything — pass a bare `<host>`, not
-`<login>@<host>`).
+`status` reports how the box has drifted from what setup established, and never
+changes anything. Its argument follows the rule every smith verb shares: **the
+`@` decides**. A value containing `@` is an SSH target used exactly as written;
+a value without one is looked up in the box inventory (`smith machine list`),
+and on a miss is handed to `ssh` as written, so an `ssh_config` alias works too.
+See [Boxes by name](#boxes-by-name) below.
 
 ### Provision over Tailscale
 
@@ -206,12 +210,17 @@ without echoing. Smith only closes public SSH once it has verified the box is
 reachable over the tailnet, so a policy that isn't ready yet never locks you
 out.
 
-After a successful tailscale setup, smith prints the tailnet name to use from
-then on:
+A successful tailscale setup registers the **tailnet** address — the one the
+lock-out-safety probe came in over — and tells you the name to use from then
+on:
 
-```sh
-smith machine setup smith@smith-<host>   # re-run over the tailnet
-smith machine status smith-<host>        # check status over the tailnet
+```
+tailscale reach established over 100.92.14.7; public SSH closed.
+registered smith@100.92.14.7 as "dev"
+
+Reach it by name from now on:
+  smith machine status dev
+  smith machine setup dev
 ```
 
 #### Tailscale notes
@@ -223,13 +232,48 @@ smith machine status smith-<host>        # check status over the tailnet
 - **Authorization follows you, not one machine.** The ACL `src` is your tailnet
   user login, which matches every device you own on the tailnet. Any of your
   machines that's on the tailnet can `ssh smith@smith-<host>` or run
-  `smith machine status smith-<host>` — no key, no per-machine setup. To run
+  `smith machine status smith@smith-<host>` — no key, no per-machine setup. To run
   `machine setup` from another machine it also needs the `tailscale` CLI and to
   be a running tailnet member.
 - **The first provision still uses your SSH key.** A brand-new box isn't on the
   tailnet yet, so the initial `--access tailscale` run reaches it over public SSH
   as your bootstrap login (key-based) to install and enroll Tailscale, then
   closes public 22. The keyless model applies to everything after that.
+
+## Boxes by name
+
+Smith keeps a **box inventory** at `~/.smith/cache/boxes.json` — a name → address
+book, and nothing else. A successful `machine setup` writes the address it just
+proved into it; every verb reads it, so you type `dev` instead of an IP that
+changed when the box was hardened.
+
+```sh
+smith machine list                            # instant, offline: names and targets
+smith machine list --probe                    # ... and whether each one answers
+smith machine add smith@100.92.14.7           # register a box smith already provisioned
+smith machine add smith@100.92.14.7 --name api
+smith machine forget dev                      # drop the entry; the box keeps running
+```
+
+`setup` takes `--name` to choose the name (its marker's name, the blueprint's
+name, then the host are the fallbacks) and `--target` to register an address of
+your own instead of the one smith proved.
+
+**The `@` decides**, in every verb: a value containing `@` is an SSH target used
+exactly as written and never looked up; a value without one is looked up in the
+inventory and, on a miss, handed to `ssh` as written. That last part is free
+interoperability — an `ssh_config` alias or a MagicDNS name works as a smith
+argument with no smith configuration at all.
+
+**Rebuildable, not self-rebuilding.** Nothing in `boxes.json` exists only there
+— every fact about a box is on the box's marker — but smith cannot fetch it back
+for you. Rebuilding an entry means SSHing to a box, which means already knowing
+its address, and provider-side discovery is not in v1. A deleted `boxes.json` is
+rebuilt **by hand, one `smith machine add` per box**, from your provider
+dashboard or shell history; each box returns under the name its marker records.
+
+[docs/inventory.md](docs/inventory.md) covers the four verbs, the naming rules,
+collisions and renames, and the file's schema versioning in full.
 
 ## Blueprints
 

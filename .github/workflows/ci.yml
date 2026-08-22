@@ -30,9 +30,14 @@ jobs:
 
       # Install golangci-lint onto PATH so `make lint` actually runs. Locally it
       # skips with a note when absent; in CI that would make linting a silent
-      # no-op, so the gate installs it (pinned, matching .golangci.yml version 2).
+      # no-op, so the gate installs it. The version comes from the Makefile, the
+      # same place `make tools` tells a developer to install — one pin, so the
+      # linter that gates a PR cannot drift from the one run locally.
       - name: Install golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.12.2/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+        run: |
+          version="$(make -s tools-version)"
+          curl -sSfL "https://raw.githubusercontent.com/golangci/golangci-lint/$version/install.sh" \
+            | sh -s -- -b "$(go env GOPATH)/bin" "$version"
 
       # Enforce tidiness here — the release pipeline deliberately omits
       # `go mod tidy` (it mutates go.mod/go.sum mid-release). A drift fails CI.

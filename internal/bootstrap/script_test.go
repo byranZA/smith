@@ -841,3 +841,97 @@ func TestScriptSetupRecordsTheBlueprintPointer(t *testing.T) {
 		t.Errorf("marker Blueprint = %q after a rewrite, want acme preserved", m.Blueprint)
 	}
 }
+
+// TestScriptSetupRecordsTheBoxName drives the embedded bootstrap.sh with a box
+// name and checks the marker records it and keeps it across a rewrite. The name
+// is the box's self-record of what the operator calls it, so an inventory entry
+// rebuilt from the box comes back under that name rather than an address.
+func TestScriptSetupRecordsTheBoxName(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir, scriptPath, env := scriptFixture(t)
+	markerPath := filepath.Join(dir, "bootstrap.json")
+
+	setup := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test", "--name", "dev")
+	setup.Env = append(os.Environ(), env...)
+	if out, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	m, _, err := decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if m.Name != "dev" {
+		t.Errorf("marker Name = %q, want the name the operator gave the box (dev)", m.Name)
+	}
+
+	// A subcommand that rewrites the marker from the recorded run state must keep
+	// the name, exactly as it keeps the access mode and blueprint pointer.
+	closeCmd := exec.Command(bash, scriptPath, "close-public-ssh")
+	closeCmd.Env = append(os.Environ(), env...)
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("close-public-ssh failed: %v\n%s", err, out)
+	}
+	m, _, err = decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker after rewrite: %v", err)
+	}
+	if m.Name != "dev" {
+		t.Errorf("marker Name = %q after a rewrite, want dev preserved", m.Name)
+	}
+}
+
+// TestScriptSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint proves the marker never
+// carries a key it has no value for: a box set up with neither a name nor a
+// blueprint records neither, rather than recording each as the empty string.
+func TestScriptSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir, scriptPath, env := scriptFixture(t)
+	markerPath := filepath.Join(dir, "bootstrap.json")
+
+	setup := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test")
+	setup.Env = append(os.Environ(), env...)
+	if out, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read marker: %v", err)
+	}
+	for _, key := range []string{`"name"`, `"blueprint"`} {
+		if strings.Contains(string(data), key) {
+			t.Errorf("marker carries %s with no value to record:\n%s", key, data)
+		}
+	}
+	if _, _, err := decodeMarker(t, markerPath); err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+}
+
+// scriptFixture writes the embedded script and its fake privileged binaries into
+// a temp dir and returns the dir, the script path, and the environment that
+// points the script at both.
+func scriptFixture(t *testing.T) (dir, scriptPath string, env []string) {
+	t.Helper()
+	dir = t.TempDir()
+	scriptPath = filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProvisioningFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "ssh", "#!/usr/bin/env bash\nexit 0\n")
+	return dir, scriptPath, bootstrapTestEnv(t, dir, binDir)
+}

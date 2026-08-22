@@ -282,3 +282,38 @@ func TestSetupPassesTheBlueprintPointer(t *testing.T) {
 		t.Errorf("setup command = %q, want it to pass the blueprint pointer", conn.setupRunCmd)
 	}
 }
+
+// TestSetupPassesTheBoxName proves setup hands the box the name the operator
+// gave it, so the marker records it and the box can say what it is called.
+func TestSetupPassesTheBoxName(t *testing.T) {
+	conn := &fakeConn{}
+	if _, err := NewRunner(conn).Setup(
+		context.Background(),
+		SetupOptions{AccessMode: "public", SmithVersion: "1.2.3", BoxName: "dev"},
+		io.Discard, io.Discard,
+	); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if !strings.Contains(conn.setupRunCmd, "--name 'dev'") {
+		t.Errorf("setup command = %q, want it to pass the box name", conn.setupRunCmd)
+	}
+}
+
+// TestSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint proves a run that names neither
+// a box name nor a blueprint passes neither flag, so the box records no key for
+// what the run did not say — rather than recording each as the empty string.
+func TestSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint(t *testing.T) {
+	conn := &fakeConn{}
+	if _, err := NewRunner(conn).Setup(
+		context.Background(),
+		SetupOptions{AccessMode: "public", SmithVersion: "1.2.3"},
+		io.Discard, io.Discard,
+	); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	for _, flag := range []string{"--name", "--blueprint"} {
+		if strings.Contains(conn.setupRunCmd, flag) {
+			t.Errorf("setup command = %q, want no %s for a value the run does not have", conn.setupRunCmd, flag)
+		}
+	}
+}

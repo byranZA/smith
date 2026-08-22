@@ -30,7 +30,7 @@
 # box-side streamed phase.
 set -Eeuo pipefail
 
-SMITH_BOOTSTRAP_VERSION=1
+SMITH_BOOTSTRAP_VERSION=2
 
 # MARKER is the on-box ledger path. SMITH_MARKER overrides it (used by tests to
 # point at a writable location without root); production always uses the default.
@@ -111,6 +111,10 @@ PUBLIC_SSH="open"
 # Empty when the box is built from no blueprint. It is a name and nothing else —
 # the staged document is ground truth, so no content hash is recorded.
 BLUEPRINT=""
+# BOX_NAME is the box's name: the operator-chosen name the box is registered
+# under, recorded in the marker so the name survives on the box itself and not
+# only in the operator's inventory. Empty when the run names the box nothing.
+BOX_NAME=""
 
 # The tailscale apt keyring and sources list. SMITH_TS_KEYRING and SMITH_TS_LIST
 # override them for tests; production uses the apt defaults. The keyring is the
@@ -195,12 +199,23 @@ write_marker() {
   local ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   as_root mkdir -p "$MARKER_DIR"
+  # The name and the blueprint pointer are recorded only when the run has one:
+  # a box named nothing, or built from no blueprint, carries no such key at all
+  # rather than carrying it empty.
+  local optional=""
+  if [ -n "$BOX_NAME" ]; then
+    optional="${optional}  \"name\": \"${BOX_NAME}\",
+"
+  fi
+  if [ -n "$BLUEPRINT" ]; then
+    optional="${optional}  \"blueprint\": \"${BLUEPRINT}\",
+"
+  fi
   printf '%s\n' "{
   \"schema_version\": ${SMITH_BOOTSTRAP_VERSION},
   \"smith_version\": \"${SMITH_VERSION}\",
   \"access_mode\": \"${ACCESS}\",
-  \"blueprint\": \"${BLUEPRINT}\",
-  \"completed_phases\": [$(json_phases)],
+${optional}  \"completed_phases\": [$(json_phases)],
   \"updated_at\": \"${ts}\"
 }" | as_root tee "$MARKER" >/dev/null
 }
@@ -414,7 +429,7 @@ phase_firewall() {
   status="$(as_root ufw status verbose 2>/dev/null || true)"
 
   local has_ssh_rule=1
-  printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW' || has_ssh_rule=0
+  grep -qE '22/tcp[[:space:]]+ALLOW' <<<"$status" || has_ssh_rule=0
 
   local ssh_ok=1
   if [ "$want_public_ssh" = "open" ] && [ "$has_ssh_rule" -eq 0 ]; then
@@ -424,8 +439,8 @@ phase_firewall() {
     ssh_ok=0
   fi
 
-  if printf '%s\n' "$status" | grep -qi 'Status: active' \
-    && printf '%s\n' "$status" | grep -qi 'deny (incoming)' \
+  if grep -qi 'Status: active' <<<"$status" \
+    && grep -qi 'deny (incoming)' <<<"$status" \
     && [ "$ssh_ok" -eq 1 ]; then
     PHASE_STATUS="satisfied"
     return 0
@@ -507,8 +522,9 @@ ssh_hardening_selftest() {
 
   as_root sshd -t || return 1
   reload_sshd || return 1
-  as_root sshd -T -C "user=${SMITH_USER},host=localhost,addr=127.0.0.1" 2>/dev/null \
-    | grep -qi '^pubkeyauthentication yes' || return 1
+  local effective
+  effective="$(as_root sshd -T -C "user=${SMITH_USER},host=localhost,addr=127.0.0.1" 2>/dev/null || true)"
+  grep -qi '^pubkeyauthentication yes' <<<"$effective" || return 1
 
   local tmpdir
   tmpdir="$(mktemp -d)"
@@ -617,7 +633,8 @@ phase_access() {
 }
 
 # parse_setup_args reads the setup subcommand's flags: the access mode, the
-# smith version, and the blueprint pointer to stamp into the marker.
+# smith version, and the box name and blueprint pointer to stamp into the
+# marker.
 parse_setup_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -631,6 +648,10 @@ parse_setup_args() {
         ;;
       --blueprint)
         BLUEPRINT="${2:-}"
+        shift 2
+        ;;
+      --name)
+        BOX_NAME="${2:-}"
         shift 2
         ;;
       --public-ssh)
@@ -678,19 +699,21 @@ setup() {
   done
 }
 
-# load_marker_state restores the run parameters (access mode, smith version,
-# blueprint pointer) and completed phases from the existing marker, so a
+# load_marker_state restores the run parameters (access mode, smith version, box
+# name, blueprint pointer) and completed phases from the existing marker, so a
 # follow-up subcommand such as close-public-ssh rewrites the marker without
 # clobbering what setup recorded.
 load_marker_state() {
   [ -f "$MARKER" ] || return 0
-  local am sv bp
+  local am sv bp bn
   am="$(grep -o '"access_mode":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   sv="$(grep -o '"smith_version":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   bp="$(grep -o '"blueprint":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  bn="$(grep -o '"name":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   [ -n "$am" ] && ACCESS="$am"
   [ -n "$sv" ] && SMITH_VERSION="$sv"
   [ -n "$bp" ] && BLUEPRINT="$bp"
+  [ -n "$bn" ] && BOX_NAME="$bn"
 
   COMPLETED_PHASES=()
   local arr item
@@ -787,17 +810,17 @@ probe_firewall() {
     echo "ufw-ssh-allow=?"
     return 0
   fi
-  if printf '%s\n' "$status" | grep -qi 'Status: active'; then
+  if grep -qi 'Status: active' <<<"$status"; then
     echo "ufw-active=active"
   else
     echo "ufw-active=inactive"
   fi
-  if printf '%s\n' "$status" | grep -qi 'deny (incoming)'; then
+  if grep -qi 'deny (incoming)' <<<"$status"; then
     echo "ufw-default-deny=deny"
   else
     echo "ufw-default-deny=allow"
   fi
-  if printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW'; then
+  if grep -qE '22/tcp[[:space:]]+ALLOW' <<<"$status"; then
     echo "ufw-ssh-allow=allow"
   else
     echo "ufw-ssh-allow=deny"
@@ -833,7 +856,7 @@ probe_services() {
 
   local conf
   conf="$(as_root cat "$SMITH_AUTO_UPGRADES_CONF" 2>/dev/null || true)"
-  if printf '%s' "$conf" | grep -q 'APT::Periodic::Unattended-Upgrade "1"'; then
+  if grep -q 'APT::Periodic::Unattended-Upgrade "1"' <<<"$conf"; then
     echo "auto-updates=enabled"
   else
     echo "auto-updates=disabled"

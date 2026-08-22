@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -14,23 +13,30 @@ import (
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/provider"
-	"github.com/byranZA/smith/internal/secret"
-	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
 // newMachineCmd builds `smith machine` and its subcommands, reading the config
-// home through resolve, running provider CLIs through runner, probing a new
-// box's ssh port through dialer, and timing the create command's polls by
-// clock.
-func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
+// home through resolve, launching both the provider CLIs and the ssh binary
+// through exec, probing a new box's ssh port through dialer, and timing the
+// create command's polls by clock.
+func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(resolve), newStatusCmd())
+	cmd.AddCommand(
+		newCreateCmd(resolve, exec, dialer, clock),
+		newSetupCmd(resolve, exec),
+		newStatusCmd(resolve, exec),
+		newListCmd(resolve, exec),
+		newAddCmd(resolve, exec),
+		newForgetCmd(resolve),
+	)
 	return cmd
 }
 
@@ -173,321 +179,97 @@ nothing is provisioned yet. Run:
 `, box.ID, box.IP, passed, box.IP, advice)
 }
 
-// newSetupCmd builds `smith machine setup <login>@<host>`. It connects, runs the
-// preflight gate, and on a pass runs the ordered mutating phases, streaming their
-// live progress. --access selects the access layer: public (default) leaves
-// hardened SSH open on the public IP; tailscale joins the box to the operator's
-// tailnet as a tag:smith node and closes public SSH once a live tailnet probe
-// proves reach. --blueprint names the blueprint the box is built from, read
-// through the config home resolve locates and staged onto the box.
-func newSetupCmd(resolve homeResolver) *cobra.Command {
-	var accessMode, authKeyRef, blueprintName string
+// newListCmd builds `smith machine list [--probe]`. It reads the box inventory
+// out of the config home and prints what it finds, sorted by name with a
+// summary line.
+//
+// Without --probe it is instant and offline: nothing is connected to, no
+// command is run on any box, and no file or directory is created — a box knows
+// of no other boxes, so there is nothing out there to ask. An absent inventory
+// is not a failure but the ordinary state before the first box is registered,
+// so it reports that and exits 0; only a file smith cannot read is an error,
+// and that error names the file rather than being papered over as empty.
+//
+// With --probe it opens a connection to every box at once and adds the
+// REACHABLE column. That is the whole of the difference: the probe never
+// writes, never prunes and never fails the command, because reachability is a
+// display concern and an entry smith could not reach is at least as often
+// rebooting, off-tailnet or firewalled as it is gone — and v1 has no way to
+// fetch a pruned entry back.
+func newListCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
+	var probe bool
 	cmd := &cobra.Command{
-		Use:   "setup <login>@<host>",
-		Short: "Provision, secure, and make a fresh box reachable",
-		Args:  cobra.ExactArgs(1),
+		Use:   "list",
+		Short: "List the boxes smith knows how to reach",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target, err := parseTarget(args[0])
+			home, err := resolve()
 			if err != nil {
 				return err
 			}
-			if accessMode != "public" && accessMode != "tailscale" {
-				return fmt.Errorf("invalid --access %q: want public or tailscale", accessMode)
-			}
-			host := hostOf(target)
-			ctx := cmd.Context()
-			// The config home is read only when there is a blueprint to stage, so
-			// an operator with no config home can still set a box up.
-			var home config.Home
-			if blueprintName != "" {
-				h, err := resolve()
-				if err != nil {
-					return err
-				}
-				home = h
-			}
-			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
-
-			conn := connection.New(target, connection.System())
-			runner := bootstrap.NewRunner(conn)
-
-			// Tailscale up-front, before anything on the box is mutated: acquire the
-			// auth key, refuse if this admin machine is not itself on the tailnet
-			// (smith could not then verify reach), and print the one-time tailnet
-			// prerequisites personalized to the operator.
-			var access *tailscale.Access
-			var acquireKey func() (string, error)
-			if accessMode == "tailscale" {
-				a, acq, err := prepareTailscale(ctx, conn, host, authKeyRef, stdout)
-				if err != nil {
-					if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
-						return fmt.Errorf("write refusal: %w", werr)
-					}
-					return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
-				}
-				access, acquireKey = a, acq
-			}
-
-			res, err := runner.Preflight(ctx)
+			inv, skew, err := inventory.Read(home.InventoryPath())
 			if err != nil {
-				return fmt.Errorf("preflight: %w", err)
+				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(stdout, res.Report()); err != nil {
-				return fmt.Errorf("write report: %w", err)
-			}
-			if res.Outcome != bootstrap.OutcomePassed {
-				return &exitError{code: res.Outcome.ExitCode()}
-			}
-
-			// The blueprint pointer, checked once the box is known reachable and
-			// before the first mutating phase: a box built from a blueprint is
-			// only ever re-run with one.
-			if err := checkBlueprintPointer(ctx, conn, blueprintName, stderr); err != nil {
-				return err
-			}
-
-			// Every placement source is resolved on the operator's machine before
-			// the first mutating phase, because staging is
-			// resolve-all-then-write: a reference that will not resolve refuses
-			// the run with the box untouched, rather than landing a base layer
-			// the operator then has to discover is missing its credentials.
-			staged, err := resolveStagedConfig(home, blueprintName, stderr)
-			if err != nil {
-				return err
-			}
-
-			publicSSH, err := publicSSHTarget(ctx, runner, accessMode)
-			if err != nil {
-				return fmt.Errorf("derive firewall target: %w", err)
-			}
-
-			opts := bootstrap.SetupOptions{
-				AccessMode:   accessMode,
-				SmithVersion: resolveVersion(),
-				Blueprint:    blueprintName,
-				PublicSSH:    publicSSH,
-			}
-			setupRes, err := runner.Setup(ctx, opts, stdout, stderr)
-			if err != nil {
-				return fmt.Errorf("setup: %w", err)
-			}
-			if setupRes.Failure != nil {
-				if _, err := fmt.Fprint(stderr, setupRes.Failure.Report()); err != nil {
-					return fmt.Errorf("write failure report: %w", err)
+			var reach map[string]bool
+			if probe {
+				if reach, err = probeBoxes(cmd.Context(), inv, exec); err != nil {
+					return reportInvalid(cmd, err)
 				}
 			}
-			if setupRes.Outcome != bootstrap.OutcomePassed {
-				return &exitError{code: setupRes.Outcome.ExitCode()}
-			}
-
-			// The config-staging stage: the base layer is in place, so the box can
-			// be told what kind of box it is. It runs before the access layer
-			// closes any door smith is still reached over.
-			if err := stageConfig(ctx, conn, staged, stdout); err != nil {
-				if _, werr := fmt.Fprintf(stderr, "config staging failed: %v\n", err); werr != nil {
-					return fmt.Errorf("write staging failure: %w", werr)
-				}
-				return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
-			}
-
-			if accessMode == "tailscale" {
-				return establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), inventory.Readout(inv, skew, reach)); err != nil {
+				return fmt.Errorf("write box listing: %w", err)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&accessMode, "access", "public", "how the box is reached: public or tailscale")
-	cmd.Flags().StringVar(&authKeyRef, "tailscale-auth-key", "",
-		"reference to the Tailscale auth key for --access=tailscale (env:VAR or file:/path); prompts if omitted on a terminal")
-	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
-		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
+	cmd.Flags().BoolVar(&probe, "probe", false,
+		"connect to every listed box and report whether it answers; nothing is stored and no entry is pruned")
 	return cmd
 }
 
-// checkBlueprintPointer applies the blueprint-pointer rule at the command
-// surface: a run naming no blueprint against a box whose marker records one is
-// refused, naming the blueprint the box was built from, and exits as a gate
-// rejection — the code the setup family already answers a refusal that mutated
-// nothing with.
+// probeBoxes reports which of the inventory's boxes answer, opening one
+// connection per box over its registered target. The targets are used
+// verbatim, as everywhere: they are what smith proved, so there is nothing to
+// resolve them against.
+func probeBoxes(ctx context.Context, inv inventory.Inventory, exec connection.Exec) (map[string]bool, error) {
+	conns := make(map[string]status.Conn, len(inv.Boxes))
+	for name, box := range inv.Boxes {
+		conns[name] = connection.New(box.Target, exec)
+	}
+	reach, err := status.ProbeAll(ctx, conns)
+	if err != nil {
+		return nil, fmt.Errorf("probe listed boxes: %w", err)
+	}
+	return reach, nil
+}
+
+// newStatusCmd builds `smith machine status <name-or-target>`. It resolves the
+// argument through the shared rule — the "@" decides — connects over what that
+// yields, gathers the box's live facts read-only, reconciles them against the
+// marker, prints the drift report, and maps the verdict to an exit code (0
+// matches, 1 drifted, 2 not-provisioned, 3 unreachable). It never mutates the
+// box — the marker's access_mode, not a flag, sets probe expectations, so there
+// is deliberately no --access flag.
 //
-// It runs after the preflight gate — which mutates nothing and owns the
-// connect-failure outcome — and before the first mutating phase, so a refusal
-// leaves the box, its staged document and its staged placements exactly as they
-// were.
-func checkBlueprintPointer(ctx context.Context, conn staging.Conn, blueprintName string, stderr io.Writer) error {
-	if err := staging.CheckPointer(ctx, conn, blueprintName); err != nil {
-		return refuseSetup(stderr, err)
-	}
-	return nil
-}
-
-// stagedConfig is the operator's blueprint resolved and ready to go onto the
-// box: the tree the staging stage converges, and the document it was read from,
-// named when a write fails so the operator knows which blueprint the box choked
-// on.
-type stagedConfig struct {
-	tree staging.Tree
-	path string
-}
-
-// resolveStagedConfig reads the named blueprint from the operator's config home
-// and resolves every placement source on the operator's machine. It takes no
-// connection and reaches no box, so a refusal here cannot have created or
-// modified a byte of /etc/smith.
-//
-// It runs before the first mutating phase because staging is
-// resolve-all-then-write: a from: reference naming a path or a variable this
-// machine does not have is a blueprint the operator has to fix, and finding
-// that out after the base layer landed would leave a provisioned box configured
-// for a session that cannot run. Every unresolvable reference is enumerated in
-// one refusal, so a blueprint full of typos is fixed in one pass rather than
-// one run per typo, and the refusal exits as a gate rejection -- the code the
-// setup family answers a refusal that mutated nothing with.
-//
-// A run naming no blueprint resolves nothing and stages nothing: the box keeps
-// whatever it already holds, and the flag-only path survives.
-func resolveStagedConfig(home config.Home, blueprintName string, stderr io.Writer) (*stagedConfig, error) {
-	if blueprintName == "" {
-		return nil, nil
-	}
-	doc, err := config.LoadDocument(home, blueprintName)
-	if err != nil {
-		return nil, refuseSetup(stderr, fmt.Errorf("read blueprint: %w", err))
-	}
-	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve)
-	if err != nil {
-		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
-	}
-	return &stagedConfig{tree: tree, path: doc.Path}, nil
-}
-
-// refuseSetup reports a setup refusal that mutated nothing and exits as a gate
-// rejection, the code the setup family already answers such a refusal with.
-func refuseSetup(stderr io.Writer, err error) error {
-	if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
-		return fmt.Errorf("write refusal: %w", werr)
-	}
-	return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
-}
-
-// stageConfig runs the config-staging stage: it writes the resolved blueprint
-// and its placement bytes onto the box at /etc/smith/, reporting what it staged
-// and what it left alone.
-//
-// It converges rather than resolves: the document was parsed and every source
-// resolved before the box was touched, so the only failures left here are the
-// box's own. It runs after the base layer because the staged placements are
-// owned by the smith user, who does not exist until then. Nothing to stage --
-// a run naming no blueprint -- leaves the box exactly as it was.
-func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, stdout io.Writer) error {
-	if staged == nil {
-		return nil
-	}
-	result, err := staging.Converge(ctx, conn, staged.tree)
-	if err != nil {
-		return fmt.Errorf("stage blueprint %s: %w", staged.path, err)
-	}
-	if _, err := fmt.Fprint(stdout, result.Report()); err != nil {
-		return fmt.Errorf("write staging report: %w", err)
-	}
-	return nil
-}
-
-// prepareTailscale performs the up-front, no-mutation tailscale steps: it
-// refuses when the admin machine is not on the tailnet, fails fast when a key
-// would be needed but there is nothing to prompt and no reference to resolve,
-// and prints the two one-time-per-tailnet prerequisites personalized to the
-// operator. It returns the Access orchestrator and a key-acquiring closure the
-// enroll step calls only if the box actually needs enrolling — so a re-run of an
-// already-reachable box never resolves (or prompts for) a fresh auth key.
-func prepareTailscale(ctx context.Context, conn *connection.SSH, host, authKeyRef string, stdout io.Writer) (*tailscale.Access, func() (string, error), error) {
-	// Fail fast before mutating anything when the key could never be obtained:
-	// no reference to resolve and no interactive terminal to prompt. Acquisition
-	// itself is deferred to enroll, so an already-satisfied re-run needs no key.
-	term := secret.NewStdTerminal()
-	if authKeyRef == "" && !term.Interactive() {
-		return nil, nil, fmt.Errorf("resolve tailscale auth key: %w", secret.ErrNoReference)
-	}
-
-	admin := tailscale.NewAdmin(connection.System())
-	if err := tailscale.CheckAdminOnTailnet(ctx, admin); err != nil {
-		return nil, nil, fmt.Errorf("tailnet preflight: %w", err)
-	}
-
-	status, err := admin.Status(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read tailnet identity: %w", err)
-	}
-	if _, err := fmt.Fprint(stdout, tailscale.Prereqs(status.Identity, host)); err != nil {
-		return nil, nil, fmt.Errorf("write prerequisites: %w", err)
-	}
-
-	box := tailscale.NewBox(conn, bootstrap.RemoteScriptPath)
-	acquireKey := func() (string, error) {
-		return secret.Acquire(authKeyRef, "Tailscale auth key: ", term)
-	}
-	return tailscale.NewAccess(box, admin), acquireKey, nil
-}
-
-// publicSSHTarget derives the access-aware firewall target for public port 22:
-// public mode keeps it open, and tailscale mode keeps it open while smith is
-// still reached over public SSH but closed on a re-run reached over the tailnet,
-// so a tailnet re-run never transiently re-opens public 22.
-func publicSSHTarget(ctx context.Context, runner *bootstrap.Runner, accessMode string) (string, error) {
-	if accessMode != "tailscale" {
-		return tailscale.PublicSSHOpen.String(), nil
-	}
-	sshConn, err := runner.SSHConnection(ctx)
-	if err != nil {
-		return "", fmt.Errorf("probe ssh connection: %w", err)
-	}
-	over := tailscale.ConnectedOverTailnet(sshConn)
-	return tailscale.PublicSSHTarget(accessMode, over).String(), nil
-}
-
-// establishTailscale runs the probe-gated tailscale access sequence after the
-// base layer is in place: enroll the tag:smith node, prove reach with a live
-// tailnet ssh probe, and only then close public SSH. A failure leaves public SSH
-// open and reports which prerequisite to fix (exit 1, partial but reachable). On
-// success it tells the operator the tailnet name to re-run over; a box already
-// enrolled and reachable is reported as an already-satisfied no-op.
-func establishTailscale(ctx context.Context, access *tailscale.Access, host string, acquireKey func() (string, error), stdout, stderr io.Writer) error {
-	result, err := access.Establish(ctx, tailscale.EstablishOptions{Host: host, AcquireKey: acquireKey})
-	if err != nil {
-		if _, werr := fmt.Fprintf(stderr, "tailscale access not established: %v\n", err); werr != nil {
-			return fmt.Errorf("write tailscale failure: %w", werr)
-		}
-		return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
-	}
-	headline := "tailscale reach established over %s; public SSH closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n"
-	if result.AlreadySatisfied {
-		headline = "tailscale access already satisfied over %s; public SSH already closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n"
-	}
-	if _, err := fmt.Fprintf(stdout, headline, result.TailnetIP, result.ReRunHost); err != nil {
-		return fmt.Errorf("write success: %w", err)
-	}
-	return nil
-}
-
-// newStatusCmd builds `smith machine status <host>`. It connects as smith@host
-// (the tailnet name in tailscale mode), gathers the box's live facts read-only,
-// reconciles them against the marker, prints the drift report, and maps the
-// verdict to an exit code (0 matches, 1 drifted, 2 not-provisioned, 3
-// unreachable). It never mutates the box — the marker's access_mode, not a flag,
-// sets probe expectations, so there is deliberately no --access flag.
-func newStatusCmd() *cobra.Command {
+// A refusal on a bare argument smith did not recognise carries the two fixes
+// with it: status no longer has a private convention that turns a bare address
+// into the smith user, so an operator who relied on that one is told the
+// address to pass and the command that registers the box under a name.
+func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <host>",
+		Use:   "status <name-or-target>",
 		Short: "Report how a box has drifted from what setup established",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			host, err := parseStatusHost(args[0])
+			inv, err := lookupInventory(resolve, args[0])
 			if err != nil {
-				return err
+				return reportInvalid(cmd, err)
 			}
+			target := inventory.Resolve(inv, args[0])
 			ctx := cmd.Context()
 
-			conn := connection.New("smith@"+host, connection.System())
+			conn := connection.New(target, exec)
 			admin := tailscale.NewAdmin(connection.System())
 			prober := status.NewProber(conn, admin)
 
@@ -496,11 +278,15 @@ func newStatusCmd() *cobra.Command {
 				return fmt.Errorf("probe box: %w", err)
 			}
 
-			report := status.Unreachable(host)
+			report := status.Unreachable(target)
 			if gathered.Reachable {
 				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), report.String()); err != nil {
+			out := report.String()
+			if !gathered.Reachable {
+				out += inventory.ConnectHint(inv, args[0])
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), out); err != nil {
 				return fmt.Errorf("write status report: %w", err)
 			}
 			if code := report.ExitCode(); code != 0 {
@@ -511,17 +297,37 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// parseStatusHost validates the status host argument: a bare host (or tailnet
-// name), never a <login>@<host> — status always connects as the smith user, so a
-// login prefix is a mistake worth catching.
-func parseStatusHost(arg string) (string, error) {
-	if arg == "" {
-		return "", errors.New("invalid host: want a bare <host>")
+// lookupInventory locates the config home and returns the inventory a verb
+// resolves arg against, leaving to the inventory package whether the file is
+// read at all.
+func lookupInventory(resolve homeResolver, arg string) (inventory.Inventory, error) {
+	home, err := resolve()
+	if err != nil {
+		return inventory.Empty(), err
 	}
-	if strings.Contains(arg, "@") {
-		return "", fmt.Errorf("invalid host %q: pass a bare <host>, not <login>@<host> — status connects as smith", arg)
+	inv, _, err := inventory.LoadFor(home.InventoryPath(), arg)
+	if err != nil {
+		return inventory.Empty(), err
 	}
-	return arg, nil
+	return inv, nil
+}
+
+// resolveSetupTarget resolves setup's argument under the shared rule and holds
+// it to the shape setup needs. Setup is the one verb that reads the target's
+// host — the tailnet prerequisites and the firewall phase are written in terms
+// of it — so an opaque target it cannot take apart is refused here rather than
+// half-applied later. An argument that resolves to nothing keeps the refusal it
+// has always had, which already names the shape to pass.
+func resolveSetupTarget(inv inventory.Inventory, arg string) (string, error) {
+	resolved := inventory.Resolve(inv, arg)
+	target, err := parseTarget(resolved)
+	if err == nil {
+		return target, nil
+	}
+	if resolved != arg {
+		return "", fmt.Errorf("box %q is registered as %q, which setup cannot use: want <login>@<host>", arg, resolved)
+	}
+	return "", err
 }
 
 // parseTarget validates a bootstrap-login target of the form <login>@<host> and
@@ -539,4 +345,229 @@ func parseTarget(arg string) (string, error) {
 func hostOf(target string) string {
 	_, host, _ := strings.Cut(target, "@")
 	return host
+}
+
+// newAddCmd builds `smith machine add <target> [--name <name>]`. It registers a
+// box smith already provisioned — the manual reconstruction path for an
+// inventory that was deleted, and the way a second machine learns the boxes the
+// first one set up.
+//
+// Registration is read-only towards the box: smith connects, reads the marker,
+// and registers or refuses. It never writes a marker, because a box carrying
+// none is not an unregistered smith box — it is a box smith has never
+// provisioned, and stamping one would assert provisioned, secured and reachable
+// state that does not exist. The refusal names `machine setup` instead.
+//
+// The argument is the target, used verbatim: add is registering an address, so
+// there is nothing to resolve it against yet. The name is the operator's
+// --name, else the name the box's marker records, else the box's host — and
+// smith says which fallback it used rather than letting the operator assume
+// the box named itself.
+func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use:   "add <target>",
+		Short: "Register a box smith already provisioned",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := args[0]
+			ctx := cmd.Context()
+			conn := connection.New(target, exec)
+
+			reachable, err := connection.Reachable(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("probe box: %w", err)
+			}
+			if !reachable {
+				return refuseAdd(cmd, bootstrap.OutcomeConnectFailed,
+					fmt.Errorf("could not connect to %s: register it once smith can reach it", target))
+			}
+
+			box, present, err := status.ReadMarker(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("read marker: %w", err)
+			}
+			if !present {
+				return refuseAdd(cmd, bootstrap.OutcomeRejected, fmt.Errorf(
+					"%s has never been set up by smith: it carries no marker at %s.\n"+
+						"Provision it first with:\n  smith machine setup <login>@%s",
+					target, marker.Path, hostOrTarget(target)))
+			}
+
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			registered, origin := inventory.Name(inventory.Naming{
+				Flag:   name,
+				Marker: box.Name,
+				Host:   hostOrTarget(target),
+			})
+			if _, err := registerBox(home, registration{name: registered, target: target}); err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), addedReport(registered, target, origin, box.Blueprint)); err != nil {
+				return fmt.Errorf("write registration: %w", err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "the name to register the box under; omitted, its marker or its host names it")
+	return cmd
+}
+
+// registration is one box's registration as the verb running it knows it: the
+// name to register, the target to register it under, the name the box's own
+// marker records, and the address this run reached the box over. The last two
+// are what decide whether the box already has an entry to move, and a verb with
+// nothing to move — `machine add`, which reads a marker it never wrote — leaves
+// them empty.
+type registration struct {
+	// recorded is the name the box's marker records, empty when the caller has
+	// no recorded name to move an entry off.
+	recorded string
+	// addressed is the address this run reached the box over, which is how a
+	// re-run of a registered box is told from a box carrying another box's name.
+	addressed string
+	// name is the name the box is registered under.
+	name string
+	// target is the proven address the name maps to.
+	target string
+}
+
+// registerBox reads the inventory, maps r.name to r.target in it, and writes it
+// back. It returns the name whose entry moved, empty when nothing moved, so the
+// caller reports a rename only when there was one. The name is decided by the
+// caller: each verb derives its own default from what it knows, and this one
+// only ever registers the name it is handed.
+//
+// A registration is a rename when the box already has an entry under the name
+// its marker records: the old entry goes, so renaming a box leaves one entry
+// rather than two names for one machine, and a re-run whose address changed
+// updates the entry it already has. Whether that entry is this box's is the
+// inventory's call, not the marker's — see inventory.PreviousName.
+//
+// The config home is created here and only here on the registration paths:
+// reading never creates, so the directory comes into existence at the first
+// write into it.
+func registerBox(home config.Home, r registration) (string, error) {
+	inv, skew, err := inventory.Read(home.InventoryPath())
+	if err != nil {
+		return "", fmt.Errorf("read the box inventory: %w", err)
+	}
+	previous := inventory.PreviousName(inv, r.recorded, r.addressed, r.target)
+	next, err := inventory.Rename(inv, previous, r.name, r.target)
+	if err != nil {
+		return "", fmt.Errorf("cannot register %s: %w", r.target, err)
+	}
+	if err := config.EnsureHome(home); err != nil {
+		return "", fmt.Errorf("create the config home: %w", err)
+	}
+	if err := inventory.Write(home.InventoryPath(), next, skew); err != nil {
+		return "", fmt.Errorf("register %s: %w", r.target, err)
+	}
+	if previous == r.name {
+		return "", nil
+	}
+	return previous, nil
+}
+
+// addedReport renders what the operator is told by a successful registration:
+// the name the box is reached by from now on, the target it resolves to, and —
+// when the name came off nothing better than the host — that the box's marker
+// recorded none.
+func addedReport(name, target string, origin inventory.Origin, blueprint string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "registered %s as %q\n", target, name)
+	if blueprint != "" {
+		fmt.Fprintf(&b, "built from the blueprint %q\n", blueprint)
+	}
+	if origin == inventory.OriginHost {
+		fmt.Fprintf(&b, "\nthe box's marker records no name, so smith named it after its host.\n"+
+			"Register it under another name with: smith machine add %s --name <name>\n", target)
+	}
+	return b.String()
+}
+
+// refuseAdd reports a registration smith declined and exits with the code that
+// kind of refusal is owed: a box that never answered is a connect failure, and
+// one that answered but carries no marker is a gate rejection. Neither wrote
+// anything, on the box or in the inventory.
+func refuseAdd(cmd *cobra.Command, outcome bootstrap.Outcome, cause error) error {
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "add refused: %v\n", cause); err != nil {
+		return fmt.Errorf("write refusal: %w", err)
+	}
+	return &exitError{code: outcome.ExitCode()}
+}
+
+// hostOrTarget returns the host part of a <login>@<host> target, or the whole
+// value when it carries no login — an ssh_config alias is its own host, and is
+// as good a name for the box as anything smith could invent.
+func hostOrTarget(target string) string {
+	if _, host, ok := strings.Cut(target, "@"); ok && host != "" {
+		return host
+	}
+	return target
+}
+
+// newForgetCmd builds `smith machine forget <name>`. It removes one entry from
+// the box inventory and does nothing else: no connection is opened and the box
+// is not touched, so a forgotten box keeps running and can be registered again
+// with `machine add` the moment the operator wants it back. That is the whole
+// safety story — forgetting costs a line in a file, never a machine.
+//
+// The argument is a registered name, never a target: a value smith would hand
+// straight to ssh names nothing in the inventory, so there would be nothing to
+// remove. A name no box is registered under is a refusal rather than a silent
+// success, because an operator who mistypes a name is owed the news that the
+// entry they meant is still there.
+func newForgetCmd(resolve homeResolver) *cobra.Command {
+	return &cobra.Command{
+		Use:   "forget <name>",
+		Short: "Remove a box from the inventory, leaving the box itself alone",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			target, err := forgetBox(home, args[0])
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), forgottenReport(args[0], target)); err != nil {
+				return fmt.Errorf("write removal: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
+// forgetBox reads the inventory, removes name from it, and writes it back. It
+// returns the target the name reached, which is what the operator needs to put
+// the entry back. The config home is never created here: forgetting a name that
+// is not registered writes nothing, and a name cannot be registered in an
+// inventory that does not exist.
+func forgetBox(home config.Home, name string) (string, error) {
+	inv, skew, err := inventory.Read(home.InventoryPath())
+	if err != nil {
+		return "", fmt.Errorf("read the box inventory: %w", err)
+	}
+	next, err := inventory.Forget(inv, name)
+	if err != nil {
+		return "", fmt.Errorf("cannot forget %s: %w", name, err)
+	}
+	if err := inventory.Write(home.InventoryPath(), next, skew); err != nil {
+		return "", fmt.Errorf("forget %s: %w", name, err)
+	}
+	return inv.Boxes[name].Target, nil
+}
+
+// forgottenReport renders what the operator is told by a successful removal:
+// the name that no longer reaches anything, and the command that registers the
+// box again — the entry is gone, and smith is the only thing that knew where
+// the box was.
+func forgottenReport(name, target string) string {
+	return fmt.Sprintf("forgot %q (%s)\n\nRegister it again with:\n  smith machine add %s --name %s\n",
+		name, target, target, name)
 }

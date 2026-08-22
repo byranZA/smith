@@ -207,7 +207,10 @@ declaration site for every credential on the box.
   the fix is **blueprint inheritance**, not preferences.
 - **A destroyed box takes its marker with it**, so knowing what a since-destroyed box held depends
   on remembering which blueprint built it. Recording the blueprint per box in the local inventory
-  would give revocation-after-destroy for free; nothing here depends on it.
+  would give revocation-after-destroy for free, and
+  [ADR-0011](./0011-the-box-inventory-is-identity-only.md) declined it — the inventory holds
+  identity only, so this gap stays open for whoever ships box `destroy`. Nothing here depends on
+  it.
 - **Anyone adding a second acquisition path re-opens this decision.** A fetch-at-use-time
   integration, an on-box agent, or a smith that knows one forge by name each breaks either the
   driver-agnostic guarantee or the credential-agnostic one, and must be weighed against them

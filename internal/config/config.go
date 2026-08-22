@@ -7,8 +7,10 @@
 // directory is, and lets a test run the real code path against a temp
 // directory rather than a stand-in filesystem.
 //
-// Nothing in this package writes. Reading a config home that does not exist is
-// reported, not repaired.
+// Reading never creates: a config home that does not exist is reported, not
+// repaired. EnsureHome is the one thing here that writes, and only write paths
+// call it — it creates the home and its cache, and appends to the operator's
+// .gitignore rather than rewriting a file that is theirs.
 package config
 
 import (
@@ -43,6 +45,24 @@ func NewHome(path string) Home {
 
 // Path returns the directory this config home is rooted at.
 func (h Home) Path() string { return h.path }
+
+// cacheDir is the gitignored directory inside the config home holding what
+// smith derived rather than what the operator wrote. The box inventory is its
+// only occupant.
+const cacheDir = "cache"
+
+// inventoryFile is the box inventory's name inside the cache directory.
+const inventoryFile = "boxes.json"
+
+// CachePath returns the config home's cache directory — the gitignored
+// directory holding what smith derived rather than what the operator wrote.
+// Nothing is read or created; the path is derived, not discovered.
+func (h Home) CachePath() string { return filepath.Join(h.path, cacheDir) }
+
+// InventoryPath returns the box inventory's file inside the config home's
+// cache. Nothing is read or created, so a caller can name the file it would
+// have read before any box exists.
+func (h Home) InventoryPath() string { return filepath.Join(h.CachePath(), inventoryFile) }
 
 // isPath reports whether what the operator typed is a path rather than a bare
 // blueprint name. The two are told apart structurally: a value containing a

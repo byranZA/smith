@@ -225,3 +225,24 @@ func findFact(t *testing.T, r Report, phase, factName string) Finding {
 	t.Fatalf("no finding %q under phase %q in report:\n%s", factName, phase, r.String())
 	return Finding{}
 }
+
+// TestReconcileReportsAPreviousSchemaMarkersFacts proves a box set up before
+// the marker schema advanced still gets a full status report, with the older
+// schema noted rather than the report withheld: the fields the older schema
+// never had are simply absent, and every fact it does carry is still reconciled.
+func TestReconcileReportsAPreviousSchemaMarkersFacts(t *testing.T) {
+	m := cleanPublicMarker()
+	m.SchemaVersion = marker.SchemaVersion - 1
+
+	r := Reconcile(m, marker.SkewOlder, true, cleanPublicFacts())
+
+	if r.Verdict != VerdictMatches {
+		t.Fatalf("Verdict = %v, want Matches: an older marker's facts still reconcile", r.Verdict)
+	}
+	if len(r.Groups) == 0 {
+		t.Error("report carries no findings, want the facts an older marker still describes")
+	}
+	if !strings.Contains(r.String(), "older smith schema") {
+		t.Errorf("report = %q, want it to note the older marker schema", r.String())
+	}
+}

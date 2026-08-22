@@ -32,13 +32,20 @@ Everything lives under `~/.smith/`:
   blueprints/
     acme.yaml           # selected as `acme`
     prod.yaml
-  cache/                # machine-local, gitignored
+  cache/
+    boxes.json          # the box inventory: machine-local, gitignored
 ```
 
 The directory is meant to be committed and shared — that is why no secret value
 is ever written into it (see [References, not
 values](#references-not-values) below). `cache/` is machine-local and stays out
-of the commit.
+of the commit; it holds the [box inventory](./inventory.md), the name → address
+book smith writes when a setup succeeds.
+
+smith creates `~/.smith/` on its **first write** into it — registering a box —
+and never on a read: `blueprint check` validates without creating anything. The
+creation also puts `cache/` into the config home's `.gitignore`, **appending**
+to a `.gitignore` you already keep rather than rewriting it.
 
 A blueprint's **name is its filename without the extension**. `acme.yaml` on
 disk is the blueprint `acme`, and smith refuses `acme.yaml` as a name rather
