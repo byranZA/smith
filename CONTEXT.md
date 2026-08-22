@@ -231,9 +231,36 @@ _Avoid_: provider plugin, driver (reserved for a session's actor), integration.
 
 **Provider marker**:
 How an adapter recognises a box it created — a tag, a label, or the box's own name, the adapter's
-choice, since smith must not require native provider tags. Two fields, because what `create` passes
-and what the extractor reads back differ per provider. Unrelated to the on-box **marker**.
+choice, since smith must not require native provider tags. Three fields — `arg`, `read`, `expect` —
+because what `create` passes, where it reads back from and the form it reads back in all differ per
+provider. Its value is the operator-chosen box name, so two smith boxes cannot share a name at one
+provider; smith does not enforce that. v1 writes a marker and never reads one back, so `read` and
+`expect` are validated and unused. Unrelated to the on-box **marker**.
 _Avoid_: tag (the old name; it presumed native tag support).
+
+**Canonical box record**:
+What any provider's JSON is normalized to — `{id, ip|null}` — so no caller of the
+provider adapter ever touches a provider's own shape. The marker is stamped on create and, since
+v1 never reads one back, is not a field of the record. An address the provider has not assigned
+yet is null, and that absence is what makes smith poll `list`, rather than a declared field
+saying the provider is synchronous or deferred.
+_Avoid_: droplet, server object, instance record.
+
+**Extractor path**:
+The small path grammar an adapter reads a provider's JSON with — a key, dotted descent, `[*]`,
+and `[field=value]` selecting array elements by field value. A `record` path locates the box
+inside whatever envelope a response wraps it in, per template; the `extract` paths then read id
+and address relative to it. There is no positional index, deliberately: a provider's address
+list has no stable order, so selecting by position silently yields a private address. A path
+matching nothing is an error naming the path, never a zero value.
+_Avoid_: JSONPath (the standard grammar, which this is not), selector, query.
+
+**Placeholder**:
+One of the four values smith substitutes into an adapter's templates — `{{name}}`,
+`{{marker_arg}}`, `{{ssh_key}}`, `{{id}}` — every other argument being the operator's own
+literal text. An unrecognised one is a validation error, and an argument that renders empty
+drops itself *and* the flag before it, which is how a flat argument list says "omit this".
+_Avoid_: variable, parameter, interpolation.
 
 **Control surface / relay**:
 The operator's local smith after bootstrap: it holds the box inventory and the config home, and it

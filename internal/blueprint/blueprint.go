@@ -83,18 +83,36 @@ type Provider struct {
 	SSHKey string `yaml:"ssh_key"`
 	// Marker is how a smith-created box is stamped and recognised again.
 	Marker ProviderMarker `yaml:"marker"`
+	// Record is where the box record sits inside a template's response.
+	Record ProviderRecord `yaml:"record"`
 	// Extract is how a box's identity and address are read out of the
 	// provider's JSON.
 	Extract ProviderExtract `yaml:"extract"`
 }
 
-// ProviderMarker is the two halves of a provider marker: what create passes
-// and what the extractor reads back, which differ across providers.
+// ProviderMarker is the three parts of a provider marker: what create passes,
+// where the extractor reads it back from, and the form it reads back in, all
+// of which differ across providers. Arg and Expect render with {{value}} bound
+// to the box name.
 type ProviderMarker struct {
-	// Arg is the value create stamps the box with.
+	// Arg is the value create stamps the box with. Empty stamps nothing,
+	// which is how an adapter marks a box by its own name.
 	Arg string `yaml:"arg"`
 	// Read is the path the marker is read back from in the provider's JSON.
 	Read string `yaml:"read"`
+	// Expect is the form the marker reads back in.
+	Expect string `yaml:"expect"`
+}
+
+// ProviderRecord is where the box record sits inside a template's response,
+// declared per template because one provider wraps the two differently: an
+// hcloud create answers with the record under "server" while its list answers
+// with a bare array. An empty path means the response is the record itself.
+type ProviderRecord struct {
+	// Create is the path to the record in the create template's response.
+	Create string `yaml:"create"`
+	// List is the path to the box records in the list template's response.
+	List string `yaml:"list"`
 }
 
 // ProviderExtract is the paths a box's identity and address are read from in

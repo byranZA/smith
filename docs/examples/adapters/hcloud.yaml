@@ -1,0 +1,75 @@
+# ┌───────────────────────────────────────────────────────────────────────┐
+# │  UNVERIFIED. THIS ADAPTER HAS NEVER BEEN RUN.                         │
+# └───────────────────────────────────────────────────────────────────────┘
+#
+# Every line below is inferred from Hetzner's published `hcloud` documentation.
+# No hcloud command was ever executed against a real account, because nobody on
+# this project has one. Treat it as a sketch of the shape, not as a tested
+# example: the flag spellings, the response envelopes and the label semantics
+# are all assumptions.
+#
+# It is the load-bearing assumption in the design, not a footnote. hcloud
+# stores a marker as a key/value label written `smith=dev` and read back as the
+# bare `dev`, while a DigitalOcean tag is an opaque string that reads back
+# exactly as written — that asymmetry is the entire reason `marker` has
+# separate `arg` and `expect` fields rather than one. If it is wrong, the
+# schema is carrying a field it does not need.
+#
+# OUTSTANDING WORK: run this against a real Hetzner account — create, address,
+# list, and read the marker back — and either confirm it or correct it. Until
+# someone does, the verified worked example is ./doctl.yaml.
+provider:
+  create:
+    - hcloud
+    - server
+    - create
+    - --name
+    - "{{name}}"
+    - --type
+    - cpx31
+    - --image
+    - ubuntu-24.04
+    - --ssh-key
+    - "{{ssh_key}}"
+    - --label
+    - "{{marker_arg}}"
+    - -o
+    - json
+
+  list:
+    - hcloud
+    - server
+    - list
+    - -o
+    - json
+
+  destroy:
+    - hcloud
+    - server
+    - delete
+    - "{{id}}"
+
+  # Deliberately absent: an hcloud context keeps its token in
+  # ~/.config/hcloud/cli.toml with no environment variable at all, so an
+  # adapter that required one would fail pre-flight on a working machine.
+  # An adapter declaring no `requires` is checked for nothing.
+
+  ssh_key: my-laptop
+
+  # The asymmetry named above: written as a key/value pair, read back as the
+  # value alone. Nothing in v1 reads `read` or `expect`.
+  marker:
+    arg:    "smith={{value}}"
+    read:   "labels.smith"
+    expect: "{{value}}"
+
+  # An hcloud create is documented as answering with the server under a
+  # "server" key, while its list answers with a bare array — which is why the
+  # record path is per template rather than per adapter.
+  record:
+    create: "server"
+    list:   "[*]"
+
+  extract:
+    id: "id"
+    ip: "public_net.ipv4.ip"

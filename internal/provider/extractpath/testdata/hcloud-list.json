@@ -1,0 +1,19 @@
+[
+  {
+    "id": 55512345,
+    "name": "smith-proto-abc",
+    "status": "running",
+    "public_net": {
+      "ipv4": { "id": 1, "ip": "5.75.10.20", "blocked": false, "dns_ptr": "static.hetzner.com" },
+      "ipv6": { "id": 2, "ip": "2a01:4f8::/64", "blocked": false }
+    },
+    "labels": { "smith": "abc" }
+  },
+  {
+    "id": 55599999,
+    "name": "unrelated",
+    "status": "running",
+    "public_net": { "ipv4": { "ip": "5.75.99.99" } },
+    "labels": { "env": "prod" }
+  }
+]

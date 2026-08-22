@@ -1,0 +1,75 @@
+# The same DigitalOcean adapter, for a token that cannot create tags.
+#
+# VERIFIED. A droplet-scoped DigitalOcean token refuses `--tag-name` with
+# `403 ... missing the required permission tag:create`, on a token that is
+# otherwise perfectly good and that passes every pre-flight smith can run. This
+# file is what that account uses instead: the box's own name is the marker.
+#
+# It is the proof that an adapter is data rather than code. It differs from
+# ./doctl.yaml in the marker block alone, smith runs both down the same path
+# with no branch between them, and both are driven by smith's test suite. If a
+# change ever makes this file need special handling inside smith, provider
+# knowledge has leaked in.
+provider:
+  # Identical to ./doctl.yaml, `--tag-name` included. The marker below renders
+  # empty, and an argument that renders empty drops itself and the flag before
+  # it, so `--tag-name` never reaches doctl with nothing behind it. Deleting
+  # the two lines by hand works too — leaving them in is what shows the rule.
+  create:
+    - doctl
+    - compute
+    - droplet
+    - create
+    - "{{name}}"
+    - --image
+    - ubuntu-24-04-x64
+    - --size
+    - s-1vcpu-512mb-10gb
+    - --region
+    - fra1
+    - --ssh-keys
+    - "{{ssh_key}}"
+    - --tag-name
+    - "{{marker_arg}}"
+    - --wait
+    - -o
+    - json
+
+  list:
+    - doctl
+    - compute
+    - droplet
+    - list
+    - -o
+    - json
+
+  destroy:
+    - doctl
+    - compute
+    - droplet
+    - delete
+    - "{{id}}"
+    - --force
+
+  requires:
+    - DIGITALOCEAN_ACCESS_TOKEN
+
+  ssh_key: my-laptop
+
+  # Stamp nothing, and read the marker back off the box's own name. {{value}}
+  # is the box name you typed, which is the whole of what a provider-side
+  # marker has to answer: did smith create this box.
+  #
+  # As in the sibling adapter, nothing in v1 reads `read` or `expect`.
+  marker:
+    arg:    ""
+    read:   "name"
+    expect: "{{value}}"
+
+  record:
+    create: "[*]"
+    list:   "[*]"
+
+  extract:
+    id: "id"
+    ip: "networks.v4[type=public].ip_address"

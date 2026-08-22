@@ -6,24 +6,170 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
-// newMachineCmd builds `smith machine` and its subcommands.
-func newMachineCmd() *cobra.Command {
+// newMachineCmd builds `smith machine` and its subcommands, reading the config
+// home through resolve, running provider CLIs through runner, probing a new
+// box's ssh port through dialer, and timing the create command's polls by
+// clock.
+func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machine",
-		Short: "Set up and inspect a remote development box",
+		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newSetupCmd(), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(), newStatusCmd())
 	return cmd
+}
+
+// newCreateCmd builds `smith machine create <name> --blueprint <name-or-path>`.
+// It renders the operator's own create template with the box name substituted,
+// runs it through the provider CLI the adapter names, and reports the box the
+// provider returned.
+//
+// It stops at "the box exists": nothing is written to the box and no bootstrap
+// runs, so the operator is handed the `machine setup` line to run next rather
+// than a half-provisioned box. That is deliberate — a chained setup failing
+// halfway would leave a box that exists, is billed, and that smith cannot tear
+// down, since v1 ships no destroy.
+//
+// A provider that assigns the address after the create returns is waited out on
+// clock, so the operator sees one command whether the address came back with
+// the box or a moment later. Once the address is known the box's ssh port is
+// polled until it answers, because no provider CLI waits for sshd: a create
+// that returned the moment the provider did would hand the operator a setup
+// line that is refused for the next half minute.
+func newCreateCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
+	var blueprintName string
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a box at the provider the adapter describes",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			adapter, err := resolveAdapter(home, blueprintName)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			box, err := provider.Create(cmd.Context(), runner, clock, adapter, args[0])
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if err := awaitReachable(cmd.Context(), dialer, clock, box); err != nil {
+				return reportInvalid(cmd, err)
+			}
+			return writeCreated(cmd, box, adapter.SSHKey)
+		},
+	}
+	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
+		"the blueprint whose provider adapter creates the box; omitted, the adapter comes from preferences")
+	return cmd
+}
+
+// readinessTimeout is how long create waits for a new box's ssh port to answer.
+// A box that boots normally answers well inside it; a box that does not is one
+// the operator has to look at themselves, and waiting longer only delays that.
+const readinessTimeout = 5 * time.Minute
+
+// awaitReachable polls the box's ssh port until it answers, and names the box
+// when it does not. The box exists and is being billed whatever the poll does,
+// and v1 ships no destroy, so a failure that lost the id and the address would
+// leave the operator hunting for a box smith made.
+func awaitReachable(ctx context.Context, dialer connection.Dialer, clock connection.Clock, box provider.Box) error {
+	if err := connection.WaitForSSH(ctx, dialer, clock, box.IP, readinessTimeout); err != nil {
+		return fmt.Errorf("box %s was created at %s but never became reachable: %w", box.ID, box.IP, err)
+	}
+	return nil
+}
+
+// resolveAdapter reads the adapter smith would create through, from the named
+// blueprint and the operator's preferences. The provider block replaces
+// wholesale rather than merging, so what comes back is one coherent adapter.
+//
+// An adapter is optional everywhere, so its absence is a refusal naming the
+// alternative: the operator brings their own box and hands smith the target.
+func resolveAdapter(home config.Home, blueprintName string) (provider.Adapter, error) {
+	prefs, err := config.LoadPreferences(home)
+	if err != nil {
+		return provider.Adapter{}, fmt.Errorf("read preferences: %w", err)
+	}
+	var declared *blueprint.Blueprint
+	if blueprintName != "" {
+		b, _, err := config.Load(home, blueprintName)
+		if err != nil {
+			return provider.Adapter{}, fmt.Errorf("read blueprint: %w", err)
+		}
+		declared = &b
+	}
+	resolved := config.Resolve(config.Overrides{}, declared, &prefs.Declared)
+	if err := resolved.Conflicts(); err != nil {
+		return provider.Adapter{}, fmt.Errorf("refusing to create a box: %w", err)
+	}
+	if resolved.Provider.Provider == nil {
+		return provider.Adapter{}, errors.New(
+			"no provider adapter is configured: declare a provider block in the blueprint or in preferences, " +
+				"or create the box yourself and run smith machine setup <login>@<host>")
+	}
+	return provider.Adapt(*resolved.Provider.Provider), nil
+}
+
+// writeCreated reports the box the provider returned and the command to run
+// next.
+func writeCreated(cmd *cobra.Command, box provider.Box, sshKey string) error {
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), createdReport(box, sshKey)); err != nil {
+		return fmt.Errorf("write created report: %w", err)
+	}
+	return nil
+}
+
+// createdReport renders what the operator is handed by a successful create: the
+// box, the ssh key reference smith passed to the provider, the command to run
+// next, and what to check first when that command cannot get in. The login is
+// the one a stock cloud image boots with; an image that grants a different one
+// takes that login instead.
+//
+// The key reference is reported because no pre-flight can validate it. A key
+// reference that names nothing, a key registered under another name, and a
+// token without permission to read keys are indistinguishable to smith and
+// identical to the operator: the box boots, port 22 answers, and the first ssh
+// returns Permission denied (publickey). Naming the reference here is what
+// turns that into a pointed failure.
+func createdReport(box provider.Box, sshKey string) string {
+	passed := fmt.Sprintf("%q", sshKey)
+	advice := fmt.Sprintf(`If that is refused with "Permission denied (publickey)", the ssh key reference
+is the first thing to check. smith passed %q to the provider without
+interpreting it, so it cannot tell a wrong reference from a token that may not
+read keys.`, sshKey)
+	if sshKey == "" {
+		passed = "none passed"
+		advice = `If that is refused with "Permission denied (publickey)", the ssh key is the
+first thing to check. smith passed none, so the box carries only the keys the
+provider put on it itself.`
+	}
+	return fmt.Sprintf(`box created: %s
+address:     %s
+ssh key:     %s
+reachable:   port 22 is answering
+
+nothing is provisioned yet. Run:
+  smith machine setup root@%s
+
+%s
+`, box.ID, box.IP, passed, box.IP, advice)
 }
 
 // newSetupCmd builds `smith machine setup <login>@<host>`. It connects, runs the

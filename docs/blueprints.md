@@ -16,6 +16,8 @@ cannot drift out of the schema:
 
 - [`docs/examples/blueprints/acme.yaml`](./examples/blueprints/acme.yaml)
 - [`docs/examples/preferences.yaml`](./examples/preferences.yaml)
+- [`docs/examples/adapters/`](./examples/adapters/) — provider adapters on
+  their own, explained field by field in [Provider adapters](./providers.md)
 
 They are the fastest way in: copy them, change what is yours, run
 `smith blueprint check`.
@@ -90,6 +92,15 @@ So: a blueprint that names `provider` **at all** replaces the preference block
 entirely, and a blueprint silent on `provider` inherits it entirely. Nothing is
 taken from both.
 
+### The adapter itself
+
+The rest of the block — the three templates, the four placeholders smith
+substitutes, `requires`, `ssh_key`, `marker`, `record` and `extract` — is one
+page of its own: [Provider adapters](./providers.md). It covers what an adapter
+is, that it is optional, and the worked examples in
+[`docs/examples/adapters/`](./examples/adapters/), one verified against a real
+provider and one explicitly not.
+
 ## Checking before you build
 
 ```sh
@@ -114,7 +125,7 @@ resolved configuration:
 access:     tailscale (blueprint)
 terminal:   tmux (blueprint)
 workspace:  ~/workspace (blueprint)
-provider:   hcloud (blueprint, replacing the preference)
+provider:   doctl (blueprint, replacing the preference)
 git:
   user_name:  Ada Lovelace (blueprint)
   user_email: ada@acme.example (blueprint)
