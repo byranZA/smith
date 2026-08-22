@@ -82,6 +82,28 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System(), connection.SystemDialer(), provider.SystemClock()), newSessionCmd(stagedBoxConfig, staging.Root, connection.System(), connection.System(), connection.System()), newVersionCmd())
+	// --relayed-from is what the relay always passes and only the relay
+	// passes: hidden, because an operator never types it, and optional,
+	// because the operator who SSHed in and ran a verb by hand is not
+	// relaying and has nothing to declare. Comparing it against this
+	// binary's own version, and refusing a command line this smith may not
+	// mean the same thing by, is the version-skew slice's.
+	var relayedFrom string
+	root.PersistentFlags().StringVar(&relayedFrom, "relayed-from", "", "the version of the smith relaying this command")
+	if err := root.PersistentFlags().MarkHidden("relayed-from"); err != nil {
+		// The flag was registered on the line above, so a failure here is
+		// not a runtime condition but a build that cannot be correct.
+		panic(fmt.Sprintf("hide --relayed-from: %v", err))
+	}
+	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System(), connection.SystemDialer(), provider.SystemClock()), newSessionCmd(sessionWiring{
+		box:     stagedBoxConfig,
+		home:    userConfigHome,
+		root:    staging.Root,
+		git:     connection.System(),
+		tmux:    connection.System(),
+		connect: connection.System(),
+		ssh:     connection.System(),
+		version: resolveVersion(),
+	}), newVersionCmd())
 	return root
 }

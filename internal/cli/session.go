@@ -8,9 +8,13 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 )
@@ -36,27 +40,149 @@ func stagedBoxConfig() (config.Resolved, error) {
 	return config.Resolve(config.Overrides{}, &b, nil), nil
 }
 
-// newSessionCmd builds `smith session` and its subcommands, reading the box's
-// staged configuration through resolve and driving the box through the git and
-// tmux runners. connect is the exec boundary the connecting verbs cross to
-// hand the operator's terminal to tmux. Placements are materialized from the box state directory at
-// root — /etc/smith on a real box — which is passed in rather than reached for
-// so a test drives the real command against a staged tree of its own.
+// newSessionCmd builds `smith session` and its subcommands from the wiring
+// they run through, which carries both what a verb needs here and what it
+// needs to reach a box.
 //
-// The verbs run against the local machine: on a provisioned box smith is on
-// the operator's PATH, so an operator who has connected to the box gets the
-// same surface a relay will later render for them from their laptop.
-func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner, connect session.Execer) *cobra.Command {
+// Every verb takes an optional leading box, and that argument is the whole of
+// the rule: naming one relays the verb to the smith installed on that box,
+// naming none runs it here. So `smith session list dev` on the operator's
+// laptop and `smith session list` after SSHing in are one implementation of
+// the verb, reached through one door.
+func newSessionCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session",
 		Short: "Work on a branch in its own worktree and tmux session",
 	}
-	cmd.AddCommand(newSessionStartCmd(resolve, root, git, tmux, connect))
-	cmd.AddCommand(newSessionAttachCmd(resolve, root, git, tmux, connect))
-	cmd.AddCommand(newSessionListCmd(resolve, root, git, tmux))
-	cmd.AddCommand(newSessionStopCmd(resolve, root, git, tmux))
-	cmd.AddCommand(newSessionRemoveCmd(resolve, root, git, tmux))
+	cmd.AddCommand(newSessionStartCmd(w))
+	cmd.AddCommand(newSessionAttachCmd(w))
+	cmd.AddCommand(newSessionListCmd(w))
+	cmd.AddCommand(newSessionStopCmd(w))
+	cmd.AddCommand(newSessionRemoveCmd(w))
 	return cmd
+}
+
+// sessionWiring is everything a session verb is built from: what it needs to
+// run here, and what it needs to relay. Both halves are always present,
+// because which one a verb uses is decided by the operator's own command line
+// and not at wiring time.
+type sessionWiring struct {
+	// box reads the blueprint staged on this box, for a verb running here.
+	box boxResolver
+	// home locates the operator's config home, where a box name is resolved
+	// to the target it was proven at.
+	home homeResolver
+	// root is the box state directory the placement bytes were staged under.
+	root string
+	// git and tmux are the commands a verb running here drives the box with.
+	git, tmux session.Runner
+	// connect replaces smith's own process: with tmux for a verb running
+	// here, with ssh for one that relays.
+	connect session.Execer
+	// ssh launches the local ssh binary a relayed verb travels over.
+	ssh connection.Exec
+	// version is this smith's version, which every relayed invocation carries
+	// so the box can refuse a command line it may not mean the same thing by.
+	version string
+}
+
+// leading splits a verb's positional arguments into the box it names and the
+// arguments the verb itself takes. takes is how many of those there are, so an
+// argument beyond them can only be the box — which is the whole of the rule
+// for every verb whose arity is fixed.
+func leading(args []string, takes int) (string, []string) {
+	if len(args) > takes {
+		return args[0], args[1:]
+	}
+	return "", args
+}
+
+// leadingBox splits a batch removal's arguments into the box it names and the
+// sessions it is to remove. rm is the one verb whose leading argument is
+// ambiguous, because it takes any number of names, so the argument is read as
+// a box only when it is one the operator registered or wrote out in full. On
+// the box, where a batch is composed from `session list --names`, there is no
+// inventory to hit and a session name never carries an "@".
+func (w sessionWiring) leadingBox(args []string) (string, []string, error) {
+	if len(args) < 2 {
+		return "", args, nil
+	}
+	inv, err := lookupInventory(w.home, args[0])
+	if err != nil {
+		return "", nil, err
+	}
+	if _, registered := inventory.Lookup(inv, args[0]); registered || strings.Contains(args[0], "@") {
+		return args[0], args[1:], nil
+	}
+	return "", args, nil
+}
+
+// verb renders the invocation the box is to run: the session verb by name, the
+// arguments it takes, and the flags the operator actually set, spelled back as
+// --flag=value so the box parses the command line they typed. The box target
+// is resolved here under the shared rule — an "@" is a literal target, a bare
+// value is looked up in the inventory — and an empty one is the verb running
+// on this machine.
+func (w sessionWiring) verb(cmd *cobra.Command, name, box string, args ...string) (relay.Verb, error) {
+	target, err := w.target(box)
+	if err != nil {
+		return relay.Verb{}, err
+	}
+	relayed := append([]string{"session", name}, args...)
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		relayed = append(relayed, "--"+f.Name+"="+f.Value.String())
+	})
+	return relay.Verb{Target: target, Version: w.version, Args: relayed}, nil
+}
+
+// target resolves the box a verb named into the ssh target it relays to. No
+// box named stays no box named, which is the verb running here.
+func (w sessionWiring) target(box string) (string, error) {
+	if box == "" {
+		return "", nil
+	}
+	inv, err := lookupInventory(w.home, box)
+	if err != nil {
+		return "", err
+	}
+	return inventory.Resolve(inv, box), nil
+}
+
+// localEnv resolves what a verb running on this machine acts against: the
+// blueprint staged here, paired with the commands smith drives the box with.
+// A staged blueprint that is absent or cannot be trusted travels out untouched
+// so it keeps the exit code its kind is owed.
+func (w sessionWiring) localEnv(cmd *cobra.Command, connect session.Execer) (session.Env, error) {
+	resolved, err := w.box()
+	if err != nil {
+		return session.Env{}, err
+	}
+	env, err := sessionEnv(resolved, w.root, w.git, w.tmux, connect)
+	if err != nil {
+		return session.Env{}, reportInvalid(cmd, err)
+	}
+	return env, nil
+}
+
+// reportRelay maps a relayed verb's outcome onto the exit the operator gets. A
+// box that ran smith and refused — the version-skew refusal above all — has
+// already said why on the operator's terminal, so its exit code is carried out
+// with nothing added; a box with no smith and a box that could not be reached
+// are reported here. Anything else is the verb having run on this machine and
+// having reported itself, exactly as it did before there was a relay.
+func reportRelay(cmd *cobra.Command, err error) error {
+	var exit *relay.ExitError
+	if errors.As(err, &exit) {
+		return &exitError{code: exit.Code}
+	}
+	var absent *relay.NotInstalledError
+	if errors.As(err, &absent) {
+		return reportInvalid(cmd, absent)
+	}
+	if errors.Is(err, connection.ErrConnect) {
+		return reportInvalid(cmd, err)
+	}
+	return err
 }
 
 // newSessionListCmd builds
@@ -72,38 +198,41 @@ func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner, c
 // It exits zero whatever it finds: a non-zero exit on "something is unpushed"
 // would conflate the command failing with the data having a property, and the
 // listing exists to be read before a teardown the operator does by hand.
-func newSessionListCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
+func newSessionListCmd(w sessionWiring) *cobra.Command {
 	var repo string
 	var live, stopped, names bool
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List the sessions on this box and whether they are running",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			filter, err := sessionFilter(repo, live, stopped)
+		Use:   "list [<box>]",
+		Short: "List the sessions on a box and whether they are running",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			box, _ := leading(args, 0)
+			verb, err := w.verb(cmd, "list", box)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			resolved, err := resolve()
-			if err != nil {
-				return err
-			}
-			env, err := sessionEnv(resolved, root, git, tmux, nil)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			sessions, err := session.List(cmd.Context(), env, filter)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			render := session.Readout
-			if names {
-				render = session.Names
-			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), render(sessions)); err != nil {
-				return fmt.Errorf("write session listing: %w", err)
-			}
-			return nil
+			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, func() error {
+				filter, err := sessionFilter(repo, live, stopped)
+				if err != nil {
+					return reportInvalid(cmd, err)
+				}
+				env, err := w.localEnv(cmd, nil)
+				if err != nil {
+					return err
+				}
+				sessions, err := session.List(cmd.Context(), env, filter)
+				if err != nil {
+					return reportInvalid(cmd, err)
+				}
+				render := session.Readout
+				if names {
+					render = session.Names
+				}
+				if _, err := fmt.Fprint(cmd.OutOrStdout(), render(sessions)); err != nil {
+					return fmt.Errorf("write session listing: %w", err)
+				}
+				return nil
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr()))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "list only the sessions of one declared repo")
@@ -140,36 +269,46 @@ func sessionFilter(repo string, live, stopped bool) (session.Filter, error) {
 // It then puts the operator in that session writable, because start is the
 // verb of someone who is there to work. --detach opts out of that half and
 // returns instead, which is what a caller with no human present drives.
-func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runner, connect session.Execer) *cobra.Command {
+func newSessionStartCmd(w sessionWiring) *cobra.Command {
 	var repo, branch, base string
 	var detach bool
 	cmd := &cobra.Command{
-		Use:   "start",
+		Use:   "start [<box>]",
 		Short: "Stand up a worktree and a tmux session for a branch",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if repo == "" || branch == "" {
-				return reportInvalid(cmd, errors.New("session start needs --repo naming a declared repo and --branch naming the branch to work on"))
-			}
-			resolved, err := resolve()
-			if err != nil {
-				return err
-			}
-			env, err := sessionEnv(resolved, root, git, tmux, connect)
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			box, _ := leading(args, 0)
+			verb, err := w.verb(cmd, "start", box)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch, Base: base})
-			if err != nil {
-				return reportInvalid(cmd, err)
+			local := func() error {
+				if repo == "" || branch == "" {
+					return reportInvalid(cmd, errors.New("session start needs --repo naming a declared repo and --branch naming the branch to work on"))
+				}
+				env, err := w.localEnv(cmd, w.connect)
+				if err != nil {
+					return err
+				}
+				started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch, Base: base})
+				if err != nil {
+					return reportInvalid(cmd, err)
+				}
+				if detach {
+					return writeStarted(cmd, started)
+				}
+				if err := session.Attach(cmd.Context(), env, started.Name, session.Interact); err != nil {
+					return reportInvalid(cmd, err)
+				}
+				return nil
 			}
+			// A start that will connect hands the terminal to the box's
+			// tmux, so it travels the same way attach does; one that detaches
+			// is an ordinary command whose report the operator reads.
 			if detach {
-				return writeStarted(cmd, started)
+				return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr()))
 			}
-			if err := session.Attach(cmd.Context(), env, started.Name, session.Interact); err != nil {
-				return reportInvalid(cmd, err)
-			}
-			return nil
+			return reportRelay(cmd, relay.Connect(w.connect, verb, local))
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "the declared repo to cut the worktree from")
@@ -187,29 +326,32 @@ func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runn
 // smith execs into tmux, so this command does not return: what the operator
 // sees afterwards is tmux itself, and disconnecting leaves the session
 // running.
-func newSessionAttachCmd(resolve boxResolver, root string, git, tmux session.Runner, connect session.Execer) *cobra.Command {
+func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 	var interact bool
 	cmd := &cobra.Command{
-		Use:   "attach <name>",
+		Use:   "attach [<box>] <name>",
 		Short: "Connect a terminal to a session, read-only unless asked to interact",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved, err := resolve()
-			if err != nil {
-				return err
-			}
-			env, err := sessionEnv(resolved, root, git, tmux, connect)
+			box, names := leading(args, 1)
+			verb, err := w.verb(cmd, "attach", box, names...)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			mode := session.Observe
-			if interact {
-				mode = session.Interact
-			}
-			if err := session.Attach(cmd.Context(), env, args[0], mode); err != nil {
-				return reportInvalid(cmd, err)
-			}
-			return nil
+			return reportRelay(cmd, relay.Connect(w.connect, verb, func() error {
+				env, err := w.localEnv(cmd, w.connect)
+				if err != nil {
+					return err
+				}
+				mode := session.Observe
+				if interact {
+					mode = session.Interact
+				}
+				if err := session.Attach(cmd.Context(), env, names[0], mode); err != nil {
+					return reportInvalid(cmd, err)
+				}
+				return nil
+			}))
 		},
 	}
 	cmd.Flags().BoolVar(&interact, "interact", false, "connect writable rather than read-only")
@@ -222,28 +364,31 @@ func newSessionAttachCmd(resolve boxResolver, root string, git, tmux session.Run
 // It takes no confirmation and has no --force: nothing it does loses work, so
 // a gate here would only teach the operator to wave one away at the verb that
 // is safe, and mean it at the one that is not.
-func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
+func newSessionStopCmd(w sessionWiring) *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop <name>",
+		Use:   "stop [<box>] <name>",
 		Short: "End a session's tmux session, keeping its worktree and branch",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved, err := resolve()
-			if err != nil {
-				return err
-			}
-			env, err := sessionEnv(resolved, root, git, tmux, nil)
+			box, names := leading(args, 1)
+			verb, err := w.verb(cmd, "stop", box, names...)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			name := args[0]
-			if err := session.Stop(cmd.Context(), env, name); err != nil {
-				return reportInvalid(cmd, err)
-			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s is stopped; its worktree and branch are untouched\n", name); err != nil {
-				return fmt.Errorf("write report: %w", err)
-			}
-			return nil
+			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, func() error {
+				env, err := w.localEnv(cmd, nil)
+				if err != nil {
+					return err
+				}
+				name := names[0]
+				if err := session.Stop(cmd.Context(), env, name); err != nil {
+					return reportInvalid(cmd, err)
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s is stopped; its worktree and branch are untouched\n", name); err != nil {
+					return fmt.Errorf("write report: %w", err)
+				}
+				return nil
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr()))
 		},
 	}
 }
@@ -262,26 +407,32 @@ func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runne
 // a refusal prints what would be lost and the exact --force command that
 // overrides it, and exits non-zero, so a human and a loop are answered
 // identically.
-func newSessionRemoveCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
+func newSessionRemoveCmd(w sessionWiring) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "rm <name>...",
+		Use:   "rm [<box>] <name>...",
 		Short: "Reclaim the worktrees of one or more sessions, keeping their branches",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolved, err := resolve()
-			if err != nil {
-				return err
-			}
-			env, err := sessionEnv(resolved, root, git, tmux, nil)
+			box, names, err := w.leadingBox(args)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			removed, err := session.Remove(cmd.Context(), env, args, force)
+			verb, err := w.verb(cmd, "rm", box, names...)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			return writeRemoved(cmd, removed)
+			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, func() error {
+				env, err := w.localEnv(cmd, nil)
+				if err != nil {
+					return err
+				}
+				removed, err := session.Remove(cmd.Context(), env, names, force)
+				if err != nil {
+					return reportInvalid(cmd, err)
+				}
+				return writeRemoved(cmd, removed)
+			}, cmd.OutOrStdout(), cmd.ErrOrStderr()))
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "reclaim the worktrees even if a session is running or its worktree is dirty")

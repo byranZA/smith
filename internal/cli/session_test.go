@@ -36,7 +36,7 @@ func TestSessionStartStandsUpAWorktreeAndATmuxSession(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -64,7 +64,7 @@ func TestSessionStartRefusesAnUndeclaredRepo(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"start", "--repo", "ghost", "--branch", "spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -92,7 +92,7 @@ func TestSessionStartCutsFromTheRequestedBase(t *testing.T) {
 	bare := filepath.Join(workspace, "smith", "repo.git")
 	runGit(t, bare, "branch", "release-2", "main")
 	moveOn(t, bare, "main")
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -118,7 +118,7 @@ func TestSessionStartRefusesABaseAgainstAnExistingBranch(t *testing.T) {
 	runGit(t, bare, "branch", "release-2", "main")
 	runGit(t, bare, "branch", "spec-42", "main")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -238,7 +238,7 @@ func TestSessionAttachObservesByDefault(t *testing.T) {
 	resolve := resolvedBox(workspace, "smith")
 	standUp(t, resolve)
 	execer := &fakeExec{}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, execer))
 	cmd.SetArgs([]string{"attach", "smith-spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -262,7 +262,7 @@ func TestSessionAttachInteractsOnRequest(t *testing.T) {
 	resolve := resolvedBox(workspace, "smith")
 	standUp(t, resolve)
 	execer := &fakeExec{}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, execer))
 	cmd.SetArgs([]string{"attach", "smith-spec-42", "--interact"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
@@ -283,7 +283,7 @@ func TestSessionAttachRefusesAnUnknownName(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	execer := &fakeExec{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, execer))
 	cmd.SetArgs([]string{"attach", "smith-ghost"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -309,7 +309,7 @@ func TestSessionStartConnectsWritableUnlessDetached(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	execer := &fakeExec{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, execer))
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -341,7 +341,7 @@ func TestSessionAttachIsUnderTheRootCommand(t *testing.T) {
 // test of another verb has one to address.
 func standUp(t *testing.T, resolve boxResolver) {
 	t.Helper()
-	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	start := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
@@ -358,7 +358,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	start := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "smith/spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
@@ -366,7 +366,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 		t.Fatalf("session start err = %v", err)
 	}
 
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -392,7 +392,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 func TestSessionListSaysSoWhenThereIsNothingToList(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -427,14 +427,14 @@ func TestSessionListExitsZeroWithUnpushedWork(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	start := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
 	if err := start.Execute(); err != nil {
 		t.Fatalf("session start err = %v", err)
 	}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -458,14 +458,14 @@ func TestSessionListSubtractsTheBlueprintsPlacements(t *testing.T) {
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBoxPlacing(workspace, "smith", ".env")
 	root := stageRepoPlacement(t, "smith", ".env", "TOKEN=1\n")
-	start := newSessionCmd(resolve, root, connection.System(), &fakeTmux{}, &fakeExec{})
+	start := newSessionCmd(onBox(t, resolve, root, connection.System(), &fakeTmux{}, &fakeExec{}))
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
 	if err := start.Execute(); err != nil {
 		t.Fatalf("session start err = %v", err)
 	}
-	cmd := newSessionCmd(resolve, root, connection.System(), &fakeTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, root, connection.System(), &fakeTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -506,7 +506,7 @@ func TestSessionStopEndsTheTmuxSessionAndKeepsTheWorktree(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -573,7 +573,7 @@ func TestSessionStartPlacesTheBlueprintsFilesInTheWorktree(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	root := stageRepoPlacement(t, "smith", "config/.env", "TOKEN=staged\n")
-	cmd := newSessionCmd(resolvedBoxPlacing(workspace, "smith", "config/.env"), root, connection.System(), &fakeTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolvedBoxPlacing(workspace, "smith", "config/.env"), root, connection.System(), &fakeTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -633,7 +633,7 @@ func TestSessionRemoveReclaimsTheWorktreeOfACleanStoppedSession(t *testing.T) {
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
 	standUp(t, resolve)
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &stoppedTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &stoppedTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "smith-spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -668,7 +668,7 @@ func TestSessionRemoveRefusesADirtyWorktreeWithoutPrompting(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o600); err != nil {
 		t.Fatalf("modify the worktree: %v", err)
 	}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &stoppedTmux{}, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), &stoppedTmux{}, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "smith-spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -703,7 +703,7 @@ func TestSessionRemoveForceOverridesALiveDirtySession(t *testing.T) {
 		t.Fatalf("modify the worktree: %v", err)
 	}
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "smith-spec-42", "--force"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -800,7 +800,7 @@ func stopSession(t *testing.T, resolve boxResolver, tmux session.Runner, name st
 // runSession drives one session subcommand and fails the test if it refuses.
 func runSession(t *testing.T, resolve boxResolver, tmux session.Runner, args ...string) {
 	t.Helper()
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs(args)
 	var errOut bytes.Buffer
 	cmd.SetOut(io.Discard)
@@ -845,7 +845,7 @@ func TestSessionListNarrowsTheRowsByFilter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+			cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 			cmd.SetArgs(tt.args)
 			var out, errOut bytes.Buffer
 			cmd.SetOut(&out)
@@ -875,7 +875,7 @@ func TestSessionListNarrowsTheRowsByFilter(t *testing.T) {
 func TestSessionListRefusesTwoOppositeStateFilters(t *testing.T) {
 	workspace := t.TempDir()
 	resolve, tmux := twoReposOneLive(t, workspace)
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"list", "--live", "--stopped"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -897,7 +897,7 @@ func TestSessionListRefusesTwoOppositeStateFilters(t *testing.T) {
 func TestSessionListNamesPrintsBareNames(t *testing.T) {
 	workspace := t.TempDir()
 	resolve, tmux := twoReposOneLive(t, workspace)
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"list", "--names"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -923,7 +923,7 @@ func TestSessionRemoveTakesSeveralNames(t *testing.T) {
 		standUpOn(t, resolve, tmux, "smith", branch)
 		stopSession(t, resolve, tmux, "smith-"+branch)
 	}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "smith-one", "smith-two", "smith-three"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -961,7 +961,7 @@ func TestSessionRemoveRefusesTheWholeBatchAndEnumeratesEveryOffender(t *testing.
 			t.Fatalf("dirty the worktree: %v", err)
 		}
 	}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "smith-one", "smith-two", "smith-three", "smith-four"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -996,7 +996,7 @@ func TestSessionRemoveRefusesAnUnknownNameBeforeRemovingAnything(t *testing.T) {
 		standUpOn(t, resolve, tmux, "smith", branch)
 		stopSession(t, resolve, tmux, "smith-"+branch)
 	}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "smith-one", "smith-ghost", "smith-two"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -1028,7 +1028,7 @@ func TestSessionRemoveTakesNoFiltersOfItsOwn(t *testing.T) {
 	tmux := &tmuxBox{}
 	standUpOn(t, resolve, tmux, "smith", "spec-42")
 	stopSession(t, resolve, tmux, "smith-spec-42")
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs([]string{"rm", "--stopped"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -1051,7 +1051,7 @@ func TestSessionRemoveTakesNoFiltersOfItsOwn(t *testing.T) {
 func TestSessionListNamesComposeIntoABatchRemoval(t *testing.T) {
 	workspace := t.TempDir()
 	resolve, tmux := twoReposOneLive(t, workspace)
-	list := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	list := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	list.SetArgs([]string{"list", "--stopped", "--names"})
 	var listed, errOut bytes.Buffer
 	list.SetOut(&listed)
@@ -1060,7 +1060,7 @@ func TestSessionListNamesComposeIntoABatchRemoval(t *testing.T) {
 		t.Fatalf("session list err = %v (stderr: %s)", err, errOut.String())
 	}
 
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd := newSessionCmd(onBox(t, resolve, t.TempDir(), connection.System(), tmux, &fakeExec{}))
 	cmd.SetArgs(append([]string{"rm"}, strings.Fields(listed.String())...))
 	var out bytes.Buffer
 	cmd.SetOut(&out)
