@@ -239,8 +239,9 @@ provider; smith does not enforce that. v1 writes a marker and never reads one ba
 _Avoid_: tag (the old name; it presumed native tag support).
 
 **Canonical box record**:
-What any provider's JSON is normalized to — `{id, ip|null, marker}` — so no caller of the
-provider adapter ever touches a provider's own shape. An address the provider has not assigned
+What any provider's JSON is normalized to — `{id, ip|null}` — so no caller of the
+provider adapter ever touches a provider's own shape. The marker is stamped on create and, since
+v1 never reads one back, is not a field of the record. An address the provider has not assigned
 yet is null, and that absence is what makes smith poll `list`, rather than a declared field
 saying the provider is synchronous or deferred.
 _Avoid_: droplet, server object, instance record.

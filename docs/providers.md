@@ -72,7 +72,7 @@ design exists to remove. They are your literal text, in your template.
 ## Reading the provider's answer
 
 Whatever JSON your CLI writes is normalized to one canonical record — the box
-id, its public address, and the marker it carries — by two sets of paths.
+id and its public address — by two sets of paths.
 
 `record` locates the box inside whatever envelope the provider wraps it in, per
 template, because one provider can wrap its two verbs differently:

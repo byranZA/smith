@@ -140,15 +140,17 @@ type Extract struct {
 }
 
 // Box is the canonical record smith normalizes any provider's JSON to: the
-// provider's own identifier for the box, its public address, and the marker it
-// carries. An address the provider has not assigned yet is empty.
+// provider's own identifier for the box and its public address. An address the
+// provider has not assigned yet is empty.
+//
+// The marker a box carries is not a field here: v1 stamps a marker on create
+// and never reads one back, so carrying it would hand every caller a field that
+// is always empty.
 type Box struct {
 	// ID is the provider's own identifier for the box.
 	ID string
 	// IP is the box's public address, empty when the provider reported none.
 	IP string
-	// Marker is the provider-side marker the box carries.
-	Marker string
 }
 
 // Create runs the adapter's create template for a box called name and returns

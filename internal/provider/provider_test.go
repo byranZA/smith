@@ -754,3 +754,19 @@ func TestCreateReportsAnAddressPathThatMissesOnTheMatchingListEntry(t *testing.T
 		t.Errorf("Create() err = %v, want it to name the ip path that matched nothing", err)
 	}
 }
+
+// TestBoxCarriesOnlyWhatSmithExtracts guards the canonical record against a
+// field no extractor fills: v1 stamps a marker and never reads one back, so a
+// Marker field on Box would read as "this box carries no marker" for every box
+// smith ever creates.
+func TestBoxCarriesOnlyWhatSmithExtracts(t *testing.T) {
+	var fields []string
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(provider.Box{})) {
+		fields = append(fields, field.Name)
+	}
+
+	want := []string{"ID", "IP"}
+	if !slices.Equal(fields, want) {
+		t.Errorf("Box fields = %q, want %q", fields, want)
+	}
+}
