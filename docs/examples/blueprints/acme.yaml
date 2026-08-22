@@ -31,47 +31,60 @@ git:
 # command otherwise, so any CLI that emits JSON fits here.
 #
 # A blueprint that names `provider` at all replaces the preferences block
-# whole. Half of one adapter and half of another is never what you want.
+# whole. Half of one adapter and half of another is never what you want — this
+# one is the same DigitalOcean account as the preferences, on a bigger droplet.
+#
+# Image, size and region are your own literal text and get no smith fields:
+# `s-2vcpu-4gb` and Hetzner's `cpx31` have nothing in common but position.
+# More adapters, and what every field means, are in ../adapters/ and
+# ../../providers.md.
 provider:
   create:
-    - hcloud
-    - server
+    - doctl
+    - compute
+    - droplet
     - create
-    - --name
     - "{{name}}"
-    - --type
-    - cpx31
     - --image
-    - ubuntu-24.04
-    - --label
-    - "{{marker_arg}}"
-    - --ssh-key
+    - ubuntu-24-04-x64
+    - --size
+    - s-2vcpu-4gb
+    - --region
+    - fra1
+    - --ssh-keys
     - "{{ssh_key}}"
+    - --tag-name
+    - "{{marker_arg}}"
+    - --wait
     - -o
     - json
   list:
-    - hcloud
-    - server
+    - doctl
+    - compute
+    - droplet
     - list
     - -o
     - json
   destroy:
-    - hcloud
-    - server
+    - doctl
+    - compute
+    - droplet
     - delete
     - "{{id}}"
-    - -o
-    - json
+    - --force
   requires:
-    - HCLOUD_TOKEN
+    - DIGITALOCEAN_ACCESS_TOKEN
   ssh_key: acme-box
   marker:
-    arg: smith={{value}}
-    read: labels.smith
-    expect: "{{value}}"
+    arg: "smith:{{value}}"
+    read: "tags[*]"
+    expect: "smith:{{value}}"
+  record:
+    create: "[*]"
+    list: "[*]"
   extract:
     id: id
-    ip: public_net.ipv4.ip
+    ip: networks.v4[type=public].ip_address
 
 # System packages, installed unversioned from apt.
 packages:

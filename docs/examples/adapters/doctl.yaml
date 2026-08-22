@@ -1,0 +1,104 @@
+# A worked example provider adapter: DigitalOcean, through `doctl`.
+#
+# VERIFIED. Every line here ran against a real DigitalOcean account with
+# doctl 1.166.0 — create, address, sshd banner, list, resolve the address back
+# to the id, destroy — in about forty seconds. The responses it answered with
+# are the fixtures smith's own test suite drives this file against.
+#
+# An adapter is a description of one provider's CLI, as data. Paste this block
+# into ~/.smith/preferences.yaml or into a blueprint, change what is yours, and
+# check it:
+#
+#     smith blueprint check ./doctl.yaml
+#
+# Nothing here is a smith concept except the {{...}} placeholders. Image, size
+# and region are your own literal text, because a `size` field in smith's
+# schema would be exactly the provider knowledge this design exists to remove.
+provider:
+  # The create template. smith substitutes {{name}}, {{marker_arg}} and
+  # {{ssh_key}} and passes every other argument through as written.
+  #
+  # `--wait` is load-bearing: without it doctl answers the moment the API
+  # accepts the request, and the droplet's address list is still empty, so the
+  # ip extractor below has nothing to match.
+  create:
+    - doctl
+    - compute
+    - droplet
+    - create
+    - "{{name}}"
+    - --image
+    - ubuntu-24-04-x64
+    - --size
+    - s-1vcpu-512mb-10gb
+    - --region
+    - fra1
+    - --ssh-keys
+    - "{{ssh_key}}"
+    - --tag-name
+    - "{{marker_arg}}"
+    - --wait
+    - -o
+    - json
+
+  list:
+    - doctl
+    - compute
+    - droplet
+    - list
+    - -o
+    - json
+
+  # Accepted, validated, and never executed: v1 ships no destroy. It is
+  # declared so an adapter written today stays correct when one does.
+  destroy:
+    - doctl
+    - compute
+    - droplet
+    - delete
+    - "{{id}}"
+    - --force
+
+  # The names of the environment variables the CLI needs, never their values.
+  # smith checks they are present before running anything and then inherits
+  # your environment into the command, so doctl reads the token itself.
+  #
+  # This catches a MISSING credential and never an INSUFFICIENT one: a token
+  # can be present, correctly named, and still lack the scope the template
+  # needs. That is not hypothetical — it is why the sibling adapter exists.
+  requires:
+    - DIGITALOCEAN_ACCESS_TOKEN
+
+  # A key already registered at DigitalOcean, passed through verbatim. smith
+  # does not interpret, resolve or validate it; a name, a fingerprint and a
+  # full public key line are all equally acceptable, and all fail identically
+  # if wrong.
+  ssh_key: my-laptop
+
+  # How a smith-created box is stamped. DigitalOcean tags are opaque strings,
+  # so what create passes and what reads back are the same text.
+  #
+  # `read` and `expect` are written now and read later: v1 stamps a marker at
+  # create and never reads one back, because both readers — teardown and
+  # provider-side discovery — are out of scope. They are still validated, so
+  # what you write today stays correct when a reader ships.
+  marker:
+    arg:    "smith:{{value}}"
+    read:   "tags[*]"
+    expect: "smith:{{value}}"
+
+  # Where the box record sits inside each response. doctl answers both verbs
+  # with a bare array, so both select every element.
+  record:
+    create: "[*]"
+    list:   "[*]"
+
+  # Where identity and address are read, relative to the record above. The
+  # address is selected by a predicate rather than by position: the entries of
+  # `networks.v4` have no stable order, and in one account the public address
+  # came second on one droplet and first on another. Taking `[0]` hands smith a
+  # 10.x address roughly half the time, and the box is then unreachable for a
+  # reason that looks like anything but an extractor bug.
+  extract:
+    id: "id"
+    ip: "networks.v4[type=public].ip_address"

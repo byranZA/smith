@@ -41,6 +41,9 @@ provider:
     arg:    smith={{value}}
     read:   labels.smith
     expect: "{{value}}"
+  record:
+    create: server
+    list:   "[*]"
   extract:
     id: id
     ip: public_net.ipv4.ip

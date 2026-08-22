@@ -238,6 +238,29 @@ provider; smith does not enforce that. v1 writes a marker and never reads one ba
 `expect` are validated and unused. Unrelated to the on-box **marker**.
 _Avoid_: tag (the old name; it presumed native tag support).
 
+**Canonical box record**:
+What any provider's JSON is normalized to — `{id, ip|null, marker}` — so no caller of the
+provider adapter ever touches a provider's own shape. An address the provider has not assigned
+yet is null, and that absence is what makes smith poll `list`, rather than a declared field
+saying the provider is synchronous or deferred.
+_Avoid_: droplet, server object, instance record.
+
+**Extractor path**:
+The small path grammar an adapter reads a provider's JSON with — a key, dotted descent, `[*]`,
+and `[field=value]` selecting array elements by field value. A `record` path locates the box
+inside whatever envelope a response wraps it in, per template; the `extract` paths then read id
+and address relative to it. There is no positional index, deliberately: a provider's address
+list has no stable order, so selecting by position silently yields a private address. A path
+matching nothing is an error naming the path, never a zero value.
+_Avoid_: JSONPath (the standard grammar, which this is not), selector, query.
+
+**Placeholder**:
+One of the four values smith substitutes into an adapter's templates — `{{name}}`,
+`{{marker_arg}}`, `{{ssh_key}}`, `{{id}}` — every other argument being the operator's own
+literal text. An unrecognised one is a validation error, and an argument that renders empty
+drops itself *and* the flag before it, which is how a flat argument list says "omit this".
+_Avoid_: variable, parameter, interpolation.
+
 **Control surface / relay**:
 The operator's local smith after bootstrap: it holds the box inventory and the config home, and it
 **relays** the session and workspace verbs over SSH to the smith installed on the box rather than

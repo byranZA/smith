@@ -257,7 +257,7 @@ resolved configuration:
 access:     tailscale (blueprint)
 terminal:   tmux (blueprint)
 workspace:  ~/workspace (blueprint)
-provider:   hcloud (blueprint, replacing the preference)
+provider:   doctl (blueprint, replacing the preference)
 git:
   user_name:  Ada Lovelace (blueprint)
   user_email: ada@acme.example (blueprint)
@@ -277,6 +277,12 @@ Start from the worked examples — a full
 [docs/blueprints.md](docs/blueprints.md) for the config home, the split between
 the two files, precedence, and what smith does and does not do about
 credentials.
+
+If you want smith to create the box too, describe your provider's own CLI as
+data in a `provider` block and run `smith machine create dev --blueprint acme`.
+It is optional — without it you bring the box as before —
+and [docs/providers.md](docs/providers.md) covers it, alongside worked
+[adapters](docs/examples/adapters/) for DigitalOcean.
 
 > **smith knows no service by name.** It places files and exports environment
 > variables; it knows nothing about GitHub or npm. A blueprint declaring

@@ -1,0 +1,20 @@
+[
+  {
+    "id": 593069736,
+    "name": "dev",
+    "memory": 512,
+    "vcpus": 1,
+    "disk": 10,
+    "status": "active",
+    "region": { "slug": "fra1", "name": "Frankfurt 1" },
+    "size_slug": "s-1vcpu-512mb-10gb",
+    "networks": {
+      "v4": [
+        { "ip_address": "10.135.0.4", "netmask": "255.255.0.0", "gateway": "10.135.0.1", "type": "private" },
+        { "ip_address": "203.0.113.10", "netmask": "255.255.240.0", "gateway": "203.0.113.1", "type": "public" }
+      ]
+    },
+    "tags": null,
+    "volume_ids": []
+  }
+]

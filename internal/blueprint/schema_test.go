@@ -56,6 +56,9 @@ func TestParseDecodesEverySchemaField(t *testing.T) {
 	if p.Marker.Arg != "smith={{value}}" || p.Marker.Read != "labels.smith" || p.Marker.Expect != "{{value}}" {
 		t.Errorf("Provider.Marker = %+v, want the declared marker", p.Marker)
 	}
+	if p.Record.Create != "server" || p.Record.List != "[*]" {
+		t.Errorf("Provider.Record = %+v, want the declared record paths", p.Record)
+	}
 	if p.Extract.ID != "id" || p.Extract.IP != "public_net.ipv4.ip" {
 		t.Errorf("Provider.Extract = %+v, want the declared extractors", p.Extract)
 	}

@@ -14,6 +14,7 @@ func Adapt(p blueprint.Provider) Adapter {
 		Requires: p.Requires,
 		SSHKey:   p.SSHKey,
 		Marker:   Marker{Arg: p.Marker.Arg, Read: p.Marker.Read, Expect: p.Marker.Expect},
+		Record:   Record{Create: p.Record.Create, List: p.Record.List},
 		Extract:  Extract{ID: p.Extract.ID, IP: p.Extract.IP},
 	}
 }
