@@ -37,12 +37,22 @@ var ErrEmptyArg = errors.New("secret reference has an empty argument")
 // unset environment variable.
 var ErrNotFound = errors.New("secret reference resolved to nothing")
 
+// Split separates a reference into its scheme and argument, on the first colon
+// only, so file:C:\keys\ts keeps its Windows drive letter. It reports whether
+// the reference carried a scheme at all: a value with no colon is not a
+// reference, and ok is false. Splitting is the whole of the reference grammar,
+// so callers that only check a reference share it with callers that resolve
+// one.
+func Split(ref string) (scheme, arg string, ok bool) {
+	return strings.Cut(ref, ":")
+}
+
 // Resolve turns a scheme:arg reference into its secret value. It splits on the
 // first colon only, so file:C:\keys\ts keeps its Windows drive letter, dispatches
 // on the scheme (env: reads an environment variable, file: reads a file), and
 // whitespace-trims the result. A reference with no scheme is ErrBareLiteral.
 func Resolve(ref string) (string, error) {
-	scheme, arg, ok := strings.Cut(ref, ":")
+	scheme, arg, ok := Split(ref)
 	if !ok {
 		return "", fmt.Errorf("resolve %q: %w", ref, ErrBareLiteral)
 	}

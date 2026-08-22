@@ -1,0 +1,159 @@
+# A worked example blueprint: the kind of box the Acme team develops on.
+#
+# Copy it to ~/.smith/blueprints/acme.yaml, change what is yours, and check it
+# before you build anything:
+#
+#     smith blueprint check acme
+#
+# Every block is written out in full — one key per line, list entries expanded
+# rather than folded into `{ from: ..., to: ... }` maps. YAML parses both
+# spellings identically and smith enforces neither, so the house style lives
+# here and in the docs or nowhere.
+
+# How the box is reached: public or tailscale.
+access: tailscale
+
+# The terminal substrate sessions run under. tmux is the only value v1 knows.
+terminal: tmux
+
+# Where the repo worktrees live on the box.
+workspace: ~/workspace
+
+# The identity the box commits as. Declare this or place your own ~/.gitconfig
+# — never both, because git reads one file and two writers on it means the one
+# you did not think about wins.
+git:
+  user_name: Ada Lovelace
+  user_email: ada@acme.example
+
+# How smith creates and lists boxes: a description of one provider's CLI, as
+# data. smith substitutes the {{...}} placeholders and never interprets the
+# command otherwise, so any CLI that emits JSON fits here.
+#
+# A blueprint that names `provider` at all replaces the preferences block
+# whole. Half of one adapter and half of another is never what you want.
+provider:
+  create:
+    - hcloud
+    - server
+    - create
+    - --name
+    - "{{name}}"
+    - --type
+    - cpx31
+    - --image
+    - ubuntu-24.04
+    - --label
+    - "{{marker_arg}}"
+    - --ssh-key
+    - "{{ssh_key}}"
+    - -o
+    - json
+  list:
+    - hcloud
+    - server
+    - list
+    - -o
+    - json
+  destroy:
+    - hcloud
+    - server
+    - delete
+    - "{{id}}"
+    - -o
+    - json
+  requires:
+    - HCLOUD_TOKEN
+  ssh_key: acme-box
+  marker:
+    arg: smith={{value}}
+    read: labels.smith
+  extract:
+    id: id
+    ip: public_net.ipv4.ip
+
+# System packages, installed unversioned from apt.
+packages:
+  - ripgrep
+  - jq
+  - postgresql-client
+
+# Version-pinned runtimes for the whole box. A repo can pin its own below.
+tools:
+  node: "20"
+  go: "1.23"
+
+# Box-wide environment variables. Every value is a reference to where the value
+# lives, never the value itself:
+#
+#   env:VAR      read from the environment of the smith process, on your machine
+#   file:PATH    read from a file on your machine
+#   literal:TEXT the text itself — deliberate, greppable, and never a secret
+#
+# A bare value with no scheme is refused. That is the point: a blueprint is a
+# file you commit and share, so a secret can only land in it on purpose.
+env:
+  GITHUB_TOKEN: env:GH_TOKEN
+  ANTHROPIC_API_KEY: file:~/.secrets/acme/anthropic-key
+  LOG_LEVEL: literal:debug
+
+# Files placed on the box, outside any worktree. A box placement's destination
+# is absolute or ~-relative, because there is no worktree to anchor it to.
+#
+#   mode: converge  replace the file on every pass (the default)
+#   mode: once      write it only if it is absent; the box owns it thereafter
+#   perms:          the destination's octal file mode, quoted so YAML keeps it
+#                   a string rather than reading 0600 as a number
+placements:
+  - from: file:~/.secrets/acme/id_forge
+    to: ~/.ssh/id_forge
+    mode: converge
+    perms: "0600"
+
+  - from: file:~/.config/acme/agent-instructions.md
+    to: ~/.config/acme/agent-instructions.md
+    mode: once
+    perms: "0644"
+
+# The repositories this box carries, each cloned into the workspace.
+#
+# The clone URLs are SSH, and that is deliberate. smith knows nothing about
+# GitHub — it places files and exports variables, and that is the whole of its
+# credential story. A GITHUB_TOKEN beside an https:// clone URL does not
+# authenticate anything, because git needs a credential helper configured to
+# use it and smith will not notice, fix, or warn about that. Place a key and
+# clone over SSH, or configure the helper yourself with a placement.
+repos:
+  # A repo names its worktree directory, its remote, and the branch work is
+  # cut from. Its tools override the box-wide ones for this repo only.
+  - name: acme-api
+    url: git@github.com:acme/api.git
+    base: develop
+    tools:
+      node: "22"
+    env:
+      ACME_REGION: literal:eu-central
+      ACME_DB_PASSWORD: file:~/.secrets/acme/db-password
+    # A repo placement's destination is worktree-relative — it lands inside
+    # this repo's checkout, so an absolute or ~-relative path here is refused.
+    placements:
+      - from: file:~/.secrets/acme/api.env
+        to: packages/api/.env
+        mode: converge
+        perms: "0600"
+
+      - from: file:~/fixtures/acme.sql
+        to: seed.sql
+        mode: once
+        perms: "0644"
+
+  # Leave `name` out and smith takes the last segment of the URL — this repo
+  # is "web". Two repos resolving to the same name is an error, because they
+  # would collide in the workspace.
+  - url: git@github.com:acme/web.git
+    base: main
+    placements:
+      - from: file:~/.secrets/acme/web.env
+        to: .env.local
+        mode: converge
+        perms: "0600"

@@ -58,6 +58,6 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newMachineCmd(), newVersionCmd())
+	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(), newVersionCmd())
 	return root
 }

@@ -1,0 +1,9 @@
+# The scope hazard: the same visual shape at two indents, anchored differently.
+placements:
+  - from: file:~/.secrets/acme/gitconfig
+    to:   etc/gitconfig          # box scope, relative — anchored to what?
+repos:
+  - url: git@github.com:acme/api.git
+    placements:
+      - from: file:~/.secrets/acme/npmrc
+        to:   ~/.npmrc           # repo scope, ~-relative — silently in the worktree

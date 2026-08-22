@@ -1,0 +1,70 @@
+# A worked example preferences file: what belongs to you rather than to a kind
+# of box. Copy it to ~/.smith/preferences.yaml and check it with:
+#
+#     smith blueprint check
+#
+# The test for whether a value belongs here: if you built a completely
+# different box tomorrow, should this value follow? Your provider account and
+# the name you commit under follow. A list of repos does not.
+#
+# Only fixed-key fields live here. repos, placements, packages, tools and env
+# are blueprint-only and are refused in this file — a box records which
+# blueprint it was built from and nothing about your preferences, so the
+# blueprint has to be enough to rebuild it.
+
+# How boxes are reached, unless a blueprint or --access says otherwise.
+access: tailscale
+
+# The terminal substrate sessions run under.
+terminal: tmux
+
+# Where repo worktrees live on a box.
+workspace: ~/workspace
+
+# The identity your boxes commit as. Set it here and a teammate who clones your
+# ~/.smith and builds the same blueprint commits as themselves, not as you.
+git:
+  user_name: Ada Lovelace
+  user_email: ada@acme.example
+
+# Your provider account, described once. A blueprint that declares a provider
+# block replaces this one entirely rather than merging field by field.
+provider:
+  create:
+    - hcloud
+    - server
+    - create
+    - --name
+    - "{{name}}"
+    - --type
+    - cpx21
+    - --image
+    - ubuntu-24.04
+    - --label
+    - "{{marker_arg}}"
+    - --ssh-key
+    - "{{ssh_key}}"
+    - -o
+    - json
+  list:
+    - hcloud
+    - server
+    - list
+    - -o
+    - json
+  destroy:
+    - hcloud
+    - server
+    - delete
+    - "{{id}}"
+    - -o
+    - json
+  requires:
+    - HCLOUD_TOKEN
+  ssh_key: ada-laptop
+  marker:
+    arg: smith={{value}}
+    read: labels.smith
+  extract:
+    id: id
+    ip: public_net.ipv4.ip
