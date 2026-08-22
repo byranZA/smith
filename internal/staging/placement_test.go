@@ -1,6 +1,7 @@
 package staging
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -219,5 +220,44 @@ func TestPlanKeepsRepoAndBoxPlacementsOfOneDestinationApart(t *testing.T) {
 	}
 	if tree.Placements[0].File.Path == tree.Placements[1].File.Path {
 		t.Errorf("both scopes staged at %q, want distinct staged files", tree.Placements[0].File.Path)
+	}
+}
+
+func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
+	tree := Plan(nil, blueprint.Blueprint{
+		Placements: []blueprint.Placement{{From: "file:/home/op/.missing", To: "/home/smith/.npmrc"}},
+		Repos: []blueprint.Repo{{
+			Name:       "api",
+			Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: ".env"}},
+		}},
+	})
+
+	_, err := Resolve(tree, secret.Resolve)
+	if err == nil {
+		t.Fatal("Resolve() error = nil, want both unresolvable references refused")
+	}
+	for _, want := range []string{"file:/home/op/.missing", "/home/smith/.npmrc", "env:NPM_TOKEN_UNSET", "api", ".env"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Resolve() error = %v, want it to name %q", err, want)
+		}
+	}
+	var unresolved *UnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("Resolve() error = %v, want an *UnresolvedError", err)
+	}
+	if len(unresolved.Sources) != 2 {
+		t.Errorf("refusal carries %d unresolvable sources, want both", len(unresolved.Sources))
+	}
+}
+
+func TestResolveNamesAnUnsetEnvironmentVariable(t *testing.T) {
+	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: "~/.npmrc"}}})
+
+	_, err := Resolve(tree, secret.Resolve)
+	if err == nil {
+		t.Fatal("Resolve() error = nil, want the unset variable refused")
+	}
+	if !strings.Contains(err.Error(), "NPM_TOKEN_UNSET") {
+		t.Errorf("Resolve() error = %v, want it to name the unset variable", err)
 	}
 }

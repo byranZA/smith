@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -16,6 +17,9 @@ import (
 // test here reaches a real box.
 type fakeStagingBox struct {
 	staged []string
+	// writeErrOn is the path whose write the box rejects, standing in for a
+	// staging run that fails partway through.
+	writeErrOn string
 
 	commands []string
 	inputs   []string
@@ -40,6 +44,9 @@ func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Re
 	}
 	f.commands = append(f.commands, cmd)
 	f.inputs = append(f.inputs, string(data))
+	if f.writeErrOn != "" && strings.Contains(cmd, f.writeErrOn) {
+		return errors.New("permission denied")
+	}
 	return nil
 }
 
@@ -150,5 +157,62 @@ func TestStageConfigReportsWhatItPruned(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "pruned") || !strings.Contains(out.String(), stray) {
 		t.Errorf("stageConfig() reported %q, want it to report %s as pruned", out.String(), stray)
+	}
+}
+
+func TestStageConfigRefusesAnUnsetEnvSourceBeforeTouchingTheBox(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN_UNSET\n    to: /home/smith/.npmrc\n")
+	box := &fakeStagingBox{}
+	var out bytes.Buffer
+
+	err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out)
+	if err == nil {
+		t.Fatal("stageConfig() err = nil, want the unset variable refused")
+	}
+	if !strings.Contains(err.Error(), "NPM_TOKEN_UNSET") {
+		t.Errorf("stageConfig() err = %v, want it to name the unset variable", err)
+	}
+	if len(box.commands) != 0 {
+		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
+	}
+}
+
+func TestStageConfigEnumeratesEveryUnresolvableSource(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme",
+		"placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n"+
+			"  - from: env:NPM_TOKEN_UNSET\n    to: /home/smith/.netrc\n")
+	box := &fakeStagingBox{}
+	var out bytes.Buffer
+
+	err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out)
+	if err == nil {
+		t.Fatal("stageConfig() err = nil, want both unresolvable sources refused")
+	}
+	for _, want := range []string{dir + "/missing", "NPM_TOKEN_UNSET"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("stageConfig() err = %v, want one refusal naming %q", err, want)
+		}
+	}
+	if len(box.commands) != 0 {
+		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
+	}
+}
+
+func TestStageConfigNamesTheWriteThatFailedPartwayThrough(t *testing.T) {
+	t.Setenv("NPM_TOKEN", "s3cr3t")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN\n    to: /home/smith/.npmrc\n")
+	placement := staging.BoxPlacementPathIn(staging.Root, "/home/smith/.npmrc")
+	box := &fakeStagingBox{writeErrOn: placement}
+	var out bytes.Buffer
+
+	err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out)
+	if err == nil {
+		t.Fatal("stageConfig() err = nil, want the failed write reported")
+	}
+	if !strings.Contains(err.Error(), placement) {
+		t.Errorf("stageConfig() err = %v, want it to name the write that failed", err)
 	}
 }
