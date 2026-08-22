@@ -426,7 +426,7 @@ func concludeSetup(ctx context.Context, exec connection.Exec, home config.Home, 
 // address the lock-out-safety probe came in over; a public run opens the
 // connection that decides whether there is anything to register at all.
 //
-// A box that did not answer is ("", nil), the convention status.Reachable
+// A box that did not answer is ("", nil), the convention connection.Reachable
 // already uses: an unreachable box is a fact about the box, not a failure of
 // the probe, and the caller has a partial outcome to report rather than an
 // error to raise.
@@ -438,7 +438,7 @@ func provenTarget(ctx context.Context, exec connection.Exec, c setupConclusion) 
 		return smithTarget(c.tailnetIP), nil
 	}
 	target := smithTarget(c.names.Host)
-	reachable, err := status.Reachable(ctx, connection.New(target, exec))
+	reachable, err := connection.Reachable(ctx, connection.New(target, exec))
 	if err != nil {
 		return "", fmt.Errorf("probe %s: %w", target, err)
 	}

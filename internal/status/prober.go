@@ -51,7 +51,7 @@ func NewProber(conn bootstrap.Conn, admin tailscale.Admin) *Prober {
 // unreachable Gathered rather than a Go error; a Go error is returned only for
 // unexpected infrastructure failures or a malformed marker.
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
-	reachable, err := Reachable(ctx, p.conn)
+	reachable, err := connection.Reachable(ctx, p.conn)
 	if err != nil {
 		return Gathered{}, err
 	}

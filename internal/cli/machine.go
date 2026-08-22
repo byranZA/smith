@@ -374,7 +374,7 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			ctx := cmd.Context()
 			conn := connection.New(target, exec)
 
-			reachable, err := status.Reachable(ctx, conn)
+			reachable, err := connection.Reachable(ctx, conn)
 			if err != nil {
 				return fmt.Errorf("probe box: %w", err)
 			}

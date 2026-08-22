@@ -112,11 +112,12 @@ func NewRunner(conn Conn) *Runner {
 // Outcome (not a Go error); a Go error is returned only for unexpected
 // infrastructure failures.
 func (r *Runner) Preflight(ctx context.Context) (Result, error) {
-	if err := r.conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return Result{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
-		}
-		return Result{}, fmt.Errorf("reachability probe: %w", err)
+	reachable, err := connection.Reachable(ctx, r.conn)
+	if err != nil {
+		return Result{}, err
+	}
+	if !reachable {
+		return Result{Outcome: OutcomeConnectFailed, Reason: connection.ErrConnect.Error()}, nil
 	}
 
 	if err := r.ship(ctx); err != nil {

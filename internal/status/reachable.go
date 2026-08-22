@@ -20,24 +20,6 @@ type Conn interface {
 	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
 }
 
-// Reachable reports whether smith can open a connection to the box: it runs
-// the cheapest command there is and looks only at whether it got in.
-//
-// A refused connection is (false, nil), not an error — an unreachable box is a
-// fact about the box, and a caller deciding what to do about it should not
-// have to unwrap an error to learn it. Anything else — a missing ssh binary, a
-// command that ran and failed — is a Go error, because it says nothing about
-// whether the box answers.
-func Reachable(ctx context.Context, conn Conn) (bool, error) {
-	if err := conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return false, nil
-		}
-		return false, fmt.Errorf("reachability probe: %w", err)
-	}
-	return true, nil
-}
-
 // ReadMarker reads the box's marker and reports whether it carried one. It
 // reads and never writes: a box smith has never provisioned carries no marker,
 // and saying otherwise would assert provisioned state that does not exist.
@@ -88,7 +70,7 @@ func ProbeAll(ctx context.Context, conns map[string]Conn) (map[string]bool, erro
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			reachable, err := Reachable(ctx, conn)
+			reachable, err := connection.Reachable(ctx, conn)
 			results <- result{name: name, reachable: reachable, err: err}
 		}()
 	}

@@ -30,38 +30,6 @@ func (c *scriptedConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) e
 	return c.err
 }
 
-func TestReachableReportsAnAnsweringBox(t *testing.T) {
-	got, err := Reachable(context.Background(), &scriptedConn{})
-	if err != nil {
-		t.Fatalf("Reachable() err = %v, want nil", err)
-	}
-	if !got {
-		t.Error("Reachable() = false, want true for a box that answered")
-	}
-}
-
-func TestReachableReportsAConnectFailureAsUnreachableNotAnError(t *testing.T) {
-	got, err := Reachable(context.Background(), &scriptedConn{err: connection.ErrConnect})
-	if err != nil {
-		t.Fatalf("Reachable() err = %v, want a connect failure reported as unreachable", err)
-	}
-	if got {
-		t.Error("Reachable() = true, want false for a box that refused the connection")
-	}
-}
-
-func TestReachableSurfacesAnythingElseAsAnError(t *testing.T) {
-	boom := errors.New("ssh binary is missing")
-
-	got, err := Reachable(context.Background(), &scriptedConn{err: boom})
-	if !errors.Is(err, boom) {
-		t.Fatalf("Reachable() err = %v, want the underlying failure", err)
-	}
-	if got {
-		t.Error("Reachable() = true, want false alongside an error")
-	}
-}
-
 func TestReadMarkerDecodesTheBoxsMarker(t *testing.T) {
 	conn := &scriptedConn{out: `{"schema_version":1,"access_mode":"public","blueprint":"acme"}`}
 
