@@ -16,6 +16,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/secret"
+	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
 )
@@ -29,7 +30,7 @@ func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connecti
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(resolve), newStatusCmd())
 	return cmd
 }
 
@@ -177,9 +178,10 @@ nothing is provisioned yet. Run:
 // live progress. --access selects the access layer: public (default) leaves
 // hardened SSH open on the public IP; tailscale joins the box to the operator's
 // tailnet as a tag:smith node and closes public SSH once a live tailnet probe
-// proves reach.
-func newSetupCmd() *cobra.Command {
-	var accessMode, authKeyRef string
+// proves reach. --blueprint names the blueprint the box is built from, read
+// through the config home resolve locates and staged onto the box.
+func newSetupCmd(resolve homeResolver) *cobra.Command {
+	var accessMode, authKeyRef, blueprintName string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
@@ -194,6 +196,16 @@ func newSetupCmd() *cobra.Command {
 			}
 			host := hostOf(target)
 			ctx := cmd.Context()
+			// The config home is read only when there is a blueprint to stage, so
+			// an operator with no config home can still set a box up.
+			var home config.Home
+			if blueprintName != "" {
+				h, err := resolve()
+				if err != nil {
+					return err
+				}
+				home = h
+			}
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 			conn := connection.New(target, connection.System())
@@ -246,6 +258,16 @@ func newSetupCmd() *cobra.Command {
 				return &exitError{code: setupRes.Outcome.ExitCode()}
 			}
 
+			// The config-staging stage: the base layer is in place, so the box can
+			// be told what kind of box it is. It runs before the access layer
+			// closes any door smith is still reached over.
+			if err := stageConfig(ctx, conn, home, blueprintName, stdout); err != nil {
+				if _, werr := fmt.Fprintf(stderr, "config staging failed: %v\n", err); werr != nil {
+					return fmt.Errorf("write staging failure: %w", werr)
+				}
+				return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
+			}
+
 			if accessMode == "tailscale" {
 				return establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
 			}
@@ -255,7 +277,35 @@ func newSetupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&accessMode, "access", "public", "how the box is reached: public or tailscale")
 	cmd.Flags().StringVar(&authKeyRef, "tailscale-auth-key", "",
 		"reference to the Tailscale auth key for --access=tailscale (env:VAR or file:/path); prompts if omitted on a terminal")
+	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
+		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	return cmd
+}
+
+// stageConfig runs the config-staging stage: it reads the named blueprint from
+// the operator's config home and stages it onto the box at
+// /etc/smith/blueprint.yaml, reporting what it staged and what it left alone.
+//
+// The blueprint is parsed before the box is touched, so a document smith cannot
+// read refuses the stage rather than half-configuring a box. A run naming no
+// blueprint stages nothing: the box keeps whatever it already holds, and the
+// flag-only path survives.
+func stageConfig(ctx context.Context, conn staging.Conn, home config.Home, blueprintName string, stdout io.Writer) error {
+	if blueprintName == "" {
+		return nil
+	}
+	doc, err := config.LoadDocument(home, blueprintName)
+	if err != nil {
+		return fmt.Errorf("read blueprint: %w", err)
+	}
+	result, err := staging.Converge(ctx, conn, staging.Plan(doc.Bytes))
+	if err != nil {
+		return fmt.Errorf("stage blueprint %s: %w", doc.Path, err)
+	}
+	if _, err := fmt.Fprint(stdout, result.Report()); err != nil {
+		return fmt.Errorf("write staging report: %w", err)
+	}
+	return nil
 }
 
 // prepareTailscale performs the up-front, no-mutation tailscale steps: it
