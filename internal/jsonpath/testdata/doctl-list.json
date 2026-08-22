@@ -1,0 +1,30 @@
+[
+  {
+    "id": 593069736,
+    "name": "smith-proto-REDACTED",
+    "status": "active",
+    "region": { "slug": "fra1", "name": "Frankfurt 1" },
+    "networks": {
+      "v4": [
+        { "ip_address": "203.0.113.10", "netmask": "255.255.240.0", "type": "public" },
+        { "ip_address": "10.135.0.4", "netmask": "255.255.0.0", "type": "private" }
+      ]
+    },
+    "tags": null,
+    "volume_ids": []
+  },
+  {
+    "id": 551149971,
+    "name": "an-unrelated-droplet",
+    "status": "active",
+    "region": { "slug": "fra1", "name": "Frankfurt 1" },
+    "networks": {
+      "v4": [
+        { "ip_address": "10.135.0.3", "netmask": "255.255.0.0", "type": "private" },
+        { "ip_address": "198.51.100.7", "netmask": "255.255.240.0", "type": "public" }
+      ]
+    },
+    "tags": null,
+    "volume_ids": []
+  }
+]

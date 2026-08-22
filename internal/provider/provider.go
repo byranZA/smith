@@ -57,6 +57,8 @@ type Adapter struct {
 	SSHKey string
 	// Marker is how a smith-created box is stamped and recognised again.
 	Marker Marker
+	// Record is where the box record sits inside a template's response.
+	Record Record
 	// Extract is how a box's identity and address are read out of the
 	// provider's JSON.
 	Extract Extract
@@ -70,6 +72,19 @@ type Marker struct {
 	Arg string
 	// Read is the path the marker is read back from in the provider's JSON.
 	Read string
+}
+
+// Record is the path locating the box record inside a template's response.
+// It is per template rather than per adapter because one provider wraps the
+// two differently: hcloud's create answers with the record under "server" and
+// its list answers with a bare array.
+//
+// An empty path means the response is the record.
+type Record struct {
+	// Create is the path to the record in the create template's response.
+	Create string
+	// List is the path to the box records in the list template's response.
+	List string
 }
 
 // Extract is the paths a box's identity and address are read from in the
@@ -107,7 +122,7 @@ func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (B
 	if err != nil {
 		return Box{}, err
 	}
-	return extract(doc, adapter.Extract)
+	return extract(doc, adapter.Record.Create, adapter.Extract)
 }
 
 // render substitutes the box name into a template, leaving every other
@@ -134,7 +149,7 @@ func run(ctx context.Context, runner Runner, argv []string) (any, error) {
 	dec.UseNumber()
 	var doc any
 	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("provider command %q did not write JSON: %w", argv[0], err)
+		return nil, fmt.Errorf("provider command %q wrote output that could not be read as JSON: %w", argv[0], err)
 	}
 	return doc, nil
 }
@@ -148,8 +163,18 @@ func providerOutput(stderr string) string {
 	return "\n" + strings.TrimRight(stderr, "\n")
 }
 
-// extract normalizes a provider's response to the canonical box record.
-func extract(doc any, paths Extract) (Box, error) {
+// extract normalizes a provider's response to the canonical box record. The
+// record path locates the box within whatever envelope the provider wrapped it
+// in; the extractor paths are then read relative to the record, so an adapter
+// says where the box is once rather than repeating the envelope in every field.
+func extract(doc any, record string, paths Extract) (Box, error) {
+	if record != "" {
+		found, err := jsonpath.Lookup(doc, record)
+		if err != nil {
+			return Box{}, fmt.Errorf("provider adapter's record path: %w", err)
+		}
+		doc = found
+	}
 	id, err := jsonpath.Lookup(doc, paths.ID)
 	if err != nil {
 		return Box{}, fmt.Errorf("provider adapter's id path: %w", err)

@@ -156,3 +156,68 @@ func TestAdaptCarriesTheWholeProviderBlock(t *testing.T) {
 		t.Errorf("Adapt() = %+v, want %+v", got, want)
 	}
 }
+
+// doctlResponse is a real doctl create response, trimmed: the record arrives
+// wrapped in an array, and the address list puts the private entry second.
+const doctlResponse = `[{"id": 593069736, "tags": null,
+  "networks": {"v4": [
+    {"ip_address": "203.0.113.10", "type": "public"},
+    {"ip_address": "10.135.0.4", "type": "private"}]}}]`
+
+func TestCreateReadsTheRecordOutOfWhateverEnvelopeTheProviderUses(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		adapter  provider.Adapter
+		want     provider.Box
+	}{
+		{
+			name:     "an array response",
+			response: doctlResponse,
+			adapter: provider.Adapter{
+				Create:  []string{"doctl", "compute", "droplet", "create", "{{name}}", "-o", "json"},
+				Record:  provider.Record{Create: "[*]"},
+				Extract: provider.Extract{ID: "id", IP: "networks.v4[type=public].ip_address"},
+			},
+			want: provider.Box{ID: "593069736", IP: "203.0.113.10"},
+		},
+		{
+			name:     "an object envelope",
+			response: `{"server": {"id": 55512345, "public_net": {"ipv4": {"ip": "5.75.10.20"}}}}`,
+			adapter: provider.Adapter{
+				Create:  []string{"hcloud", "server", "create", "--name", "{{name}}", "-o", "json"},
+				Record:  provider.Record{Create: "server"},
+				Extract: provider.Extract{ID: "id", IP: "public_net.ipv4.ip"},
+			},
+			want: provider.Box{ID: "55512345", IP: "5.75.10.20"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{stdout: tt.response}
+
+			box, err := provider.Create(context.Background(), runner, tt.adapter, "dev")
+			if err != nil {
+				t.Fatalf("Create() err = %v", err)
+			}
+			if box != tt.want {
+				t.Errorf("Create() = %+v, want %+v", box, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateReportsARecordPathThatMatchedNothing(t *testing.T) {
+	adapter := hetzner()
+	adapter.Record.Create = "droplet"
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	_, err := provider.Create(context.Background(), runner, adapter, "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want a record path matching nothing reported")
+	}
+	if !strings.Contains(err.Error(), "droplet") || !strings.Contains(err.Error(), "record path") {
+		t.Errorf("Create() err = %v, want it to name the adapter's record path", err)
+	}
+}

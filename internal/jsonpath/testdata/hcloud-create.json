@@ -1,0 +1,14 @@
+{
+  "server": {
+    "id": 55512345,
+    "name": "smith-proto-abc",
+    "status": "running",
+    "public_net": {
+      "ipv4": { "id": 1, "ip": "5.75.10.20", "blocked": false },
+      "ipv6": { "id": 2, "ip": "2a01:4f8::/64" }
+    },
+    "labels": { "smith": "abc" }
+  },
+  "root_password": null,
+  "next_actions": []
+}
