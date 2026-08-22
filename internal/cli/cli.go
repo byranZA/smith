@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/provider"
 )
 
 // buildVersion is the smith version a release pipeline injects via
@@ -60,6 +61,6 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System()), newVersionCmd())
+	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System(), provider.SystemClock()), newVersionCmd())
 	return root
 }

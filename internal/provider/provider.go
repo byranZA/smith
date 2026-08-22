@@ -156,7 +156,11 @@ type Box struct {
 // written to the box and no bootstrap runs, because a create that chained into
 // setup and failed halfway would leave the operator holding a box that exists,
 // is billed, and that smith cannot tear down.
-func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (Box, error) {
+//
+// A provider that assigns an address later answers create with an id and no
+// address, and Create then polls the list template until the entry whose id
+// matches carries one — which is why it takes a clock.
+func Create(ctx context.Context, runner Runner, clock Clock, adapter Adapter, name string) (Box, error) {
 	if err := Validate(adapter); err != nil {
 		return Box{}, err
 	}
@@ -172,7 +176,14 @@ func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (B
 	if err != nil {
 		return Box{}, err
 	}
-	return extract(doc, adapter.Record.Create, adapter.Extract)
+	box, err := extract(doc, adapter.Record.Create, adapter.Extract)
+	if err != nil {
+		return Box{}, err
+	}
+	if box.IP != "" {
+		return box, nil
+	}
+	return awaitAddress(ctx, runner, clock, adapter, box)
 }
 
 // Validate reports whether smith can run an adapter's templates: it must
@@ -359,6 +370,13 @@ func extract(doc any, record string, paths Extract) (Box, error) {
 		}
 		doc = found
 	}
+	return extractRecord(doc, paths)
+}
+
+// extractRecord reads one located box record into the canonical form. The
+// record path has already been applied, so the extractor paths are read
+// relative to the record itself.
+func extractRecord(doc any, paths Extract) (Box, error) {
 	id, err := jsonpath.Lookup(doc, paths.ID)
 	if err != nil {
 		return Box{}, fmt.Errorf("provider adapter's id path: %w", err)

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/provider"
@@ -51,7 +52,7 @@ const hetznerResponse = `{"id": 519823476123, "public_net": {"ipv4": {"ip": "203
 func TestCreateRunsTheTemplateWithTheBoxNameSubstituted(t *testing.T) {
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	if _, err := provider.Create(context.Background(), runner, hetzner(), "dev"); err != nil {
+	if _, err := provider.Create(context.Background(), runner, &fakeClock{}, hetzner(), "dev"); err != nil {
 		t.Fatalf("Create() err = %v", err)
 	}
 
@@ -67,7 +68,7 @@ func TestCreateRunsTheTemplateWithTheBoxNameSubstituted(t *testing.T) {
 func TestCreateExtractsTheBoxByDottedPath(t *testing.T) {
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	box, err := provider.Create(context.Background(), runner, hetzner(), "dev")
+	box, err := provider.Create(context.Background(), runner, &fakeClock{}, hetzner(), "dev")
 	if err != nil {
 		t.Fatalf("Create() err = %v", err)
 	}
@@ -81,7 +82,7 @@ func TestCreateExtractsTheBoxByDottedPath(t *testing.T) {
 func TestCreateSurfacesTheProvidersOwnError(t *testing.T) {
 	runner := &fakeRunner{stderr: "Error: missing the required permission ssh_key:read", err: errors.New("exit status 1")}
 
-	_, err := provider.Create(context.Background(), runner, hetzner(), "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, hetzner(), "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want the failing provider command reported")
@@ -94,7 +95,7 @@ func TestCreateSurfacesTheProvidersOwnError(t *testing.T) {
 func TestCreateReportsOutputThatIsNotJSON(t *testing.T) {
 	runner := &fakeRunner{stdout: "Server dev created\n"}
 
-	_, err := provider.Create(context.Background(), runner, hetzner(), "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, hetzner(), "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want output that is not JSON reported")
@@ -109,7 +110,7 @@ func TestCreateReportsAnExtractorPathThatMatchedNothing(t *testing.T) {
 	adapter.Extract.ID = "droplet.id"
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	_, err := provider.Create(context.Background(), runner, adapter, "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want a path matching nothing reported")
@@ -122,7 +123,7 @@ func TestCreateReportsAnExtractorPathThatMatchedNothing(t *testing.T) {
 func TestCreateRefusesAnAdapterWithNoCreateTemplate(t *testing.T) {
 	runner := &fakeRunner{}
 
-	if _, err := provider.Create(context.Background(), runner, provider.Adapter{}, "dev"); err == nil {
+	if _, err := provider.Create(context.Background(), runner, &fakeClock{}, provider.Adapter{}, "dev"); err == nil {
 		t.Fatal("Create() err = nil, want an adapter with no create template refused")
 	}
 	if runner.runs != 0 {
@@ -196,7 +197,7 @@ func TestCreateReadsTheRecordOutOfWhateverEnvelopeTheProviderUses(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			runner := &fakeRunner{stdout: tt.response}
 
-			box, err := provider.Create(context.Background(), runner, tt.adapter, "dev")
+			box, err := provider.Create(context.Background(), runner, &fakeClock{}, tt.adapter, "dev")
 			if err != nil {
 				t.Fatalf("Create() err = %v", err)
 			}
@@ -212,7 +213,7 @@ func TestCreateReportsARecordPathThatMatchedNothing(t *testing.T) {
 	adapter.Record.Create = "droplet"
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	_, err := provider.Create(context.Background(), runner, adapter, "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want a record path matching nothing reported")
@@ -237,7 +238,7 @@ func TestCreateRendersTheOptionalArguments(t *testing.T) {
 	adapter.Marker.Arg = "smith"
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+	if _, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev"); err != nil {
 		t.Fatalf("Create() err = %v", err)
 	}
 
@@ -274,7 +275,7 @@ func TestCreateDropsAnArgumentThatRendersEmptyAndTheFlagBeforeIt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := &fakeRunner{stdout: hetznerResponse}
 
-			if _, err := provider.Create(context.Background(), runner, tt.adapter, "dev"); err != nil {
+			if _, err := provider.Create(context.Background(), runner, &fakeClock{}, tt.adapter, "dev"); err != nil {
 				t.Fatalf("Create() err = %v", err)
 			}
 
@@ -293,7 +294,7 @@ func TestCreateKeepsANonFlagBeforeADroppedArgument(t *testing.T) {
 	adapter.Create = []string{"doctl", "compute", "droplet", "create", "{{name}}", "--ssh-keys", "{{ssh_key}}", "-o", "json"}
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+	if _, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev"); err != nil {
 		t.Fatalf("Create() err = %v", err)
 	}
 
@@ -308,7 +309,7 @@ func TestCreateRefusesATemplateWithAnUnknownPlaceholder(t *testing.T) {
 	adapter.Create = append(adapter.Create, "--ssh-key", "{{sshkey}}")
 	runner := &fakeRunner{}
 
-	_, err := provider.Create(context.Background(), runner, adapter, "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want an unknown placeholder refused")
@@ -391,7 +392,7 @@ func TestCreateStampsTheBoxWithTheMarkerArgumentRenderedFromTheBoxName(t *testin
 			adapter.Marker = tt.marker
 			runner := &fakeRunner{stdout: hetznerResponse}
 
-			if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+			if _, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev"); err != nil {
 				t.Fatalf("Create() err = %v", err)
 			}
 
@@ -455,7 +456,7 @@ func TestCreatePassesTheSSHKeyReferenceThroughUnaltered(t *testing.T) {
 			adapter.SSHKey = tt.sshKey
 			runner := &fakeRunner{stdout: hetznerResponse}
 
-			if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+			if _, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev"); err != nil {
 				t.Fatalf("Create() err = %v", err)
 			}
 
@@ -478,7 +479,7 @@ func TestCreateRunsTheCommandWhenARequirementIsSatisfied(t *testing.T) {
 	t.Setenv("SMITH_TEST_TOKEN", "present")
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	if _, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_TOKEN"), "dev"); err != nil {
+	if _, err := provider.Create(context.Background(), runner, &fakeClock{}, hetznerRequiring("SMITH_TEST_TOKEN"), "dev"); err != nil {
 		t.Fatalf("Create() err = %v", err)
 	}
 
@@ -490,7 +491,7 @@ func TestCreateRunsTheCommandWhenARequirementIsSatisfied(t *testing.T) {
 func TestCreateRefusesAMissingRequirementBeforeRunningAnything(t *testing.T) {
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	_, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_ABSENT_TOKEN"), "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, hetznerRequiring("SMITH_TEST_ABSENT_TOKEN"), "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want a missing requirement reported")
@@ -506,7 +507,7 @@ func TestCreateRefusesAMissingRequirementBeforeRunningAnything(t *testing.T) {
 func TestCreateNamesEveryMissingRequirement(t *testing.T) {
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	_, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_ABSENT_ONE", "SMITH_TEST_ABSENT_TWO"), "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, hetznerRequiring("SMITH_TEST_ABSENT_ONE", "SMITH_TEST_ABSENT_TWO"), "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want the missing requirements reported")
@@ -523,7 +524,7 @@ func TestCreateChecksNothingWhenNoRequirementsAreDeclared(t *testing.T) {
 	// file, so a mandatory requires would refuse a working machine.
 	runner := &fakeRunner{stdout: hetznerResponse}
 
-	if _, err := provider.Create(context.Background(), runner, hetzner(), "dev"); err != nil {
+	if _, err := provider.Create(context.Background(), runner, &fakeClock{}, hetzner(), "dev"); err != nil {
 		t.Fatalf("Create() err = %v", err)
 	}
 
@@ -539,12 +540,169 @@ func TestCreateNeverShowsARequiredVariablesValue(t *testing.T) {
 	// to assert the value never leaks.
 	runner := &fakeRunner{stderr: "Error: unauthorized", err: errors.New("exit status 1")}
 
-	_, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_TOKEN"), "dev")
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, hetznerRequiring("SMITH_TEST_TOKEN"), "dev")
 
 	if err == nil {
 		t.Fatal("Create() err = nil, want the failing provider command reported")
 	}
 	if strings.Contains(err.Error(), secret) {
 		t.Errorf("Create() err = %v, want no required variable's value in it", err)
+	}
+}
+
+// fakeClock is the passage of time with none of the waiting: a wait returns at
+// once and simply moves the clock forward, so the poll's retry cadence and its
+// timeout are exercised without a test sleeping for either.
+type fakeClock struct {
+	now   time.Time
+	waits int
+}
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+func (c *fakeClock) After(d time.Duration) <-chan time.Time {
+	c.now, c.waits = c.now.Add(d), c.waits+1
+	fired := make(chan time.Time, 1)
+	fired <- c.now
+	return fired
+}
+
+// scriptedRunner replays one canned response per call, with the last one
+// repeating, so a poll that runs the list template several times sees the
+// account change under it. It records every argv it was handed.
+type scriptedRunner struct {
+	responses []string
+
+	argv [][]string
+}
+
+func (r *scriptedRunner) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	r.argv = append(r.argv, append([]string{name}, args...))
+	response := r.responses[min(len(r.argv), len(r.responses))-1]
+	if _, err := io.WriteString(stdout, response); err != nil {
+		return err
+	}
+	return nil
+}
+
+// runs reports how many times the runner was asked to run a command.
+func (r *scriptedRunner) runs() int { return len(r.argv) }
+
+// deferring is an adapter for a provider that answers create with an id now and
+// an address later — the shape the address poll exists for.
+func deferring() provider.Adapter {
+	return provider.Adapter{
+		Create:  []string{"doctl", "compute", "droplet", "create", "{{name}}", "-o", "json"},
+		List:    []string{"doctl", "compute", "droplet", "list", "-o", "json"},
+		Record:  provider.Record{Create: "[*]", List: "[*]"},
+		Extract: provider.Extract{ID: "id", IP: "networks.v4[type=public].ip_address"},
+	}
+}
+
+const (
+	// createdWithoutAnAddress is a create response carrying an id and no
+	// address yet: the address list is null rather than absent, which is how a
+	// provider reports "not assigned".
+	createdWithoutAnAddress = `[{"id": 593069736, "networks": {"v4": null}}]`
+	// listedWithoutAnAddress holds another operator's box, which has an
+	// address, and the new one, which does not.
+	listedWithoutAnAddress = `[{"id": 111222333, "networks": {"v4": [{"ip_address": "198.51.100.7", "type": "public"}]}},
+	  {"id": 593069736, "networks": {"v4": null}}]`
+	// listedWithAnAddress is the same account once the address is assigned.
+	listedWithAnAddress = `[{"id": 111222333, "networks": {"v4": [{"ip_address": "198.51.100.7", "type": "public"}]}},
+	  {"id": 593069736, "networks": {"v4": [{"ip_address": "203.0.113.10", "type": "public"}]}}]`
+)
+
+func TestCreateRunsNoListCommandWhenTheAddressCameBackWithTheBox(t *testing.T) {
+	runner := &scriptedRunner{responses: []string{hetznerResponse}}
+
+	box, err := provider.Create(context.Background(), runner, &fakeClock{}, hetzner(), "dev")
+	if err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	if box.IP != "203.0.113.10" {
+		t.Errorf("Create() ip = %q, want the address the create reported", box.IP)
+	}
+	if runner.runs() != 1 {
+		t.Errorf("ran %d commands, want only the create template", runner.runs())
+	}
+}
+
+func TestCreateTakesTheAddressFromTheListEntryWhoseIDMatches(t *testing.T) {
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress, listedWithAnAddress}}
+
+	box, err := provider.Create(context.Background(), runner, &fakeClock{}, deferring(), "dev")
+	if err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	want := provider.Box{ID: "593069736", IP: "203.0.113.10"}
+	if box != want {
+		t.Errorf("Create() = %+v, want %+v", box, want)
+	}
+	if runner.runs() != 2 {
+		t.Errorf("ran %d commands, want the create template and one list", runner.runs())
+	}
+	if got := runner.argv[1]; !slices.Equal(got, []string{"doctl", "compute", "droplet", "list", "-o", "json"}) {
+		t.Errorf("second command = %q, want the adapter's list template", got)
+	}
+}
+
+func TestCreateRetriesTheAddressPollUntilAnAddressAppears(t *testing.T) {
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress, listedWithoutAnAddress, listedWithAnAddress}}
+	clock := &fakeClock{}
+
+	box, err := provider.Create(context.Background(), runner, clock, deferring(), "dev")
+	if err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	if box.IP != "203.0.113.10" {
+		t.Errorf("Create() ip = %q, want the address the second list reported", box.IP)
+	}
+	if runner.runs() != 3 {
+		t.Errorf("ran %d commands, want the create template and two lists", runner.runs())
+	}
+	if clock.waits != 1 {
+		t.Errorf("waited %d times, want one wait between the two lists", clock.waits)
+	}
+}
+
+func TestCreateGivesUpOnTheAddressPollNamingTheBoxID(t *testing.T) {
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress, listedWithoutAnAddress}}
+	clock := &fakeClock{}
+
+	_, err := provider.Create(context.Background(), runner, clock, deferring(), "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want a box that never reported an address reported")
+	}
+	if !strings.Contains(err.Error(), "593069736") {
+		t.Errorf("Create() err = %v, want it to name the box id so the operator can find it at the provider", err)
+	}
+	if !strings.Contains(err.Error(), "address") {
+		t.Errorf("Create() err = %v, want it to say what it was waiting for", err)
+	}
+	if clock.waits == 0 {
+		t.Error("waited 0 times, want the poll to have retried before giving up")
+	}
+}
+
+func TestCreateReportsABoxWithNoAddressAndNoListTemplateToPollWith(t *testing.T) {
+	adapter := deferring()
+	adapter.List = nil
+	runner := &scriptedRunner{responses: []string{createdWithoutAnAddress}}
+
+	_, err := provider.Create(context.Background(), runner, &fakeClock{}, adapter, "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want a box with no address and no way to poll for one reported")
+	}
+	if !strings.Contains(err.Error(), "593069736") {
+		t.Errorf("Create() err = %v, want it to name the box id", err)
+	}
+	if runner.runs() != 1 {
+		t.Errorf("ran %d commands, want only the create template", runner.runs())
 	}
 }

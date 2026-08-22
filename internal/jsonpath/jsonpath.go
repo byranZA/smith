@@ -45,6 +45,21 @@ import (
 // in document order is the answer. Extraction wants one value: the record
 // inside an envelope, the box's id, its address.
 func Lookup(doc any, path string) (any, error) {
+	matches, err := LookupAll(doc, path)
+	if err != nil {
+		return nil, err
+	}
+	return matches[0], nil
+}
+
+// LookupAll returns every value doc holds at path, in document order, or an
+// error naming the path when the path matches nothing or is not a path smith
+// understands.
+//
+// It is the answer for a path over a collection rather than over one value: a
+// provider's list response holds every box in the account, and "[*]" over it
+// has to reach all of them, not only the first.
+func LookupAll(doc any, path string) ([]any, error) {
 	segments, err := parse(path)
 	if err != nil {
 		return nil, err
@@ -57,7 +72,7 @@ func Lookup(doc any, path string) (any, error) {
 		}
 		matches = next
 	}
-	return matches[0], nil
+	return matches, nil
 }
 
 // segment is one dot-separated step of a path: a key to descend into, then the

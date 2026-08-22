@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/provider"
 )
 
 // fakeProviderRunner stands in for the provider CLI: no test in this package
@@ -48,7 +49,7 @@ const providerBlueprint = `provider:
 // code.
 func runCreate(t *testing.T, dir string, runner *fakeProviderRunner, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := newMachineCmd(func() (config.Home, error) { return config.NewHome(dir), nil }, runner)
+	cmd := newMachineCmd(func() (config.Home, error) { return config.NewHome(dir), nil }, runner, provider.SystemClock())
 	cmd.SetArgs(args)
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)

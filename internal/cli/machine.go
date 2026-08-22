@@ -20,13 +20,14 @@ import (
 )
 
 // newMachineCmd builds `smith machine` and its subcommands, reading the config
-// home through resolve and running provider CLIs through runner.
-func newMachineCmd(resolve homeResolver, runner provider.Runner) *cobra.Command {
+// home through resolve, running provider CLIs through runner, and timing the
+// create command's address poll by clock.
+func newMachineCmd(resolve homeResolver, runner provider.Runner, clock provider.Clock) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner), newSetupCmd(), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner, clock), newSetupCmd(), newStatusCmd())
 	return cmd
 }
 
@@ -40,7 +41,11 @@ func newMachineCmd(resolve homeResolver, runner provider.Runner) *cobra.Command 
 // than a half-provisioned box. That is deliberate — a chained setup failing
 // halfway would leave a box that exists, is billed, and that smith cannot tear
 // down, since v1 ships no destroy.
-func newCreateCmd(resolve homeResolver, runner provider.Runner) *cobra.Command {
+//
+// A provider that assigns the address after the create returns is waited out on
+// clock, so the operator sees one command whether the address came back with
+// the box or a moment later.
+func newCreateCmd(resolve homeResolver, runner provider.Runner, clock provider.Clock) *cobra.Command {
 	var blueprintName string
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -55,7 +60,7 @@ func newCreateCmd(resolve homeResolver, runner provider.Runner) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			box, err := provider.Create(cmd.Context(), runner, adapter, args[0])
+			box, err := provider.Create(cmd.Context(), runner, clock, adapter, args[0])
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
