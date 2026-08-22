@@ -333,3 +333,55 @@ and [docs/providers.md](docs/providers.md) covers it, alongside worked
 > `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git
 > needs a credential helper for that, and smith will not notice. Clone over SSH
 > and place the key, or place the helper's config yourself.
+
+## Sessions
+
+A **session** is one `tmux` session plus one git worktree of one repo on one
+branch — the unit of parallel work on a box. Five verbs manage them, and they
+run on the box: name a box and smith relays the verb over SSH, name none and it
+runs where you are.
+
+```sh
+smith session start dev --repo smith --branch spec-42     # cut, place, launch, connect
+smith session start dev --repo smith --branch spec-42 --detach
+smith session attach dev smith-spec-42                    # read-only
+smith session attach dev smith-spec-42 --interact         # writable
+smith session list dev                                    # the work-state readout
+smith session stop dev smith-spec-42                      # keeps the worktree and branch
+smith session rm dev smith-spec-42                        # keeps the branch
+```
+
+Names are derived, never chosen: `<repo>-<branch>`, sanitized to one path
+segment. `start` is **ensure-running** — run it twice and the second run
+connects you to the session the first stood up — so `stop` then `start` is how
+a changed blueprint's placements land.
+
+`list` answers the one question worth asking before you destroy a box by hand
+at your provider, in one line:
+
+```
+NAME             STATE    DIRTY  UNPUSHED
+smith-main       live     -      0
+smith-spec-42    stopped  dirty  3
+web-hotfix       stopped  -      0
+
+3 sessions · 1 dirty · 1 with unpushed commits
+```
+
+`--names` prints the identity column alone, which is what a sweep is composed
+from: `smith session rm dev $(smith session list dev --stopped --names)`. The
+batch is all-or-nothing.
+
+> **Nothing is exposed.** Attaching adds no listener, no port, no tunnel and no
+> new credential — it is `tmux attach` reached through the SSH door bootstrap
+> already built, identically under `--access=public` and `--access=tailscale`.
+> Read-only is **advisory**: anyone who can SSH as `smith` can attach writable.
+> It guards against typing into a pane, not against an operator.
+
+`rm` reclaims a worktree and keeps the branch, so everything it takes away comes
+back on the next `start` **except uncommitted changes** — which is exactly what
+it refuses on, alongside a session that is still running.
+
+[docs/sessions.md](docs/sessions.md) covers the five verbs and their flags, the
+three paths through `start`, the two access levels, what `rm` does and does not
+destroy, and the pre-teardown read in full.
