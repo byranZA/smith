@@ -135,3 +135,54 @@ func TestBlueprintCheckReportsAMalformedBlueprint(t *testing.T) {
 		t.Errorf("stderr = %q, want it to report the file as malformed with a position", stderr)
 	}
 }
+
+func TestBlueprintCheckWithNoBlueprintReportsAnAbsentPreferencesFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent-home")
+
+	stdout, stderr, code := runCheck(t, dir, "check")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for an absent config home (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "no preferences file") {
+		t.Errorf("stdout = %q, want it to report that there is no preferences file", stdout)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("config home exists after check, want it not created")
+	}
+}
+
+func TestBlueprintCheckReadsABlueprintPathVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "shared", "terminals: tmux\n") // invalid, and must not be read
+	outside := filepath.Join(t.TempDir(), "shared.yaml")
+	if err := os.WriteFile(outside, []byte("access: public\n"), 0o644); err != nil {
+		t.Fatalf("write blueprint: %v", err)
+	}
+
+	stdout, stderr, code := runCheck(t, dir, "check", outside)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint outside the config home (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, outside) {
+		t.Errorf("stdout = %q, want it to name the file %q that was read", stdout, outside)
+	}
+}
+
+func TestBlueprintCheckRefusesANameCarryingAnExtension(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme.yaml")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for a name carrying an extension", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed for a refused blueprint name", stdout)
+	}
+	if !strings.Contains(stderr, "extension") || !strings.Contains(stderr, `"acme"`) {
+		t.Errorf("stderr = %q, want it to refuse the extension and name %q instead", stderr, "acme")
+	}
+}
