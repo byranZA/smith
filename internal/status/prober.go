@@ -51,11 +51,12 @@ func NewProber(conn bootstrap.Conn, admin tailscale.Admin) *Prober {
 // unreachable Gathered rather than a Go error; a Go error is returned only for
 // unexpected infrastructure failures or a malformed marker.
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
-	if err := p.conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return Gathered{Reachable: false}, nil
-		}
-		return Gathered{}, fmt.Errorf("reachability probe: %w", err)
+	reachable, err := Reachable(ctx, p.conn)
+	if err != nil {
+		return Gathered{}, err
+	}
+	if !reachable {
+		return Gathered{Reachable: false}, nil
 	}
 
 	if err := bootstrap.ShipScript(ctx, p.conn); err != nil {

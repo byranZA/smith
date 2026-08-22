@@ -7,8 +7,10 @@
 // directory is, and lets a test run the real code path against a temp
 // directory rather than a stand-in filesystem.
 //
-// Nothing in this package writes. Reading a config home that does not exist is
-// reported, not repaired.
+// Reading never creates: a config home that does not exist is reported, not
+// repaired. EnsureHome is the one thing here that writes, and only write paths
+// call it — it creates the home and its cache, and appends to the operator's
+// .gitignore rather than rewriting a file that is theirs.
 package config
 
 import (

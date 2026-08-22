@@ -15,6 +15,7 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
@@ -36,6 +37,7 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 		newSetupCmd(resolve, exec),
 		newStatusCmd(resolve, exec),
 		newListCmd(resolve),
+		newAddCmd(resolve, exec),
 	)
 	return cmd
 }
@@ -615,4 +617,147 @@ func parseTarget(arg string) (string, error) {
 func hostOf(target string) string {
 	_, host, _ := strings.Cut(target, "@")
 	return host
+}
+
+// newAddCmd builds `smith machine add <target> [--name <name>]`. It registers a
+// box smith already provisioned — the manual reconstruction path for an
+// inventory that was deleted, and the way a second machine learns the boxes the
+// first one set up.
+//
+// Registration is read-only towards the box: smith connects, reads the marker,
+// and registers or refuses. It never writes a marker, because a box carrying
+// none is not an unregistered smith box — it is a box smith has never
+// provisioned, and stamping one would assert provisioned, secured and reachable
+// state that does not exist. The refusal names `machine setup` instead.
+//
+// The argument is the target, used verbatim: add is registering an address, so
+// there is nothing to resolve it against yet. The name is the operator's
+// --name, or the box's host when they pass none — a marker recording a name is
+// the marker-v2 slice's, and until then smith says which fallback it used
+// rather than letting the operator assume the box named itself.
+func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use:   "add <target>",
+		Short: "Register a box smith already provisioned",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := args[0]
+			ctx := cmd.Context()
+			conn := connection.New(target, exec)
+
+			reachable, err := status.Reachable(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("probe box: %w", err)
+			}
+			if !reachable {
+				return refuseAdd(cmd, bootstrap.OutcomeConnectFailed,
+					fmt.Errorf("could not connect to %s: register it once smith can reach it", target))
+			}
+
+			box, present, err := status.ReadMarker(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("read marker: %w", err)
+			}
+			if !present {
+				return refuseAdd(cmd, bootstrap.OutcomeRejected, fmt.Errorf(
+					"%s has never been set up by smith: it carries no marker at %s.\n"+
+						"Provision it first with:\n  smith machine setup <login>@%s",
+					target, marker.Path, hostOrTarget(target)))
+			}
+
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			registered, source, err := registerBox(home, target, name)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), addedReport(registered, target, source, box.Blueprint)); err != nil {
+				return fmt.Errorf("write registration: %w", err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "the name to register the box under; omitted, its host names it")
+	return cmd
+}
+
+// nameSource is where the name a box was registered under came from. The
+// operator is told, because a name smith derived is one they did not choose and
+// may want to replace.
+type nameSource int
+
+const (
+	// nameFromOperator means the operator named the box with --name.
+	nameFromOperator nameSource = iota
+	// nameFromHost means the name was derived from the target's host, because
+	// the operator named none and the box's marker records none either.
+	nameFromHost
+)
+
+// registerBox reads the inventory, registers target under the name the operator
+// chose or the one derived from the target, and writes it back. It returns the
+// name the box was registered under and where that name came from.
+//
+// The config home is created here and only here on this path: reading never
+// creates, so the directory comes into existence at the first write into it.
+func registerBox(home config.Home, target, name string) (string, nameSource, error) {
+	inv, skew, err := inventory.Read(home.InventoryPath())
+	if err != nil {
+		return "", nameFromHost, fmt.Errorf("read the box inventory: %w", err)
+	}
+	source := nameFromOperator
+	if name == "" {
+		name, source = hostOrTarget(target), nameFromHost
+	}
+	next, err := inventory.Register(inv, name, target)
+	if err != nil {
+		return "", source, fmt.Errorf("cannot register %s: %w", target, err)
+	}
+	if err := config.EnsureHome(home); err != nil {
+		return "", source, fmt.Errorf("create the config home: %w", err)
+	}
+	if err := inventory.Write(home.InventoryPath(), next, skew); err != nil {
+		return "", source, fmt.Errorf("register %s: %w", target, err)
+	}
+	return name, source, nil
+}
+
+// addedReport renders what the operator is told by a successful registration:
+// the name the box is reached by from now on, the target it resolves to, and —
+// when smith had to derive the name — that the box's marker recorded none.
+func addedReport(name, target string, source nameSource, blueprint string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "registered %s as %q\n", target, name)
+	if blueprint != "" {
+		fmt.Fprintf(&b, "built from the blueprint %q\n", blueprint)
+	}
+	if source == nameFromHost {
+		fmt.Fprintf(&b, "\nthe box's marker records no name, so smith named it after its host.\n"+
+			"Register it under another name with: smith machine add %s --name <name>\n", target)
+	}
+	return b.String()
+}
+
+// refuseAdd reports a registration smith declined and exits with the code that
+// kind of refusal is owed: a box that never answered is a connect failure, and
+// one that answered but carries no marker is a gate rejection. Neither wrote
+// anything, on the box or in the inventory.
+func refuseAdd(cmd *cobra.Command, outcome bootstrap.Outcome, cause error) error {
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "add refused: %v\n", cause); err != nil {
+		return fmt.Errorf("write refusal: %w", err)
+	}
+	return &exitError{code: outcome.ExitCode()}
+}
+
+// hostOrTarget returns the host part of a <login>@<host> target, or the whole
+// value when it carries no login — an ssh_config alias is its own host, and is
+// as good a name for the box as anything smith could invent.
+func hostOrTarget(target string) string {
+	if _, host, ok := strings.Cut(target, "@"); ok && host != "" {
+		return host
+	}
+	return target
 }
