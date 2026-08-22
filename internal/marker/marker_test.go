@@ -126,3 +126,28 @@ func TestAppendPhaseDoesNotMutateInput(t *testing.T) {
 		t.Errorf("AppendPhase mutated its input: %v", original.CompletedPhases)
 	}
 }
+
+// TestMarkerRecordsTheBlueprintPointerAndNoContentHash pins the blueprint
+// pointer: the marker records which blueprint a box was built from, by name
+// only. A content hash would be stale the moment either side is edited — the
+// staged document is ground truth — so the record must carry nothing about the
+// document's contents.
+func TestMarkerRecordsTheBlueprintPointerAndNoContentHash(t *testing.T) {
+	t.Parallel()
+	data, err := Encode(Marker{SchemaVersion: SchemaVersion, AccessMode: "public", Blueprint: "acme"})
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	got, _, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if got.Blueprint != "acme" {
+		t.Errorf("Blueprint = %q, want %q", got.Blueprint, "acme")
+	}
+	for _, unwanted := range []string{"hash", "digest", "sha"} {
+		if strings.Contains(string(data), unwanted) {
+			t.Errorf("marker JSON contains %q, want the blueprint name and nothing about the document's contents:\n%s", unwanted, data)
+		}
+	}
+}

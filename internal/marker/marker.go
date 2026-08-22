@@ -32,6 +32,11 @@ type Marker struct {
 	SmithVersion string `json:"smith_version"`
 	// AccessMode is how the box is reached: "public" or "tailscale".
 	AccessMode string `json:"access_mode"`
+	// Blueprint is the blueprint pointer: the name of the blueprint the box was
+	// built from, empty when it was built from none. It is a name and nothing
+	// else — no content hash — because the staged document is ground truth and
+	// a hash would be stale the moment either side is edited.
+	Blueprint string `json:"blueprint"`
 	// CompletedPhases lists the phases that completed, in the order they ran.
 	CompletedPhases []string `json:"completed_phases"`
 	// UpdatedAt is when the marker was last written, as an RFC 3339 timestamp.

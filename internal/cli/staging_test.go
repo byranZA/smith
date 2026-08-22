@@ -17,6 +17,9 @@ import (
 // test here reaches a real box.
 type fakeStagingBox struct {
 	staged []string
+	// marker is the JSON the box answers a marker read with, standing in for a
+	// box that records the blueprint it was built from.
+	marker string
 	// writeErrOn is the path whose write the box rejects, standing in for a
 	// staging run that fails partway through.
 	writeErrOn string
@@ -27,6 +30,11 @@ type fakeStagingBox struct {
 
 func (f *fakeStagingBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
 	f.commands = append(f.commands, cmd)
+	if strings.Contains(cmd, staging.MarkerPath) {
+		if _, err := io.WriteString(stdout, f.marker); err != nil {
+			return err
+		}
+	}
 	if strings.Contains(cmd, "find") {
 		for _, path := range f.staged {
 			if _, err := io.WriteString(stdout, path+"\n"); err != nil {
@@ -214,5 +222,39 @@ func TestStageConfigNamesTheWriteThatFailedPartwayThrough(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), placement) {
 		t.Errorf("stageConfig() err = %v, want it to name the write that failed", err)
+	}
+}
+
+func TestCheckBlueprintPointerRefusesABlueprintlessRerun(t *testing.T) {
+	box := &fakeStagingBox{marker: `{"schema_version":1,"access_mode":"public","blueprint":"acme"}`}
+	var errOut bytes.Buffer
+
+	err := checkBlueprintPointer(context.Background(), box, "", &errOut)
+	if err == nil {
+		t.Fatal("checkBlueprintPointer() err = nil, want a box built from a blueprint to refuse a blueprint-less re-run")
+	}
+	var exit *exitError
+	if !errors.As(err, &exit) || exit.code != 2 {
+		t.Errorf("checkBlueprintPointer() err = %v, want a gate rejection (exit 2)", err)
+	}
+	if !strings.Contains(errOut.String(), "acme") {
+		t.Errorf("checkBlueprintPointer() reported %q, want it to name the blueprint the box was built from", errOut.String())
+	}
+	for _, cmd := range box.commands {
+		if !strings.Contains(cmd, staging.MarkerPath) {
+			t.Errorf("checkBlueprintPointer() ran %q on the box, want the refusal to leave the staged config untouched", cmd)
+		}
+	}
+}
+
+func TestCheckBlueprintPointerAllowsABoxThatRecordsNoBlueprint(t *testing.T) {
+	box := &fakeStagingBox{marker: `{"schema_version":1,"access_mode":"public","blueprint":""}`}
+	var errOut bytes.Buffer
+
+	if err := checkBlueprintPointer(context.Background(), box, "", &errOut); err != nil {
+		t.Fatalf("checkBlueprintPointer() err = %v, want a box with no pointer to be set up with no blueprint", err)
+	}
+	if errOut.String() != "" {
+		t.Errorf("checkBlueprintPointer() reported %q, want nothing said", errOut.String())
 	}
 }

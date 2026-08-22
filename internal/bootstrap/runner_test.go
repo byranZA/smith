@@ -265,3 +265,20 @@ func TestOutcomeExitCode(t *testing.T) {
 // errRemote is a stand-in for a remote command that ran and failed (as opposed
 // to a connection failure).
 var errRemote = errors.New("remote command failed")
+
+// TestSetupPassesTheBlueprintPointer proves setup hands the box the blueprint
+// the operator built it from, so the marker records the pointer. Without it a
+// box could never say what kind of box it is.
+func TestSetupPassesTheBlueprintPointer(t *testing.T) {
+	conn := &fakeConn{}
+	if _, err := NewRunner(conn).Setup(
+		context.Background(),
+		SetupOptions{AccessMode: "public", SmithVersion: "1.2.3", Blueprint: "acme"},
+		io.Discard, io.Discard,
+	); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if !strings.Contains(conn.setupRunCmd, "--blueprint 'acme'") {
+		t.Errorf("setup command = %q, want it to pass the blueprint pointer", conn.setupRunCmd)
+	}
+}

@@ -239,12 +239,24 @@ func newSetupCmd(resolve homeResolver) *cobra.Command {
 				return &exitError{code: res.Outcome.ExitCode()}
 			}
 
+			// The blueprint pointer, checked once the box is known reachable and
+			// before the first mutating phase: a box built from a blueprint is
+			// only ever re-run with one.
+			if err := checkBlueprintPointer(ctx, conn, blueprintName, stderr); err != nil {
+				return err
+			}
+
 			publicSSH, err := publicSSHTarget(ctx, runner, accessMode)
 			if err != nil {
 				return fmt.Errorf("derive firewall target: %w", err)
 			}
 
-			opts := bootstrap.SetupOptions{AccessMode: accessMode, SmithVersion: resolveVersion(), PublicSSH: publicSSH}
+			opts := bootstrap.SetupOptions{
+				AccessMode:   accessMode,
+				SmithVersion: resolveVersion(),
+				Blueprint:    blueprintName,
+				PublicSSH:    publicSSH,
+			}
 			setupRes, err := runner.Setup(ctx, opts, stdout, stderr)
 			if err != nil {
 				return fmt.Errorf("setup: %w", err)
@@ -280,6 +292,26 @@ func newSetupCmd(resolve homeResolver) *cobra.Command {
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
 		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	return cmd
+}
+
+// checkBlueprintPointer applies the blueprint-pointer rule at the command
+// surface: a run naming no blueprint against a box whose marker records one is
+// refused, naming the blueprint the box was built from, and exits as a gate
+// rejection — the code the setup family already answers a refusal that mutated
+// nothing with.
+//
+// It runs after the preflight gate — which mutates nothing and owns the
+// connect-failure outcome — and before the first mutating phase, so a refusal
+// leaves the box, its staged document and its staged placements exactly as they
+// were.
+func checkBlueprintPointer(ctx context.Context, conn staging.Conn, blueprintName string, stderr io.Writer) error {
+	if err := staging.CheckPointer(ctx, conn, blueprintName); err != nil {
+		if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
+			return fmt.Errorf("write refusal: %w", werr)
+		}
+		return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
+	}
+	return nil
 }
 
 // stageConfig runs the config-staging stage: it reads the named blueprint from
