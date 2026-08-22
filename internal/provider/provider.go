@@ -20,16 +20,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/byranZA/smith/internal/jsonpath"
 )
 
-// namePlaceholder is the operator-chosen box name's placeholder in a template.
-// It is the only value smith substitutes into a create template in this form;
-// every other argument is the operator's literal text, passed through as
-// written.
-const namePlaceholder = "{{name}}"
+// The placeholders smith substitutes into a template. These four are the whole
+// vocabulary: every other argument is the operator's literal text, passed
+// through as written, and a placeholder outside this set is a validation error
+// rather than a literal sent to the provider.
+const (
+	// namePlaceholder is the operator-chosen box name.
+	namePlaceholder = "{{name}}"
+	// markerArgPlaceholder is the value create stamps the box with.
+	markerArgPlaceholder = "{{marker_arg}}"
+	// sshKeyPlaceholder is the operator's provider-side key reference.
+	sshKeyPlaceholder = "{{ssh_key}}"
+	// idPlaceholder is the box id, supplied to the destroy template, which v1
+	// accepts as data and never executes.
+	idPlaceholder = "{{id}}"
+)
+
+// placeholders is the set smith supplies, in the order an error lists them.
+var placeholders = []string{namePlaceholder, markerArgPlaceholder, sshKeyPlaceholder, idPlaceholder}
+
+// placeholderPattern matches any {{...}} token in a template argument, so an
+// unrecognised one is caught rather than passed to the provider verbatim.
+var placeholderPattern = regexp.MustCompile(`{{[^{}]*}}`)
 
 // Runner launches a local process. It is the narrow command-running interface
 // the provider CLI is reached through, deliberately the same shape
@@ -114,10 +133,14 @@ type Box struct {
 // setup and failed halfway would leave the operator holding a box that exists,
 // is billed, and that smith cannot tear down.
 func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (Box, error) {
-	if len(adapter.Create) == 0 {
-		return Box{}, fmt.Errorf("provider adapter declares no create template")
+	if err := Validate(adapter); err != nil {
+		return Box{}, err
 	}
-	argv := render(adapter.Create, name)
+	argv := render(adapter.Create, map[string]string{
+		namePlaceholder:      name,
+		markerArgPlaceholder: adapter.Marker.Arg,
+		sshKeyPlaceholder:    adapter.SSHKey,
+	})
 	doc, err := run(ctx, runner, argv)
 	if err != nil {
 		return Box{}, err
@@ -125,14 +148,74 @@ func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (B
 	return extract(doc, adapter.Record.Create, adapter.Extract)
 }
 
-// render substitutes the box name into a template, leaving every other
-// argument exactly as the operator wrote it.
-func render(template []string, name string) []string {
-	argv := make([]string, len(template))
-	for i, arg := range template {
-		argv[i] = strings.ReplaceAll(arg, namePlaceholder, name)
+// Validate reports whether smith can run an adapter's templates: it must
+// declare a create template, and every {{placeholder}} in any template must be
+// one of the four smith supplies. An unrecognised placeholder is caught here
+// rather than sent to the provider as literal text, which is what a template
+// carrying {{sshkey}} would otherwise become.
+func Validate(adapter Adapter) error {
+	if len(adapter.Create) == 0 {
+		return fmt.Errorf("provider adapter declares no create template")
+	}
+	templates := []struct {
+		name string
+		argv []string
+	}{
+		{"create", adapter.Create},
+		{"list", adapter.List},
+		{"destroy", adapter.Destroy},
+	}
+	for _, template := range templates {
+		for _, arg := range template.argv {
+			for _, found := range placeholderPattern.FindAllString(arg, -1) {
+				if !slices.Contains(placeholders, found) {
+					return fmt.Errorf("provider adapter's %s template uses unknown placeholder %s: smith supplies %s",
+						template.name, found, strings.Join(placeholders, ", "))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// render substitutes smith's placeholders into a template, leaving every other
+// argument exactly as the operator wrote it, and drops the arguments left
+// empty.
+//
+// An argument that renders empty is dropped along with the argument before it
+// when that one is a flag. A flat argument list has no other way to say "omit
+// this": an operator who declares no ssh key would otherwise send
+// --ssh-key "", which the provider CLI rejects. The rule is mechanical and the
+// same for every placeholder, which is what makes an adapter whose marker is
+// the box's own name — no create argument at all — a configuration rather than
+// a special case here.
+func render(template []string, values map[string]string) []string {
+	argv := make([]string, 0, len(template))
+	for _, arg := range template {
+		rendered := arg
+		for placeholder, value := range values {
+			rendered = strings.ReplaceAll(rendered, placeholder, value)
+		}
+		if rendered == "" && rendered != arg {
+			argv = dropFlag(argv)
+			continue
+		}
+		argv = append(argv, rendered)
 	}
 	return argv
+}
+
+// dropFlag removes the argument a dropped value was passed behind, when that
+// argument is a flag. A preceding argument that is not a flag is the
+// provider's own literal text — a subcommand, say — and stays.
+func dropFlag(argv []string) []string {
+	if len(argv) == 0 {
+		return argv
+	}
+	if last := argv[len(argv)-1]; !strings.HasPrefix(last, "-") || last == "-" {
+		return argv
+	}
+	return argv[:len(argv)-1]
 }
 
 // run launches the rendered argv and decodes its stdout as JSON. A failing

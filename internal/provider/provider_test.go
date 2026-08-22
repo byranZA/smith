@@ -221,3 +221,139 @@ func TestCreateReportsARecordPathThatMatchedNothing(t *testing.T) {
 		t.Errorf("Create() err = %v, want it to name the adapter's record path", err)
 	}
 }
+
+// optional is an adapter whose create template passes both optional values
+// behind flags, which is the shape the drop rule exists for.
+func optional() provider.Adapter {
+	a := hetzner()
+	a.Create = []string{"hcloud", "server", "create", "--name", "{{name}}",
+		"--ssh-key", "{{ssh_key}}", "--label", "{{marker_arg}}", "-o", "json"}
+	return a
+}
+
+func TestCreateRendersTheOptionalArguments(t *testing.T) {
+	adapter := optional()
+	adapter.SSHKey = "my-laptop"
+	adapter.Marker.Arg = "smith"
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	want := []string{"server", "create", "--name", "dev",
+		"--ssh-key", "my-laptop", "--label", "smith", "-o", "json"}
+	if !slices.Equal(runner.args, want) {
+		t.Errorf("args = %q, want %q", runner.args, want)
+	}
+}
+
+func TestCreateDropsAnArgumentThatRendersEmptyAndTheFlagBeforeIt(t *testing.T) {
+	tests := []struct {
+		name    string
+		adapter provider.Adapter
+		want    []string
+	}{
+		{
+			name:    "no ssh key drops --ssh-key",
+			adapter: func() provider.Adapter { a := optional(); a.Marker.Arg = "smith"; return a }(),
+			want:    []string{"server", "create", "--name", "dev", "--label", "smith", "-o", "json"},
+		},
+		{
+			name:    "no marker argument drops --label",
+			adapter: func() provider.Adapter { a := optional(); a.SSHKey = "my-laptop"; return a }(),
+			want:    []string{"server", "create", "--name", "dev", "--ssh-key", "my-laptop", "-o", "json"},
+		},
+		{
+			name:    "neither declared drops both",
+			adapter: optional(),
+			want:    []string{"server", "create", "--name", "dev", "-o", "json"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{stdout: hetznerResponse}
+
+			if _, err := provider.Create(context.Background(), runner, tt.adapter, "dev"); err != nil {
+				t.Fatalf("Create() err = %v", err)
+			}
+
+			if !slices.Equal(runner.args, tt.want) {
+				t.Errorf("args = %q, want %q", runner.args, tt.want)
+			}
+			if slices.Contains(runner.args, "") {
+				t.Errorf("args = %q, want no empty argument left behind", runner.args)
+			}
+		})
+	}
+}
+
+func TestCreateKeepsANonFlagBeforeADroppedArgument(t *testing.T) {
+	adapter := hetzner()
+	adapter.Create = []string{"doctl", "compute", "droplet", "create", "{{name}}", "--ssh-keys", "{{ssh_key}}", "-o", "json"}
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	want := []string{"compute", "droplet", "create", "dev", "-o", "json"}
+	if !slices.Equal(runner.args, want) {
+		t.Errorf("args = %q, want %q", runner.args, want)
+	}
+}
+
+func TestCreateRefusesATemplateWithAnUnknownPlaceholder(t *testing.T) {
+	adapter := hetzner()
+	adapter.Create = append(adapter.Create, "--ssh-key", "{{sshkey}}")
+	runner := &fakeRunner{}
+
+	_, err := provider.Create(context.Background(), runner, adapter, "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want an unknown placeholder refused")
+	}
+	for _, want := range []string{"{{sshkey}}", "{{name}}", "{{marker_arg}}", "{{ssh_key}}", "{{id}}"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Create() err = %v, want it to name %s", err, want)
+		}
+	}
+	if runner.runs != 0 {
+		t.Errorf("ran %d commands, want none", runner.runs)
+	}
+}
+
+func TestValidateReportsAnUnknownPlaceholderInAnyTemplate(t *testing.T) {
+	tests := []struct {
+		name    string
+		adapter provider.Adapter
+	}{
+		{"in create", provider.Adapter{Create: []string{"hcloud", "server", "create", "{{box}}"}}},
+		{"in list", provider.Adapter{Create: []string{"hcloud"}, List: []string{"hcloud", "server", "list", "{{box}}"}}},
+		{"in destroy", provider.Adapter{Create: []string{"hcloud"}, Destroy: []string{"hcloud", "server", "delete", "{{box}}"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := provider.Validate(tt.adapter)
+
+			if err == nil {
+				t.Fatal("Validate() err = nil, want an unknown placeholder reported")
+			}
+			if !strings.Contains(err.Error(), "{{box}}") {
+				t.Errorf("Validate() err = %v, want it to name {{box}}", err)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsTheFourPlaceholdersSmithSupplies(t *testing.T) {
+	adapter := provider.Adapter{
+		Create:  []string{"hcloud", "server", "create", "{{name}}", "{{marker_arg}}", "{{ssh_key}}"},
+		List:    []string{"hcloud", "server", "list"},
+		Destroy: []string{"hcloud", "server", "delete", "{{id}}"},
+	}
+
+	if err := provider.Validate(adapter); err != nil {
+		t.Errorf("Validate() err = %v, want the placeholders smith supplies accepted", err)
+	}
+}
