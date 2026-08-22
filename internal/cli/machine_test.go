@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -184,6 +186,66 @@ func TestMachineCreateNamesTheSSHKeyReferenceAsTheFirstSuspectOnARefusedConnect(
 			}
 			if !strings.Contains(advice, tt.want) {
 				t.Errorf("stdout = %q, want the refused-connect advice to name %q", stdout, tt.want)
+			}
+		})
+	}
+}
+
+// providerBlueprintRequiringAToken is the same adapter naming the environment
+// variable its CLI reads the provider token from. The name is all the blueprint
+// carries: the value stays in the operator's environment.
+const providerBlueprintRequiringAToken = `provider:
+  create: [hcloud, server, create, --name, "{{name}}", -o, json]
+  requires: [SMITH_TEST_TOKEN]
+  extract:
+    id: id
+    ip: public_net.ipv4.ip
+`
+
+func TestMachineCreateRefusesAMissingRequirementBeforeCreatingAnything(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprintRequiringAToken)
+	t.Setenv("SMITH_TEST_TOKEN", "unset below")
+	if err := os.Unsetenv("SMITH_TEST_TOKEN"); err != nil {
+		t.Fatalf("unset SMITH_TEST_TOKEN: %v", err)
+	}
+	runner := &fakeProviderRunner{}
+
+	stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want non-zero when a required variable is not set")
+	}
+	if runner.runs != 0 {
+		t.Errorf("ran %d commands, want none before a missing requirement is reported", runner.runs)
+	}
+	if !strings.Contains(stderr, "SMITH_TEST_TOKEN") || !strings.Contains(stderr, "environment") {
+		t.Errorf("stderr = %q, want it to name the variable the provider requires in the environment", stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed when the create is refused", stdout)
+	}
+}
+
+func TestMachineCreateNeverShowsARequiredVariablesValue(t *testing.T) {
+	const token = "hcloud-token-a1b2c3d4"
+	tests := []struct {
+		name   string
+		runner *fakeProviderRunner
+	}{
+		{"a created box", &fakeProviderRunner{stdout: `{"id": 1, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}},
+		{"a refusing provider", &fakeProviderRunner{stderr: "Error: unauthorized", err: errors.New("exit status 1")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeBlueprint(t, dir, "acme", providerBlueprintRequiringAToken)
+			t.Setenv("SMITH_TEST_TOKEN", token)
+
+			stdout, stderr, _ := runCreate(t, dir, tt.runner, "create", "dev", "--blueprint", "acme")
+
+			if strings.Contains(stdout, token) || strings.Contains(stderr, token) {
+				t.Errorf("output = %q / %q, want no required variable's value in it", stdout, stderr)
 			}
 		})
 	}

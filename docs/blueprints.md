@@ -131,6 +131,33 @@ marker is the box name, and its only job is answering "did smith create this
 box". smith does not enforce this — nothing checks the provider for a name
 collision before creating a box.
 
+### Provider credentials
+
+`requires` lists the **names** of environment variables the provider CLI needs.
+Names only — no values, and no references to a store either:
+
+```yaml
+provider:
+  requires: [HCLOUD_TOKEN]
+```
+
+smith checks each name is present in your environment **before it runs any
+provider command**, then launches the command with your environment inherited,
+so the CLI reads the token itself. smith never reads, resolves, stages or logs
+the value, and no smith output can contain it.
+
+**`requires` catches a missing credential and never an insufficient one.** A
+token can be present, correctly named, and still lack the scope your template
+needs — a DigitalOcean token without tag permission passes this check and is
+refused only at create, with `403 ... missing the required permission
+tag:create`. Nothing smith can check before running the command tells those two
+apart.
+
+**It is optional.** `hcloud` contexts keep the token in
+`~/.config/hcloud/cli.toml` with no environment variable at all, so an adapter
+declaring no `requires` is checked for nothing and trusts the CLI's own
+credential story.
+
 ## Checking before you build
 
 ```sh

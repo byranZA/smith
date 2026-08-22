@@ -15,6 +15,10 @@ func System() SystemExec { return SystemExec{} }
 
 // Run launches name with args through os/exec, wiring the provided
 // stdin/stdout/stderr straight through so output streams live.
+//
+// The subprocess inherits smith's own environment. That is how a provider CLI
+// reaches its credential: smith checks only that a required variable is
+// present and never reads its value, and the command picks it up itself.
 func (SystemExec) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin = stdin

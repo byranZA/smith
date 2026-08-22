@@ -466,3 +466,85 @@ func TestCreatePassesTheSSHKeyReferenceThroughUnaltered(t *testing.T) {
 		})
 	}
 }
+
+// hetznerRequiring is the same adapter declaring the environment its CLI needs.
+func hetznerRequiring(names ...string) provider.Adapter {
+	adapter := hetzner()
+	adapter.Requires = names
+	return adapter
+}
+
+func TestCreateRunsTheCommandWhenARequirementIsSatisfied(t *testing.T) {
+	t.Setenv("SMITH_TEST_TOKEN", "present")
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	if _, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_TOKEN"), "dev"); err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	if runner.runs != 1 {
+		t.Errorf("ran %d commands, want the create template run once", runner.runs)
+	}
+}
+
+func TestCreateRefusesAMissingRequirementBeforeRunningAnything(t *testing.T) {
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	_, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_ABSENT_TOKEN"), "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want a missing requirement reported")
+	}
+	if !strings.Contains(err.Error(), "SMITH_TEST_ABSENT_TOKEN") || !strings.Contains(err.Error(), "environment") {
+		t.Errorf("Create() err = %v, want it to name the variable the provider requires in the environment", err)
+	}
+	if runner.runs != 0 {
+		t.Errorf("ran %d commands, want none before a missing requirement is reported", runner.runs)
+	}
+}
+
+func TestCreateNamesEveryMissingRequirement(t *testing.T) {
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	_, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_ABSENT_ONE", "SMITH_TEST_ABSENT_TWO"), "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want the missing requirements reported")
+	}
+	for _, name := range []string{"SMITH_TEST_ABSENT_ONE", "SMITH_TEST_ABSENT_TWO"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("Create() err = %v, want it to name %q", err, name)
+		}
+	}
+}
+
+func TestCreateChecksNothingWhenNoRequirementsAreDeclared(t *testing.T) {
+	// An empty environment is legal: hcloud contexts hold the token in a config
+	// file, so a mandatory requires would refuse a working machine.
+	runner := &fakeRunner{stdout: hetznerResponse}
+
+	if _, err := provider.Create(context.Background(), runner, hetzner(), "dev"); err != nil {
+		t.Fatalf("Create() err = %v", err)
+	}
+
+	if runner.runs != 1 {
+		t.Errorf("ran %d commands, want the create template run once", runner.runs)
+	}
+}
+
+func TestCreateNeverShowsARequiredVariablesValue(t *testing.T) {
+	const secret = "hcloud-token-a1b2c3d4"
+	t.Setenv("SMITH_TEST_TOKEN", secret)
+	// A refusal is the most output smith produces, so it is the strongest place
+	// to assert the value never leaks.
+	runner := &fakeRunner{stderr: "Error: unauthorized", err: errors.New("exit status 1")}
+
+	_, err := provider.Create(context.Background(), runner, hetznerRequiring("SMITH_TEST_TOKEN"), "dev")
+
+	if err == nil {
+		t.Fatal("Create() err = nil, want the failing provider command reported")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("Create() err = %v, want no required variable's value in it", err)
+	}
+}

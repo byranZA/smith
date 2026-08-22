@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -159,6 +160,9 @@ func Create(ctx context.Context, runner Runner, adapter Adapter, name string) (B
 	if err := Validate(adapter); err != nil {
 		return Box{}, err
 	}
+	if err := requireEnv(adapter.Requires); err != nil {
+		return Box{}, err
+	}
 	argv := render(adapter.Create, map[string]string{
 		namePlaceholder:      name,
 		markerArgPlaceholder: strings.ReplaceAll(adapter.Marker.Arg, valuePlaceholder, name),
@@ -222,6 +226,57 @@ func unknown(text string, accepted []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// requireEnv checks that every environment variable the adapter declares is
+// present, before any provider command runs, so a missing credential fails with
+// smith's own message rather than whatever the provider CLI says about it.
+//
+// Presence is the whole check, and deliberately so on both sides:
+//
+// It guards a missing credential and never an insufficient one. A token can be
+// present, correctly named, and still lack the scope the template needs — a
+// DigitalOcean token without tag permission passes here and is refused only at
+// create, with "403 ... missing the required permission tag:create". No
+// pre-flight smith can run distinguishes the two.
+//
+// And the list is optional: hcloud contexts hold the token in
+// ~/.config/hcloud/cli.toml with no environment variable at all, so an adapter
+// declaring nothing is checked for nothing and trusts the CLI's own credential
+// story.
+//
+// smith reads the name and never the value. The value is never resolved,
+// staged, logged or carried into an error message; the subprocess inherits the
+// operator's environment and picks it up there.
+func requireEnv(names []string) error {
+	var missing []string
+	for _, name := range names {
+		if _, ok := os.LookupEnv(name); !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("provider requires %s in the environment: set %s and run the command again",
+		quoteAll(missing), plural(len(missing), "it", "them"))
+}
+
+// quoteAll renders names as a quoted, comma-separated list for an error.
+func quoteAll(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, fmt.Sprintf("%q", name))
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// plural picks the singular or plural word for a count.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // render substitutes smith's placeholders into a template, leaving every other
