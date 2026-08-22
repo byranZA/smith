@@ -10,7 +10,10 @@
 // The package is split into a pure seam and an applying one. Plan derives the
 // desired staged tree from a blueprint document and touches nothing; Converge
 // applies that tree to a box over a narrow connection, comparing digests before
-// it writes so a re-run that changes nothing rewrites nothing.
+// it writes so a re-run that changes nothing rewrites nothing. Load is the read
+// half, running on the box: it re-validates the staged document through the
+// same strict parser and refuses one it cannot trust rather than running a verb
+// against a half-understood blueprint.
 //
 // /etc/smith/ is a provisioned box's state. The box is deliberately given no
 // ~/.smith/ — that is the operator's config home, and the two must never be the
@@ -24,7 +27,7 @@ const Root = "/etc/smith"
 // DocumentPath is where the operator's blueprint is staged on the box. It is a
 // committed, non-secret artifact, so it is world-readable: an operator who
 // SSHes in can read the document their box was built from.
-const DocumentPath = Root + "/blueprint.yaml"
+const DocumentPath = Root + "/" + documentFile
 
 // documentMode is the staged document's permissions, and documentOwner its
 // owner: root, because `machine setup` is the sole writer.

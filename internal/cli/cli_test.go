@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/byranZA/smith/internal/staging"
 )
 
 func TestSetupRejectsInvalidAccessMode(t *testing.T) {
@@ -138,6 +141,9 @@ func TestCodeFromError(t *testing.T) {
 		{"exit error carries its code", &exitError{code: 2}, 2},
 		{"connect exit code", &exitError{code: 3}, 3},
 		{"plain error is general failure", errors.New("boom"), 1},
+		{"absent staged blueprint", &staging.AbsentError{Path: staging.DocumentPath}, 4},
+		{"malformed staged blueprint", &staging.MalformedError{Path: staging.DocumentPath, Err: errors.New("line 2: unknown field")}, 5},
+		{"a wrapped staged-config refusal keeps its code", fmt.Errorf("load config: %w", &staging.AbsentError{Path: staging.DocumentPath}), 4},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
