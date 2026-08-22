@@ -396,3 +396,34 @@ placements:
 		}
 	}
 }
+
+func TestBlueprintCheckRefusesAPreferenceGitIdentityBesideAGitconfigPlacement(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "git:\n  user_name: Ada Lovelace\n  user_email: ada@example.com\n")
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:~/.secrets/gitconfig\n    to: ~/.gitconfig\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for a preference identity beside a gitconfig placement (stderr: %s)", code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed for a refused configuration", stdout)
+	}
+	for _, want := range []string{"~/.gitconfig", "mutually exclusive", "choose"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+		}
+	}
+}
+
+func TestBlueprintCheckAcceptsAGitconfigPlacementWithNoIdentityAnywhere(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:~/.secrets/gitconfig\n    to: ~/.gitconfig\n")
+
+	_, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a gitconfig placement with no identity (stderr: %s)", code, stderr)
+	}
+}

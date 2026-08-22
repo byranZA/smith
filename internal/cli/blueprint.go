@@ -88,10 +88,17 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			// The resolved picture is what setup would act on, and a
+			// preference-declared field can disagree with a blueprint one, so
+			// it is checked before anything is reported as valid.
+			effective := config.Resolve(overrides, &b, &prefs)
+			if err := effective.Conflicts(); err != nil {
+				return reportInvalid(cmd, err)
+			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "blueprint %q is valid (%s)\n", name, path); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
-			return writeResolved(cmd, config.Resolve(overrides, &b, &prefs))
+			return writeResolved(cmd, effective)
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "", "override how the box is reached: public or tailscale")

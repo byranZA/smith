@@ -22,11 +22,6 @@ var (
 // does not.
 const gitSuffix = ".git"
 
-// gitconfigPath is the file git reads a box-wide identity from. Git reads it
-// or ~/.config/git/config and never both, so this is the one path the
-// identity fields and a box placement can collide on.
-const gitconfigPath = "~/.gitconfig"
-
 // placementScope is what a placement's destination is anchored to, which
 // follows from where the placement is declared and nothing else: at the top
 // level a placement is box-scoped, under a repos[] entry it is repo-scoped.
@@ -79,31 +74,11 @@ func validate(b Blueprint) []Finding {
 	var report []Finding
 	report = append(report, choice("access", b.Access, accessModes)...)
 	report = append(report, choice("terminal", b.Terminal, terminals)...)
-	report = append(report, gitFindings(b.Git, b.Placements)...)
+	report = append(report, GitConflicts(b.Git, b.Placements)...)
 	report = append(report, envFindings("env", b.Env)...)
 	report = append(report, placementFindings("placements", b.Placements, boxScope)...)
 	report = append(report, repoFindings(b.Repos)...)
 	return report
-}
-
-// gitFindings refuses a blueprint that names two writers for the same
-// ~/.gitconfig. Identity fields mean smith writes that file itself, so a box
-// placement to it would land on top of what smith wrote, in whichever order
-// the two happened to run. Only the operator knows which they meant, so the
-// pair is refused rather than resolved.
-func gitFindings(identity Git, placements []Placement) []Finding {
-	if identity == (Git{}) {
-		return nil
-	}
-	for _, p := range placements {
-		if p.To != gitconfigPath {
-			continue
-		}
-		return []Finding{{Path: "git", Message: fmt.Sprintf(
-			"git identity fields and a box placement to %q are mutually exclusive, because both write that file: choose which one does, and drop the other",
-			gitconfigPath)}}
-	}
-	return nil
 }
 
 // repoFindings checks each repo carries a remote and that no two of them would

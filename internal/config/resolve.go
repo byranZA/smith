@@ -159,6 +159,28 @@ type Effective struct {
 	Placements []blueprint.Placement
 }
 
+// resolvedSubject names the document the post-resolve findings are about. A
+// conflict between a preference and a blueprint belongs to neither file on its
+// own, so the report says which picture it is refusing rather than sending the
+// operator to one of the two files at random.
+const resolvedSubject = "resolved configuration"
+
+// Conflicts refuses a resolved configuration whose fields disagree with each
+// other, as opposed to one whose documents are individually well formed. A
+// rule lands here rather than in the parser when the values it weighs can be
+// declared in different files: the preferences hold the git identity, the
+// blueprint holds the placements, and only the resolved picture shows both.
+//
+// It returns nil when smith would act on the configuration as it stands.
+func (e Effective) Conflicts() error {
+	identity := blueprint.Git{UserName: e.Git.UserName.Value, UserEmail: e.Git.UserEmail.Value}
+	findings := blueprint.GitConflicts(identity, e.Placements)
+	if len(findings) == 0 {
+		return nil
+	}
+	return &blueprint.ValidationError{Subject: resolvedSubject, Findings: findings}
+}
+
 // String renders the resolved configuration as one line per field in schema
 // order, with the collections the blueprint declared written out under theirs.
 // A field nobody declared and smith has no default for is left out entirely,

@@ -309,3 +309,36 @@ func TestEffectiveOmitsCollectionsNobodyDeclared(t *testing.T) {
 		}
 	}
 }
+
+func TestEffectiveRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *testing.T) {
+	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
+	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
+
+	err := Resolve(Overrides{}, b, p).Conflicts()
+
+	if err == nil {
+		t.Fatal("Conflicts() err = nil, want the two writers of ~/.gitconfig refused")
+	}
+	for _, want := range []string{"~/.gitconfig", "mutually exclusive", "choose"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Conflicts() err = %q, want it to mention %q", err, want)
+		}
+	}
+}
+
+func TestEffectiveAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T) {
+	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
+
+	if err := Resolve(Overrides{}, b, nil).Conflicts(); err != nil {
+		t.Errorf("Conflicts() err = %v, want a gitconfig placement accepted on its own", err)
+	}
+}
+
+func TestEffectiveAcceptsAGitIdentityWithNoGitconfigPlacement(t *testing.T) {
+	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/tok", To: "~/.config/gh/hosts.yml"}}}
+	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace"}}
+
+	if err := Resolve(Overrides{}, b, p).Conflicts(); err != nil {
+		t.Errorf("Conflicts() err = %v, want an identity accepted beside unrelated placements", err)
+	}
+}
