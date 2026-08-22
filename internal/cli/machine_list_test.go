@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
@@ -148,5 +149,100 @@ func TestMachineListNotesAnInventoryANewerSmithWrote(t *testing.T) {
 	}
 	if !strings.Contains(stdout+stderr, "newer smith") {
 		t.Errorf("output = %q, want a note that a newer smith wrote the file", stdout+stderr)
+	}
+}
+
+// probingSSH stands in for the local ssh binary during a probe run: it answers
+// for every target except the ones named unreachable, and records what it was
+// pointed at. Probes run concurrently, so it guards its own records.
+type probingSSH struct {
+	unreachable map[string]bool
+
+	mu      sync.Mutex
+	targets []string
+}
+
+// Run records the ssh destination and refuses the connection for a target the
+// fake was told does not answer.
+func (s *probingSSH) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
+	if name != "ssh" || len(args) < 2 {
+		return nil
+	}
+	target := args[len(args)-2]
+	s.mu.Lock()
+	s.targets = append(s.targets, target)
+	s.mu.Unlock()
+	if s.unreachable[target] {
+		return refusedExit{}
+	}
+	return nil
+}
+
+// runProbingList runs `machine list --probe` against a config home rooted at
+// dir, with every ssh launch pointed at the given fake.
+func runProbingList(t *testing.T, dir string, ssh *probingSSH, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	cmd := newMachineCmd(
+		func() (config.Home, error) { return config.NewHome(dir), nil },
+		ssh, idleDialer{t: t}, provider.SystemClock(),
+	)
+	cmd.SetArgs(append([]string{"list"}, args...))
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	code = codeFromError(cmd.Execute())
+	return out.String(), errBuf.String(), code
+}
+
+// twoBoxInventory registers the two boxes every probing case is decided against.
+const twoBoxInventory = `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"},"scratch":{"target":"smith@203.0.113.42"}}}`
+
+func TestMachineListProbeFlagsAnUnreachableBoxInline(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, twoBoxInventory)
+	ssh := &probingSSH{unreachable: map[string]bool{"smith@203.0.113.42": true}}
+
+	stdout, stderr, code := runProbingList(t, dir, ssh, "--probe")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a listing with an unreachable box (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "REACHABLE") {
+		t.Errorf("stdout = %q, want a REACHABLE column", stdout)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if !strings.HasPrefix(lines[1], "dev") || !strings.HasSuffix(lines[1], "reachable") || strings.HasSuffix(lines[1], "unreachable") {
+		t.Errorf("line for dev = %q, want it shown as reachable", lines[1])
+	}
+	if !strings.HasPrefix(lines[2], "scratch") || !strings.HasSuffix(lines[2], "unreachable") {
+		t.Errorf("line for scratch = %q, want it shown as unreachable", lines[2])
+	}
+	if len(ssh.targets) != 2 {
+		t.Errorf("ssh targets = %v, want one probe per box", ssh.targets)
+	}
+}
+
+func TestMachineListProbeLeavesTheInventoryUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, twoBoxInventory)
+	path := config.NewHome(dir).InventoryPath()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	ssh := &probingSSH{unreachable: map[string]bool{"smith@203.0.113.42": true}}
+
+	stdout, _, _ := runProbingList(t, dir, ssh, "--probe")
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("inventory = %q, want it byte-identical after a probe run (was %q)", after, before)
+	}
+	if !strings.Contains(stdout, "scratch") {
+		t.Errorf("stdout = %q, want the unreachable box still listed, never pruned", stdout)
 	}
 }

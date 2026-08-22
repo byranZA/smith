@@ -36,7 +36,7 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 		newCreateCmd(resolve, exec, dialer, clock),
 		newSetupCmd(resolve, exec),
 		newStatusCmd(resolve, exec),
-		newListCmd(resolve),
+		newListCmd(resolve, exec),
 		newAddCmd(resolve, exec),
 		newForgetCmd(resolve),
 	)
@@ -505,17 +505,26 @@ func establishTailscale(ctx context.Context, access *tailscale.Access, host stri
 	return result, nil
 }
 
-// newListCmd builds `smith machine list`. It reads the box inventory out of the
-// config home and prints what it finds, sorted by name with a summary line.
+// newListCmd builds `smith machine list [--probe]`. It reads the box inventory
+// out of the config home and prints what it finds, sorted by name with a
+// summary line.
 //
-// It is instant and offline: nothing is connected to, no command is run on any
-// box, and no file or directory is created — a box knows of no other boxes, so
-// there is nothing out there to ask. An absent inventory is not a failure but
-// the ordinary state before the first box is registered, so it reports that and
-// exits 0; only a file smith cannot read is an error, and that error names the
-// file rather than being papered over as empty.
-func newListCmd(resolve homeResolver) *cobra.Command {
-	return &cobra.Command{
+// Without --probe it is instant and offline: nothing is connected to, no
+// command is run on any box, and no file or directory is created — a box knows
+// of no other boxes, so there is nothing out there to ask. An absent inventory
+// is not a failure but the ordinary state before the first box is registered,
+// so it reports that and exits 0; only a file smith cannot read is an error,
+// and that error names the file rather than being papered over as empty.
+//
+// With --probe it opens a connection to every box at once and adds the
+// REACHABLE column. That is the whole of the difference: the probe never
+// writes, never prunes and never fails the command, because reachability is a
+// display concern and an entry smith could not reach is at least as often
+// rebooting, off-tailnet or firewalled as it is gone — and v1 has no way to
+// fetch a pruned entry back.
+func newListCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
+	var probe bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the boxes smith knows how to reach",
 		Args:  cobra.NoArgs,
@@ -528,12 +537,37 @@ func newListCmd(resolve homeResolver) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), inventory.Readout(inv, skew)); err != nil {
+			var reach map[string]bool
+			if probe {
+				if reach, err = probeBoxes(cmd.Context(), inv, exec); err != nil {
+					return reportInvalid(cmd, err)
+				}
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), inventory.Readout(inv, skew, reach)); err != nil {
 				return fmt.Errorf("write box listing: %w", err)
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&probe, "probe", false,
+		"connect to every listed box and report whether it answers; nothing is stored and no entry is pruned")
+	return cmd
+}
+
+// probeBoxes reports which of the inventory's boxes answer, opening one
+// connection per box over its registered target. The targets are used
+// verbatim, as everywhere: they are what smith proved, so there is nothing to
+// resolve them against.
+func probeBoxes(ctx context.Context, inv inventory.Inventory, exec connection.Exec) (map[string]bool, error) {
+	conns := make(map[string]status.Conn, len(inv.Boxes))
+	for name, box := range inv.Boxes {
+		conns[name] = connection.New(box.Target, exec)
+	}
+	reach, err := status.ProbeAll(ctx, conns)
+	if err != nil {
+		return nil, fmt.Errorf("probe listed boxes: %w", err)
+	}
+	return reach, nil
 }
 
 // newStatusCmd builds `smith machine status <name-or-target>`. It resolves the

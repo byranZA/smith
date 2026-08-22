@@ -12,7 +12,7 @@ func TestReadoutListsBoxesInNameOrderWithTheirTargets(t *testing.T) {
 		"api":     {Target: "smith@100.92.14.31"},
 	}}
 
-	out := Readout(inv, SkewNone)
+	out := Readout(inv, SkewNone, nil)
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) < 4 {
@@ -37,7 +37,7 @@ func TestReadoutListsBoxesInNameOrderWithTheirTargets(t *testing.T) {
 func TestReadoutSummarisesASingleBox(t *testing.T) {
 	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{"dev": {Target: "smith@100.92.14.7"}}}
 
-	out := Readout(inv, SkewNone)
+	out := Readout(inv, SkewNone, nil)
 
 	if !strings.HasSuffix(strings.TrimRight(out, "\n"), "1 box") {
 		t.Errorf("Readout() = %q, want it to end with the summary %q", out, "1 box")
@@ -45,7 +45,7 @@ func TestReadoutSummarisesASingleBox(t *testing.T) {
 }
 
 func TestReadoutSaysSoWhenNoBoxesAreRegistered(t *testing.T) {
-	out := Readout(Empty(), SkewNone)
+	out := Readout(Empty(), SkewNone, nil)
 
 	if !strings.Contains(out, "no boxes registered") {
 		t.Errorf("Readout() = %q, want it to report that no boxes are registered", out)
@@ -61,12 +61,42 @@ func TestReadoutSaysSoWhenNoBoxesAreRegistered(t *testing.T) {
 func TestReadoutNotesAnInventoryANewerSmithWrote(t *testing.T) {
 	inv := Inventory{SchemaVersion: 99, Boxes: map[string]Box{"dev": {Target: "smith@100.92.14.7"}}}
 
-	out := Readout(inv, SkewNewer)
+	out := Readout(inv, SkewNewer, nil)
 
 	if !strings.Contains(out, "dev") {
 		t.Errorf("Readout() = %q, want the entries it recognises listed", out)
 	}
 	if !strings.Contains(out, "newer smith") {
 		t.Errorf("Readout() = %q, want it to note that a newer smith wrote the file", out)
+	}
+}
+
+func TestReadoutMarksEachBoxReachableOrUnreachableWhenProbed(t *testing.T) {
+	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{
+		"dev":     {Target: "smith@100.92.14.7"},
+		"scratch": {Target: "smith@203.0.113.42"},
+	}}
+
+	out := Readout(inv, SkewNone, map[string]bool{"dev": true, "scratch": false})
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(lines[0], "REACHABLE") {
+		t.Errorf("header = %q, want a REACHABLE column", lines[0])
+	}
+	if !strings.HasSuffix(lines[1], "reachable") || strings.HasSuffix(lines[1], "unreachable") {
+		t.Errorf("line for dev = %q, want it marked reachable", lines[1])
+	}
+	if !strings.HasSuffix(lines[2], "unreachable") {
+		t.Errorf("line for scratch = %q, want it marked unreachable", lines[2])
+	}
+}
+
+func TestReadoutOmitsTheReachableColumnWhenNothingWasProbed(t *testing.T) {
+	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{"dev": {Target: "smith@100.92.14.7"}}}
+
+	out := Readout(inv, SkewNone, nil)
+
+	if strings.Contains(out, "REACHABLE") {
+		t.Errorf("Readout() = %q, want no REACHABLE column with no probe results", out)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
@@ -61,4 +62,50 @@ func ReadMarker(ctx context.Context, conn Conn) (marker.Marker, bool, error) {
 		return marker.Marker{}, false, fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
 	}
 	return m, true, nil
+}
+
+// ProbeAll reports, for each named box, whether smith could reach it. The
+// probes run concurrently — one per box, all in flight at once — because the
+// fan-out's cost is entirely waiting on boxes that may never answer, and an
+// operator listing a handful of them should wait for the slowest, not the sum.
+//
+// It never writes: reachability is a display concern, so what comes back is a
+// value the caller renders and drops. An unreachable box is a false in the
+// result, not an error and not a reason to prune an entry — a failed connect
+// means rebooting, off-tailnet or firewalled at least as often as it means the
+// box is gone. Only a probe that could not run at all — no ssh binary, say —
+// is an error, and then no results come back, because a listing that silently
+// marked every box unreachable would be a lie about the boxes.
+func ProbeAll(ctx context.Context, conns map[string]Conn) (map[string]bool, error) {
+	type result struct {
+		name      string
+		reachable bool
+		err       error
+	}
+	results := make(chan result, len(conns))
+	var wg sync.WaitGroup
+	for name, conn := range conns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reachable, err := Reachable(ctx, conn)
+			results <- result{name: name, reachable: reachable, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	reach := make(map[string]bool, len(conns))
+	var errs []error
+	for r := range results {
+		if r.err != nil {
+			errs = append(errs, fmt.Errorf("probe box %s: %w", r.name, r.err))
+			continue
+		}
+		reach[r.name] = r.reachable
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return reach, nil
 }
