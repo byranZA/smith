@@ -15,7 +15,7 @@ import (
 const exampleHome = "../../docs/examples"
 
 func TestTheShippedExampleBlueprintValidates(t *testing.T) {
-	got, err := config.Load(config.NewHome(exampleHome), "acme")
+	got, _, err := config.Load(config.NewHome(exampleHome), "acme")
 	if err != nil {
 		t.Fatalf("Load(example acme) err = %v, want nil", err)
 	}
@@ -60,10 +60,11 @@ func TestTheShippedExamplePreferencesValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPreferences(example) err = %v, want nil", err)
 	}
-	if got.Access == "" || got.Terminal == "" || got.Workspace == "" || got.Provider == nil {
-		t.Errorf("example preferences = %+v, want access, terminal, workspace and a provider", got)
+	declared := got.Declared
+	if declared.Access == "" || declared.Terminal == "" || declared.Workspace == "" || declared.Provider == nil {
+		t.Errorf("example preferences = %+v, want access, terminal, workspace and a provider", declared)
 	}
-	if got.Git.UserName == "" || got.Git.UserEmail == "" {
-		t.Errorf("example preferences Git = %+v, want a git identity", got.Git)
+	if declared.Git.UserName == "" || declared.Git.UserEmail == "" {
+		t.Errorf("example preferences Git = %+v, want a git identity", declared.Git)
 	}
 }

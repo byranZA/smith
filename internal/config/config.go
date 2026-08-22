@@ -74,72 +74,82 @@ func Select(home Home, nameOrPath string) (string, error) {
 	return filepath.Join(home.path, "blueprints", nameOrPath+blueprintExt), nil
 }
 
-// Load selects, reads, and parses the blueprint the operator named. A
-// blueprint that does not exist is an error naming the path smith looked for,
-// so the operator can see where it expected to find one.
-func Load(home Home, nameOrPath string) (blueprint.Blueprint, error) {
+// Load selects, reads, and parses the blueprint the operator named, returning
+// it alongside the file it came from. A blueprint that does not exist is an
+// error naming the path smith looked for, so the operator can see where it
+// expected to find one.
+//
+// The path comes back because a caller reporting on a blueprint has to name
+// the file it read, and asking selection a second time to learn it would let
+// the two answers drift apart.
+func Load(home Home, nameOrPath string) (blueprint.Blueprint, string, error) {
 	path, err := Select(home, nameOrPath)
 	if err != nil {
-		return blueprint.Blueprint{}, err
+		return blueprint.Blueprint{}, "", err
 	}
 	data, err := os.ReadFile(path) // #nosec G304 -- the operator names their own blueprint.
 	if err != nil {
 		if os.IsNotExist(err) {
 			if isPath(nameOrPath) {
-				return blueprint.Blueprint{}, fmt.Errorf("no blueprint at %s", path)
+				return blueprint.Blueprint{}, path, fmt.Errorf("no blueprint at %s", path)
 			}
-			return blueprint.Blueprint{}, fmt.Errorf("no blueprint named %q: looked for %s", nameOrPath, path)
+			return blueprint.Blueprint{}, path, fmt.Errorf("no blueprint named %q: looked for %s", nameOrPath, path)
 		}
-		return blueprint.Blueprint{}, fmt.Errorf("read blueprint %s: %w", path, err)
+		return blueprint.Blueprint{}, path, fmt.Errorf("read blueprint %s: %w", path, err)
 	}
 	b, err := blueprint.Parse(data)
 	if err != nil {
-		return blueprint.Blueprint{}, fmt.Errorf("%s: %w", path, err)
+		return blueprint.Blueprint{}, path, fmt.Errorf("%s: %w", path, err)
 	}
-	return b, nil
+	return b, path, nil
 }
 
 // preferencesFile is the name of the operator-wide preferences file inside the
 // config home.
 const preferencesFile = "preferences" + blueprintExt
 
-// PreferencesFile reports where the operator's preferences live and whether
-// that file is there. Preferences are optional and so is the config home, so an
-// absent file is a fact to report rather than an error; the caller falls
-// through to smith's built-in defaults. Nothing is created.
-func PreferencesFile(home Home) (path string, found bool, err error) {
-	path = filepath.Join(home.path, preferencesFile)
-	switch _, err := os.Stat(path); {
-	case err == nil:
-		return path, true, nil
-	case os.IsNotExist(err):
-		return path, false, nil
-	default:
-		return path, false, fmt.Errorf("look for preferences %s: %w", path, err)
-	}
+// Preferences are the operator's preferences as smith read them: what they
+// declare, the file they live in, and whether that file was there at all.
+//
+// The path and the fact of the file travel with the values because both are
+// optional: a caller reporting on preferences has to be able to say "none at
+// this path" as readily as "these, from this file", and neither can be told
+// from the declared values alone.
+type Preferences struct {
+	// Declared is what the preferences file declares, or the zero value when
+	// there is no such file.
+	Declared blueprint.Preferences
+	// Path is where the preferences live, whether or not a file is there.
+	Path string
+	// Found reports whether a preferences file was there to read.
+	Found bool
 }
 
-// LoadPreferences reads and parses the operator's preferences. Preferences are
-// optional and so is the config home, so an absent file yields the zero
-// Preferences and no error: smith falls through to its built-in defaults. An
-// invalid one is an error naming the file, because preferences are part of
-// what smith would use on every run and silently ignoring them would leave a
-// box configured by something the operator never wrote.
-func LoadPreferences(home Home) (blueprint.Preferences, error) {
-	path, found, err := PreferencesFile(home)
-	if err != nil {
-		return blueprint.Preferences{}, err
-	}
-	if !found {
-		return blueprint.Preferences{}, nil
-	}
+// preferencesPath is where the operator's preferences live inside the config
+// home. Nothing is read or created; the path is derived, not discovered.
+func preferencesPath(home Home) string {
+	return filepath.Join(home.path, preferencesFile)
+}
+
+// LoadPreferences reads and parses the operator's preferences, returning them
+// alongside the file they came from. Preferences are optional and so is the
+// config home, so an absent file yields unset preferences and no error, marked
+// as not found: smith falls through to its built-in defaults. An invalid one
+// is an error naming the file, because preferences are part of what smith
+// would use on every run and silently ignoring them would leave a box
+// configured by something the operator never wrote. Nothing is created.
+func LoadPreferences(home Home) (Preferences, error) {
+	path := preferencesPath(home)
 	data, err := os.ReadFile(path) // #nosec G304 -- the preferences live at a path smith derives itself.
 	if err != nil {
-		return blueprint.Preferences{}, fmt.Errorf("read preferences %s: %w", path, err)
+		if os.IsNotExist(err) {
+			return Preferences{Path: path}, nil
+		}
+		return Preferences{Path: path}, fmt.Errorf("read preferences %s: %w", path, err)
 	}
 	p, err := blueprint.ParsePreferences(data)
 	if err != nil {
-		return blueprint.Preferences{}, fmt.Errorf("%s: %w", path, err)
+		return Preferences{Path: path}, fmt.Errorf("%s: %w", path, err)
 	}
-	return p, nil
+	return Preferences{Declared: p, Path: path, Found: true}, nil
 }

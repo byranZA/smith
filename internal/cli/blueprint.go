@@ -80,11 +80,7 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 				return writeResolved(cmd, config.Resolve(overrides, nil, &prefs))
 			}
 			name := args[0]
-			path, err := config.Select(home, name)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			b, err := config.Load(home, name)
+			b, path, err := config.Load(home, name)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -125,30 +121,21 @@ func writeResolved(cmd *cobra.Command, resolved config.Resolved) error {
 // file is reported and the command succeeds: smith falls through to its
 // built-in defaults. Nothing is created.
 func checkPreferences(cmd *cobra.Command, home config.Home, report bool) (blueprint.Preferences, error) {
-	path, found, err := config.PreferencesFile(home)
-	if err != nil {
-		return blueprint.Preferences{}, reportInvalid(cmd, err)
-	}
-	if !found {
-		if !report {
-			return blueprint.Preferences{}, nil
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "no preferences file at %s; using smith's built-in defaults\n", path); err != nil {
-			return blueprint.Preferences{}, fmt.Errorf("write report: %w", err)
-		}
-		return blueprint.Preferences{}, nil
-	}
 	prefs, err := config.LoadPreferences(home)
 	if err != nil {
 		return blueprint.Preferences{}, reportInvalid(cmd, err)
 	}
 	if !report {
-		return prefs, nil
+		return prefs.Declared, nil
 	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "preferences file %s is valid\n", path); err != nil {
+	line := fmt.Sprintf("preferences file %s is valid\n", prefs.Path)
+	if !prefs.Found {
+		line = fmt.Sprintf("no preferences file at %s; using smith's built-in defaults\n", prefs.Path)
+	}
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), line); err != nil {
 		return blueprint.Preferences{}, fmt.Errorf("write report: %w", err)
 	}
-	return prefs, nil
+	return prefs.Declared, nil
 }
 
 // reportInvalid writes a refusal to stderr and carries the invalid-blueprint

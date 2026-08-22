@@ -33,19 +33,22 @@ func TestLoadReadsAndParsesTheSelectedBlueprint(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: tailscale\nrepos:\n  - url: git@github.com:acme/api.git\n")
 
-	got, err := config.Load(config.NewHome(dir), "acme")
+	got, path, err := config.Load(config.NewHome(dir), "acme")
 	if err != nil {
 		t.Fatalf("Load() err = %v, want nil", err)
 	}
 	if got.Access != "tailscale" || len(got.Repos) != 1 {
 		t.Errorf("Load() = %+v, want access tailscale and one repo", got)
 	}
+	if want := filepath.Join(dir, "blueprints", "acme.yaml"); path != want {
+		t.Errorf("Load() path = %q, want the file it read, %q", path, want)
+	}
 }
 
 func TestLoadReportsAMissingBlueprintWithThePathItLookedFor(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := config.Load(config.NewHome(dir), "staging")
+	_, _, err := config.Load(config.NewHome(dir), "staging")
 	if err == nil {
 		t.Fatal("Load() err = nil, want an error for a blueprint that does not exist")
 	}
@@ -59,7 +62,7 @@ func TestLoadCreatesNothing(t *testing.T) {
 	dir := t.TempDir()
 	before := tree(t, dir)
 
-	if _, err := config.Load(config.NewHome(dir), "acme"); err == nil {
+	if _, _, err := config.Load(config.NewHome(dir), "acme"); err == nil {
 		t.Fatal("Load() err = nil, want an error for an absent config home")
 	}
 	if after := tree(t, dir); !equal(before, after) {
@@ -158,19 +161,22 @@ func TestLoadReadsABlueprintPathVerbatim(t *testing.T) {
 	// A blueprint of the same name inside the config home must not be read.
 	writeBlueprint(t, dir, "shared", "access: tailscale\n")
 
-	got, err := config.Load(config.NewHome(dir), outside)
+	got, path, err := config.Load(config.NewHome(dir), outside)
 	if err != nil {
 		t.Fatalf("Load() err = %v, want nil", err)
 	}
 	if got.Access != "public" {
 		t.Errorf("Load() access = %q, want %q from the file the path names", got.Access, "public")
 	}
+	if path != outside {
+		t.Errorf("Load() path = %q, want the path it was given, %q", path, outside)
+	}
 }
 
 func TestLoadReportsAMissingBlueprintPathByPath(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "shared.yaml")
 
-	_, err := config.Load(config.NewHome(t.TempDir()), missing)
+	_, _, err := config.Load(config.NewHome(t.TempDir()), missing)
 	if err == nil {
 		t.Fatal("Load() err = nil, want an error for a blueprint path that does not exist")
 	}
@@ -183,36 +189,33 @@ func TestLoadReportsAMissingBlueprintPathByPath(t *testing.T) {
 	}
 }
 
-func TestPreferencesFileReportsAnAbsentFileWithoutCreatingIt(t *testing.T) {
+func TestLoadPreferencesReportsAnAbsentFileWithoutCreatingIt(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "absent-home")
 
-	path, found, err := config.PreferencesFile(config.NewHome(dir))
+	got, err := config.LoadPreferences(config.NewHome(dir))
 	if err != nil {
-		t.Fatalf("PreferencesFile() err = %v, want nil for an absent config home", err)
+		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
 	}
-	if found {
-		t.Error("PreferencesFile() found = true, want false for an absent config home")
+	if got.Found {
+		t.Error("LoadPreferences() found = true, want false for an absent config home")
 	}
-	if want := filepath.Join(dir, "preferences.yaml"); path != want {
-		t.Errorf("PreferencesFile() path = %q, want %q", path, want)
+	if want := filepath.Join(dir, "preferences.yaml"); got.Path != want {
+		t.Errorf("LoadPreferences() path = %q, want %q", got.Path, want)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("config home exists after PreferencesFile(), want it not created")
+		t.Errorf("config home exists after LoadPreferences(), want it not created")
 	}
 }
 
-func TestPreferencesFileFindsThePreferencesInTheConfigHome(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "preferences.yaml"), []byte("access: public\n"), 0o644); err != nil {
-		t.Fatalf("write preferences: %v", err)
-	}
+func TestLoadPreferencesTreatsAnAbsentFileAsUnsetPreferences(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent-home")
 
-	path, found, err := config.PreferencesFile(config.NewHome(dir))
+	got, err := config.LoadPreferences(config.NewHome(dir))
 	if err != nil {
-		t.Fatalf("PreferencesFile() err = %v, want nil", err)
+		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
 	}
-	if !found {
-		t.Errorf("PreferencesFile() found = false for %s, want true", path)
+	if got.Declared.Access != "" || got.Declared.Workspace != "" {
+		t.Errorf("LoadPreferences() = %+v, want every field unset", got.Declared)
 	}
 }
 
@@ -224,20 +227,14 @@ func TestLoadPreferencesReadsAndParsesThePreferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPreferences() err = %v, want nil", err)
 	}
-	if got.Access != "tailscale" || got.Workspace != "/srv/work" {
-		t.Errorf("LoadPreferences() = %+v, want access tailscale and workspace /srv/work", got)
+	if got.Declared.Access != "tailscale" || got.Declared.Workspace != "/srv/work" {
+		t.Errorf("LoadPreferences() = %+v, want access tailscale and workspace /srv/work", got.Declared)
 	}
-}
-
-func TestLoadPreferencesTreatsAnAbsentFileAsUnsetPreferences(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "absent-home")
-
-	got, err := config.LoadPreferences(config.NewHome(dir))
-	if err != nil {
-		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
+	if !got.Found {
+		t.Error("LoadPreferences() found = false, want true for preferences in the config home")
 	}
-	if got.Access != "" || got.Workspace != "" {
-		t.Errorf("LoadPreferences() = %+v, want every field unset", got)
+	if want := filepath.Join(dir, "preferences.yaml"); got.Path != want {
+		t.Errorf("LoadPreferences() path = %q, want the file it read, %q", got.Path, want)
 	}
 }
 
