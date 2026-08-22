@@ -9,21 +9,105 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
-// newMachineCmd builds `smith machine` and its subcommands.
-func newMachineCmd() *cobra.Command {
+// newMachineCmd builds `smith machine` and its subcommands, reading the config
+// home through resolve and running provider CLIs through runner.
+func newMachineCmd(resolve homeResolver, runner provider.Runner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machine",
-		Short: "Set up and inspect a remote development box",
+		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newSetupCmd(), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner), newSetupCmd(), newStatusCmd())
 	return cmd
+}
+
+// newCreateCmd builds `smith machine create <name> --blueprint <name-or-path>`.
+// It renders the operator's own create template with the box name substituted,
+// runs it through the provider CLI the adapter names, and reports the box the
+// provider returned.
+//
+// It stops at "the box exists": nothing is written to the box and no bootstrap
+// runs, so the operator is handed the `machine setup` line to run next rather
+// than a half-provisioned box. That is deliberate — a chained setup failing
+// halfway would leave a box that exists, is billed, and that smith cannot tear
+// down, since v1 ships no destroy.
+func newCreateCmd(resolve homeResolver, runner provider.Runner) *cobra.Command {
+	var blueprintName string
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a box at the provider the adapter describes",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			adapter, err := resolveAdapter(home, blueprintName)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			box, err := provider.Create(cmd.Context(), runner, adapter, args[0])
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			return writeCreated(cmd, box)
+		},
+	}
+	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
+		"the blueprint whose provider adapter creates the box; omitted, the adapter comes from preferences")
+	return cmd
+}
+
+// resolveAdapter reads the adapter smith would create through, from the named
+// blueprint and the operator's preferences. The provider block replaces
+// wholesale rather than merging, so what comes back is one coherent adapter.
+//
+// An adapter is optional everywhere, so its absence is a refusal naming the
+// alternative: the operator brings their own box and hands smith the target.
+func resolveAdapter(home config.Home, blueprintName string) (provider.Adapter, error) {
+	prefs, err := config.LoadPreferences(home)
+	if err != nil {
+		return provider.Adapter{}, fmt.Errorf("read preferences: %w", err)
+	}
+	var declared *blueprint.Blueprint
+	if blueprintName != "" {
+		b, _, err := config.Load(home, blueprintName)
+		if err != nil {
+			return provider.Adapter{}, fmt.Errorf("read blueprint: %w", err)
+		}
+		declared = &b
+	}
+	resolved := config.Resolve(config.Overrides{}, declared, &prefs.Declared)
+	if err := resolved.Conflicts(); err != nil {
+		return provider.Adapter{}, fmt.Errorf("refusing to create a box: %w", err)
+	}
+	if resolved.Provider.Provider == nil {
+		return provider.Adapter{}, errors.New(
+			"no provider adapter is configured: declare a provider block in the blueprint or in preferences, " +
+				"or create the box yourself and run smith machine setup <login>@<host>")
+	}
+	return provider.Adapt(*resolved.Provider.Provider), nil
+}
+
+// writeCreated reports the box the provider returned and the command to run
+// next. The login is the one a stock cloud image boots with; an image that
+// grants a different one takes that login instead.
+func writeCreated(cmd *cobra.Command, box provider.Box) error {
+	report := fmt.Sprintf("box created: %s\naddress:     %s\n\nnothing is provisioned yet. Run:\n  smith machine setup root@%s\n",
+		box.ID, box.IP, box.IP)
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
+		return fmt.Errorf("write created report: %w", err)
+	}
+	return nil
 }
 
 // newSetupCmd builds `smith machine setup <login>@<host>`. It connects, runs the
