@@ -218,6 +218,36 @@ func TestResolveResolvesTheGitIdentityFieldByField(t *testing.T) {
 	}
 }
 
+func TestResolveKeepsAPreferenceNameUnderABlueprintEmail(t *testing.T) {
+	b := &blueprint.Blueprint{Git: blueprint.Git{UserEmail: "bot@example.com"}}
+	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
+
+	got := Resolve(Overrides{}, b, p)
+
+	if got.Git.UserEmail.Value != "bot@example.com" || got.Git.UserEmail.Origin != FromBlueprint {
+		t.Errorf("resolved git user_email = %q from %q, want %q from %q", got.Git.UserEmail.Value, got.Git.UserEmail.Origin, "bot@example.com", FromBlueprint)
+	}
+	if got.Git.UserName.Value != "Ada Lovelace" || got.Git.UserName.Origin != FromPreferences {
+		t.Errorf("resolved git user_name = %q from %q, want the untouched preference %q from %q", got.Git.UserName.Value, got.Git.UserName.Origin, "Ada Lovelace", FromPreferences)
+	}
+	for _, want := range []string{"user_name", "Ada Lovelace", string(FromPreferences), "user_email", "bot@example.com", string(FromBlueprint)} {
+		if !strings.Contains(got.String(), want) {
+			t.Errorf("resolved configuration = %q, want it to contain %q", got.String(), want)
+		}
+	}
+}
+
+func TestResolveLeavesAnUndeclaredHalfOfTheIdentityUnset(t *testing.T) {
+	got := Resolve(Overrides{}, &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}, nil)
+
+	if got.Git.UserEmail.Value != "" || got.Git.UserEmail.Origin != "" {
+		t.Errorf("resolved git user_email = %q from %q, want it left unset with no origin", got.Git.UserEmail.Value, got.Git.UserEmail.Origin)
+	}
+	if strings.Contains(got.String(), "user_email") {
+		t.Errorf("resolved configuration = %q, want no user_email reported when none is declared", got.String())
+	}
+}
+
 func TestResolveInventsNoGitIdentityWhenNobodyDeclaresOne(t *testing.T) {
 	got := Resolve(Overrides{}, nil, nil)
 
