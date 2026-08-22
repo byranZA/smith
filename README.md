@@ -230,3 +230,45 @@ smith machine status smith-<host>        # check status over the tailnet
   tailnet yet, so the initial `--access tailscale` run reaches it over public SSH
   as your bootstrap login (key-based) to install and enroll Tailscale, then
   closes public 22. The keyless model applies to everything after that.
+
+## Blueprints
+
+A **blueprint** declares what kind of box smith builds — its repos, runtimes,
+placed files, access mode — as one YAML file in `~/.smith/blueprints/`.
+**Preferences** (`~/.smith/preferences.yaml`) hold what belongs to you across
+every box. Both are optional, and every field they carry can also come from a
+flag or a built-in default: **flag → blueprint → preference → default**.
+
+Validate one before you build anything — `check` writes nothing, touches no box,
+and needs no network:
+
+```sh
+smith blueprint check              # validate your preferences
+smith blueprint check acme         # validate preferences + the blueprint `acme`
+smith blueprint check ./team.yaml  # validate a blueprint kept outside ~/.smith
+```
+
+It prints what smith would actually use, and where each value came from:
+
+```
+blueprint "acme" is valid (/home/ada/.smith/blueprints/acme.yaml)
+
+resolved configuration:
+access:    tailscale (blueprint)
+terminal:  tmux (blueprint)
+workspace: ~/workspace (blueprint)
+provider:  hcloud (blueprint, replacing the preference)
+```
+
+Start from the worked examples — a full
+[blueprint](docs/examples/blueprints/acme.yaml) and matching
+[preferences](docs/examples/preferences.yaml) — and read
+[docs/blueprints.md](docs/blueprints.md) for the config home, the split between
+the two files, precedence, and what smith does and does not do about
+credentials.
+
+> **smith knows no service by name.** It places files and exports environment
+> variables; it knows nothing about GitHub or npm. A blueprint declaring
+> `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git
+> needs a credential helper for that, and smith will not notice. Clone over SSH
+> and place the key, or place the helper's config yourself.

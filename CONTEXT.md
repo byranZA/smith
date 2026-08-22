@@ -185,6 +185,32 @@ the staged blueprint, and the staged placement bytes. Separate locations and rol
 they must never share a directory, because one machine could one day hold both.
 _Avoid_: config dir (ambiguous between the two).
 
+**Preferences**:
+`~/.smith/preferences.yaml` — the operator's own half of the config home, answering *if you built
+a completely different box tomorrow, should this value follow?* with yes. **Fixed-key fields
+only** (`access`, `terminal`, `workspace`, `provider`, `git`); the open-ended collections
+(`repos`, `placements`, `packages`, `tools`, `env`) are blueprint-only, so the marker's blueprint
+pointer is enough to reproduce a box. Optional, like the blueprint itself
+([ADR-0006](./docs/adr/0006-the-blueprint-config-surface.md)).
+_Avoid_: settings, defaults, user config, global config.
+
+**Resolved configuration**:
+What smith would actually use for one box, every field carrying the **origin** it came from —
+flag, blueprint, preferences, or built-in default. Precedence is field-level and most-specific
+wins (**CLI flag > blueprint field > home preference > built-in default**), with one exception:
+the `provider` block **replaces wholesale**, because half of one adapter beside half of another
+is never wanted and the mismatch would surface only at box creation. Origins are returned data,
+not printed side effects, which is why `blueprint check` is a formatter over them.
+_Avoid_: merged config, effective settings, final config.
+
+**Credential-agnostic**:
+The stance that smith **places files and exports environment variables and knows no service by
+name** — not GitHub, not npm, not any forge. The moment it knew one it would owe the next, plus
+CLI version skew and a choice between auth modes. The concrete cost is real and paid in
+documentation, not magic: a blueprint declaring `GITHUB_TOKEN` beside `https://` clone URLs does
+not authenticate, because git needs a credential helper and smith neither notices nor fixes that.
+_Avoid_: provider-agnostic (reserved for the provider adapter), integration.
+
 **Box inventory**:
 `~/.smith/cache/boxes.json` — a name → proven-target address book and nothing else. An entry is an
 operator-chosen name plus the opaque SSH target smith **proved** works. Identity only: access mode,
