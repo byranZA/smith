@@ -91,3 +91,66 @@ func Load(root string) (blueprint.Blueprint, error) {
 	}
 	return b, nil
 }
+
+// MissingPlacementError reports a placement the staged blueprint declares
+// whose bytes are not staged beside it. `machine setup` writes the document and
+// the bytes in one run, so the two only come apart when /etc/smith/ has been
+// edited by hand — and the placement cannot be honoured from the box, because
+// its source reference resolves only on the operator's machine.
+type MissingPlacementError struct {
+	// Repo is the repo whose worktree the file was to land in, empty for a
+	// box-scoped placement.
+	Repo string
+	// Destination is where the file was to land, as the staged document
+	// declared it.
+	Destination string
+	// Path is the staged path its bytes were looked for at.
+	Path string
+}
+
+// Error implements error.
+func (e *MissingPlacementError) Error() string {
+	return fmt.Sprintf("the placement to %s%s has no staged bytes at %s: %s to stage them",
+		e.scope(), e.Destination, e.Path, restage)
+}
+
+// scope names the repo a placement is scoped to, so the refusal reads as the
+// operator declared it: nothing at all for a box-scoped placement.
+func (e *MissingPlacementError) scope() string {
+	if e.Repo == "" {
+		return ""
+	}
+	return "in repo " + e.Repo + " "
+}
+
+// ReadPlacement answers with the staged bytes of a placement the staged
+// blueprint declares, under root — /etc/smith on a real box. A placement is
+// keyed by its scope and destination: repo is the repo whose worktree the file
+// lands in, or empty for a box-scoped placement.
+//
+// The key comes from the same pure derivation the writer staged the bytes
+// under, so the reader cannot look in a place the writer would not have
+// written. A box destination is canonicalized the same way too, which is why
+// ~/.npmrc reads back the bytes staged for /home/smith/.npmrc.
+//
+// The placement's `from:` is not consulted, for any scheme. Every source
+// reference in a staged document points at the operator's laptop — a path that
+// does not exist on the box, or an environment variable that means something
+// else there — so it is opaque provenance and the staged bytes are the only
+// truth. A declared placement with no staged bytes is refused as a
+// *MissingPlacementError naming the destination rather than falling back to a
+// reference that would resolve to the wrong thing.
+func ReadPlacement(root, repo, destination string) ([]byte, error) {
+	path := BoxPlacementPathIn(root, destination)
+	if repo != "" {
+		path = RepoPlacementPathIn(root, repo, destination)
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- the staged path is one smith derives itself from the scope and destination.
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, &MissingPlacementError{Repo: repo, Destination: destination, Path: path}
+		}
+		return nil, fmt.Errorf("read the staged bytes of the placement to %s at %s: %w", destination, path, err)
+	}
+	return data, nil
+}

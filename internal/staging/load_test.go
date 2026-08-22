@@ -2,6 +2,7 @@ package staging
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,5 +130,121 @@ func TestLoadReadsTheDocumentTheWriterStages(t *testing.T) {
 	}
 	if DocumentPathIn(Root) != DocumentPath {
 		t.Errorf("DocumentPathIn(Root) = %q, want %q", DocumentPathIn(Root), DocumentPath)
+	}
+}
+
+// stagePlacement writes bytes at path inside a box config directory, creating
+// the scope directories the writer would have created.
+func stagePlacement(t *testing.T, path string, bytes string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("make staged placement directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(bytes), 0o600); err != nil {
+		t.Fatalf("write staged placement: %v", err)
+	}
+}
+
+func TestReadPlacementReadsABoxScopedPlacementsStagedBytes(t *testing.T) {
+	root := t.TempDir()
+	stagePlacement(t, BoxPlacementPathIn(root, "/home/smith/.npmrc"), "//registry:_authToken=t0ken\n")
+
+	got, err := ReadPlacement(root, "", "/home/smith/.npmrc")
+	if err != nil {
+		t.Fatalf("ReadPlacement() err = %v, want nil", err)
+	}
+	if string(got) != "//registry:_authToken=t0ken\n" {
+		t.Errorf("ReadPlacement() = %q, want the staged bytes", got)
+	}
+}
+
+func TestReadPlacementReadsATildeDestinationFromItsCanonicalKey(t *testing.T) {
+	root := t.TempDir()
+	stagePlacement(t, BoxPlacementPathIn(root, "/home/smith/.npmrc"), "canonical\n")
+
+	got, err := ReadPlacement(root, "", "~/.npmrc")
+	if err != nil {
+		t.Fatalf("ReadPlacement() err = %v, want nil", err)
+	}
+	if string(got) != "canonical\n" {
+		t.Errorf("ReadPlacement() = %q, want the bytes staged under the canonical key", got)
+	}
+}
+
+func TestReadPlacementReadsARepoScopedPlacementsStagedBytes(t *testing.T) {
+	root := t.TempDir()
+	stagePlacement(t, RepoPlacementPathIn(root, "api", ".env"), "DATABASE_URL=postgres://local\n")
+
+	got, err := ReadPlacement(root, "api", ".env")
+	if err != nil {
+		t.Fatalf("ReadPlacement() err = %v, want nil", err)
+	}
+	if string(got) != "DATABASE_URL=postgres://local\n" {
+		t.Errorf("ReadPlacement() = %q, want the staged bytes", got)
+	}
+}
+
+func TestReadPlacementReadsEveryPlacementTheWriterStaged(t *testing.T) {
+	b := blueprint.Blueprint{
+		Placements: []blueprint.Placement{{From: "file:/home/op/.secrets/npmrc", To: "~/.npmrc"}},
+		Repos: []blueprint.Repo{{
+			Name:       "api",
+			URL:        "git@github.com:acme/api.git",
+			Placements: []blueprint.Placement{{From: "env:API_ENV", To: ".env"}},
+		}},
+	}
+	root := t.TempDir()
+	tree := Plan(nil, b)
+	for i, p := range tree.Placements {
+		stagePlacement(t, filepath.Join(root, strings.TrimPrefix(p.File.Path, Root)), fmt.Sprintf("bytes %d\n", i))
+	}
+
+	for i, p := range tree.Placements {
+		got, err := ReadPlacement(root, p.Repo, p.Destination)
+		if err != nil {
+			t.Fatalf("ReadPlacement(%q, %q) err = %v, want nil", p.Repo, p.Destination, err)
+		}
+		if want := fmt.Sprintf("bytes %d\n", i); string(got) != want {
+			t.Errorf("ReadPlacement(%q, %q) = %q, want %q", p.Repo, p.Destination, got, want)
+		}
+	}
+}
+
+func TestReadPlacementRefusesAPlacementWithNoStagedBytes(t *testing.T) {
+	root := t.TempDir()
+
+	_, err := ReadPlacement(root, "api", ".env")
+	var missing *MissingPlacementError
+	if !errors.As(err, &missing) {
+		t.Fatalf("ReadPlacement() err = %v, want a *MissingPlacementError", err)
+	}
+	for _, want := range []string{".env", "api", "machine setup"} {
+		if !strings.Contains(missing.Error(), want) {
+			t.Errorf("ReadPlacement() err = %q, want it to name %q", missing, want)
+		}
+	}
+}
+
+func TestReadPlacementResolvesNoSourceReference(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "npmrc")
+	if err := os.WriteFile(source, []byte("the laptop's bytes\n"), 0o600); err != nil {
+		t.Fatalf("write the operator-side source: %v", err)
+	}
+	t.Setenv("NPM_TOKEN", "the environment's bytes")
+	root := t.TempDir()
+	stagePlacement(t, BoxPlacementPathIn(root, "/home/smith/.npmrc"), "the staged bytes\n")
+	stagePlacement(t, RepoPlacementPathIn(root, "api", ".env"), "the staged bytes\n")
+
+	for _, tt := range []struct{ repo, destination string }{
+		{"", "/home/smith/.npmrc"},
+		{"api", ".env"},
+	} {
+		got, err := ReadPlacement(root, tt.repo, tt.destination)
+		if err != nil {
+			t.Fatalf("ReadPlacement(%q, %q) err = %v, want nil", tt.repo, tt.destination, err)
+		}
+		if string(got) != "the staged bytes\n" {
+			t.Errorf("ReadPlacement(%q, %q) = %q, want the staged bytes", tt.repo, tt.destination, got)
+		}
 	}
 }
