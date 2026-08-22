@@ -15,7 +15,6 @@ package blueprint
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 
 	"go.yaml.in/yaml/v3"
@@ -47,18 +46,34 @@ type Repo struct {
 
 // Parse decodes a blueprint document, refusing any key the schema does not
 // define. An empty document is a valid blueprint with every field unset.
+//
+// Every problem in the document is reported in one pass: the returned error is
+// a *ValidationError carrying an ordered list of findings, so an operator
+// fixing a blueprint sees the whole list rather than the first line of it. A
+// document that is not YAML at all is reported as malformed instead, with the
+// position the parser gave up at.
 func Parse(data []byte) (Blueprint, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return Blueprint{}, malformedReport(err)
+	}
+	if doc.Kind == 0 {
+		// A document holding nothing to decode is an empty blueprint, which is
+		// valid, not malformed.
+		return Blueprint{}, nil
+	}
+
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 
 	var b Blueprint
-	if err := dec.Decode(&b); err != nil {
-		if errors.Is(err, io.EOF) {
-			// The decoder reports a document holding nothing to decode as
-			// end-of-input; an empty blueprint is valid, not malformed.
-			return Blueprint{}, nil
-		}
-		return Blueprint{}, fmt.Errorf("invalid blueprint: %w", err)
+	err := dec.Decode(&b)
+	if err == nil || errors.Is(err, io.EOF) {
+		return b, nil
 	}
-	return b, nil
+	var schema *yaml.TypeError
+	if errors.As(err, &schema) {
+		return Blueprint{}, schemaReport(schema, indexPaths(&doc))
+	}
+	return Blueprint{}, malformedReport(err)
 }

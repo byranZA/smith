@@ -94,3 +94,44 @@ func writeBlueprint(t *testing.T, dir, name, body string) {
 		t.Fatalf("write blueprint %s: %v", name, err)
 	}
 }
+
+func TestBlueprintCheckReportsEveryErrorOnStderr(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\nterminals: tmux\nsessions: 3\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for an invalid blueprint", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want no resolved configuration printed", stdout)
+	}
+	for _, want := range []string{"line 2", `unknown field "terminals"`, "line 3", `unknown field "sessions"`} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+		}
+	}
+	for _, leak := range []string{"blueprint.Blueprint", "main.", "not found in type"} {
+		if strings.Contains(stderr, leak) {
+			t.Errorf("stderr = %q, want no %q in an operator-facing report", stderr, leak)
+		}
+	}
+}
+
+func TestBlueprintCheckReportsAMalformedBlueprint(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: [unclosed\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for a malformed blueprint", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed for a malformed blueprint", stdout)
+	}
+	if !strings.Contains(stderr, "malformed") || !strings.Contains(stderr, "line 1") {
+		t.Errorf("stderr = %q, want it to report the file as malformed with a position", stderr)
+	}
+}
