@@ -118,3 +118,28 @@ func PreferencesFile(home Home) (path string, found bool, err error) {
 		return path, false, fmt.Errorf("look for preferences %s: %w", path, err)
 	}
 }
+
+// LoadPreferences reads and parses the operator's preferences. Preferences are
+// optional and so is the config home, so an absent file yields the zero
+// Preferences and no error: smith falls through to its built-in defaults. An
+// invalid one is an error naming the file, because preferences are part of
+// what smith would use on every run and silently ignoring them would leave a
+// box configured by something the operator never wrote.
+func LoadPreferences(home Home) (blueprint.Preferences, error) {
+	path, found, err := PreferencesFile(home)
+	if err != nil {
+		return blueprint.Preferences{}, err
+	}
+	if !found {
+		return blueprint.Preferences{}, nil
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- the preferences live at a path smith derives itself.
+	if err != nil {
+		return blueprint.Preferences{}, fmt.Errorf("read preferences %s: %w", path, err)
+	}
+	p, err := blueprint.ParsePreferences(data)
+	if err != nil {
+		return blueprint.Preferences{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return p, nil
+}

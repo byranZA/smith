@@ -186,3 +186,66 @@ func TestBlueprintCheckRefusesANameCarryingAnExtension(t *testing.T) {
 		t.Errorf("stderr = %q, want it to refuse the extension and name %q instead", stderr, "acme")
 	}
 }
+
+func writePreferences(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "preferences.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write preferences: %v", err)
+	}
+}
+
+func TestBlueprintCheckWithNoBlueprintValidatesThePreferences(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: tailscale\nterminal: tmux\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for valid preferences (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "valid") || !strings.Contains(stdout, "preferences.yaml") {
+		t.Errorf("stdout = %q, want it to report the preferences file as valid", stdout)
+	}
+}
+
+func TestBlueprintCheckWithNoBlueprintRefusesACollectionInPreferences(t *testing.T) {
+	for _, field := range []string{"repos", "placements", "packages", "tools", "env"} {
+		t.Run(field, func(t *testing.T) {
+			dir := t.TempDir()
+			writePreferences(t, dir, field+":\n")
+
+			stdout, stderr, code := runCheck(t, dir, "check")
+
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1 for %q in preferences (stdout: %s)", code, field, stdout)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want nothing printed for invalid preferences", stdout)
+			}
+			if !strings.Contains(stderr, field) {
+				t.Errorf("stderr = %q, want it to name %q as the refused field", stderr, field)
+			}
+		})
+	}
+}
+
+func TestBlueprintCheckFailsWhenThePreferencesAreInvalid(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "repos:\n  - url: git@github.com:acme/api.git\n")
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for a valid blueprint under invalid preferences", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed while the preferences are invalid", stdout)
+	}
+	if !strings.Contains(stderr, "preferences") || !strings.Contains(stderr, "repos") {
+		t.Errorf("stderr = %q, want it to report the preferences error", stderr)
+	}
+}

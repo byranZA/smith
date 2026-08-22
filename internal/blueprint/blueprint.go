@@ -148,43 +148,57 @@ type Repo struct {
 // document that is not YAML at all is reported as malformed instead, with the
 // position the parser gave up at.
 func Parse(data []byte) (Blueprint, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return Blueprint{}, malformedReport(err)
-	}
-	if doc.Kind == 0 {
-		// A document holding nothing to decode is an empty blueprint, which is
-		// valid, not malformed.
-		return Blueprint{}, nil
-	}
-
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-
 	var b Blueprint
-	var structural []Finding
-	switch err := dec.Decode(&b); {
-	case err == nil, errors.Is(err, io.EOF):
-	default:
-		var schema *yaml.TypeError
-		if !errors.As(err, &schema) {
-			return Blueprint{}, malformedReport(err)
-		}
-		// The decoder fills every field it did understand, so the semantic
-		// rules still run over the rest of the document and the operator sees
-		// one report rather than a queue of them.
-		structural = schemaFindings(schema, indexPaths(&doc))
+	doc, structural, err := decodeStrict(data, blueprintSubject, &b)
+	if err != nil {
+		return Blueprint{}, err
 	}
 
 	// The reserved-name rule reads the document rather than the decoded
 	// blueprint, so its findings carry a line and are merged with the
 	// structural ones by position.
-	positioned := append(structural, reservedFindings(&doc)...)
+	positioned := append(structural, reservedFindings(doc)...)
 	sort.SliceStable(positioned, func(i, j int) bool { return positioned[i].Line < positioned[j].Line })
 
 	b = withDefaults(b)
 	if report := append(positioned, validate(b)...); len(report) > 0 {
-		return Blueprint{}, &ValidationError{Findings: report}
+		return Blueprint{}, &ValidationError{Subject: blueprintSubject, Findings: report}
 	}
 	return b, nil
+}
+
+// decodeStrict decodes one config document into target, refusing any key the
+// schema does not define, and hands back the parsed document alongside the
+// findings for the keys it refused. Both blueprints and preferences are read
+// through it, so the two surfaces are strict in exactly the same way and
+// neither can drift into leniency on its own.
+//
+// The decoder fills every field it did understand before reporting the rest,
+// so the caller's semantic rules still run over the document and the operator
+// sees one report rather than a queue of them. Only a document that is not
+// YAML at all is returned as an error here: it never reached a schema, so
+// nothing else can be said about it. The returned document is nil when there
+// was nothing to decode, which is valid and means every field is unset.
+func decodeStrict(data []byte, subject string, target any) (*yaml.Node, []Finding, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, nil, malformedReport(subject, err)
+	}
+	if doc.Kind == 0 {
+		return nil, nil, nil
+	}
+
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+
+	switch err := dec.Decode(target); {
+	case err == nil, errors.Is(err, io.EOF):
+		return &doc, nil, nil
+	default:
+		var schema *yaml.TypeError
+		if !errors.As(err, &schema) {
+			return nil, nil, malformedReport(subject, err)
+		}
+		return &doc, schemaFindings(schema, indexPaths(&doc)), nil
+	}
 }

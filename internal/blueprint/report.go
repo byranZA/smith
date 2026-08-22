@@ -35,10 +35,22 @@ func (f Finding) String() string {
 	}
 }
 
-// ValidationError is everything wrong with one blueprint document, gathered in
-// a single pass so an operator fixing a blueprint never plays whack-a-mole.
-// Its findings are ordered as they appear in the document.
+// The two config documents an operator writes, named as the report names
+// them. A finding says which file the operator has to go and fix, so the two
+// surfaces never have to be told apart by their wording.
+const (
+	blueprintSubject   = "blueprint"
+	preferencesSubject = "preferences"
+)
+
+// ValidationError is everything wrong with one config document, gathered in a
+// single pass so an operator fixing it never plays whack-a-mole. Its findings
+// are ordered as they appear in the document.
 type ValidationError struct {
+	// Subject names the document the findings are about — the blueprint or
+	// the preferences — so the operator knows which file to open. An unset
+	// subject reads as a blueprint.
+	Subject string
 	// Findings are the problems found, in document order. There is always at
 	// least one.
 	Findings []Finding
@@ -51,11 +63,15 @@ type ValidationError struct {
 // Error renders the operator-facing report: one line per finding, or a single
 // distinctly worded line when the document is malformed.
 func (e *ValidationError) Error() string {
+	subject := e.Subject
+	if subject == "" {
+		subject = blueprintSubject
+	}
 	if e.Malformed {
-		return "blueprint is malformed: " + e.Findings[0].String()
+		return subject + " is malformed: " + e.Findings[0].String()
 	}
 	var b strings.Builder
-	b.WriteString("blueprint is invalid:")
+	b.WriteString(subject + " is invalid:")
 	for _, f := range e.Findings {
 		b.WriteString("\n  ")
 		b.WriteString(f.String())

@@ -38,7 +38,8 @@ func newBlueprintCmd(resolve homeResolver) *cobra.Command {
 // newCheckCmd builds `smith blueprint check [<name-or-path>]`. With a bare
 // name it reads that blueprint out of the config home; with a path it reads
 // that file verbatim; with no argument it reports on the operator's
-// preferences alone. It reports whether what it read is valid. check
+// preferences alone. The preferences are validated either way, since they are
+// part of what smith would use. It reports whether what it read is valid. check
 // writes nothing, touches no box, and needs no network: it answers "is this
 // blueprint valid?" before any box exists. Exit 0 valid, 1 invalid or not
 // found, with the report on stdout and any refusal on stderr.
@@ -52,8 +53,13 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Preferences are part of what smith would use on every run, so
+			// they are validated whether or not a blueprint was named.
+			if err := checkPreferences(cmd, home, len(args) == 0); err != nil {
+				return err
+			}
 			if len(args) == 0 {
-				return checkPreferences(cmd, home)
+				return nil
 			}
 			name := args[0]
 			path, err := config.Select(home, name)
@@ -71,24 +77,36 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 	}
 }
 
-// checkPreferences reports on the operator's preferences alone. Preferences
-// and the config home holding them are both optional, so an absent file is
-// reported and the command succeeds: smith falls through to its built-in
-// defaults. Nothing is created.
-func checkPreferences(cmd *cobra.Command, home config.Home) error {
+// checkPreferences validates the operator's preferences, reporting on them
+// when report is set — which is when no blueprint was named and they are the
+// whole subject of the check. Under a named blueprint they are validated
+// silently, so a valid preferences file does not narrate itself in front of
+// the blueprint the operator asked about.
+//
+// Preferences and the config home holding them are both optional, so an absent
+// file is reported and the command succeeds: smith falls through to its
+// built-in defaults. Nothing is created.
+func checkPreferences(cmd *cobra.Command, home config.Home, report bool) error {
 	path, found, err := config.PreferencesFile(home)
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
 	if !found {
+		if !report {
+			return nil
+		}
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "no preferences file at %s; using smith's built-in defaults\n", path); err != nil {
 			return fmt.Errorf("write report: %w", err)
 		}
 		return nil
 	}
-	// A preferences file that is there is reported by path only: parsing it is
-	// the preferences schema's job and lands with that schema.
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "preferences file %s\n", path); err != nil {
+	if _, err := config.LoadPreferences(home); err != nil {
+		return reportInvalid(cmd, err)
+	}
+	if !report {
+		return nil
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "preferences file %s is valid\n", path); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}
 	return nil

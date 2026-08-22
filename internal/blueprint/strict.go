@@ -24,14 +24,15 @@ var (
 )
 
 // malformedReport turns a syntax error — the document is not YAML at all —
-// into a report carrying the position the parser gave up at.
-func malformedReport(err error) *ValidationError {
+// into a report about subject, carrying the position the parser gave up at.
+func malformedReport(subject string, err error) *ValidationError {
 	message, line := err.Error(), 0
 	if m := positionRe.FindStringSubmatch(message); m != nil {
 		line = atoi(m[1])
 		message = m[2]
 	}
 	return &ValidationError{
+		Subject:   subject,
 		Malformed: true,
 		Findings:  []Finding{{Line: line, Message: message}},
 	}

@@ -215,3 +215,52 @@ func TestPreferencesFileFindsThePreferencesInTheConfigHome(t *testing.T) {
 		t.Errorf("PreferencesFile() found = false for %s, want true", path)
 	}
 }
+
+func TestLoadPreferencesReadsAndParsesThePreferences(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: tailscale\nworkspace: /srv/work\n")
+
+	got, err := config.LoadPreferences(config.NewHome(dir))
+	if err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil", err)
+	}
+	if got.Access != "tailscale" || got.Workspace != "/srv/work" {
+		t.Errorf("LoadPreferences() = %+v, want access tailscale and workspace /srv/work", got)
+	}
+}
+
+func TestLoadPreferencesTreatsAnAbsentFileAsUnsetPreferences(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent-home")
+
+	got, err := config.LoadPreferences(config.NewHome(dir))
+	if err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
+	}
+	if got.Access != "" || got.Workspace != "" {
+		t.Errorf("LoadPreferences() = %+v, want every field unset", got)
+	}
+}
+
+func TestLoadPreferencesReportsAnInvalidFileWithItsPath(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "repos:\n  - url: git@github.com:acme/api.git\n")
+
+	_, err := config.LoadPreferences(config.NewHome(dir))
+	if err == nil {
+		t.Fatal("LoadPreferences() err = nil, want a collection in preferences refused")
+	}
+	got := err.Error()
+	if !strings.Contains(got, filepath.Join(dir, "preferences.yaml")) {
+		t.Errorf("LoadPreferences() error = %q, want it to name the preferences file", got)
+	}
+	if !strings.Contains(got, "repos") {
+		t.Errorf("LoadPreferences() error = %q, want it to name the refused field", got)
+	}
+}
+
+func writePreferences(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "preferences.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write preferences: %v", err)
+	}
+}
