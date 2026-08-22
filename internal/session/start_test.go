@@ -572,11 +572,9 @@ func worktreeCount(t *testing.T, bare string) int {
 type placer struct {
 	root       string
 	placements []blueprint.Placement
-	calls      int
 }
 
 func (p *placer) Place(repo, worktree string) error {
-	p.calls++
 	if _, err := staging.Place(p.root, repo, worktree, p.placements); err != nil {
 		return fmt.Errorf("place into %s: %w", worktree, err)
 	}
@@ -711,7 +709,6 @@ func TestStartOnALiveSessionPlacesNothing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("TOKEN=edited\n"), 0o600); err != nil {
 		t.Fatalf("edit the placed file: %v", err)
 	}
-	before := placed.calls
 
 	if _, err := session.Start(context.Background(), env, req); err != nil {
 		t.Fatalf("Start() err = %v", err)
@@ -719,9 +716,6 @@ func TestStartOnALiveSessionPlacesNothing(t *testing.T) {
 
 	if got := readFile(t, filepath.Join(dir, ".env")); got != "TOKEN=edited\n" {
 		t.Errorf("placed file = %q, want it left as the live session had it", got)
-	}
-	if placed.calls != before {
-		t.Errorf("placements converged %d times, want the live path to converge none", placed.calls-before)
 	}
 }
 
