@@ -190,7 +190,11 @@ nothing is provisioned yet. Run:
 // proves reach. --blueprint names the blueprint the box is built from, read
 // through the config home resolve locates and staged onto the box. --name names
 // the box, stamped onto its marker so the box records what the operator calls
-// it.
+// it and registered in the inventory so they can type it instead of an address.
+//
+// A run that gets all the way through ends by proving the target the box is
+// reachable by from now on and registering it — the address setup used to print
+// once and throw away.
 func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var accessMode, authKeyRef, blueprintName, boxName string
 	cmd := &cobra.Command{
@@ -211,15 +215,14 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			}
 			host := hostOf(target)
 			ctx := cmd.Context()
-			// The config home is read only when there is a blueprint to stage, so
-			// an operator with no config home can still set a box up.
-			var home config.Home
-			if blueprintName != "" {
-				h, err := resolve()
-				if err != nil {
-					return err
-				}
-				home = h
+			// The config home is located up front — locating it reads nothing —
+			// because a successful setup registers the box in the inventory
+			// inside it. It is read only when there is a blueprint to stage, and
+			// created only by that registration, so an operator with no config
+			// home can still set a box up.
+			home, err := resolve()
+			if err != nil {
+				return err
 			}
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
@@ -306,10 +309,18 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
 			}
 
+			// The box is provisioned; what is left is writing down the address
+			// smith will reach it by from now on, which the operator would
+			// otherwise have to remember off a line that scrolls away.
+			conclusion := setupConclusion{accessMode: accessMode, host: host, name: boxName}
 			if accessMode == "tailscale" {
-				return establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
+				result, err := establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
+				if err != nil {
+					return err
+				}
+				conclusion.tailnetIP = result.TailnetIP
 			}
-			return nil
+			return concludeSetup(ctx, exec, home, conclusion, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "public", "how the box is reached: public or tailscale")
@@ -318,7 +329,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
 		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	cmd.Flags().StringVar(&boxName, "name", "",
-		"the name the box records for itself; omitted, the box records no name")
+		"the name the box is registered and recorded under; omitted, its host names it")
 	return cmd
 }
 
@@ -466,25 +477,28 @@ func publicSSHTarget(ctx context.Context, runner *bootstrap.Runner, accessMode s
 // establishTailscale runs the probe-gated tailscale access sequence after the
 // base layer is in place: enroll the tag:smith node, prove reach with a live
 // tailnet ssh probe, and only then close public SSH. A failure leaves public SSH
-// open and reports which prerequisite to fix (exit 1, partial but reachable). On
-// success it tells the operator the tailnet name to re-run over; a box already
-// enrolled and reachable is reported as an already-satisfied no-op.
-func establishTailscale(ctx context.Context, access *tailscale.Access, host string, acquireKey func() (string, error), stdout, stderr io.Writer) error {
+// open and reports which prerequisite to fix (exit 1, partial but reachable). A
+// box already enrolled and reachable is reported as an already-satisfied no-op.
+//
+// It returns the establish result rather than telling the operator how to get
+// back in: the address it proved is the one the box is registered under, so the
+// line worth printing names the box, and only the registration knows its name.
+func establishTailscale(ctx context.Context, access *tailscale.Access, host string, acquireKey func() (string, error), stdout, stderr io.Writer) (tailscale.Result, error) {
 	result, err := access.Establish(ctx, tailscale.EstablishOptions{Host: host, AcquireKey: acquireKey})
 	if err != nil {
 		if _, werr := fmt.Fprintf(stderr, "tailscale access not established: %v\n", err); werr != nil {
-			return fmt.Errorf("write tailscale failure: %w", werr)
+			return tailscale.Result{}, fmt.Errorf("write tailscale failure: %w", werr)
 		}
-		return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
+		return tailscale.Result{}, &exitError{code: bootstrap.OutcomePartial.ExitCode()}
 	}
-	headline := "tailscale reach established over %s; public SSH closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n"
+	headline := "tailscale reach established over %s; public SSH closed.\n"
 	if result.AlreadySatisfied {
-		headline = "tailscale access already satisfied over %s; public SSH already closed.\nRe-run over the box's tailnet name: smith machine setup smith@%s\n"
+		headline = "tailscale access already satisfied over %s; public SSH already closed.\n"
 	}
-	if _, err := fmt.Fprintf(stdout, headline, result.TailnetIP, result.ReRunHost); err != nil {
-		return fmt.Errorf("write success: %w", err)
+	if _, err := fmt.Fprintf(stdout, headline, result.TailnetIP); err != nil {
+		return tailscale.Result{}, fmt.Errorf("write success: %w", err)
 	}
-	return nil
+	return result, nil
 }
 
 // newListCmd builds `smith machine list`. It reads the box inventory out of the
@@ -676,8 +690,11 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			registered, source, err := registerBox(home, target, name)
-			if err != nil {
+			registered, source := name, nameFromOperator
+			if registered == "" {
+				registered, source = hostOrTarget(target), nameFromHost
+			}
+			if err := registerBox(home, registered, target); err != nil {
 				return reportInvalid(cmd, err)
 			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), addedReport(registered, target, source, box.Blueprint)); err != nil {
@@ -703,32 +720,29 @@ const (
 	nameFromHost
 )
 
-// registerBox reads the inventory, registers target under the name the operator
-// chose or the one derived from the target, and writes it back. It returns the
-// name the box was registered under and where that name came from.
+// registerBox reads the inventory, maps name to target in it, and writes it
+// back. The name is decided by the caller: each verb derives its own default
+// from what it knows, and this one only ever registers the name it is handed.
 //
-// The config home is created here and only here on this path: reading never
-// creates, so the directory comes into existence at the first write into it.
-func registerBox(home config.Home, target, name string) (string, nameSource, error) {
+// The config home is created here and only here on the registration paths:
+// reading never creates, so the directory comes into existence at the first
+// write into it.
+func registerBox(home config.Home, name, target string) error {
 	inv, skew, err := inventory.Read(home.InventoryPath())
 	if err != nil {
-		return "", nameFromHost, fmt.Errorf("read the box inventory: %w", err)
-	}
-	source := nameFromOperator
-	if name == "" {
-		name, source = hostOrTarget(target), nameFromHost
+		return fmt.Errorf("read the box inventory: %w", err)
 	}
 	next, err := inventory.Register(inv, name, target)
 	if err != nil {
-		return "", source, fmt.Errorf("cannot register %s: %w", target, err)
+		return fmt.Errorf("cannot register %s: %w", target, err)
 	}
 	if err := config.EnsureHome(home); err != nil {
-		return "", source, fmt.Errorf("create the config home: %w", err)
+		return fmt.Errorf("create the config home: %w", err)
 	}
 	if err := inventory.Write(home.InventoryPath(), next, skew); err != nil {
-		return "", source, fmt.Errorf("register %s: %w", target, err)
+		return fmt.Errorf("register %s: %w", target, err)
 	}
-	return name, source, nil
+	return nil
 }
 
 // addedReport renders what the operator is told by a successful registration:
