@@ -131,11 +131,11 @@ func (i Identity) lines() []string {
 	return out
 }
 
-// Effective is the configuration smith would actually use — every field
+// Resolved is the configuration smith would actually use — every field
 // resolved through the precedence chain, each carrying its origin. It answers
 // the question an operator checking a blueprint is really asking: not "is the
 // document shaped right?" but "what would setup do?".
-type Effective struct {
+type Resolved struct {
 	// Access is how the box is reached.
 	Access Value
 	// Terminal is the terminal substrate sessions run under.
@@ -172,9 +172,9 @@ const resolvedSubject = "resolved configuration"
 // blueprint holds the placements, and only the resolved picture shows both.
 //
 // It returns nil when smith would act on the configuration as it stands.
-func (e Effective) Conflicts() error {
-	identity := blueprint.Git{UserName: e.Git.UserName.Value, UserEmail: e.Git.UserEmail.Value}
-	findings := blueprint.GitConflicts(identity, e.Placements)
+func (r Resolved) Conflicts() error {
+	identity := blueprint.Git{UserName: r.Git.UserName.Value, UserEmail: r.Git.UserEmail.Value}
+	findings := blueprint.GitConflicts(identity, r.Placements)
 	if len(findings) == 0 {
 		return nil
 	}
@@ -185,19 +185,19 @@ func (e Effective) Conflicts() error {
 // order, with the collections the blueprint declared written out under theirs.
 // A field nobody declared and smith has no default for is left out entirely,
 // so what is printed is what setup would act on and nothing else.
-func (e Effective) String() string {
+func (r Resolved) String() string {
 	lines := []string{
-		field("access", e.Access),
-		field("terminal", e.Terminal),
-		field("workspace", e.Workspace),
-		field("provider", e.Provider),
+		field("access", r.Access),
+		field("terminal", r.Terminal),
+		field("workspace", r.Workspace),
+		field("provider", r.Provider),
 	}
-	lines = append(lines, block("git", e.Git.lines())...)
-	lines = append(lines, block("repos", repoLines(e.Repos))...)
-	lines = append(lines, block("packages", e.Packages)...)
-	lines = append(lines, block("tools", pairLines(e.Tools))...)
-	lines = append(lines, block("env", pairLines(e.Env))...)
-	lines = append(lines, block("placements", placementLines(e.Placements))...)
+	lines = append(lines, block("git", r.Git.lines())...)
+	lines = append(lines, block("repos", repoLines(r.Repos))...)
+	lines = append(lines, block("packages", r.Packages)...)
+	lines = append(lines, block("tools", pairLines(r.Tools))...)
+	lines = append(lines, block("env", pairLines(r.Env))...)
+	lines = append(lines, block("placements", placementLines(r.Placements))...)
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -293,14 +293,14 @@ func placementLines(placements []blueprint.Placement) []string {
 // is read and nothing is printed. A nil blueprint is a run with no blueprint
 // named, which is the path preferences alone serve; nil preferences are an
 // operator who wrote none.
-func Resolve(o Overrides, b *blueprint.Blueprint, p *blueprint.Preferences) Effective {
+func Resolve(o Overrides, b *blueprint.Blueprint, p *blueprint.Preferences) Resolved {
 	if b == nil {
 		b = &blueprint.Blueprint{}
 	}
 	if p == nil {
 		p = &blueprint.Preferences{}
 	}
-	return Effective{
+	return Resolved{
 		Access:    resolve(o.Access, b.Access, p.Access, defaultAccess),
 		Terminal:  resolve("", b.Terminal, p.Terminal, defaultTerminal),
 		Workspace: resolve("", b.Workspace, p.Workspace, defaultWorkspace),

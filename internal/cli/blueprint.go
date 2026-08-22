@@ -91,14 +91,14 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 			// The resolved picture is what setup would act on, and a
 			// preference-declared field can disagree with a blueprint one, so
 			// it is checked before anything is reported as valid.
-			effective := config.Resolve(overrides, &b, &prefs)
-			if err := effective.Conflicts(); err != nil {
+			resolved := config.Resolve(overrides, &b, &prefs)
+			if err := resolved.Conflicts(); err != nil {
 				return reportInvalid(cmd, err)
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "blueprint %q is valid (%s)\n", name, path); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
-			return writeResolved(cmd, effective)
+			return writeResolved(cmd, resolved)
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "", "override how the box is reached: public or tailscale")
@@ -107,8 +107,8 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 
 // writeResolved prints the configuration smith would use, one field per line
 // with the origin of its value.
-func writeResolved(cmd *cobra.Command, effective config.Effective) error {
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nresolved configuration:\n%s", effective); err != nil {
+func writeResolved(cmd *cobra.Command, resolved config.Resolved) error {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nresolved configuration:\n%s", resolved); err != nil {
 		return fmt.Errorf("write resolved configuration: %w", err)
 	}
 	return nil

@@ -83,7 +83,7 @@ func TestResolveAppliesPreferencesWithNoBlueprintAtAll(t *testing.T) {
 	}
 }
 
-func TestEffectiveReportsEveryFieldWithItsOrigin(t *testing.T) {
+func TestResolvedReportsEveryFieldWithItsOrigin(t *testing.T) {
 	got := Resolve(Overrides{Access: "tailscale"}, &blueprint.Blueprint{Terminal: "tmux"}, nil).String()
 
 	for _, want := range []string{"access", "tailscale", string(FromFlag), "terminal", string(FromBlueprint), "workspace", "~/workspace", string(FromDefault)} {
@@ -178,7 +178,7 @@ func TestResolveKeepsEveryOtherFieldFieldLevelWhenTheProviderIsReplaced(t *testi
 	}
 }
 
-func TestEffectiveReportsWhichAdapterIsInPlay(t *testing.T) {
+func TestResolvedReportsWhichAdapterIsInPlay(t *testing.T) {
 	replaced := Resolve(Overrides{},
 		&blueprint.Blueprint{Provider: &blueprint.Provider{Create: []string{"doctl", "compute", "droplet", "create"}}},
 		&blueprint.Preferences{Provider: &blueprint.Provider{Create: []string{"hcloud", "server", "create"}}},
@@ -265,7 +265,7 @@ placements:
 	}
 }
 
-func TestEffectiveReportsTheGitIdentityAndTheCollections(t *testing.T) {
+func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
 	b := &blueprint.Blueprint{
 		Git:        blueprint.Git{UserName: "Ada Lovelace"},
 		Packages:   []string{"ripgrep"},
@@ -300,7 +300,7 @@ func TestEffectiveReportsTheGitIdentityAndTheCollections(t *testing.T) {
 	}
 }
 
-func TestEffectiveOmitsCollectionsNobodyDeclared(t *testing.T) {
+func TestResolvedOmitsCollectionsNobodyDeclared(t *testing.T) {
 	got := Resolve(Overrides{}, nil, nil).String()
 
 	for _, unwanted := range []string{"repos", "packages", "tools", "env", "placements", "git"} {
@@ -310,7 +310,7 @@ func TestEffectiveOmitsCollectionsNobodyDeclared(t *testing.T) {
 	}
 }
 
-func TestEffectiveRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *testing.T) {
+func TestResolvedRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *testing.T) {
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
 
@@ -326,7 +326,7 @@ func TestEffectiveRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *tes
 	}
 }
 
-func TestEffectiveAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T) {
+func TestResolvedAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T) {
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
 
 	if err := Resolve(Overrides{}, b, nil).Conflicts(); err != nil {
@@ -334,7 +334,7 @@ func TestEffectiveAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T)
 	}
 }
 
-func TestEffectiveAcceptsAGitIdentityWithNoGitconfigPlacement(t *testing.T) {
+func TestResolvedAcceptsAGitIdentityWithNoGitconfigPlacement(t *testing.T) {
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/tok", To: "~/.config/gh/hosts.yml"}}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace"}}
 
