@@ -256,8 +256,9 @@ func TestListReportsADetachedWorktree(t *testing.T) {
 // writeBareRepoWithRemote stands up a bare repo in the workspace the way the
 // workspace stage does, with a second bare repo as its origin and its
 // remote-tracking refs fetched — which is what makes the unpushed count mean
-// anything.
-func writeBareRepoWithRemote(t *testing.T, workspace, repo, defaultBranch string) {
+// anything. It returns the origin, so a test can put a commit there and ask
+// whether smith fetched it.
+func writeBareRepoWithRemote(t *testing.T, workspace, repo, defaultBranch string) string {
 	t.Helper()
 	writeBareRepo(t, workspace, repo, defaultBranch)
 	bare := filepath.Join(workspace, repo, "repo.git")
@@ -268,6 +269,7 @@ func writeBareRepoWithRemote(t *testing.T, workspace, repo, defaultBranch string
 	// the count reads would never exist without one.
 	git(t, bare, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
 	git(t, bare, "fetch", "origin")
+	return remote
 }
 
 // commit writes a file and commits it in a worktree, so a test can put commits

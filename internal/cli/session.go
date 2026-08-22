@@ -88,16 +88,18 @@ func newSessionListCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Com
 }
 
 // newSessionStartCmd builds
-// `smith session start --repo <name> --branch <name> [--detach]`. It cuts the
-// branch from the repo's default branch, creates a worktree for it below the
-// repo's worktrees directory, and launches a tmux session in that worktree.
+// `smith session start --repo <name> --branch <name> [--base <ref>]
+// [--detach]`. It cuts the branch from --base, else from the base the
+// blueprint declares for the repo, else from the repo's default branch,
+// creates a worktree for it below the repo's worktrees directory, and launches
+// a tmux session in that worktree.
 //
 // It stands the session up and returns without connecting to it, which is what
 // --detach asks for and, for now, all start does: connecting is a later slice,
 // and a verb that always detaches is the one a caller with no human present
 // can drive.
 func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
-	var repo, branch string
+	var repo, branch, base string
 	var detach bool
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -115,7 +117,7 @@ func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Co
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch})
+			started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch, Base: base})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -123,7 +125,8 @@ func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Co
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "the declared repo to cut the worktree from")
-	cmd.Flags().StringVar(&branch, "branch", "", "the branch to work on, cut from the repo's default branch when it is new")
+	cmd.Flags().StringVar(&branch, "branch", "", "the branch to work on, cut from the base when it is new")
+	cmd.Flags().StringVar(&base, "base", "", "the ref a new branch is cut from; refused against a branch that already exists")
 	cmd.Flags().BoolVar(&detach, "detach", false, "stand the session up without connecting to it, which is what start does either way for now")
 	return cmd
 }

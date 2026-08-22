@@ -98,19 +98,34 @@ type StartRequest struct {
 	Repo string
 	// Branch is the branch the session works on.
 	Branch string
+	// Base is the ref a new branch is cut from, overriding the base the
+	// blueprint declares for the repo. It applies only when cutting: against
+	// a branch that already exists it is a refusal, because the operator
+	// naming a base has a rebase or a reset in mind and smith's git surface
+	// is worktree add and worktree remove.
+	Base string
 }
 
 // Start ensures a session is running and returns it. It is not a create verb:
 // one probe pair — does the worktree exist, and is its tmux session live —
 // decides which of three things it does.
 //
-// With no worktree, the branch is cut from the repo's default branch, a
-// worktree for it is created one level below the repo's worktrees directory,
-// and a tmux session named smith/<name> is launched in it. With a worktree
+// With no worktree, the repo is fetched and the branch is cut — from the
+// requested base, else from the base the blueprint declares for the repo,
+// else from the repo's default branch — a worktree for it is created one
+// level below the repo's worktrees directory, and a tmux session named
+// smith/<name> is launched in it. A branch that already exists is checked out
+// into the new worktree rather than cut a second time. With a worktree
 // whose tmux session is gone, the tmux session is launched in the checkout the
 // operator left: that is how a stopped session resumes, which is why there is
 // no separate resume verb. With both already there, Start creates nothing and
 // reports the session as it found it.
+//
+// Before any of that it refuses, with nothing yet on disk, on the four things
+// it cannot make right afterwards: a repo the blueprint does not declare, a
+// derived name another branch already holds, a base named against a branch
+// that already exists, and a branch checked out somewhere that is not a
+// session smith stood up.
 //
 // It stands the session up and returns without connecting to it, which is what
 // makes it drivable with no human present.
@@ -129,11 +144,33 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	name := DeriveName(repo.Name, branch)
 	stood := Session{Name: name, Repo: repo.Name, Branch: branch, Live: true}
 
-	existing, found, err := worktreeOn(ctx, env.Git, bare, branch)
+	// This enumeration is the one reason Start looks before it creates: the
+	// sanitizer is lossy, so two branches can derive one name, and a session
+	// standing up under a name another branch already holds would make every
+	// other verb address the wrong worktree. If a future ticket ever makes
+	// names reversible, the collision gate below becomes dead code rather
+	// than staying quietly correct.
+	worktrees, err := listWorktrees(ctx, env.Git, bare)
 	if err != nil {
 		return Session{}, err
 	}
-	if found {
+	if err := notColliding(worktrees, repo, name, branch); err != nil {
+		return Session{}, err
+	}
+
+	exists, err := branchExists(ctx, env.Git, bare, branch)
+	if err != nil {
+		return Session{}, err
+	}
+	base := strings.TrimSpace(req.Base)
+	if base != "" && exists {
+		return Session{}, fmt.Errorf("branch %q of repo %q already exists, so start cannot base it on %q: start cuts a branch from a base, it never rebases or resets one", branch, repo.Name, base)
+	}
+
+	if existing, held := heldBy(worktrees, branch); held {
+		if dir := filepath.Join(root, worktreesDir); !oneBelow(existing.path, dir) {
+			return Session{}, fmt.Errorf("branch %q of repo %q is already checked out at %s, held by session %q: git allows one worktree per branch, and that checkout is not one smith stood up below %s", branch, repo.Name, existing.path, listedName(repo.Name, existing), dir)
+		}
 		if isLive(ctx, env.Tmux, name) {
 			return stood, nil
 		}
@@ -143,21 +180,106 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		return stood, nil
 	}
 
-	base := repo.Base
-	if base == "" {
-		if base, err = defaultBranch(ctx, env.Git, bare); err != nil {
-			return Session{}, err
-		}
-	}
 	dir := filepath.Join(root, worktreesDir, worktreeDir(branch))
-	if _, err := run(ctx, env.Git, "git", "-C", bare,
-		"worktree", "add", "-b", branch, dir, base); err != nil {
-		return Session{}, fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", branch, repo.Name, dir, err)
+	if err := checkout(ctx, env, repo, bare, dir, branch, base, exists); err != nil {
+		return Session{}, err
 	}
 	if err := launch(ctx, env.Tmux, name, dir); err != nil {
 		return Session{}, err
 	}
 	return stood, nil
+}
+
+// checkout puts the branch in a worktree of its own at dir. A branch that
+// already exists — the one a reclaimed session left behind in the bare repo —
+// is checked out as it stands; a branch that does not is cut, and only that
+// path fetches. A branch cut from a stale base is a merge-time failure that
+// looks like anything but a session bug, and cutting is the one moment smith
+// is already touching the network, so the resume and connect paths pay
+// nothing for it.
+func checkout(ctx context.Context, env Env, repo Repo, bare, dir, branch, base string, exists bool) error {
+	args := []string{"-C", bare, "worktree", "add", dir, branch}
+	if !exists {
+		if err := fetch(ctx, env.Git, bare, repo.Name); err != nil {
+			return err
+		}
+		if base == "" {
+			base = repo.Base
+		}
+		if base == "" {
+			var err error
+			if base, err = defaultBranch(ctx, env.Git, bare); err != nil {
+				return err
+			}
+		}
+		args = []string{"-C", bare, "worktree", "add", "-b", branch, dir, base}
+	}
+	if _, err := run(ctx, env.Git, "git", args...); err != nil {
+		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", branch, repo.Name, dir, err)
+	}
+	return nil
+}
+
+// fetch refreshes the repo from its remote. It runs only where a branch is
+// about to be cut, and it also keeps the unpushed count honest: that count
+// reads the remote-tracking refs, so it is only as fresh as the last fetch.
+func fetch(ctx context.Context, git Runner, bare, repo string) error {
+	if _, err := run(ctx, git, "git", "-C", bare, "fetch"); err != nil {
+		return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
+	}
+	return nil
+}
+
+// branchExists reports whether the bare repo already holds that branch. It
+// asks for the branch by name rather than reading a ref path, so a branch
+// that is simply absent is an empty answer and not an error to be told apart
+// from a repo that could not be read.
+func branchExists(ctx context.Context, git Runner, bare, branch string) (bool, error) {
+	listed, err := run(ctx, git, "git", "-C", bare, "branch", "--list", branch, "--format=%(refname:short)")
+	if err != nil {
+		return false, fmt.Errorf("look for branch %q in the repo at %s: %w", branch, bare, err)
+	}
+	return listed != "", nil
+}
+
+// notColliding refuses when the name this session would take is already held
+// by a worktree on a different branch. Both branches are named: the derived
+// name alone cannot tell the operator which of their branches is in the way,
+// because deriving it is what lost the difference.
+func notColliding(worktrees []worktree, repo Repo, name, branch string) error {
+	for _, wt := range worktrees {
+		if wt.branch != branch && listedName(repo.Name, wt) == name {
+			return fmt.Errorf("session name %q is already held by branch %q of repo %q, which branch %q derives the same name as: rename one of the two branches", name, wt.branch, repo.Name, branch)
+		}
+	}
+	return nil
+}
+
+// heldBy finds the worktree the branch is checked out in, if any.
+func heldBy(worktrees []worktree, branch string) (worktree, bool) {
+	for _, wt := range worktrees {
+		if wt.branch == branch {
+			return wt, true
+		}
+	}
+	return worktree{}, false
+}
+
+// oneBelow reports whether path is a checkout directly below dir, which is
+// the layout every session smith stands up has. Symlinks are resolved because
+// a temp directory is often reached through one and git reports the path it
+// resolved to.
+func oneBelow(path, dir string) bool {
+	return resolved(filepath.Dir(path)) == resolved(dir)
+}
+
+// resolved is path with its symlinks followed, or cleaned as given when it
+// cannot be reached — a path that does not exist is still comparable.
+func resolved(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return filepath.Clean(path)
 }
 
 // launch starts the detached tmux session a session runs under, with its

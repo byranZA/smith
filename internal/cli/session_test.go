@@ -81,6 +81,60 @@ func TestSessionStartRefusesAnUndeclaredRepo(t *testing.T) {
 	}
 }
 
+// TestSessionStartCutsFromTheRequestedBase locks in that --base reaches the
+// cut: the branch starts at the ref the operator named, not at the repo's
+// default branch.
+func TestSessionStartCutsFromTheRequestedBase(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	runGit(t, bare, "branch", "release-2", "main")
+	moveOn(t, bare, "main")
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), &fakeTmux{})
+	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2", "--detach"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if got, want := gitStdout(t, dir, "rev-parse", "HEAD"), gitStdout(t, bare, "rev-parse", "release-2"); got != want {
+		t.Errorf("worktree is at %s, want the tip of the requested base %s", got, want)
+	}
+}
+
+// TestSessionStartRefusesABaseAgainstAnExistingBranch locks in the refusal
+// exit path for a base smith cannot honour: nothing is stood up and the
+// command exits non-zero.
+func TestSessionStartRefusesABaseAgainstAnExistingBranch(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	runGit(t, bare, "branch", "release-2", "main")
+	runGit(t, bare, "branch", "spec-42", "main")
+	tmux := &fakeTmux{}
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), tmux)
+	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code == 0 {
+		t.Fatalf("exit code = 0, want non-zero for a base against an existing branch")
+	}
+	if !strings.Contains(errOut.String(), "spec-42") {
+		t.Errorf("stderr = %q, want it to name the branch that already exists", errOut.String())
+	}
+	if len(tmux.calls) != 0 {
+		t.Errorf("tmux was invoked %v, want nothing stood up", tmux.calls)
+	}
+}
+
 // TestSessionStartIsUnderTheRootCommand locks in the surface an operator on
 // the box types.
 func TestSessionStartIsUnderTheRootCommand(t *testing.T) {
@@ -127,14 +181,31 @@ func writeBareRepo(t *testing.T, workspace, repo string) {
 	runGit(t, src, "clone", "--bare", src, filepath.Join(workspace, repo, "repo.git"))
 }
 
+// moveOn puts a commit on a branch of a bare repo, so a test can tell a base
+// that was honoured from the default branch that moved past it.
+func moveOn(t *testing.T, bare, branch string) {
+	t.Helper()
+	tree := gitStdout(t, bare, "rev-parse", branch+"^{tree}")
+	commit := gitStdout(t, bare, "-c", "user.email=smith@example.com", "-c", "user.name=smith",
+		"commit-tree", tree, "-p", branch, "-m", "moved on")
+	runGit(t, bare, "update-ref", "refs/heads/"+branch, commit)
+}
+
 // runGit runs a real git command in dir and fails the test if it does not.
 func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	gitStdout(t, dir, args...)
+}
+
+// gitStdout runs a real git command in dir and returns its trimmed stdout.
+func gitStdout(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	var out, errOut strings.Builder
 	err := connection.System().Run(context.Background(), "git", append([]string{"-C", dir}, args...), nil, &out, &errOut)
 	if err != nil {
 		t.Fatalf("git %s: %v (%s)", strings.Join(args, " "), err, errOut.String())
 	}
+	return strings.TrimSpace(out.String())
 }
 
 var _ session.Runner = (*fakeTmux)(nil)

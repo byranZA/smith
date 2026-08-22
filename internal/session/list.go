@@ -38,11 +38,11 @@ func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
 			}
 			return nil, fmt.Errorf("reach the repo %q at %s: %w", repo.Name, bare, err)
 		}
-		listing, err := run(ctx, env.Git, "git", "-C", bare, "worktree", "list", "--porcelain")
+		worktrees, err := listWorktrees(ctx, env.Git, bare)
 		if err != nil {
-			return nil, fmt.Errorf("list the worktrees of repo %q at %s: %w", repo.Name, bare, err)
+			return nil, fmt.Errorf("list the worktrees of repo %q: %w", repo.Name, err)
 		}
-		for _, wt := range parseWorktrees(listing) {
+		for _, wt := range worktrees {
 			name := listedName(repo.Name, wt)
 			dirty, unpushed, err := workState(ctx, env.Git, wt, repo.Placements)
 			if err != nil {
@@ -102,23 +102,17 @@ func parseWorktrees(listing string) []worktree {
 	return worktrees
 }
 
-// worktreeOn finds the repo's worktree holding that branch, if it has one.
+// listWorktrees reads the repo's worktree registry.
 //
-// The registry is asked rather than the directory the branch's name sanitizes
-// to being stat'ed: the directory name is lossy, so two branches can sanitize
-// to one directory, and a checkout git does not know about is debris rather
-// than a session to resume into.
-func worktreeOn(ctx context.Context, git Runner, bare, branch string) (worktree, bool, error) {
+// The registry is asked rather than the worktrees directory being walked: it
+// hands back the branch git holds, which the directory name is too lossy to
+// carry, and it draws the line between a session and debris.
+func listWorktrees(ctx context.Context, git Runner, bare string) ([]worktree, error) {
 	listing, err := run(ctx, git, "git", "-C", bare, "worktree", "list", "--porcelain")
 	if err != nil {
-		return worktree{}, false, fmt.Errorf("list the worktrees of the repo at %s: %w", bare, err)
+		return nil, fmt.Errorf("list the worktrees of the repo at %s: %w", bare, err)
 	}
-	for _, wt := range parseWorktrees(listing) {
-		if wt.branch == branch {
-			return wt, true, nil
-		}
-	}
-	return worktree{}, false, nil
+	return parseWorktrees(listing), nil
 }
 
 // listedName is the name a worktree is listed under: the sanitized name the

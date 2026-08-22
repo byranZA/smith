@@ -293,3 +293,272 @@ func TestStartOnALiveSessionCreatesNothing(t *testing.T) {
 		t.Errorf("List() = %+v, want no second worktree for a live session", sessions)
 	}
 }
+
+// TestStartFetchesBeforeCuttingABranch locks in the fetch: a branch cut from a
+// stale base is a merge-time failure that looks like anything but a session
+// bug, so the one moment smith is already touching the network is the moment
+// it refreshes the repo.
+func TestStartFetchesBeforeCuttingABranch(t *testing.T) {
+	workspace := t.TempDir()
+	remote := writeBareRepoWithRemote(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	tip := pushToOrigin(t, remote, "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	if got := gitOut(t, bare, "rev-parse", "refs/remotes/origin/main"); got != tip {
+		t.Errorf("origin/main is at %s, want the tip the fetch should have brought down, %s", got, tip)
+	}
+}
+
+// TestStartDoesNotFetchWhenNoBranchIsCut locks in the other half: the resume
+// and connect paths cut nothing, so they cost no network.
+func TestStartDoesNotFetchWhenNoBranchIsCut(t *testing.T) {
+	tests := []struct {
+		name  string
+		stall func(tmux *tmuxServer)
+	}{
+		{"resuming a stopped session", func(tmux *tmuxServer) { tmux.kill(session.TmuxSession("smith-spec-42")) }},
+		{"connecting to a live session", func(*tmuxServer) {}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			remote := writeBareRepoWithRemote(t, workspace, "smith", "main")
+			bare := filepath.Join(workspace, "smith", "repo.git")
+			tmux := &tmuxServer{}
+			env := session.Env{
+				Workspace: workspace,
+				Repos:     []session.Repo{{Name: "smith"}},
+				Git:       connection.System(),
+				Tmux:      tmux,
+			}
+			req := session.StartRequest{Repo: "smith", Branch: "spec-42"}
+			if _, err := session.Start(context.Background(), env, req); err != nil {
+				t.Fatalf("first Start() err = %v", err)
+			}
+			stale := gitOut(t, bare, "rev-parse", "refs/remotes/origin/main")
+			pushToOrigin(t, remote, "main")
+			tt.stall(tmux)
+
+			if _, err := session.Start(context.Background(), env, req); err != nil {
+				t.Fatalf("Start() err = %v", err)
+			}
+
+			if got := gitOut(t, bare, "rev-parse", "refs/remotes/origin/main"); got != stale {
+				t.Errorf("origin/main is at %s, want it left where the cut found it, %s", got, stale)
+			}
+		})
+	}
+}
+
+// TestStartCutsTheBranchFromTheRequestedBase locks in --base: the operator's
+// base wins over the one the blueprint declares for the repo.
+func TestStartCutsTheBranchFromTheRequestedBase(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	git(t, bare, "branch", "release-2", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith", Base: "main"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42", Base: "release-2"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if got, want := gitOut(t, dir, "rev-parse", "HEAD"), gitOut(t, bare, "rev-parse", "release-2"); got != want {
+		t.Errorf("worktree is at %s, want the tip of the requested base %s", got, want)
+	}
+}
+
+// TestStartRefusesABaseAgainstAnExistingBranch locks in that --base applies
+// only when cutting: an operator naming a base for a branch that already
+// exists has a rebase or a reset in mind, and neither is in smith's git
+// surface.
+func TestStartRefusesABaseAgainstAnExistingBranch(t *testing.T) {
+	tests := []struct {
+		name     string
+		worktree bool
+	}{
+		{"a branch with no worktree", false},
+		{"a branch a session already holds", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			writeBareRepo(t, workspace, "smith", "main")
+			bare := filepath.Join(workspace, "smith", "repo.git")
+			git(t, bare, "branch", "release-2", "main")
+			tmux := &tmuxServer{}
+			env := session.Env{
+				Workspace: workspace,
+				Repos:     []session.Repo{{Name: "smith"}},
+				Git:       connection.System(),
+				Tmux:      tmux,
+			}
+			if tt.worktree {
+				if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+					t.Fatalf("stand the session up: %v", err)
+				}
+			} else {
+				git(t, bare, "branch", "spec-42", "main")
+			}
+			before := worktreeCount(t, bare)
+
+			_, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Base: "release-2"})
+
+			if err == nil {
+				t.Fatal("Start() err = nil, want a refusal naming the branch that already exists")
+			}
+			for _, want := range []string{"spec-42", "release-2"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Start() err = %v, want it to name %q", err, want)
+				}
+			}
+			if got := worktreeCount(t, bare); got != before {
+				t.Errorf("the repo holds %d worktrees, want the %d it held before the refusal", got, before)
+			}
+		})
+	}
+}
+
+// TestStartRefusesADerivedNameHeldByADifferentBranch locks in the collision
+// gate the lossy sanitizer admits: two branches deriving one name, and smith
+// naming both rather than standing a second session up under a taken name.
+func TestStartRefusesADerivedNameHeldByADifferentBranch(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+	}
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "smith/spec-42"}); err != nil {
+		t.Fatalf("stand the first session up: %v", err)
+	}
+
+	_, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "smith-spec-42"})
+
+	if err == nil {
+		t.Fatal("Start() err = nil, want a refusal naming both branches")
+	}
+	for _, want := range []string{"smith/spec-42", "smith-spec-42"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Start() err = %v, want it to name the branch %q", err, want)
+		}
+	}
+	if got := worktreeCount(t, bare); got != 1 {
+		t.Errorf("the repo holds %d worktrees, want only the one the first session cut", got)
+	}
+	if n := tmux.ran("new-session"); n != 1 {
+		t.Errorf("tmux new-session ran %d times, want no session under a taken name", n)
+	}
+}
+
+// TestStartRefusesABranchCheckedOutElsewhere locks in that smith phrases git's
+// one-worktree-per-branch rule itself, naming the session holding the branch
+// rather than passing git's message through.
+func TestStartRefusesABranchCheckedOutElsewhere(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	loose := filepath.Join(t.TempDir(), "loose")
+	git(t, bare, "branch", "spec-42", "main")
+	git(t, bare, "worktree", "add", loose, "spec-42")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+	}
+
+	_, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
+
+	if err == nil {
+		t.Fatal("Start() err = nil, want a refusal naming where the branch is checked out")
+	}
+	for _, want := range []string{"spec-42", loose, "smith-spec-42"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Start() err = %v, want it to name %q", err, want)
+		}
+	}
+	if got := worktreeCount(t, bare); got != 1 {
+		t.Errorf("the repo holds %d worktrees, want only the one already checked out", got)
+	}
+	if n := tmux.ran("new-session"); n != 0 {
+		t.Errorf("tmux new-session ran %d times, want none for a refused start", n)
+	}
+}
+
+// TestStartMaterialisesAnExistingBranch locks in the path a reclaimed session
+// comes back on: the branch outlived its worktree in the bare repo, so start
+// checks it out again rather than trying to cut it a second time.
+func TestStartMaterialisesAnExistingBranch(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	git(t, bare, "branch", "spec-42", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	got, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
+	if err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	want := session.Session{Name: "smith-spec-42", Repo: "smith", Branch: "spec-42", Live: true}
+	if got != want {
+		t.Errorf("Start() = %+v, want %+v", got, want)
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if branch := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); branch != "spec-42" {
+		t.Errorf("worktree is on branch %q, want the branch that already existed, %q", branch, "spec-42")
+	}
+}
+
+// pushToOrigin puts a commit on the origin's default branch the way a teammate
+// does, and returns the tip it left there — which a repo that fetched can
+// reach and a repo that did not cannot.
+func pushToOrigin(t *testing.T, remote, branch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	git(t, dir, "clone", remote, dir)
+	commit(t, dir, "teammate")
+	git(t, dir, "push", "origin", branch)
+	return gitOut(t, dir, "rev-parse", "HEAD")
+}
+
+// worktreeCount counts the checkouts a bare repo's registry holds, which is
+// how a test asserts that a refusal put nothing on disk.
+func worktreeCount(t *testing.T, bare string) int {
+	t.Helper()
+	var n int
+	for _, line := range strings.Split(gitOut(t, bare, "worktree", "list", "--porcelain"), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			n++
+		}
+	}
+	return n - 1
+}
