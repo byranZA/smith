@@ -110,3 +110,18 @@ func summary(sessions []Session) string {
 	}
 	return strings.Join(clauses, " · ")
 }
+
+// Names renders the identity column alone: one session name per line, with no
+// header, no columns and no summary line.
+//
+// It exists for one consumer — the batch removal a listing composes into,
+// `smith session rm $(smith session list --stopped --names)` — so a listing
+// with nothing in it renders as nothing at all rather than as a word the shell
+// would hand on as a name.
+func Names(sessions []Session) string {
+	var b strings.Builder
+	for _, s := range sessions {
+		fmt.Fprintln(&b, s.Name)
+	}
+	return b.String()
+}

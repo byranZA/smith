@@ -59,19 +59,31 @@ func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner, c
 	return cmd
 }
 
-// newSessionListCmd builds `smith session list`. It enumerates the sessions on
-// the box and prints them under the four columns the work-state question is
-// answered in.
+// newSessionListCmd builds
+// `smith session list [--repo <name>] [--live|--stopped] [--names]`. It
+// enumerates the sessions on the box and prints them under the four columns
+// the work-state question is answered in.
+//
+// Scale is answered by the filters rather than by the layout: the table stays
+// flat and ungrouped at fifty rows, and the operator narrows it. --names drops
+// the table entirely and prints one bare name per line, which is what a batch
+// removal is composed from.
 //
 // It exits zero whatever it finds: a non-zero exit on "something is unpushed"
 // would conflate the command failing with the data having a property, and the
 // listing exists to be read before a teardown the operator does by hand.
 func newSessionListCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
-	return &cobra.Command{
+	var repo string
+	var live, stopped, names bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the sessions on this box and whether they are running",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			filter, err := sessionFilter(repo, live, stopped)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
 			resolved, err := resolve()
 			if err != nil {
 				return err
@@ -80,16 +92,42 @@ func newSessionListCmd(resolve boxResolver, root string, git, tmux session.Runne
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			sessions, err := session.List(cmd.Context(), env, session.Filter{})
+			sessions, err := session.List(cmd.Context(), env, filter)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), session.Readout(sessions)); err != nil {
+			render := session.Readout
+			if names {
+				render = session.Names
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), render(sessions)); err != nil {
 				return fmt.Errorf("write session listing: %w", err)
 			}
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&repo, "repo", "", "list only the sessions of one declared repo")
+	cmd.Flags().BoolVar(&live, "live", false, "list only the sessions that are running")
+	cmd.Flags().BoolVar(&stopped, "stopped", false, "list only the sessions that are not running")
+	cmd.Flags().BoolVar(&names, "names", false, "print one bare session name per line, with no table and no summary")
+	return cmd
+}
+
+// sessionFilter turns the listing flags into the filter the package takes.
+// --live and --stopped are opposites, so asking for both is refused rather
+// than answered with an empty table, which reads exactly like a box that has
+// no sessions.
+func sessionFilter(repo string, live, stopped bool) (session.Filter, error) {
+	filter := session.Filter{Repo: repo}
+	switch {
+	case live && stopped:
+		return session.Filter{}, errors.New("--live and --stopped are opposites: ask for one of them, or for neither to list both")
+	case live:
+		filter.State = session.LiveOnly
+	case stopped:
+		filter.State = session.StoppedOnly
+	}
+	return filter, nil
 }
 
 // newSessionStartCmd builds
@@ -210,19 +248,26 @@ func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runne
 	}
 }
 
-// newSessionRemoveCmd builds `smith session rm <name> [--force]`. It reclaims
-// the session's worktree and keeps its branch, refusing on a dirty worktree or
-// a live session and on nothing else.
+// newSessionRemoveCmd builds `smith session rm <name>... [--force]`. It
+// reclaims the named sessions' worktrees and keeps their branches, refusing on
+// a dirty worktree or a live session and on nothing else.
 //
-// It never prompts, with a terminal or without: a refusal prints what would be
-// lost and the exact --force command that overrides it, and exits non-zero, so
-// a human and a loop are answered identically.
+// It takes names and no filters of its own. A --stopped here would make the
+// target set of a delete implicit, so cobra rejects it as the unknown flag it
+// is; the listing is where filters live, and its --names output is what a
+// batch is composed from.
+//
+// The batch is all-or-nothing: one offender refuses the lot, every offender is
+// named, and nothing is removed. It never prompts, with a terminal or without:
+// a refusal prints what would be lost and the exact --force command that
+// overrides it, and exits non-zero, so a human and a loop are answered
+// identically.
 func newSessionRemoveCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "rm <name>",
-		Short: "Reclaim a session's worktree, keeping its branch",
-		Args:  cobra.ExactArgs(1),
+		Use:   "rm <name>...",
+		Short: "Reclaim the worktrees of one or more sessions, keeping their branches",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolved, err := resolve()
 			if err != nil {
@@ -232,22 +277,32 @@ func newSessionRemoveCmd(resolve boxResolver, root string, git, tmux session.Run
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			removed, err := session.Remove(cmd.Context(), env, args[0], force)
+			removed, err := session.Remove(cmd.Context(), env, args, force)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
 			return writeRemoved(cmd, removed)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "reclaim the worktree even if the session is running or its worktree is dirty")
+	cmd.Flags().BoolVar(&force, "force", false, "reclaim the worktrees even if a session is running or its worktree is dirty")
 	return cmd
 }
 
-// writeRemoved reports what the removal cost and what it kept: the branch
-// always survives, and the commits on it that no remote has are named so the
-// operator learns of them here rather than the next time they look for the
-// work.
-func writeRemoved(cmd *cobra.Command, removed session.Removal) error {
+// writeRemoved reports what the removal cost and what it kept, one line per
+// session: the branch always survives, and the commits on it that no remote
+// has are named so the operator learns of them here rather than the next time
+// they look for the work.
+func writeRemoved(cmd *cobra.Command, removals []session.Removal) error {
+	for _, removed := range removals {
+		if err := writeOneRemoved(cmd, removed); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeOneRemoved reports a single session's removal.
+func writeOneRemoved(cmd *cobra.Command, removed session.Removal) error {
 	report := fmt.Sprintf("session %s removed", removed.Name)
 	if removed.Killed {
 		report += ", its tmux session killed"

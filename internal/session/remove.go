@@ -78,7 +78,40 @@ func kept(unpushed int) string {
 	return fmt.Sprintf(", and %d commits not on any remote", unpushed)
 }
 
-// Remove reclaims a session's worktree and keeps its branch.
+// BatchRefusedError is what Remove answers with when any of the names it was
+// handed does not survive the gate. It carries every offender rather than the
+// first: a report that named one would turn a batch into a queue of retries,
+// and the operator would learn the shape of the gate one refusal at a time.
+type BatchRefusedError struct {
+	// Names are the sessions the batch addressed, in the order the operator
+	// named them.
+	Names []string
+	// Refusals are the offenders, in the order they were named — a
+	// *RemovalRefusedError for a session that is live or dirty, and a
+	// plain error for a name no session holds.
+	Refusals []error
+}
+
+// Error implements error, rendering every offender's own refusal and, for a
+// batch of more than one, the all-or-nothing clause that says the rest
+// survived too.
+func (e *BatchRefusedError) Error() string {
+	said := make([]string, len(e.Refusals))
+	for i, refusal := range e.Refusals {
+		said[i] = refusal.Error()
+	}
+	if len(e.Names) > 1 {
+		said = append(said, fmt.Sprintf("nothing was removed: `smith session rm` is all-or-nothing across the %d sessions it was handed", len(e.Names)))
+	}
+	return strings.Join(said, "\n")
+}
+
+// Unwrap exposes the offenders to errors.Is and errors.As, so a caller can ask
+// what kind of refusal a batch met without taking its message apart.
+func (e *BatchRefusedError) Unwrap() []error { return e.Refusals }
+
+// Remove reclaims the worktrees of the named sessions and keeps their
+// branches.
 //
 // It refuses on a dirty worktree or a live session, and on nothing else. That
 // is not a compromise between safety and convenience: the repo is bare and the
@@ -90,56 +123,131 @@ func kept(unpushed int) string {
 // every in-progress branch would train force into muscle memory, which is how
 // the dirty gate that does matter gets waved away too.
 //
-// force overrides both refusals with one flag: it ends the tmux session if one
-// is running, and reclaims the worktree regardless of what is uncommitted in
-// it. Nothing here ever prompts — a delete has no undo, and a y/N at a delete
+// force overrides both refusals with one flag: it ends the tmux sessions that
+// are running, and reclaims the worktrees regardless of what is uncommitted in
+// them. Nothing here ever prompts — a delete has no undo, and a y/N at a delete
 // prompt is answered reflexively — so a refusal prints what would die and the
 // command that overrides it, identically with a human present and without.
+//
+// The batch is all-or-nothing and the gate is a property of the operation
+// rather than of each name: every name is resolved and gated before any
+// worktree is touched, a name no session holds is a refusal like any other,
+// and one offender refuses the lot. Partial deletion is the state nobody can
+// reason about afterwards, and it would leave --force covering half a batch.
 //
 // The dirty half is the work-state predicate `session list` renders, asked
 // once here rather than defined a second time: two answers to "is this
 // worktree dirty" would let list say clean while rm refuses.
-func Remove(ctx context.Context, env Env, name string, force bool) (Removal, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return Removal{}, fmt.Errorf("no session named: want the name `session list` reports")
-	}
-	found, err := find(ctx, env, name)
+func Remove(ctx context.Context, env Env, names []string, force bool) ([]Removal, error) {
+	names, err := named(names)
 	if err != nil {
-		return Removal{}, err
+		return nil, err
 	}
-	live := isLive(ctx, env.Tmux, name)
-	dirty, unpushed, err := workState(ctx, env.Git, found.wt, found.repo.Placements)
+	gated, err := gate(ctx, env, names, force)
 	if err != nil {
-		return Removal{}, err
+		return nil, err
 	}
-	if !force && (live || dirty.any()) {
-		return Removal{}, &RemovalRefusedError{
-			Name:      name,
-			Live:      live,
-			Modified:  dirty.modified,
-			Staged:    dirty.staged,
-			Untracked: dirty.untracked,
-			Unpushed:  unpushed,
+	removals := make([]Removal, len(gated))
+	for i, g := range gated {
+		if removals[i], err = reclaim(ctx, env, g); err != nil {
+			return nil, err
 		}
 	}
-	if live {
-		if err := Stop(ctx, env, name); err != nil {
+	return removals, nil
+}
+
+// named is the batch's name list with the surrounding whitespace gone and the
+// repeats dropped. A name given twice is not a refusal but it cannot be
+// removed twice either: the second pass would fail against a worktree the
+// first already reclaimed, which is the partial state the batch exists to
+// avoid.
+func named(names []string) ([]string, error) {
+	var kept []string
+	seen := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		kept = append(kept, name)
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("no session named: want the names `smith session list` reports")
+	}
+	return kept, nil
+}
+
+// admitted is one name the gate let through, together with what it read to
+// decide: the worktree to reclaim, whether a driver has to be ended first, and
+// the count the report carries.
+type admitted struct {
+	name     string
+	found    placed
+	live     bool
+	unpushed int
+}
+
+// gate resolves and checks every name before a single worktree is touched. It
+// is where all-or-nothing lives, which is why it answers with the whole batch
+// or with none of it.
+func gate(ctx context.Context, env Env, names []string, force bool) ([]admitted, error) {
+	worktrees, err := worktreesOf(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	var gated []admitted
+	var refusals []error
+	for _, name := range names {
+		found, ok := lookup(worktrees, name)
+		if !ok {
+			refusals = append(refusals, unknownSession(name))
+			continue
+		}
+		live := isLive(ctx, env.Tmux, name)
+		dirty, unpushed, err := workState(ctx, env.Git, found.wt, found.repo.Placements)
+		if err != nil {
+			return nil, err
+		}
+		if !force && (live || dirty.any()) {
+			refusals = append(refusals, &RemovalRefusedError{
+				Name:      name,
+				Live:      live,
+				Modified:  dirty.modified,
+				Staged:    dirty.staged,
+				Untracked: dirty.untracked,
+				Unpushed:  unpushed,
+			})
+			continue
+		}
+		gated = append(gated, admitted{name: name, found: found, live: live, unpushed: unpushed})
+	}
+	if len(refusals) > 0 {
+		return nil, &BatchRefusedError{Names: names, Refusals: refusals}
+	}
+	return gated, nil
+}
+
+// reclaim removes one gated session's worktree, ending its tmux session first
+// when a forced removal found one running.
+func reclaim(ctx context.Context, env Env, g admitted) (Removal, error) {
+	if g.live {
+		if err := Stop(ctx, env, g.name); err != nil {
 			return Removal{}, err
 		}
 	}
 	// git's own refusal is overridden unconditionally, because smith has
 	// already asked the only question that decides this: git counts the files
 	// smith placed as untracked work, and the predicate above does not.
-	bare := filepath.Join(env.Workspace, found.repo.Name, bareDir)
-	if _, err := run(ctx, env.Git, "git", "-C", bare, "worktree", "remove", "--force", found.wt.path); err != nil {
-		return Removal{}, fmt.Errorf("reclaim the worktree of session %q at %s: %w", name, found.wt.path, err)
+	bare := filepath.Join(env.Workspace, g.found.repo.Name, bareDir)
+	if _, err := run(ctx, env.Git, "git", "-C", bare, "worktree", "remove", "--force", g.found.wt.path); err != nil {
+		return Removal{}, fmt.Errorf("reclaim the worktree of session %q at %s: %w", g.name, g.found.wt.path, err)
 	}
 	return Removal{
-		Name:     name,
-		Repo:     found.repo.Name,
-		Branch:   found.wt.branch,
-		Unpushed: unpushed,
-		Killed:   live,
+		Name:     g.name,
+		Repo:     g.found.repo.Name,
+		Branch:   g.found.wt.branch,
+		Unpushed: g.unpushed,
+		Killed:   g.live,
 	}, nil
 }

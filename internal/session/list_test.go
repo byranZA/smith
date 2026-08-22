@@ -225,3 +225,70 @@ func TestListSkipsARepoThatIsNotClonedYet(t *testing.T) {
 }
 
 var _ session.Runner = (*tmuxServer)(nil)
+
+// TestListNarrowsTheRowsByFilter locks in that scale is answered by filters
+// rather than by layout: the table stays flat at fifty rows and the operator
+// narrows it instead.
+func TestListNarrowsTheRowsByFilter(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	writeBareRepo(t, workspace, "web", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}, {Name: "web"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	start(t, env, "smith", "live-one")
+	stop(t, env, start(t, env, "smith", "spec-42").Name)
+	stop(t, env, start(t, env, "web", "hotfix").Name)
+
+	tests := []struct {
+		name   string
+		filter session.Filter
+		want   []string
+	}{
+		{"every session", session.Filter{}, []string{"smith-live-one", "smith-spec-42", "web-hotfix"}},
+		{"one repo", session.Filter{Repo: "smith"}, []string{"smith-live-one", "smith-spec-42"}},
+		{"live only", session.Filter{State: session.LiveOnly}, []string{"smith-live-one"}},
+		{"stopped only", session.Filter{State: session.StoppedOnly}, []string{"smith-spec-42", "web-hotfix"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := session.List(context.Background(), env, tt.filter)
+			if err != nil {
+				t.Fatalf("List() err = %v", err)
+			}
+			var names []string
+			for _, s := range got {
+				names = append(names, s.Name)
+			}
+			if strings.Join(names, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("List() names = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
+
+// TestListRefusesAFilterOnAnUndeclaredRepo locks in that a typo is told
+// plainly rather than answered with an empty listing, which reads exactly like
+// a box that has no sessions.
+func TestListRefusesAFilterOnAnUndeclaredRepo(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	_, err := session.List(context.Background(), env, session.Filter{Repo: "ghost"})
+
+	if err == nil {
+		t.Fatal("List() err = nil, want a refusal for a repo the blueprint does not declare")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("List() err = %q, want it to name the undeclared repo", err)
+	}
+}

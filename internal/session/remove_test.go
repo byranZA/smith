@@ -30,13 +30,13 @@ func TestRemoveReclaimsTheWorktreeOfACleanStoppedSession(t *testing.T) {
 	started := start(t, env, "smith", "spec-42")
 	stop(t, env, started.Name)
 
-	removed, err := session.Remove(context.Background(), env, started.Name, false)
+	removed, err := session.Remove(context.Background(), env, []string{started.Name}, false)
 	if err != nil {
 		t.Fatalf("Remove() err = %v", err)
 	}
 
-	if removed.Branch != "spec-42" {
-		t.Errorf("Remove() branch = %q, want the branch it reclaimed the worktree of", removed.Branch)
+	if removed[0].Branch != "spec-42" {
+		t.Errorf("Remove() branch = %q, want the branch it reclaimed the worktree of", removed[0].Branch)
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -63,7 +63,7 @@ func TestARemovedSessionComesBackOnStart(t *testing.T) {
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
 	commit(t, dir, "work")
 	stop(t, env, started.Name)
-	if _, err := session.Remove(context.Background(), env, started.Name, false); err != nil {
+	if _, err := session.Remove(context.Background(), env, []string{started.Name}, false); err != nil {
 		t.Fatalf("Remove() err = %v", err)
 	}
 
@@ -90,7 +90,7 @@ func TestRemoveRefusesALiveSession(t *testing.T) {
 	}
 	started := start(t, env, "smith", "spec-42")
 
-	_, err := session.Remove(context.Background(), env, started.Name, false)
+	_, err := session.Remove(context.Background(), env, []string{started.Name}, false)
 
 	if err == nil {
 		t.Fatal("Remove() err = nil, want a refusal on a live session")
@@ -126,7 +126,7 @@ func TestRemoveRefusesADirtyWorktreeWithAnEnumeration(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "scratch.txt"), "notes\n")
 	stop(t, env, started.Name)
 
-	_, err := session.Remove(context.Background(), env, started.Name, false)
+	_, err := session.Remove(context.Background(), env, []string{started.Name}, false)
 
 	if err == nil {
 		t.Fatal("Remove() err = nil, want a refusal on a dirty worktree")
@@ -156,7 +156,7 @@ func TestRemoveReportsTheTwoRefusalsSeparately(t *testing.T) {
 	started := start(t, env, "smith", "spec-42")
 	writeFile(t, filepath.Join(workspace, "smith", "worktrees", "spec-42", "README.md"), "changed\n")
 
-	_, err := session.Remove(context.Background(), env, started.Name, false)
+	_, err := session.Remove(context.Background(), env, []string{started.Name}, false)
 
 	if err == nil {
 		t.Fatal("Remove() err = nil, want a refusal on a live, dirty session")
@@ -192,13 +192,13 @@ func TestRemoveReportsUnpushedCommitsAndProceeds(t *testing.T) {
 	}
 	stop(t, env, started.Name)
 
-	removed, err := session.Remove(context.Background(), env, started.Name, false)
+	removed, err := session.Remove(context.Background(), env, []string{started.Name}, false)
 	if err != nil {
 		t.Fatalf("Remove() err = %v, want unpushed commits reported rather than refused", err)
 	}
 
-	if removed.Unpushed != 3 {
-		t.Errorf("Remove() unpushed = %d, want 3", removed.Unpushed)
+	if removed[0].Unpushed != 3 {
+		t.Errorf("Remove() unpushed = %d, want 3", removed[0].Unpushed)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("worktree at %s survived the removal: %v", dir, err)
@@ -225,12 +225,12 @@ func TestForceOverridesBothRefusals(t *testing.T) {
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
 	writeFile(t, filepath.Join(dir, "README.md"), "changed\n")
 
-	removed, err := session.Remove(context.Background(), env, started.Name, true)
+	removed, err := session.Remove(context.Background(), env, []string{started.Name}, true)
 	if err != nil {
 		t.Fatalf("Remove(force) err = %v", err)
 	}
 
-	if !removed.Killed {
+	if !removed[0].Killed {
 		t.Error("Remove(force) reported nothing killed, want the live tmux session ended")
 	}
 	if tmux.ran("kill-session") != 1 {
@@ -278,7 +278,7 @@ func TestRemoveTreatsAPlacedFileAsClean(t *testing.T) {
 			}
 			tt.after(t, filepath.Join(workspace, "smith", "repo.git"))
 
-			if _, err := session.Remove(context.Background(), env, started.Name, false); err != nil {
+			if _, err := session.Remove(context.Background(), env, []string{started.Name}, false); err != nil {
 				t.Fatalf("Remove() err = %v, want a placed file read as clean", err)
 			}
 
@@ -308,7 +308,7 @@ func TestRemoveCountsAFileNoPlacementDeclares(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "scratch.txt"), "notes\n")
 	stop(t, env, started.Name)
 
-	_, err := session.Remove(context.Background(), env, started.Name, false)
+	_, err := session.Remove(context.Background(), env, []string{started.Name}, false)
 
 	if err == nil {
 		t.Fatal("Remove() err = nil, want a file no placement declares to count")
@@ -338,7 +338,7 @@ func TestRemoveReadsAnIgnoredFileAsClean(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "ignored.txt"), "noise\n")
 	stop(t, env, started.Name)
 
-	if _, err := session.Remove(context.Background(), env, started.Name, false); err != nil {
+	if _, err := session.Remove(context.Background(), env, []string{started.Name}, false); err != nil {
 		t.Fatalf("Remove() err = %v, want an ignored file read as clean", err)
 	}
 
@@ -360,7 +360,7 @@ func TestRemoveRefusesANameNoSessionHolds(t *testing.T) {
 		Tmux:      &tmuxServer{},
 	}
 
-	_, err := session.Remove(context.Background(), env, "smith-ghost", false)
+	_, err := session.Remove(context.Background(), env, []string{"smith-ghost"}, false)
 
 	if err == nil {
 		t.Fatal("Remove() err = nil, want a refusal for a name no session holds")
@@ -395,4 +395,144 @@ func branchExists(t *testing.T, workspace, repo, branch string) bool {
 	t.Helper()
 	bare := filepath.Join(workspace, repo, "repo.git")
 	return gitOut(t, bare, "branch", "--list", branch, "--format=%(refname:short)") == branch
+}
+
+// TestRemoveTakesSeveralNamesAtOnce locks in the batch: one call reclaims
+// every worktree it was handed, which is what the names listing composes into.
+func TestRemoveTakesSeveralNamesAtOnce(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	names := standDown(t, env, "one", "two", "three")
+
+	removed, err := session.Remove(context.Background(), env, names, false)
+	if err != nil {
+		t.Fatalf("Remove() err = %v", err)
+	}
+
+	if len(removed) != 3 {
+		t.Errorf("Remove() reported %d removals, want one per name", len(removed))
+	}
+	for _, branch := range []string{"one", "two", "three"} {
+		dir := filepath.Join(workspace, "smith", "worktrees", branch)
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("worktree at %s survived the batch: %v", dir, err)
+		}
+	}
+}
+
+// TestOneOffenderRefusesTheWholeBatch locks in that removal is all-or-nothing:
+// a partially applied delete is the state nobody can reason about afterwards,
+// and it would leave --force covering half a batch.
+func TestOneOffenderRefusesTheWholeBatch(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	names := standDown(t, env, "one", "two", "three")
+	writeFile(t, filepath.Join(workspace, "smith", "worktrees", "two", "scratch.txt"), "notes\n")
+
+	_, err := session.Remove(context.Background(), env, names, false)
+
+	if err == nil {
+		t.Fatal("Remove() err = nil, want one dirty worktree to refuse the whole batch")
+	}
+	for _, branch := range []string{"one", "two", "three"} {
+		dir := filepath.Join(workspace, "smith", "worktrees", branch)
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("worktree at %s did not survive the refused batch: %v", dir, err)
+		}
+	}
+}
+
+// TestARefusedBatchEnumeratesEveryOffender locks in that the operator is told
+// the whole gate in one pass: a report naming only the first offender turns a
+// batch into a queue of retries.
+func TestARefusedBatchEnumeratesEveryOffender(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	names := standDown(t, env, "one", "two", "three", "four")
+	for _, branch := range []string{"two", "four"} {
+		writeFile(t, filepath.Join(workspace, "smith", "worktrees", branch, "scratch.txt"), "notes\n")
+	}
+
+	_, err := session.Remove(context.Background(), env, names, false)
+
+	if err == nil {
+		t.Fatal("Remove() err = nil, want two dirty worktrees to refuse the batch")
+	}
+	for _, want := range []string{"smith-two", "smith-four"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Remove() err = %q, want it to name the offender %q", err, want)
+		}
+	}
+}
+
+// TestAnUnknownNameRefusesTheBatchBeforeAnythingIsRemoved locks in that the
+// gate covers the names too: a typo in a batch costs nothing, rather than
+// removing everything up to it.
+func TestAnUnknownNameRefusesTheBatchBeforeAnythingIsRemoved(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	names := standDown(t, env, "one", "two")
+
+	_, err := session.Remove(context.Background(), env, append(names, "smith-ghost"), false)
+
+	if err == nil {
+		t.Fatal("Remove() err = nil, want an unknown name to refuse the batch")
+	}
+	if !strings.Contains(err.Error(), "smith-ghost") {
+		t.Errorf("Remove() err = %q, want it to name the session it could not find", err)
+	}
+	for _, branch := range []string{"one", "two"} {
+		dir := filepath.Join(workspace, "smith", "worktrees", branch)
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("worktree at %s did not survive the refused batch: %v", dir, err)
+		}
+	}
+}
+
+// TestRemoveRefusesAnEmptyBatch locks in that a names listing that found
+// nothing composes into a refusal rather than into a removal of everything.
+func TestRemoveRefusesAnEmptyBatch(t *testing.T) {
+	env := session.Env{Workspace: t.TempDir(), Git: connection.System(), Tmux: &tmuxServer{}}
+
+	if _, err := session.Remove(context.Background(), env, nil, false); err == nil {
+		t.Fatal("Remove() err = nil, want a refusal when no session was named")
+	}
+}
+
+// standDown stands a stopped session up on each branch of the smith repo and
+// answers with the names they are addressed by, which is the fixture every
+// batch case starts from.
+func standDown(t *testing.T, env session.Env, branches ...string) []string {
+	t.Helper()
+	names := make([]string, len(branches))
+	for i, branch := range branches {
+		started := start(t, env, "smith", branch)
+		stop(t, env, started.Name)
+		names[i] = started.Name
+	}
+	return names
 }

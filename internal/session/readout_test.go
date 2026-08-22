@@ -149,3 +149,25 @@ func TestReadoutSummarizesTheWorkState(t *testing.T) {
 		})
 	}
 }
+
+// TestNamesPrintsBareNamesOnePerLine locks in the one output that is not for a
+// human to read: no header, no columns and no summary, so it composes straight
+// into a batch removal.
+func TestNamesPrintsBareNamesOnePerLine(t *testing.T) {
+	got := session.Names([]session.Session{
+		{Name: "smith-spec-42", Repo: "smith", Branch: "spec-42", Unpushed: 2},
+		{Name: "web-hotfix", Repo: "web", Branch: "hotfix", Dirty: true},
+	})
+
+	if got != "smith-spec-42\nweb-hotfix\n" {
+		t.Errorf("Names() = %q, want one bare name per line", got)
+	}
+}
+
+// TestNamesPrintsNothingWhenThereIsNothingToList locks in that an empty
+// listing composes into a removal of nothing rather than into a word.
+func TestNamesPrintsNothingWhenThereIsNothingToList(t *testing.T) {
+	if got := session.Names(nil); got != "" {
+		t.Errorf("Names(nil) = %q, want nothing at all", got)
+	}
+}

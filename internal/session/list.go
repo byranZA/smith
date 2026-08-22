@@ -11,11 +11,55 @@ import (
 	"strings"
 )
 
-// Filter narrows what List enumerates. It is empty for now — every session on
-// the box is listed — and the zero value is the whole listing.
-type Filter struct{}
+// Filter narrows what List enumerates. The zero value is the whole listing:
+// every declared repo, live and stopped alike.
+//
+// Filters live on the listing and nowhere else. The removal verb takes names,
+// because a filter there would make the target set of a delete implicit, and a
+// delete has no undo.
+type Filter struct {
+	// Repo narrows the listing to one repo the blueprint declares. Empty
+	// lists every repo.
+	Repo string
+	// State narrows the listing to one running state. The zero value lists
+	// both.
+	State State
+}
 
-// List enumerates the sessions on the box, sorted by repo and then by branch.
+// State is the running state a listing can be narrowed to. Its zero value
+// narrows nothing, so a caller that does not care never has to say so.
+type State int
+
+const (
+	// AnyState lists live and stopped sessions alike.
+	AnyState State = iota
+	// LiveOnly lists only the sessions whose tmux session is running.
+	LiveOnly
+	// StoppedOnly lists only the sessions whose tmux session is not running.
+	StoppedOnly
+)
+
+// wants reports whether a repo survives the filter.
+func (f Filter) wants(repo string) bool {
+	return f.Repo == "" || f.Repo == repo
+}
+
+// running reports whether a session in that running state survives the filter.
+// It is asked after the live probe and before the work state is read, because
+// the probe is one command and the work state is three.
+func (f Filter) running(live bool) bool {
+	switch f.State {
+	case LiveOnly:
+		return live
+	case StoppedOnly:
+		return !live
+	default:
+		return true
+	}
+}
+
+// List enumerates the sessions on the box the filter admits, sorted by repo
+// and then by branch.
 //
 // The bare repos are the registry, not the filesystem: a repo is asked for its
 // worktrees rather than the worktrees directory being walked, because the
@@ -28,14 +72,26 @@ type Filter struct{}
 // workspace stage has not cloned yet contributes nothing rather than failing
 // the listing, because list answers with what is on the box and there is
 // nothing on the box to answer with.
-func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
+func List(ctx context.Context, env Env, filter Filter) ([]Session, error) {
+	if filter.Repo != "" {
+		if _, err := env.repo(filter.Repo); err != nil {
+			return nil, err
+		}
+	}
 	worktrees, err := worktreesOf(ctx, env)
 	if err != nil {
 		return nil, err
 	}
 	var sessions []Session
 	for _, p := range worktrees {
+		if !filter.wants(p.repo.Name) {
+			continue
+		}
 		name := listedName(p.repo.Name, p.wt)
+		live := isLive(ctx, env.Tmux, name)
+		if !filter.running(live) {
+			continue
+		}
 		dirty, unpushed, err := workState(ctx, env.Git, p.wt, p.repo.Placements)
 		if err != nil {
 			return nil, err
@@ -44,7 +100,7 @@ func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
 			Name:     name,
 			Repo:     p.repo.Name,
 			Branch:   p.wt.branch,
-			Live:     isLive(ctx, env.Tmux, name),
+			Live:     live,
 			Dirty:    dirty.any(),
 			Unpushed: unpushed,
 		})

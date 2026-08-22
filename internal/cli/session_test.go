@@ -151,11 +151,15 @@ func TestSessionStartIsUnderTheRootCommand(t *testing.T) {
 
 // resolvedBox stands in for the configuration this box was built from, with
 // the workspace pointed at a temp directory and one repo declared.
-func resolvedBox(workspace, repo string) boxResolver {
+func resolvedBox(workspace string, repos ...string) boxResolver {
+	declared := make([]blueprint.Repo, len(repos))
+	for i, repo := range repos {
+		declared[i] = blueprint.Repo{Name: repo, URL: "git@example.com:acme/" + repo + ".git"}
+	}
 	return func() (config.Resolved, error) {
 		return config.Resolved{
 			Workspace: config.Value{Value: workspace, Origin: config.FromBlueprint},
-			Repos:     []blueprint.Repo{{Name: repo, URL: "git@example.com:acme/" + repo + ".git"}},
+			Repos:     declared,
 		}, nil
 	}
 }
@@ -732,5 +736,347 @@ func TestSessionRemoveIsUnderTheRootCommand(t *testing.T) {
 	}
 	if found.Name() != "rm" {
 		t.Errorf("Find(session rm) = %q, want the rm command", found.Name())
+	}
+}
+
+// tmuxBox stands in for a tmux server that remembers what it started, which is
+// what a test needs to put live and stopped sessions on one box.
+type tmuxBox struct {
+	live  map[string]bool
+	calls [][]string
+}
+
+func (b *tmuxBox) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
+	if b.live == nil {
+		b.live = map[string]bool{}
+	}
+	b.calls = append(b.calls, append([]string{name}, args...))
+	if len(args) == 0 {
+		return nil
+	}
+	id := tmuxTarget(args)
+	switch args[0] {
+	case "new-session":
+		b.live[id] = true
+	case "has-session":
+		if !b.live[id] {
+			return errNoTmuxSession
+		}
+	case "kill-session":
+		if !b.live[id] {
+			return errNoTmuxSession
+		}
+		delete(b.live, id)
+	}
+	return nil
+}
+
+// tmuxTarget returns the -t/-s value in a tmux argv.
+func tmuxTarget(args []string) string {
+	for i, a := range args {
+		if (a == "-t" || a == "-s") && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+var _ session.Runner = (*tmuxBox)(nil)
+
+// standUpOn stands a session up through the assembled command, against the
+// tmux server the test goes on to read.
+func standUpOn(t *testing.T, resolve boxResolver, tmux session.Runner, repo, branch string) {
+	t.Helper()
+	runSession(t, resolve, tmux, "start", "--repo", repo, "--branch", branch, "--detach")
+}
+
+// stopSession ends a session through the assembled command, which is how a
+// test reaches the stopped half of the live probe.
+func stopSession(t *testing.T, resolve boxResolver, tmux session.Runner, name string) {
+	t.Helper()
+	runSession(t, resolve, tmux, "stop", name)
+}
+
+// runSession drives one session subcommand and fails the test if it refuses.
+func runSession(t *testing.T, resolve boxResolver, tmux session.Runner, args ...string) {
+	t.Helper()
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs(args)
+	var errOut bytes.Buffer
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(&errOut)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("session %s err = %v (stderr: %s)", strings.Join(args, " "), err, errOut.String())
+	}
+}
+
+// twoReposOneLive stands three sessions up on two repos and stops two of them,
+// which is the fixture every filter case is read against.
+func twoReposOneLive(t *testing.T, workspace string) (boxResolver, *tmuxBox) {
+	t.Helper()
+	writeBareRepo(t, workspace, "smith")
+	writeBareRepo(t, workspace, "web")
+	resolve := resolvedBox(workspace, "smith", "web")
+	tmux := &tmuxBox{}
+	standUpOn(t, resolve, tmux, "smith", "live-one")
+	standUpOn(t, resolve, tmux, "smith", "spec-42")
+	standUpOn(t, resolve, tmux, "web", "hotfix")
+	stopSession(t, resolve, tmux, "smith-spec-42")
+	stopSession(t, resolve, tmux, "web-hotfix")
+	return resolve, tmux
+}
+
+// TestSessionListNarrowsTheRowsByFilter drives the assembled command the way
+// an operator on a busy box does: scale is answered by narrowing the flat
+// table rather than by grouping it.
+func TestSessionListNarrowsTheRowsByFilter(t *testing.T) {
+	workspace := t.TempDir()
+	resolve, tmux := twoReposOneLive(t, workspace)
+
+	tests := []struct {
+		name   string
+		args   []string
+		want   []string
+		absent []string
+	}{
+		{"by repo", []string{"list", "--repo", "smith"}, []string{"smith-live-one", "smith-spec-42"}, []string{"web-hotfix"}},
+		{"live only", []string{"list", "--live"}, []string{"smith-live-one"}, []string{"smith-spec-42", "web-hotfix"}},
+		{"stopped only", []string{"list", "--stopped"}, []string{"smith-spec-42", "web-hotfix"}, []string{"smith-live-one"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+			cmd.SetArgs(tt.args)
+			var out, errOut bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errOut)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+			}
+
+			for _, want := range tt.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("stdout = %q, want it to list %q", out.String(), want)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(out.String(), absent) {
+					t.Errorf("stdout = %q, want %q filtered out", out.String(), absent)
+				}
+			}
+		})
+	}
+}
+
+// TestSessionListRefusesTwoOppositeStateFilters locks in that a filter pair
+// that can never match anything is told plainly, rather than answered with an
+// empty table that reads like a box with no sessions.
+func TestSessionListRefusesTwoOppositeStateFilters(t *testing.T) {
+	workspace := t.TempDir()
+	resolve, tmux := twoReposOneLive(t, workspace)
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"list", "--live", "--stopped"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code == 0 {
+		t.Fatalf("exit code = 0, want non-zero for two opposite state filters")
+	}
+	if !strings.Contains(errOut.String(), "--stopped") {
+		t.Errorf("stderr = %q, want it to name the filters that contradict", errOut.String())
+	}
+}
+
+// TestSessionListNamesPrintsBareNames locks in the one output that is not for
+// a human to read: names alone, one per line, so the shell can hand them
+// straight to the removal verb.
+func TestSessionListNamesPrintsBareNames(t *testing.T) {
+	workspace := t.TempDir()
+	resolve, tmux := twoReposOneLive(t, workspace)
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"list", "--names"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	if got, want := out.String(), "smith-live-one\nsmith-spec-42\nweb-hotfix\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+}
+
+// TestSessionRemoveTakesSeveralNames drives the batch the way an operator
+// clearing a box does: every worktree named is gone in one command.
+func TestSessionRemoveTakesSeveralNames(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	tmux := &tmuxBox{}
+	for _, branch := range []string{"one", "two", "three"} {
+		standUpOn(t, resolve, tmux, "smith", branch)
+		stopSession(t, resolve, tmux, "smith-"+branch)
+	}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "smith-one", "smith-two", "smith-three"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	for _, branch := range []string{"one", "two", "three"} {
+		dir := filepath.Join(workspace, "smith", "worktrees", branch)
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("worktree at %s survived the batch: %v", dir, err)
+		}
+		if !strings.Contains(out.String(), "smith-"+branch) {
+			t.Errorf("stdout = %q, want it to report the removal of smith-%s", out.String(), branch)
+		}
+	}
+}
+
+// TestSessionRemoveRefusesTheWholeBatchAndEnumeratesEveryOffender locks in the
+// all-or-nothing refusal end to end: both offenders are named, the exit is
+// non-zero, and not one worktree was reclaimed.
+func TestSessionRemoveRefusesTheWholeBatchAndEnumeratesEveryOffender(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	tmux := &tmuxBox{}
+	for _, branch := range []string{"one", "two", "three", "four"} {
+		standUpOn(t, resolve, tmux, "smith", branch)
+		stopSession(t, resolve, tmux, "smith-"+branch)
+	}
+	for _, branch := range []string{"two", "four"} {
+		if err := os.WriteFile(filepath.Join(workspace, "smith", "worktrees", branch, "scratch.txt"), []byte("notes\n"), 0o600); err != nil {
+			t.Fatalf("dirty the worktree: %v", err)
+		}
+	}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "smith-one", "smith-two", "smith-three", "smith-four"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code == 0 {
+		t.Fatalf("exit code = 0, want non-zero for a batch with two dirty worktrees")
+	}
+	for _, want := range []string{"smith-two", "smith-four"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr = %q, want it to name the offender %q", errOut.String(), want)
+		}
+	}
+	for _, branch := range []string{"one", "two", "three", "four"} {
+		dir := filepath.Join(workspace, "smith", "worktrees", branch)
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("worktree at %s did not survive the refused batch: %v", dir, err)
+		}
+	}
+}
+
+// TestSessionRemoveRefusesAnUnknownNameBeforeRemovingAnything locks in that a
+// typo in a batch costs nothing rather than removing everything up to it.
+func TestSessionRemoveRefusesAnUnknownNameBeforeRemovingAnything(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	tmux := &tmuxBox{}
+	for _, branch := range []string{"one", "two"} {
+		standUpOn(t, resolve, tmux, "smith", branch)
+		stopSession(t, resolve, tmux, "smith-"+branch)
+	}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "smith-one", "smith-ghost", "smith-two"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code == 0 {
+		t.Fatalf("exit code = 0, want non-zero for a name no session holds")
+	}
+	if !strings.Contains(errOut.String(), "smith-ghost") {
+		t.Errorf("stderr = %q, want it to name the session it could not find", errOut.String())
+	}
+	for _, branch := range []string{"one", "two"} {
+		dir := filepath.Join(workspace, "smith", "worktrees", branch)
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("worktree at %s did not survive the refused batch: %v", dir, err)
+		}
+	}
+}
+
+// TestSessionRemoveTakesNoFiltersOfItsOwn locks in that filters live on the
+// listing alone: a filter here would make the target set of a delete implicit,
+// and a delete has no undo.
+func TestSessionRemoveTakesNoFiltersOfItsOwn(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	tmux := &tmuxBox{}
+	standUpOn(t, resolve, tmux, "smith", "spec-42")
+	stopSession(t, resolve, tmux, "smith-spec-42")
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "--stopped"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatal("Execute() err = nil, want --stopped rejected as an unknown flag")
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("worktree at %s did not survive the rejected flag: %v", dir, err)
+	}
+}
+
+// TestSessionListNamesComposeIntoABatchRemoval drives the one pipeline the
+// names output exists for: the stopped sessions the listing named are gone and
+// the live one is untouched.
+func TestSessionListNamesComposeIntoABatchRemoval(t *testing.T) {
+	workspace := t.TempDir()
+	resolve, tmux := twoReposOneLive(t, workspace)
+	list := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	list.SetArgs([]string{"list", "--stopped", "--names"})
+	var listed, errOut bytes.Buffer
+	list.SetOut(&listed)
+	list.SetErr(&errOut)
+	if err := list.Execute(); err != nil {
+		t.Fatalf("session list err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs(append([]string{"rm"}, strings.Fields(listed.String())...))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("session rm err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	for _, gone := range []string{filepath.Join("smith", "worktrees", "spec-42"), filepath.Join("web", "worktrees", "hotfix")} {
+		if _, err := os.Stat(filepath.Join(workspace, gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("worktree at %s survived the batch: %v", gone, err)
+		}
+	}
+	live := filepath.Join(workspace, "smith", "worktrees", "live-one")
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("the live session's worktree at %s did not survive: %v", live, err)
 	}
 }
