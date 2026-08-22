@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,6 +26,16 @@ type fakeBox struct {
 	hasMise bool
 	// miseErr fails the mise commands the way a box with no network does.
 	miseErr error
+	// remotes is the url each bare clone on the box was cloned from, keyed by
+	// the clone's path, which is what a repo's remote is probed for.
+	remotes map[string]string
+	// gitErr fails the git commands the way an unreachable remote does.
+	gitErr error
+}
+
+// newBox is a box holding nothing: no packages, no mise, and no clones.
+func newBox() *fakeBox {
+	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}}
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
@@ -41,6 +52,27 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 			return fmt.Errorf("write canned status: %w", err)
 		}
 		return nil
+	case strings.Contains(line, "remote get-url"):
+		url, ok := f.remotes[gitDir(argv)]
+		if !ok {
+			return fmt.Errorf("error: No such remote 'origin'")
+		}
+		if _, err := io.WriteString(stdout, url+"\n"); err != nil {
+			return fmt.Errorf("write canned remote url: %w", err)
+		}
+		return f.gitErr
+	case strings.Contains(line, "git clone"):
+		if f.gitErr != nil {
+			return f.gitErr
+		}
+		url, path := argv[len(argv)-2], argv[len(argv)-1]
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("make the canned clone at %s: %w", path, err)
+		}
+		f.remotes[path] = url
+		return nil
+	case strings.Contains(line, "git --git-dir"):
+		return f.gitErr
 	case strings.Contains(line, "mise.run"):
 		f.hasMise = true
 		return f.miseErr
@@ -59,6 +91,16 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return f.aptErr
 	}
 	return fmt.Errorf("unexpected command %q", line)
+}
+
+// gitDir is the bare clone a git command names with --git-dir.
+func gitDir(argv []string) string {
+	for i, arg := range argv {
+		if arg == "--git-dir" && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
 }
 
 // installs returns the one apt-get invocation the run made, joined for

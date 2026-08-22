@@ -50,17 +50,19 @@ func withDefaults(b Blueprint) Blueprint {
 	copy(repos, b.Repos)
 	for i := range repos {
 		if repos[i].Name == "" {
-			repos[i].Name = repoName(repos[i].URL)
+			repos[i].Name = RepoName(repos[i].URL)
 		}
 	}
 	b.Repos = repos
 	return b
 }
 
-// repoName is the worktree directory a clone URL lands in: its last path
+// RepoName is the worktree directory a clone URL lands in: its last path
 // segment without the .git a remote carries. Forges spell the separator
-// before the path either way, so both are cut.
-func repoName(url string) string {
+// before the path either way, so both are cut. It is exported because a
+// blueprint read back from a box may carry a repo the operator named
+// implicitly, and every reader has to land it in the same directory.
+func RepoName(url string) string {
 	segment := url
 	if i := strings.LastIndexAny(segment, "/:"); i >= 0 {
 		segment = segment[i+1:]

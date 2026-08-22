@@ -67,6 +67,8 @@ type Unit struct {
 	Placement Placement
 	// Fragment is the generated mise config a toolchain unit writes.
 	Fragment Fragment
+	// Repo is the repository a repos unit clones into the workspace.
+	Repo Repo
 }
 
 // Placement is one box-scoped placement of the plan: a file the blueprint

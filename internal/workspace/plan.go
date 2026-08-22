@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"cmp"
 	"maps"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,8 @@ func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
 		return planPlacements(b.Placements, home)
 	case step == Packages && len(b.Packages) > 0:
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
+	case step == Repos:
+		return planRepos(b, home)
 	case step == Toolchain && needsToolchain(b):
 		return []Unit{{Step: Toolchain, Fragment: Fragment{
 			Path:  filepath.Join(home, fragmentDir, fragmentFile),
@@ -59,6 +62,30 @@ func planPlacements(placements []blueprint.Placement, home string) []Unit {
 			Destination: p.To,
 			Mode:        p.Mode,
 			Perms:       p.Perms,
+		}})
+	}
+	return units
+}
+
+// planRepos is one unit per declared repo, so a repo that cannot be cloned is
+// reported on its own and the ones after it are still converged.
+//
+// The workspace root is the blueprint's when it declares one and ~/workspace
+// otherwise, and a repo the operator did not name takes the name its url's
+// last path segment gives it. The repo's own base branch is not read here: it
+// is the default a session starts a worktree from, and this stage makes no
+// worktree.
+func planRepos(b blueprint.Blueprint, home string) []Unit {
+	root := boxPath(cmp.Or(b.Workspace, defaultWorkspace), home)
+	mise := filepath.Join(home, miseDir, miseFile)
+	units := make([]Unit, 0, len(b.Repos))
+	for _, r := range b.Repos {
+		name := cmp.Or(r.Name, blueprint.RepoName(r.URL))
+		units = append(units, Unit{Step: Repos, Repo: Repo{
+			Name: name,
+			URL:  r.URL,
+			Path: filepath.Join(root, name, cloneDir),
+			Mise: mise,
 		}})
 	}
 	return units

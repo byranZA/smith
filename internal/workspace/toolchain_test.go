@@ -150,9 +150,9 @@ func TestGenerateQuotesAValueThatWouldBreakTheDocument(t *testing.T) {
 	}
 }
 
-// convergeTools runs the stage over the toolchain a blueprint declares,
-// against a box and a home of the test's own, and returns what it did.
-func convergeTools(t *testing.T, box *fakeBox, home string, b blueprint.Blueprint) (Result, string) {
+// convergeOnBox runs the stage over what a blueprint declares, against a box
+// and a home of the test's own, and returns what it did and what it streamed.
+func convergeOnBox(t *testing.T, box *fakeBox, home string, b blueprint.Blueprint) (Result, string) {
 	t.Helper()
 	var progress bytes.Buffer
 	env := Env{Command: box, StateRoot: t.TempDir(), Secret: fakeSecret}
@@ -189,7 +189,7 @@ func TestConvergeInstallsMiseWhenTheBoxLacksIt(t *testing.T) {
 	box := &fakeBox{installed: map[string]bool{}}
 	b := blueprint.Blueprint{Tools: map[string]string{"node": "20"}}
 
-	result, progress := convergeTools(t, box, home, b)
+	result, progress := convergeOnBox(t, box, home, b)
 
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
@@ -211,7 +211,7 @@ func TestConvergeLeavesAnInstalledMiseAlone(t *testing.T) {
 	home := t.TempDir()
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
 
-	convergeTools(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+	convergeOnBox(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
 
 	if box.ran("mise.run") {
 		t.Errorf("the stage ran %v, want no install on a box that already has mise", box.calls)
@@ -225,7 +225,7 @@ func TestConvergePinsToolsInTheGeneratedFragment(t *testing.T) {
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
 	b := blueprint.Blueprint{Tools: map[string]string{"node": "20", "go": "1.23"}}
 
-	result, _ := convergeTools(t, box, home, b)
+	result, _ := convergeOnBox(t, box, home, b)
 
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
@@ -249,7 +249,7 @@ func TestConvergeExportsEnvThroughTheFragment(t *testing.T) {
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
 	b := blueprint.Blueprint{Env: map[string]string{"GITHUB_TOKEN": "env:GITHUB_TOKEN"}}
 
-	result, _ := convergeTools(t, box, home, b)
+	result, _ := convergeOnBox(t, box, home, b)
 
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
@@ -267,7 +267,7 @@ func TestConvergeReportsAnUnresolvableValue(t *testing.T) {
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
 	b := blueprint.Blueprint{Env: map[string]string{"GITHUB_TOKEN": "env:ABSENT"}}
 
-	result, _ := convergeTools(t, box, home, b)
+	result, _ := convergeOnBox(t, box, home, b)
 
 	if !result.Failed() {
 		t.Fatalf("Result.Failed() = false, want true: %s", result.Report())
@@ -295,7 +295,7 @@ func TestConvergeNeverTouchesTheOperatorsOwnMiseConfig(t *testing.T) {
 	before := modTime(t, own)
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
 
-	convergeTools(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+	convergeOnBox(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
 
 	if got := held(t, own); got != "[tools]\nnode = \"18\"\n" {
 		t.Errorf("the operator's own mise config = %q, want it unchanged", got)
@@ -316,10 +316,10 @@ func TestConvergeNeverTouchesTheOperatorsOwnMiseConfig(t *testing.T) {
 func TestConvergeReconvergesAChangedVersion(t *testing.T) {
 	home := t.TempDir()
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
-	convergeTools(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+	convergeOnBox(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
 
 	box.calls = nil
-	convergeTools(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "22"}})
+	convergeOnBox(t, box, home, blueprint.Blueprint{Tools: map[string]string{"node": "22"}})
 
 	if got := held(t, fragmentPath(home)); !strings.Contains(got, `node = "22"`) {
 		t.Errorf("fragment = %q, want it to pin the version the blueprint now declares", got)
@@ -336,10 +336,10 @@ func TestConvergeLeavesAnUnchangedFragmentAlone(t *testing.T) {
 	home := t.TempDir()
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
 	b := blueprint.Blueprint{Tools: map[string]string{"node": "20"}}
-	convergeTools(t, box, home, b)
+	convergeOnBox(t, box, home, b)
 	before := modTime(t, fragmentPath(home))
 
-	result, _ := convergeTools(t, box, home, b)
+	result, _ := convergeOnBox(t, box, home, b)
 
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
