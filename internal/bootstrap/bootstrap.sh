@@ -429,7 +429,7 @@ phase_firewall() {
   status="$(as_root ufw status verbose 2>/dev/null || true)"
 
   local has_ssh_rule=1
-  printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW' || has_ssh_rule=0
+  grep -qE '22/tcp[[:space:]]+ALLOW' <<<"$status" || has_ssh_rule=0
 
   local ssh_ok=1
   if [ "$want_public_ssh" = "open" ] && [ "$has_ssh_rule" -eq 0 ]; then
@@ -439,8 +439,8 @@ phase_firewall() {
     ssh_ok=0
   fi
 
-  if printf '%s\n' "$status" | grep -qi 'Status: active' \
-    && printf '%s\n' "$status" | grep -qi 'deny (incoming)' \
+  if grep -qi 'Status: active' <<<"$status" \
+    && grep -qi 'deny (incoming)' <<<"$status" \
     && [ "$ssh_ok" -eq 1 ]; then
     PHASE_STATUS="satisfied"
     return 0
@@ -522,8 +522,9 @@ ssh_hardening_selftest() {
 
   as_root sshd -t || return 1
   reload_sshd || return 1
-  as_root sshd -T -C "user=${SMITH_USER},host=localhost,addr=127.0.0.1" 2>/dev/null \
-    | grep -qi '^pubkeyauthentication yes' || return 1
+  local effective
+  effective="$(as_root sshd -T -C "user=${SMITH_USER},host=localhost,addr=127.0.0.1" 2>/dev/null || true)"
+  grep -qi '^pubkeyauthentication yes' <<<"$effective" || return 1
 
   local tmpdir
   tmpdir="$(mktemp -d)"
@@ -809,17 +810,17 @@ probe_firewall() {
     echo "ufw-ssh-allow=?"
     return 0
   fi
-  if printf '%s\n' "$status" | grep -qi 'Status: active'; then
+  if grep -qi 'Status: active' <<<"$status"; then
     echo "ufw-active=active"
   else
     echo "ufw-active=inactive"
   fi
-  if printf '%s\n' "$status" | grep -qi 'deny (incoming)'; then
+  if grep -qi 'deny (incoming)' <<<"$status"; then
     echo "ufw-default-deny=deny"
   else
     echo "ufw-default-deny=allow"
   fi
-  if printf '%s\n' "$status" | grep -qE '22/tcp[[:space:]]+ALLOW'; then
+  if grep -qE '22/tcp[[:space:]]+ALLOW' <<<"$status"; then
     echo "ufw-ssh-allow=allow"
   else
     echo "ufw-ssh-allow=deny"
@@ -855,7 +856,7 @@ probe_services() {
 
   local conf
   conf="$(as_root cat "$SMITH_AUTO_UPGRADES_CONF" 2>/dev/null || true)"
-  if printf '%s' "$conf" | grep -q 'APT::Periodic::Unattended-Upgrade "1"'; then
+  if grep -q 'APT::Periodic::Unattended-Upgrade "1"' <<<"$conf"; then
     echo "auto-updates=enabled"
   else
     echo "auto-updates=disabled"

@@ -169,3 +169,74 @@ esac
 exit 0
 `)
 }
+
+// TestScriptProbeReadsAFirewallStatusLongerThanAPipe guards the firewall facts
+// against a false negative that only shows up under load: matching the status
+// text by piping it into `grep -q` lets grep exit on the first line and leaves
+// the writer with a closed pipe, which `set -o pipefail` then reports as a
+// failed match — so an active firewall reads as inactive. A box with many rules
+// makes it reliable rather than occasional, which is what this fake stands in
+// for; the probe must read the status without a pipe.
+func TestScriptProbeReadsAFirewallStatusLongerThanAPipe(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProbeFakeBins(t, binDir)
+	// An active firewall whose rule list is longer than a pipe buffer: the facts
+	// are on the first lines, the bulk after them.
+	writeFakeBin(t, binDir, "ufw", `#!/usr/bin/env bash
+if [ "$1" = "status" ]; then
+  echo "Status: active"
+  echo "Default: deny (incoming), allow (outgoing), disabled (routed)"
+  echo "22/tcp                     ALLOW       Anywhere"
+  for i in $(seq 1 20000); do
+    echo "${i}/tcp                     ALLOW       Anywhere"
+  done
+fi
+exit 0
+`)
+
+	markerPath := filepath.Join(dir, "bootstrap.json")
+	if err := os.WriteFile(markerPath, []byte(`{"schema_version":2,"access_mode":"public","completed_phases":["packages","smith-user"]}`), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	env := append(os.Environ()[:0:0],
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"SMITH_MARKER="+markerPath,
+	)
+	cmd := exec.Command(bash, scriptPath, "probe")
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe run failed: %v\n%s", err, truncate(out))
+	}
+
+	got := string(out)
+	for _, want := range []string{"ufw-active=active", "ufw-default-deny=deny", "ufw-ssh-allow=allow"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("probe output missing %q:\n%s", want, truncate(out))
+		}
+	}
+}
+
+// truncate keeps a failure's probe output readable when the fake emits a rule
+// list far longer than anything worth printing.
+func truncate(out []byte) string {
+	const max = 512
+	if len(out) <= max {
+		return string(out)
+	}
+	return string(out[:max]) + "\n… truncated"
+}
