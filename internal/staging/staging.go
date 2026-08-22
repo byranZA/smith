@@ -63,6 +63,10 @@ const (
 	// boxSubdir is where box-scoped placements are keyed, beside the
 	// repo-scoped ones.
 	boxSubdir = "box"
+	// repoSubdir is where repo-scoped placements are keyed, one directory per
+	// repo. It is a sibling of boxSubdir so a repo named "box" cannot collide
+	// with the box scope.
+	repoSubdir = "repo"
 	// boxHome is the smith user's home on the box, which a box destination's
 	// leading ~/ canonicalizes to.
 	boxHome = "/home/smith"
@@ -114,6 +118,10 @@ type Dir struct {
 type Placement struct {
 	// From is the source reference, resolved operator-side.
 	From string
+	// Repo is the repo whose worktree the file lands in, empty for a
+	// box-scoped placement. It is the scope, and with Destination it is what
+	// the staged path is keyed by.
+	Repo string
 	// Destination is where the file eventually lands, as the blueprint
 	// declared it.
 	Destination string
@@ -156,20 +164,60 @@ func Plan(document []byte, b blueprint.Blueprint) Tree {
 		},
 	}
 	if len(b.Placements) > 0 {
-		tree.Dirs = append(tree.Dirs, Dir{Path: boxDirIn(Root), Mode: placementsMode, Owner: smithOwner})
+		tree.Dirs = append(tree.Dirs, scopeDir(boxDirIn(Root)))
 	}
 	for _, p := range b.Placements {
-		tree.Placements = append(tree.Placements, Placement{
-			From:        p.From,
-			Destination: p.To,
-			File: File{
-				Path:  BoxPlacementPathIn(Root, p.To),
-				Mode:  perms(p.Perms),
-				Owner: smithOwner,
-			},
-		})
+		tree.Placements = append(tree.Placements, planned(p, "", BoxPlacementPathIn(Root, p.To)))
+	}
+	if repoScoped(b) {
+		tree.Dirs = append(tree.Dirs, scopeDir(repoDirIn(Root)))
+	}
+	for _, r := range b.Repos {
+		if len(r.Placements) == 0 {
+			continue
+		}
+		tree.Dirs = append(tree.Dirs, scopeDir(filepath.Join(repoDirIn(Root), r.Name)))
+		for _, p := range r.Placements {
+			tree.Placements = append(tree.Placements, planned(p, r.Name, RepoPlacementPathIn(Root, r.Name, p.To)))
+		}
 	}
 	return tree
+}
+
+// planned is one declared placement as the staged tree carries it: its
+// provenance and scope, and the file its bytes are staged in. The bytes stay
+// empty until Resolve attaches them, because only the operator's machine can
+// read a source reference.
+func planned(p blueprint.Placement, repo, path string) Placement {
+	return Placement{
+		From:        p.From,
+		Repo:        repo,
+		Destination: p.To,
+		File: File{
+			Path:  path,
+			Mode:  perms(p.Perms),
+			Owner: smithOwner,
+		},
+	}
+}
+
+// scopeDir is a directory of the placements tree: smith-owned and 0700, like
+// the placements directory it sits under, so a provisioned secret is readable
+// by the account that consumes it and nothing else.
+func scopeDir(path string) Dir {
+	return Dir{Path: path, Mode: placementsMode, Owner: smithOwner}
+}
+
+// repoScoped reports whether any repo the blueprint declares carries a
+// placement, which is what decides if the repo scope's directory is planned at
+// all.
+func repoScoped(b blueprint.Blueprint) bool {
+	for _, r := range b.Repos {
+		if len(r.Placements) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // BoxPlacementPathIn is where a box placement's bytes are staged under a box
@@ -185,9 +233,26 @@ func BoxPlacementPathIn(root, destination string) string {
 	return filepath.Join(boxDirIn(root), flatten(canonicalBoxDestination(destination)))
 }
 
+// RepoPlacementPathIn is where a repo placement's bytes are staged under a box
+// config directory: the repo scope's directory, then the repo, then the
+// destination flattened into a single name.
+//
+// Like the box-scoped key it is pure, so the writer and the on-box reader
+// derive it the same way. A repo destination is worktree-relative and used as
+// declared — no leading ~/ is expanded, because it names a path inside the
+// worktree rather than a home directory.
+func RepoPlacementPathIn(root, repo, destination string) string {
+	return filepath.Join(repoDirIn(root), repo, flatten(destination))
+}
+
 // boxDirIn is the box scope's directory under a box config directory.
 func boxDirIn(root string) string {
 	return filepath.Join(root, placementsSubdir, boxSubdir)
+}
+
+// repoDirIn is the repo scope's directory under a box config directory.
+func repoDirIn(root string) string {
+	return filepath.Join(root, placementsSubdir, repoSubdir)
 }
 
 // canonicalBoxDestination expands a box destination's leading ~/ to the smith

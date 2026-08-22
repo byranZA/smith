@@ -124,3 +124,100 @@ func TestResolveNamesAReferenceItCannotResolve(t *testing.T) {
 		}
 	}
 }
+
+func TestRepoPlacementPathKeysByRepoAndDestination(t *testing.T) {
+	tests := []struct {
+		name        string
+		repo        string
+		destination string
+		want        string
+	}{
+		{"a worktree-relative destination", "api", ".env", "/etc/smith/placements/repo/api/.env"},
+		{"a nested destination stays one flat key", "api", "config/local.json", "/etc/smith/placements/repo/api/config%2Flocal.json"},
+		{"a percent in the destination is encoded first", "api", "a%2Fb", "/etc/smith/placements/repo/api/a%252Fb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RepoPlacementPathIn(Root, tt.repo, tt.destination); got != tt.want {
+				t.Errorf("RepoPlacementPathIn(%q, %q) = %q, want %q", tt.repo, tt.destination, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRepoPlacementPathExpandsNoTilde(t *testing.T) {
+	got := RepoPlacementPathIn(Root, "api", "~/.npmrc")
+	if want := "/etc/smith/placements/repo/api/~%2F.npmrc"; got != want {
+		t.Errorf("RepoPlacementPathIn(%q, %q) = %q, want the destination used as declared (%q)", "api", "~/.npmrc", got, want)
+	}
+}
+
+func TestRepoPlacementPathSeparatesRepoScopeFromBoxScope(t *testing.T) {
+	if RepoPlacementPathIn(Root, "box", ".env") == BoxPlacementPathIn(Root, ".env") {
+		t.Error("a repo named box keys the same as the box scope, want distinct staged files")
+	}
+}
+
+func TestPlanKeysARepoPlacementWhereTheReaderLooksForIt(t *testing.T) {
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name:       "api",
+		URL:        "git@github.com:acme/api.git",
+		Placements: []blueprint.Placement{{From: "file:/home/op/.env.api", To: ".env"}},
+	}}}
+	tree := Plan([]byte("access: public\n"), b)
+	if len(tree.Placements) != 1 {
+		t.Fatalf("Plan() planned %d placements, want 1", len(tree.Placements))
+	}
+	got := tree.Placements[0]
+	if want := RepoPlacementPathIn(Root, "api", ".env"); got.File.Path != want {
+		t.Errorf("writer staged at %q, reader looks at %q", got.File.Path, want)
+	}
+	if got.Repo != "api" {
+		t.Errorf("placement repo = %q, want the repo it was declared under", got.Repo)
+	}
+	if got.File.Owner != "smith:smith" || got.File.Mode != "0600" {
+		t.Errorf("staged placement is %s %s, want 0600 smith:smith", got.File.Mode, got.File.Owner)
+	}
+}
+
+func TestPlanDeclaresARepoScopedDirectorySmithOwnedAt0700(t *testing.T) {
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name:       "api",
+		URL:        "git@github.com:acme/api.git",
+		Placements: []blueprint.Placement{{From: "env:T", To: ".env"}},
+	}}}
+	tree := Plan(nil, b)
+	want := map[string]bool{"/etc/smith/placements/repo": false, "/etc/smith/placements/repo/api": false}
+	for _, d := range tree.Dirs {
+		if _, ok := want[d.Path]; !ok {
+			continue
+		}
+		want[d.Path] = true
+		if d.Mode != "0700" || d.Owner != "smith:smith" {
+			t.Errorf("%s is %s %s, want 0700 smith:smith", d.Path, d.Mode, d.Owner)
+		}
+	}
+	for path, found := range want {
+		if !found {
+			t.Errorf("Plan() declared dirs %v, want %s among them", tree.Dirs, path)
+		}
+	}
+}
+
+func TestPlanKeepsRepoAndBoxPlacementsOfOneDestinationApart(t *testing.T) {
+	b := blueprint.Blueprint{
+		Placements: []blueprint.Placement{{From: "env:T", To: ".env"}},
+		Repos: []blueprint.Repo{{
+			Name:       "api",
+			URL:        "git@github.com:acme/api.git",
+			Placements: []blueprint.Placement{{From: "env:T", To: ".env"}},
+		}},
+	}
+	tree := Plan(nil, b)
+	if len(tree.Placements) != 2 {
+		t.Fatalf("Plan() planned %d placements, want both scopes", len(tree.Placements))
+	}
+	if tree.Placements[0].File.Path == tree.Placements[1].File.Path {
+		t.Errorf("both scopes staged at %q, want distinct staged files", tree.Placements[0].File.Path)
+	}
+}
