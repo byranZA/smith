@@ -98,6 +98,22 @@ func Read(path string) (Inventory, Skew, error) {
 	return inv, skew, nil
 }
 
+// LoadFor returns the inventory the value arg is resolved against. A value
+// containing "@" is a literal ssh target, so nothing is read and an empty
+// inventory is returned: an absent, unreadable or malformed boxes.json can
+// never stand between the operator and a box they addressed directly. Any
+// other value is looked up, so the inventory at path is read as it stands.
+//
+// It is the read half of the rule Resolve decides — both halves live here, so
+// a verb gets them by calling this and Resolve rather than by re-deriving when
+// the file may be skipped.
+func LoadFor(path, arg string) (Inventory, Skew, error) {
+	if literal(arg) {
+		return Empty(), SkewNone, nil
+	}
+	return Read(path)
+}
+
 // Skew classifies a decoded inventory's schema_version against the version this
 // build of smith understands. It mirrors the marker's classification rather than
 // inventing a second vocabulary for the same idea.

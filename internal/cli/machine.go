@@ -297,19 +297,15 @@ func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	}
 }
 
-// lookupInventory reads the box inventory a verb resolves its argument
-// against, and reads nothing at all when the argument contains "@": a literal
-// target is never looked up, so an unreadable inventory cannot stand between
-// the operator and a box they addressed directly.
+// lookupInventory locates the config home and returns the inventory a verb
+// resolves arg against, leaving to the inventory package whether the file is
+// read at all.
 func lookupInventory(resolve homeResolver, arg string) (inventory.Inventory, error) {
-	if strings.Contains(arg, "@") {
-		return inventory.Empty(), nil
-	}
 	home, err := resolve()
 	if err != nil {
 		return inventory.Empty(), err
 	}
-	inv, _, err := inventory.Read(home.InventoryPath())
+	inv, _, err := inventory.LoadFor(home.InventoryPath(), arg)
 	if err != nil {
 		return inventory.Empty(), err
 	}

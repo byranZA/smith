@@ -33,7 +33,7 @@ func Resolve(inv Inventory, arg string) string {
 // one. A value containing "@" is a literal target, so it is never looked up
 // even when a box is registered under that exact name.
 func Lookup(inv Inventory, arg string) (string, bool) {
-	if strings.Contains(arg, "@") {
+	if literal(arg) {
 		return "", false
 	}
 	box, ok := inv.Boxes[arg]
@@ -42,6 +42,11 @@ func Lookup(inv Inventory, arg string) (string, bool) {
 	}
 	return box.Target, true
 }
+
+// literal reports whether arg is an ssh target the operator wrote out in full.
+// It is the "@" of "the \"@\" decides", written once so every half of the rule
+// asks the same question.
+func literal(arg string) bool { return strings.Contains(arg, "@") }
 
 // ConnectHint returns what to tell an operator whose connection to arg failed,
 // or "" when there is nothing worth saying — a literal target and a registered
@@ -52,7 +57,7 @@ func Lookup(inv Inventory, arg string) (string, bool) {
 // user. The hint names both fixes — the address that would have worked, and
 // the command that registers the box so the name works from now on.
 func ConnectHint(inv Inventory, arg string) string {
-	if _, ok := Lookup(inv, arg); ok || strings.Contains(arg, "@") {
+	if _, ok := Lookup(inv, arg); ok || literal(arg) {
 		return ""
 	}
 	return fmt.Sprintf(`%s is not a registered box, so smith handed it to ssh as written.

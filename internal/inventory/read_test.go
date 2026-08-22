@@ -61,3 +61,41 @@ func write(t *testing.T, path, content string) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }
+
+func TestLoadForSkipsTheFileEntirelyForALiteralTarget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boxes.json")
+	write(t, path, "{not json")
+
+	inv, skew, err := LoadFor(path, "smith@203.0.113.10")
+	if err != nil {
+		t.Fatalf("LoadFor() err = %v, want nil — a literal target is never looked up", err)
+	}
+	if len(inv.Boxes) != 0 {
+		t.Errorf("LoadFor() boxes = %v, want none", inv.Boxes)
+	}
+	if skew != SkewNone {
+		t.Errorf("LoadFor() skew = %v, want SkewNone", skew)
+	}
+}
+
+func TestLoadForReadsTheInventoryForABareValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boxes.json")
+	write(t, path, `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
+
+	inv, _, err := LoadFor(path, "dev")
+	if err != nil {
+		t.Fatalf("LoadFor() err = %v, want nil", err)
+	}
+	if got := Resolve(inv, "dev"); got != "smith@100.92.14.7" {
+		t.Errorf("Resolve after LoadFor = %q, want %q", got, "smith@100.92.14.7")
+	}
+}
+
+func TestLoadForRefusesAMalformedInventoryForABareValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boxes.json")
+	write(t, path, "{not json")
+
+	if _, _, err := LoadFor(path, "dev"); err == nil {
+		t.Fatal("LoadFor() err = nil, want an error for a malformed inventory")
+	}
+}
