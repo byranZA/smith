@@ -69,37 +69,3 @@ func Attach(ctx context.Context, env Env, name string, mode Mode) error {
 	}
 	return nil
 }
-
-// find locates the session of that name among the worktrees the bare repos
-// hold. The registry is asked rather than the name being taken apart: the
-// derivation is lossy, so the repo and the branch behind a name are only ever
-// recoverable from git.
-func find(ctx context.Context, env Env, name string) (placed, error) {
-	worktrees, err := worktreesOf(ctx, env)
-	if err != nil {
-		return placed{}, err
-	}
-	found, ok := lookup(worktrees, name)
-	if !ok {
-		return placed{}, unknownSession(name)
-	}
-	return found, nil
-}
-
-// lookup picks the worktree listed under that name out of an enumeration
-// already in hand, which is what a verb addressing several names at once needs
-// so it reads the registry once rather than once per name.
-func lookup(worktrees []placed, name string) (placed, bool) {
-	for _, p := range worktrees {
-		if listedName(p.repo.Name, p.wt) == name {
-			return p, true
-		}
-	}
-	return placed{}, false
-}
-
-// unknownSession is the refusal for a name no session holds. It is one string
-// wherever a name is resolved, so a typo reads the same at every verb.
-func unknownSession(name string) error {
-	return fmt.Errorf("no session named %q exists on this box: `smith session list` reports the sessions there are", name)
-}
