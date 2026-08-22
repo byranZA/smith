@@ -248,6 +248,29 @@ worktree-relative and materializes on session start, at top level it is an absol
 materializes at `machine setup`. File-level only in v1.
 _Avoid_: template, sync, copy.
 
+**Toolchain selection**:
+How a box gets its runtimes: `apt` installs the unversioned OS substrate, **`mise`** ensures the
+blueprint's version-pinned `tools`. smith declares versions by writing config files it **fully
+owns** and then running `mise install` — it never runs `mise use`, which would write into the
+operator's own `~/.config/mise/config.toml`. Box-level `tools` and `env` land in
+`~/.config/mise/conf.d/smith.toml`; per-repo overrides land in `~/workspace/<repo>/mise.toml`,
+**above every worktree**, so smith never dirties a checkout and a generated file holding resolved
+secret values cannot be committed by accident. Invocation is **`mise exec`, never `mise
+activate`** — activate does not fire in the non-interactive and daemon-started shells smith and
+agents run in.
+_Avoid_: version manager, runtime install.
+
+**Nearer wins**:
+The precedence rule over toolchain config: the more specific declaration outranks smith's
+generated one, in both directions. A `mise.toml` committed *inside* a repo beats the per-repo file
+smith generates above the worktrees — the repo knows its own toolchain better than the blueprint
+does. And because mise reads `conf.d/*.toml` at **lower** precedence than `~/.config/mise/config.toml`,
+a hand-written global config on the box outranks smith's fragment. Both are deliberate: the
+operator can always override without fighting a generated file. It is the one place an on-box file
+silently outranks the blueprint, so a surprise about which version is active starts here
+([issue #123](https://github.com/byranZA/smith/issues/123)).
+_Avoid_: override, merge (nothing is merged — each file is whole-file owned).
+
 **Execution**:
 The unit a branch and worktree correspond to: 1..N tasks run sequentially on one branch, commits
 landing directly on it. A single task is an execution of length one. Names are derived by whatever
