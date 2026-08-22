@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byranZA/smith/internal/extractpath"
+	"github.com/byranZA/smith/internal/provider/extractpath"
 )
 
 // decode reads a JSON document the way smith does — numbers preserved exactly,
@@ -40,22 +40,10 @@ func TestLookupReadsAValue(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
-			if text := toString(got); text != tt.want {
+			if text := extractpath.Text(got); text != tt.want {
 				t.Errorf("Lookup(%q) = %q, want %q", tt.path, text, tt.want)
 			}
 		})
-	}
-}
-
-// toString renders a looked-up value the way a test asserts on it.
-func toString(v any) string {
-	switch t := v.(type) {
-	case string:
-		return t
-	case json.Number:
-		return t.String()
-	default:
-		return ""
 	}
 }
 
@@ -119,7 +107,7 @@ func TestLookupSelectsEveryElementOfAnArray(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
-			if text := toString(got); text != tt.want {
+			if text := extractpath.Text(got); text != tt.want {
 				t.Errorf("Lookup(%q) = %q, want %q", tt.path, text, tt.want)
 			}
 		})
@@ -146,7 +134,7 @@ func TestLookupPredicateSelectsByFieldValueNotByPosition(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
-			if text := toString(got); text != tt.want {
+			if text := extractpath.Text(got); text != tt.want {
 				t.Errorf("Lookup(%q) = %q, want %q", tt.path, text, tt.want)
 			}
 		})
@@ -173,7 +161,7 @@ func TestLookupLocatesTheRecordInWhateverEnvelopeTheProviderUses(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Lookup(\"id\") err = %v", err)
 			}
-			if text := toString(got); text != tt.want {
+			if text := extractpath.Text(got); text != tt.want {
 				t.Errorf("id of %s = %q, want %q", tt.fixture, text, tt.want)
 			}
 		})
@@ -261,8 +249,32 @@ func TestLookupReadsEveryMarkerFormTheAdaptersUse(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
-			if text := toString(got); text != tt.want {
+			if text := extractpath.Text(got); text != tt.want {
 				t.Errorf("Lookup(%q) = %q, want %q", tt.path, text, tt.want)
+			}
+		})
+	}
+}
+
+// Text is the one rendering of an extracted scalar: what a predicate compares
+// against and what the canonical box record holds are the same string, so an
+// id that matches "id=593069736" is also the id smith stores.
+func TestTextRendersEveryScalarTheGrammarYields(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"a string", "dev", "dev"},
+		{"an integer id", json.Number("593069736"), "593069736"},
+		{"a boolean", true, "true"},
+		{"a null", nil, ""},
+		{"a collection", []any{"a"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractpath.Text(tt.value); got != tt.want {
+				t.Errorf("Text(%v) = %q, want %q", tt.value, got, tt.want)
 			}
 		})
 	}

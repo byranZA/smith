@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/byranZA/smith/internal/extractpath"
+	"github.com/byranZA/smith/internal/provider/extractpath"
 )
 
 // How long the address poll waits between attempts, and how long it waits in
@@ -115,14 +115,14 @@ func listed(ctx context.Context, runner Runner, adapter Adapter, id string) (Box
 			// and another entry still can be.
 			continue
 		}
-		if text(found) != id {
+		if extractpath.Text(found) != id {
 			continue
 		}
 		ip, err := extractpath.Lookup(record, adapter.Extract.IP)
 		if err != nil {
 			return Box{}, fmt.Errorf("provider adapter's ip path: %w", err)
 		}
-		return Box{ID: id, IP: text(ip)}, nil
+		return Box{ID: id, IP: extractpath.Text(ip)}, nil
 	}
 	return Box{}, nil
 }

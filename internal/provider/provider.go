@@ -25,7 +25,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/byranZA/smith/internal/extractpath"
+	"github.com/byranZA/smith/internal/provider/extractpath"
 )
 
 // The placeholders smith substitutes into a template. These four are the whole
@@ -387,21 +387,5 @@ func extractRecord(doc any, paths Extract) (Box, error) {
 	if err != nil {
 		return Box{}, fmt.Errorf("provider adapter's ip path: %w", err)
 	}
-	return Box{ID: text(id), IP: text(ip)}, nil
-}
-
-// text renders an extracted JSON value as the string the canonical record
-// holds. A null is the empty string: a provider that has not assigned an
-// address yet reports null, which is an absent value rather than a bad one.
-func text(v any) string {
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case json.Number:
-		return t.String()
-	default:
-		return fmt.Sprint(t)
-	}
+	return Box{ID: extractpath.Text(id), IP: extractpath.Text(ip)}, nil
 }

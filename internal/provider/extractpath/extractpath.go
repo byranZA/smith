@@ -1,6 +1,9 @@
 // Package extractpath reads one value out of a decoded JSON document by the
 // extractor path an operator writes in a provider adapter.
 //
+// It is package provider's own grammar rather than shared infrastructure —
+// nothing outside an adapter reads a path — so it lives under provider.
+//
 // It exists so that grammar has one implementation and one meaning. It is the
 // part of the adapter most likely to grow, and the part where a silently wrong answer is
 // most damaging: an extractor that quietly yields a private address instead of
@@ -162,13 +165,17 @@ func (f filter) selects(element any) bool {
 	if !ok {
 		return false
 	}
-	return text(value) == f.value
+	return Text(value) == f.value
 }
 
-// text renders a decoded JSON scalar the way a predicate compares it. Numbers
-// keep their literal form, so "id=593069736" matches the document's own digits
-// rather than a float's rendering of them.
-func text(value any) string {
+// Text renders a looked-up JSON scalar as the string smith holds for it — the
+// same rendering a predicate compares against, so a box whose id matches
+// "id=593069736" is stored under those same digits. Numbers keep their literal
+// form rather than a float's rendering of them, and anything that is not a
+// scalar — a null, an object, an array — is the empty string, since a provider
+// that has not assigned an address yet reports null, which is an absent value
+// rather than a bad one.
+func Text(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v
