@@ -278,7 +278,7 @@ func commit(t *testing.T, dir, message string) {
 	t.Helper()
 	writeFile(t, filepath.Join(dir, message+".txt"), message+"\n")
 	git(t, dir, "add", message+".txt")
-	git(t, dir, "-c", "user.email=smith@example.com", "-c", "user.name=smith", "commit", "-m", message)
+	git(t, dir, "commit", "-m", message)
 }
 
 // gitFails runs a real git command and returns the error it failed with, so a

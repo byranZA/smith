@@ -86,6 +86,11 @@ func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 		t.Fatalf("make repo directory: %v", err)
 	}
 	git(t, src, "clone", "--bare", src, bare)
+	// A bare clone carries none of the source's config, and the worktrees cut
+	// from it are where the tests commit — so the identity lives here, not in
+	// whatever ambient git config the machine running the tests happens to have.
+	git(t, bare, "config", "user.email", "smith@example.com")
+	git(t, bare, "config", "user.name", "smith")
 }
 
 // git runs a real git command in dir and fails the test if it does not.

@@ -334,7 +334,7 @@ func TestRemoveReadsAnIgnoredFileAsClean(t *testing.T) {
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
 	writeFile(t, filepath.Join(dir, ".gitignore"), "ignored.txt\n")
 	git(t, dir, "add", ".gitignore")
-	git(t, dir, "-c", "user.email=smith@example.com", "-c", "user.name=smith", "commit", "-m", "ignore")
+	git(t, dir, "commit", "-m", "ignore")
 	writeFile(t, filepath.Join(dir, "ignored.txt"), "noise\n")
 	stop(t, env, started.Name)
 
