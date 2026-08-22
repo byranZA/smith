@@ -13,14 +13,16 @@
 // quietly ignores what the operator wrote is the worst available failure. On
 // top of the strict structural pass sit the semantic rules that catch a
 // document parsing cleanly while meaning nothing: a repo with no remote, two
-// repos that would collide in the workspace, and a field whose value is
-// outside the set smith recognises.
+// repos that would collide in the workspace, a field whose value is outside
+// the set smith recognises, and a schema field name misindented into one of
+// the open maps, where it becomes a phantom tool or environment variable.
 package blueprint
 
 import (
 	"bytes"
 	"errors"
 	"io"
+	"sort"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -172,8 +174,14 @@ func Parse(data []byte) (Blueprint, error) {
 		structural = schemaFindings(schema, indexPaths(&doc))
 	}
 
+	// The reserved-name rule reads the document rather than the decoded
+	// blueprint, so its findings carry a line and are merged with the
+	// structural ones by position.
+	positioned := append(structural, reservedFindings(&doc)...)
+	sort.SliceStable(positioned, func(i, j int) bool { return positioned[i].Line < positioned[j].Line })
+
 	b = withDefaults(b)
-	if report := append(structural, validate(b)...); len(report) > 0 {
+	if report := append(positioned, validate(b)...); len(report) > 0 {
 		return Blueprint{}, &ValidationError{Findings: report}
 	}
 	return b, nil
