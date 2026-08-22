@@ -2,8 +2,11 @@ package connection
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"syscall"
 )
 
 // SystemExec runs real local processes via os/exec. It is the production Exec
@@ -26,6 +29,25 @@ func (SystemExec) Run(ctx context.Context, name string, args []string, stdin io.
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return err //nolint:wrapcheck // exit error is classified by the caller
+	}
+	return nil
+}
+
+// Exec replaces smith's own process with name run with args, searching PATH
+// for the binary the way a shell does and carrying smith's environment over.
+//
+// It is how smith hands the terminal to an interactive program: with no smith
+// process left in the middle, the terminal talks to that program directly, so
+// window resizes and signals reach it rather than being copied to it. It
+// returns only when the replacement did not happen, because on success there
+// is no longer a caller to return to.
+func (SystemExec) Exec(name string, args []string) error {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return fmt.Errorf("find %s on PATH: %w", name, err)
+	}
+	if err := syscall.Exec(path, append([]string{name}, args...), os.Environ()); err != nil {
+		return fmt.Errorf("replace smith with %s: %w", name, err)
 	}
 	return nil
 }

@@ -35,7 +35,7 @@ func TestSessionStartStandsUpAWorktreeAndATmuxSession(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -63,7 +63,7 @@ func TestSessionStartRefusesAnUndeclaredRepo(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
 	cmd.SetArgs([]string{"start", "--repo", "ghost", "--branch", "spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -91,7 +91,7 @@ func TestSessionStartCutsFromTheRequestedBase(t *testing.T) {
 	bare := filepath.Join(workspace, "smith", "repo.git")
 	runGit(t, bare, "branch", "release-2", "main")
 	moveOn(t, bare, "main")
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -117,7 +117,7 @@ func TestSessionStartRefusesABaseAgainstAnExistingBranch(t *testing.T) {
 	runGit(t, bare, "branch", "release-2", "main")
 	runGit(t, bare, "branch", "spec-42", "main")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -211,6 +211,140 @@ func gitStdout(t *testing.T, dir string, args ...string) string {
 
 var _ session.Runner = (*fakeTmux)(nil)
 
+// fakeExec stands in for the exec boundary: a real exec would replace the test
+// process, so the argv smith would have handed the kernel is recorded instead.
+type fakeExec struct {
+	calls [][]string
+}
+
+func (f *fakeExec) Exec(name string, args []string) error {
+	f.calls = append(f.calls, append([]string{name}, args...))
+	return nil
+}
+
+var _ session.Execer = (*fakeExec)(nil)
+
+// TestSessionAttachObservesByDefault drives the assembled command the way an
+// operator on the box does: attach with no flag hands the terminal to tmux
+// read-only.
+func TestSessionAttachObservesByDefault(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	standUp(t, resolve)
+	execer := &fakeExec{}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd.SetArgs([]string{"attach", "smith-spec-42"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	want := []string{"tmux", "attach-session", "-r", "-t", "smith/smith-spec-42"}
+	if len(execer.calls) != 1 || strings.Join(execer.calls[0], " ") != strings.Join(want, " ") {
+		t.Fatalf("exec argv = %v, want one %v", execer.calls, want)
+	}
+}
+
+// TestSessionAttachInteractsOnRequest locks in the flag that asks for the
+// writable access level on the same tmux session.
+func TestSessionAttachInteractsOnRequest(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	standUp(t, resolve)
+	execer := &fakeExec{}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd.SetArgs([]string{"attach", "smith-spec-42", "--interact"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v", err)
+	}
+
+	want := []string{"tmux", "attach-session", "-t", "smith/smith-spec-42"}
+	if len(execer.calls) != 1 || strings.Join(execer.calls[0], " ") != strings.Join(want, " ") {
+		t.Fatalf("exec argv = %v, want one %v", execer.calls, want)
+	}
+}
+
+// TestSessionAttachRefusesAnUnknownName locks in the refusal exit path: the
+// command reports on stderr, exits non-zero, and connects to nothing.
+func TestSessionAttachRefusesAnUnknownName(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	execer := &fakeExec{}
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd.SetArgs([]string{"attach", "smith-ghost"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code == 0 {
+		t.Fatalf("exit code = 0, want non-zero for an unknown session name")
+	}
+	if !strings.Contains(errOut.String(), "smith-ghost") {
+		t.Errorf("stderr = %q, want it to name what was asked for", errOut.String())
+	}
+	if len(execer.calls) != 0 {
+		t.Errorf("exec argv = %v, want nothing connected to", execer.calls)
+	}
+}
+
+// TestSessionStartConnectsWritableUnlessDetached locks in the connect half of
+// start: standing a session up and being put in it is one command, and
+// --detach is the flag that opts out of it.
+func TestSessionStartConnectsWritableUnlessDetached(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	execer := &fakeExec{}
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, execer)
+	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	want := []string{"tmux", "attach-session", "-t", "smith/smith-spec-42"}
+	if len(execer.calls) != 1 || strings.Join(execer.calls[0], " ") != strings.Join(want, " ") {
+		t.Fatalf("exec argv = %v, want one %v", execer.calls, want)
+	}
+}
+
+// TestSessionAttachIsUnderTheRootCommand locks in the surface an operator on
+// the box types.
+func TestSessionAttachIsUnderTheRootCommand(t *testing.T) {
+	found, _, err := newRootCmd().Find([]string{"session", "attach"})
+	if err != nil {
+		t.Fatalf("Find(session attach) err = %v", err)
+	}
+	if found.Name() != "attach" {
+		t.Errorf("Find(session attach) = %q, want the attach command", found.Name())
+	}
+}
+
+// standUp stands a session up for branch spec-42 of repo smith, detached, so a
+// test of another verb has one to address.
+func standUp(t *testing.T, resolve boxResolver) {
+	t.Helper()
+	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
+	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
+	start.SetOut(io.Discard)
+	start.SetErr(io.Discard)
+	if err := start.Execute(); err != nil {
+		t.Fatalf("session start err = %v", err)
+	}
+}
+
 // TestSessionListReportsTheSessionsOnTheBox drives the assembled command the
 // way an operator on the box does: a session stood up a moment ago is listed
 // under the name the other verbs take, with the table's four columns and the
@@ -219,7 +353,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
+	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "smith/spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
@@ -227,7 +361,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 		t.Fatalf("session start err = %v", err)
 	}
 
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -253,7 +387,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 func TestSessionListSaysSoWhenThereIsNothingToList(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -288,14 +422,14 @@ func TestSessionListExitsZeroWithUnpushedWork(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
+	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
 	if err := start.Execute(); err != nil {
 		t.Fatalf("session start err = %v", err)
 	}
-	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{}, &fakeExec{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -319,14 +453,14 @@ func TestSessionListSubtractsTheBlueprintsPlacements(t *testing.T) {
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBoxPlacing(workspace, "smith", ".env")
 	root := stageRepoPlacement(t, "smith", ".env", "TOKEN=1\n")
-	start := newSessionCmd(resolve, root, connection.System(), &fakeTmux{})
+	start := newSessionCmd(resolve, root, connection.System(), &fakeTmux{}, &fakeExec{})
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
 	if err := start.Execute(); err != nil {
 		t.Fatalf("session start err = %v", err)
 	}
-	cmd := newSessionCmd(resolve, root, connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolve, root, connection.System(), &fakeTmux{}, &fakeExec{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -367,7 +501,7 @@ func TestSessionStopEndsTheTmuxSessionAndKeepsTheWorktree(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux, &fakeExec{})
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -434,7 +568,7 @@ func TestSessionStartPlacesTheBlueprintsFilesInTheWorktree(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	root := stageRepoPlacement(t, "smith", "config/.env", "TOKEN=staged\n")
-	cmd := newSessionCmd(resolvedBoxPlacing(workspace, "smith", "config/.env"), root, connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolvedBoxPlacing(workspace, "smith", "config/.env"), root, connection.System(), &fakeTmux{}, &fakeExec{})
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)

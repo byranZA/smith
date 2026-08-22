@@ -79,6 +79,9 @@ type Env struct {
 	Git Runner
 	// Tmux runs tmux.
 	Tmux Runner
+	// Exec replaces smith's own process, which is how attach hands the
+	// terminal to tmux.
+	Exec Execer
 	// Placer materializes a repo's declared placements into a worktree. A nil
 	// Placer places nothing, which is what a caller with no staged tree behind
 	// it has.

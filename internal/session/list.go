@@ -29,7 +29,52 @@ type Filter struct{}
 // the listing, because list answers with what is on the box and there is
 // nothing on the box to answer with.
 func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
+	worktrees, err := worktreesOf(ctx, env)
+	if err != nil {
+		return nil, err
+	}
 	var sessions []Session
+	for _, p := range worktrees {
+		name := listedName(p.repo.Name, p.wt)
+		dirty, unpushed, err := workState(ctx, env.Git, p.wt, p.repo.Placements)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, Session{
+			Name:     name,
+			Repo:     p.repo.Name,
+			Branch:   p.wt.branch,
+			Live:     isLive(ctx, env.Tmux, name),
+			Dirty:    dirty,
+			Unpushed: unpushed,
+		})
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].Repo != sessions[j].Repo {
+			return sessions[i].Repo < sessions[j].Repo
+		}
+		return sessions[i].Branch < sessions[j].Branch
+	})
+	return sessions, nil
+}
+
+// placed is one worktree together with the repo whose registry holds it, which
+// is what every verb that addresses a session by name needs: the name alone is
+// lossy, and the repo is half of what it was derived from.
+type placed struct {
+	repo Repo
+	wt   worktree
+}
+
+// worktreesOf enumerates the worktrees the box's bare repos hold, which are
+// the sessions on it. It is the one enumeration every verb that works from a
+// name shares, so no two of them can disagree about what a session is.
+//
+// A declared repo the workspace stage has not cloned yet contributes nothing
+// rather than failing the enumeration, because there is nothing on the box to
+// answer with.
+func worktreesOf(ctx context.Context, env Env) ([]placed, error) {
+	var found []placed
 	for _, repo := range env.Repos {
 		bare := filepath.Join(env.Workspace, repo.Name, bareDir)
 		if _, err := os.Stat(bare); err != nil {
@@ -43,28 +88,10 @@ func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
 			return nil, fmt.Errorf("list the worktrees of repo %q: %w", repo.Name, err)
 		}
 		for _, wt := range worktrees {
-			name := listedName(repo.Name, wt)
-			dirty, unpushed, err := workState(ctx, env.Git, wt, repo.Placements)
-			if err != nil {
-				return nil, err
-			}
-			sessions = append(sessions, Session{
-				Name:     name,
-				Repo:     repo.Name,
-				Branch:   wt.branch,
-				Live:     isLive(ctx, env.Tmux, name),
-				Dirty:    dirty,
-				Unpushed: unpushed,
-			})
+			found = append(found, placed{repo: repo, wt: wt})
 		}
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		if sessions[i].Repo != sessions[j].Repo {
-			return sessions[i].Repo < sessions[j].Repo
-		}
-		return sessions[i].Branch < sessions[j].Branch
-	})
-	return sessions, nil
+	return found, nil
 }
 
 // worktree is one entry of a bare repo's worktree registry: where the checkout

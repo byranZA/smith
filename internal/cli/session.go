@@ -38,19 +38,21 @@ func stagedBoxConfig() (config.Resolved, error) {
 
 // newSessionCmd builds `smith session` and its subcommands, reading the box's
 // staged configuration through resolve and driving the box through the git and
-// tmux runners. Placements are materialized from the box state directory at
+// tmux runners. connect is the exec boundary the connecting verbs cross to
+// hand the operator's terminal to tmux. Placements are materialized from the box state directory at
 // root — /etc/smith on a real box — which is passed in rather than reached for
 // so a test drives the real command against a staged tree of its own.
 //
 // The verbs run against the local machine: on a provisioned box smith is on
 // the operator's PATH, so an operator who has connected to the box gets the
 // same surface a relay will later render for them from their laptop.
-func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
+func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner, connect session.Execer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session",
 		Short: "Work on a branch in its own worktree and tmux session",
 	}
-	cmd.AddCommand(newSessionStartCmd(resolve, root, git, tmux))
+	cmd.AddCommand(newSessionStartCmd(resolve, root, git, tmux, connect))
+	cmd.AddCommand(newSessionAttachCmd(resolve, root, git, tmux, connect))
 	cmd.AddCommand(newSessionListCmd(resolve, root, git, tmux))
 	cmd.AddCommand(newSessionStopCmd(resolve, root, git, tmux))
 	return cmd
@@ -73,7 +75,7 @@ func newSessionListCmd(resolve boxResolver, root string, git, tmux session.Runne
 			if err != nil {
 				return err
 			}
-			env, err := sessionEnv(resolved, root, git, tmux)
+			env, err := sessionEnv(resolved, root, git, tmux, nil)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -96,11 +98,10 @@ func newSessionListCmd(resolve boxResolver, root string, git, tmux session.Runne
 // creates a worktree for it below the repo's worktrees directory, and launches
 // a tmux session in that worktree.
 //
-// It stands the session up and returns without connecting to it, which is what
-// --detach asks for and, for now, all start does: connecting is a later slice,
-// and a verb that always detaches is the one a caller with no human present
-// can drive.
-func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
+// It then puts the operator in that session writable, because start is the
+// verb of someone who is there to work. --detach opts out of that half and
+// returns instead, which is what a caller with no human present drives.
+func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runner, connect session.Execer) *cobra.Command {
 	var repo, branch, base string
 	var detach bool
 	cmd := &cobra.Command{
@@ -115,7 +116,7 @@ func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runn
 			if err != nil {
 				return err
 			}
-			env, err := sessionEnv(resolved, root, git, tmux)
+			env, err := sessionEnv(resolved, root, git, tmux, connect)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -123,13 +124,56 @@ func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runn
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			return writeStarted(cmd, started)
+			if detach {
+				return writeStarted(cmd, started)
+			}
+			if err := session.Attach(cmd.Context(), env, started.Name, session.Interact); err != nil {
+				return reportInvalid(cmd, err)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "the declared repo to cut the worktree from")
 	cmd.Flags().StringVar(&branch, "branch", "", "the branch to work on, cut from the base when it is new")
 	cmd.Flags().StringVar(&base, "base", "", "the ref a new branch is cut from; refused against a branch that already exists")
-	cmd.Flags().BoolVar(&detach, "detach", false, "stand the session up without connecting to it, which is what start does either way for now")
+	cmd.Flags().BoolVar(&detach, "detach", false, "stand the session up without connecting to it")
+	return cmd
+}
+
+// newSessionAttachCmd builds `smith session attach <name> [--interact]`. It
+// hands the operator's terminal to the session's tmux session — read-only
+// unless --interact is given, because an operator attaching may be there to
+// watch an agent work rather than to type into its pane.
+//
+// smith execs into tmux, so this command does not return: what the operator
+// sees afterwards is tmux itself, and disconnecting leaves the session
+// running.
+func newSessionAttachCmd(resolve boxResolver, root string, git, tmux session.Runner, connect session.Execer) *cobra.Command {
+	var interact bool
+	cmd := &cobra.Command{
+		Use:   "attach <name>",
+		Short: "Connect a terminal to a session, read-only unless asked to interact",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolved, err := resolve()
+			if err != nil {
+				return err
+			}
+			env, err := sessionEnv(resolved, root, git, tmux, connect)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			mode := session.Observe
+			if interact {
+				mode = session.Interact
+			}
+			if err := session.Attach(cmd.Context(), env, args[0], mode); err != nil {
+				return reportInvalid(cmd, err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&interact, "interact", false, "connect writable rather than read-only")
 	return cmd
 }
 
@@ -149,7 +193,7 @@ func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runne
 			if err != nil {
 				return err
 			}
-			env, err := sessionEnv(resolved, root, git, tmux)
+			env, err := sessionEnv(resolved, root, git, tmux, nil)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -168,7 +212,7 @@ func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runne
 // sessionEnv turns the box's resolved configuration into what a session verb
 // runs against: an absolute workspace root and the repos the blueprint
 // declares, paired with the commands smith drives the box with.
-func sessionEnv(resolved config.Resolved, root string, git, tmux session.Runner) (session.Env, error) {
+func sessionEnv(resolved config.Resolved, root string, git, tmux session.Runner, connect session.Execer) (session.Env, error) {
 	workspace, err := boxPath(resolved.Workspace.Value)
 	if err != nil {
 		return session.Env{}, err
@@ -178,6 +222,7 @@ func sessionEnv(resolved config.Resolved, root string, git, tmux session.Runner)
 		Repos:     declaredRepos(resolved.Repos),
 		Git:       git,
 		Tmux:      tmux,
+		Exec:      connect,
 		Placer:    stagedPlacer{root: root, repos: resolved.Repos},
 	}, nil
 }
