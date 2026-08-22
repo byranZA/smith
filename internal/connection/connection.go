@@ -77,6 +77,15 @@ func (s *SSH) run(ctx context.Context, remoteCmd string, stdin io.Reader, stdout
 	return nil
 }
 
+// TerminalArgs renders the ssh argv that runs remoteCmd on target with a TTY
+// requested. It is for a caller that replaces its own process with ssh — the
+// terminal then talks to the remote program directly, so resizes and signals
+// reach it rather than being copied to it — which is why the argv is returned
+// rather than run, and why it takes no Exec to run it through.
+func TerminalArgs(target, remoteCmd string) []string {
+	return append(append([]string{}, defaultSSHOptions...), "-t", target, remoteCmd)
+}
+
 // Copy sends the local file at localPath to remotePath on the box with scp.
 func (s *SSH) Copy(ctx context.Context, localPath, remotePath string) error {
 	args := append(append([]string{}, defaultSSHOptions...), localPath, s.target+":"+remotePath)

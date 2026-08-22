@@ -1,0 +1,294 @@
+package session_test
+
+import (
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/session"
+)
+
+// tmuxServer stands in for a tmux server, which no test may depend on: it
+// remembers the sessions new-session created and answers has-session from
+// that, so a test can drive the live/stopped probe the way the box does.
+type tmuxServer struct {
+	live  map[string]bool
+	calls [][]string
+}
+
+func (s *tmuxServer) Run(_ context.Context, _ string, args []string, _ io.Reader, _, _ io.Writer) error {
+	if s.live == nil {
+		s.live = map[string]bool{}
+	}
+	s.calls = append(s.calls, args)
+	switch {
+	case len(args) > 0 && args[0] == "new-session":
+		s.live[target(args)] = true
+		return nil
+	case len(args) > 0 && args[0] == "has-session":
+		if s.live[target(args)] {
+			return nil
+		}
+		return errNoSession
+	case len(args) > 0 && args[0] == "kill-session":
+		if !s.live[target(args)] {
+			return errNoSession
+		}
+		delete(s.live, target(args))
+		return nil
+	default:
+		return nil
+	}
+}
+
+// ran counts the tmux commands of that verb the fake was handed, which is how
+// a test asserts that a path created nothing.
+func (s *tmuxServer) ran(verb string) int {
+	var n int
+	for _, args := range s.calls {
+		if len(args) > 0 && args[0] == verb {
+			n++
+		}
+	}
+	return n
+}
+
+// kill forgets a tmux session the way a tmux server dying outside smith does.
+func (s *tmuxServer) kill(name string) {
+	delete(s.live, name)
+}
+
+// target returns the -t/-s value in a tmux argv.
+func target(args []string) string {
+	for i, a := range args {
+		if (a == "-t" || a == "-s") && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// errNoSession is what tmux exiting non-zero on has-session looks like here.
+var errNoSession = errNoSessionType("no server running")
+
+type errNoSessionType string
+
+func (e errNoSessionType) Error() string { return string(e) }
+
+// TestListReportsAStartedSessionWithItsTrueBranch locks in that the registry
+// is the bare repo: the name is the sanitized one the other verbs take, and
+// the branch comes back as git holds it rather than as the name spells it.
+func TestListReportsAStartedSessionWithItsTrueBranch(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "smith/spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	got, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	// The bare repo the fixture clones has no remote-tracking refs, so the one
+	// commit the branch carries is on no remote and counts as unpushed.
+	want := []session.Session{{Name: "smith-smith-spec-42", Repo: "smith", Branch: "smith/spec-42", Live: true, Unpushed: 1}}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Errorf("List() = %+v, want %+v", got, want)
+	}
+}
+
+// TestListProbesTmuxForEveryCall locks in that running state is probed rather
+// than remembered: a tmux session that dies outside smith lists as stopped.
+func TestListProbesTmuxForEveryCall(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+	}
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+	tmux.kill(session.TmuxSession("smith-spec-42"))
+
+	got, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("List() = %+v, want one session", got)
+	}
+	if got[0].Live {
+		t.Errorf("List() reported %q live, want stopped once its tmux session is gone", got[0].Name)
+	}
+}
+
+// TestListIgnoresADirectoryGitDoesNotKnowAbout locks in that debris under the
+// worktrees directory is not a session: inventing a row for it would make list
+// disagree with rm.
+func TestListIgnoresADirectoryGitDoesNotKnowAbout(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	if err := os.MkdirAll(filepath.Join(workspace, "smith", "worktrees", "debris"), 0o755); err != nil {
+		t.Fatalf("make debris directory: %v", err)
+	}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	got, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("List() = %+v, want no session for a directory git does not know about", got)
+	}
+}
+
+// TestListSortsByRepoThenBranch locks in the one order the rows are ever in,
+// whatever order the blueprint declared the repos in.
+func TestListSortsByRepoThenBranch(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "web", "main")
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "web"}, {Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	for _, req := range []session.StartRequest{
+		{Repo: "web", Branch: "hotfix"},
+		{Repo: "smith", Branch: "spec-9"},
+		{Repo: "smith", Branch: "spec-42"},
+	} {
+		if _, err := session.Start(context.Background(), env, req); err != nil {
+			t.Fatalf("Start(%+v) err = %v", req, err)
+		}
+	}
+
+	got, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	var names []string
+	for _, s := range got {
+		names = append(names, s.Name)
+	}
+	want := []string{"smith-spec-42", "smith-spec-9", "web-hotfix"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("List() names = %v, want %v", names, want)
+	}
+}
+
+// TestListSkipsARepoThatIsNotClonedYet locks in that list exits zero whatever
+// it finds: a declared repo the workspace stage has not cloned yet has no
+// sessions, which is not a failure.
+func TestListSkipsARepoThatIsNotClonedYet(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}, {Name: "ghost"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	got, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("List() = %+v, want nothing listed for a workspace with no worktrees", got)
+	}
+}
+
+var _ session.Runner = (*tmuxServer)(nil)
+
+// TestListNarrowsTheRowsByFilter locks in that scale is answered by filters
+// rather than by layout: the table stays flat at fifty rows and the operator
+// narrows it instead.
+func TestListNarrowsTheRowsByFilter(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	writeBareRepo(t, workspace, "web", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}, {Name: "web"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	start(t, env, "smith", "live-one")
+	stop(t, env, start(t, env, "smith", "spec-42").Name)
+	stop(t, env, start(t, env, "web", "hotfix").Name)
+
+	tests := []struct {
+		name   string
+		filter session.Filter
+		want   []string
+	}{
+		{"every session", session.Filter{}, []string{"smith-live-one", "smith-spec-42", "web-hotfix"}},
+		{"one repo", session.Filter{Repo: "smith"}, []string{"smith-live-one", "smith-spec-42"}},
+		{"live only", session.Filter{State: session.LiveOnly}, []string{"smith-live-one"}},
+		{"stopped only", session.Filter{State: session.StoppedOnly}, []string{"smith-spec-42", "web-hotfix"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := session.List(context.Background(), env, tt.filter)
+			if err != nil {
+				t.Fatalf("List() err = %v", err)
+			}
+			var names []string
+			for _, s := range got {
+				names = append(names, s.Name)
+			}
+			if strings.Join(names, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("List() names = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
+
+// TestListRefusesAFilterOnAnUndeclaredRepo locks in that a typo is told
+// plainly rather than answered with an empty listing, which reads exactly like
+// a box that has no sessions.
+func TestListRefusesAFilterOnAnUndeclaredRepo(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	_, err := session.List(context.Background(), env, session.Filter{Repo: "ghost"})
+
+	if err == nil {
+		t.Fatal("List() err = nil, want a refusal for a repo the blueprint does not declare")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("List() err = %q, want it to name the undeclared repo", err)
+	}
+}
