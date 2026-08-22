@@ -103,3 +103,56 @@ func tree(t *testing.T, dir string) string {
 	sort.Strings(paths)
 	return strings.Join(paths, "\n")
 }
+
+// TestStopRefusesAnUnknownName locks in that stop resolves the name it was
+// handed rather than reading tmux's silence as success: a typo is not an
+// already-stopped session, and it reads the same here as it does at attach and
+// at rm.
+func TestStopRefusesAnUnknownName(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	err := session.Stop(context.Background(), env, "smith-spec-43")
+
+	if err == nil {
+		t.Fatalf("Stop() err = nil, want a refusal naming the unknown session")
+	}
+	if !strings.Contains(err.Error(), "smith-spec-43") || !strings.Contains(err.Error(), "session list") {
+		t.Errorf("Stop() err = %q, want it to name the session and `session list`", err)
+	}
+}
+
+// TestStopKillsAnOrphanTmuxSession locks in that the live path stays reachable
+// without the registry: a tmux session smith's naming holds but no worktree
+// backs is still a process the operator asked smith to end.
+func TestStopKillsAnOrphanTmuxSession(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	tmux := &tmuxServer{live: map[string]bool{session.TmuxSession("smith-ghost"): true}}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+	}
+
+	if err := session.Stop(context.Background(), env, "smith-ghost"); err != nil {
+		t.Fatalf("Stop() err = %v, want the orphan tmux session killed", err)
+	}
+
+	if tmux.ran("kill-session") != 1 {
+		t.Errorf("Stop() ran %d kill-session commands, want 1", tmux.ran("kill-session"))
+	}
+	if tmux.live[session.TmuxSession("smith-ghost")] {
+		t.Errorf("tmux session %q is still live, want it ended", session.TmuxSession("smith-ghost"))
+	}
+}

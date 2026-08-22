@@ -211,6 +211,8 @@ published, and there is no browser terminal in v1.
 `stop` ends the `tmux` session and leaves the worktree and the branch exactly
 where they are. It has no `--force` and asks nothing, because nothing it does
 loses work. Stopping an already-stopped session succeeds and changes nothing.
+A name no session holds is refused, the same way `attach` and `rm` refuse it —
+`tmux` having nothing to end is what a typo looks like too.
 
 `rm` reclaims the **worktree** — the directory — and keeps the branch.
 
