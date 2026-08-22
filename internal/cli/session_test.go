@@ -138,3 +138,73 @@ func runGit(t *testing.T, dir string, args ...string) {
 }
 
 var _ session.Runner = (*fakeTmux)(nil)
+
+// TestSessionListReportsTheSessionsOnTheBox drives the assembled command the
+// way an operator on the box does: a session stood up a moment ago is listed
+// under the name the other verbs take, with the table's four columns and the
+// summary line.
+func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	start := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "smith/spec-42", "--detach"})
+	start.SetOut(io.Discard)
+	start.SetErr(io.Discard)
+	if err := start.Execute(); err != nil {
+		t.Fatalf("session start err = %v", err)
+	}
+
+	cmd := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	cmd.SetArgs([]string{"list"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	got := out.String()
+	for _, want := range []string{"NAME", "STATE", "DIRTY", "UNPUSHED", "smith-smith-spec-42", "1 session"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "smith/spec-42") {
+		t.Errorf("stdout = %q, want the true branch left out of the default output", got)
+	}
+}
+
+// TestSessionListSaysSoWhenThereIsNothingToList locks in that an empty box
+// still prints the summary line and still exits zero.
+func TestSessionListSaysSoWhenThereIsNothingToList(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), &fakeTmux{})
+	cmd.SetArgs([]string{"list"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code != 0 {
+		t.Fatalf("exit code = %d, want 0 whatever list finds (stderr: %s)", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "no sessions") {
+		t.Errorf("stdout = %q, want it to report that there are no sessions", out.String())
+	}
+}
+
+// TestSessionListIsUnderTheRootCommand locks in the surface an operator on the
+// box types.
+func TestSessionListIsUnderTheRootCommand(t *testing.T) {
+	found, _, err := newRootCmd().Find([]string{"session", "list"})
+	if err != nil {
+		t.Fatalf("Find(session list) err = %v", err)
+	}
+	if found.Name() != "list" {
+		t.Errorf("Find(session list) = %q, want the list command", found.Name())
+	}
+}

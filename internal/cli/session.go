@@ -49,7 +49,41 @@ func newSessionCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command
 		Short: "Work on a branch in its own worktree and tmux session",
 	}
 	cmd.AddCommand(newSessionStartCmd(resolve, git, tmux))
+	cmd.AddCommand(newSessionListCmd(resolve, git, tmux))
 	return cmd
+}
+
+// newSessionListCmd builds `smith session list`. It enumerates the sessions on
+// the box and prints them under the four columns the work-state question is
+// answered in.
+//
+// It exits zero whatever it finds: a non-zero exit on "something is unpushed"
+// would conflate the command failing with the data having a property, and the
+// listing exists to be read before a teardown the operator does by hand.
+func newSessionListCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List the sessions on this box and whether they are running",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			resolved, err := resolve()
+			if err != nil {
+				return err
+			}
+			env, err := sessionEnv(resolved, git, tmux)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			sessions, err := session.List(cmd.Context(), env, session.Filter{})
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), session.Readout(sessions)); err != nil {
+				return fmt.Errorf("write session listing: %w", err)
+			}
+			return nil
+		},
+	}
 }
 
 // newSessionStartCmd builds
