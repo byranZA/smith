@@ -5,10 +5,15 @@ Drives the intraday-breakout autonomous loop against a spec (PRD) GitHub issue
 and its child task issues, the way `/spec-to-tasks` and `/review-and-task`
 produce them:
 
-  - A spec issue carries a `## Tasks` checklist of child issue numbers in
-    dependency order, and each child has `Part of #<spec>` in its body.
+  - Children are GitHub **sub-issues** of the spec (`gh issue create --parent`),
+    and their dependencies are native **blocked-by** links (`--blocked-by`).
   - AFK tasks are labelled `ready-for-agent`; HITL tasks `ready-for-human`.
-  - Each child lists its blockers under a `## Blocked by` section (`#<n>`).
+
+Older specs used body conventions instead of GitHub's native relationships — a
+`## Tasks` checklist on the spec, `Part of #<spec>` in each child, and a
+`## Blocked by` section listing `#<n>`. Both are read, so a spec that is half
+migrated (native sub-issues filed against a spec that still carries a checklist)
+behaves correctly.
 
 Each iteration the driver — not the prompt — decides what happens:
 
@@ -68,6 +73,7 @@ LOG_FILE = HERE / "ralph.log"
 
 READY_LABEL = "ready-for-agent"   # AFK — an agent may pick it up
 HUMAN_LABEL = "ready-for-human"   # HITL — needs a person
+SPEC_LABEL = "spec"               # a PRD, not a task — loop over it, never run it
 
 # The coding agent that does the work. Claude Code is the default; Codex is an
 # alternative backend. Each has a headless (autonomous) and an interactive
@@ -153,7 +159,7 @@ def task_numbers_from_spec(spec_body: str) -> list[int]:
     return ordered
 
 
-def blockers_of(body: str) -> set[int]:
+def blockers_in_body(body: str) -> set[int]:
     """Issue numbers this task is `## Blocked by`. Empty if it says 'None'."""
     section = _section(body, "Blocked by")
     if re.search(r"\bnone\b", section, re.IGNORECASE) and not _HASH_REF.search(section):
@@ -165,11 +171,14 @@ def blockers_of(body: str) -> set[int]:
 # GitHub queries
 # --------------------------------------------------------------------------- #
 
+ISSUE_FIELDS = "number,state,title,labels,body,parent,blockedBy"
+
+
 def fetch_issues() -> dict[int, dict]:
     """Every issue in the repo, indexed by number, with the fields we need."""
     rows = gh_json([
         "issue", "list", "--state", "all", "--limit", "800",
-        "--json", "number,state,title,labels,body",
+        "--json", ISSUE_FIELDS,
     ])
     return {row["number"]: row for row in rows}
 
@@ -182,41 +191,73 @@ def is_open(issue: dict | None) -> bool:
     return bool(issue) and issue.get("state", "").upper() == "OPEN"
 
 
+def parent_of(issue: dict) -> int | None:
+    """The spec this issue is a native sub-issue of, if any."""
+    parent = issue.get("parent")
+    return parent.get("number") if parent else None
+
+
+def open_blockers(issue: dict, issues: dict[int, dict]) -> list[int]:
+    """Open issues blocking this task — native links plus `## Blocked by` refs.
+
+    A native blocker carries its own state, so it is trusted directly; a parsed
+    one is looked up (and an unknown number is treated as not blocking, the same
+    as before).
+    """
+    blocked = {node["number"] for node in issue.get("blockedBy", {}).get("nodes", [])
+               if node.get("state", "").upper() == "OPEN"}
+    blocked |= {n for n in blockers_in_body(issue.get("body") or "")
+                if is_open(issues.get(n))}
+    return sorted(blocked)
+
+
 def spec_children(spec_num: int, issues: dict[int, dict]) -> list[int]:
     """Candidate task numbers for a spec, in dependency order.
 
-    Primary source is the spec's `## Tasks` checklist (authoritative order).
-    Any issue whose body says `Part of #<spec>` but isn't already in the list
-    is appended after — this catches fix issues filed by `/review-and-task`
-    mid-run.
+    The spec's `## Tasks` checklist comes first when it has one, because it is
+    the only source that carries an explicit order. Native sub-issues and issues
+    whose body says `Part of #<spec>` are appended in issue-number order — that
+    covers specs written without a checklist, and fix issues filed by
+    `/review-and-task` mid-run. Ordering the tail by number is enough: real
+    dependencies are enforced by `open_blockers`, not by position.
     """
     spec = issues.get(spec_num) or _view_issue(spec_num)
     ordered = task_numbers_from_spec(spec.get("body", ""))
 
     part_of = re.compile(rf"Part of\s+#{spec_num}\b", re.IGNORECASE)
     extra = [n for n, it in sorted(issues.items())
-             if n not in ordered and n != spec_num and part_of.search(it.get("body") or "")]
+             if n not in ordered and n != spec_num
+             and (parent_of(it) == spec_num or part_of.search(it.get("body") or ""))]
     return ordered + extra
 
 
 def _view_issue(num: int) -> dict:
-    return gh_json(["issue", "view", str(num),
-                    "--json", "number,state,title,labels,body"])
+    return gh_json(["issue", "view", str(num), "--json", ISSUE_FIELDS])
 
 
 # --------------------------------------------------------------------------- #
 # Task selection
 # --------------------------------------------------------------------------- #
 
+def is_spec(issue: dict) -> bool:
+    """A nested PRD rather than a task.
+
+    A spec can be a child of a larger spec and still carry `ready-for-agent`,
+    meaning its own tasks are ready. Handing the whole spec to one agent session
+    is never what that label means — loop over it separately instead.
+    """
+    return SPEC_LABEL in labels_of(issue)
+
+
 def available_task(spec_num: int, issues: dict[int, dict], skip: set[int]):
-    """First OPEN, ready-for-agent, unblocked, non-skipped child. Or None."""
+    """First OPEN, ready-for-agent, unblocked, non-skipped, non-spec child."""
     for n in spec_children(spec_num, issues):
         it = issues.get(n)
         if not is_open(it) or n in skip:
             continue
-        if READY_LABEL not in labels_of(it):
+        if READY_LABEL not in labels_of(it) or is_spec(it):
             continue
-        if any(is_open(issues.get(b)) for b in blockers_of(it["body"])):
+        if open_blockers(it, issues):
             continue
         return n, it["title"]
     return None
@@ -229,12 +270,16 @@ def summarize_remaining(spec_num: int, issues: dict[int, dict], skip: set[int]) 
     if not open_children:
         return f"All {len(children)} task(s) under spec #{spec_num} are closed — spec complete."
 
-    human = [n for n in open_children if HUMAN_LABEL in labels_of(issues[n])]
+    specs = [n for n in open_children if is_spec(issues[n])]
+    tasks = [n for n in open_children if n not in specs]
+    human = [n for n in tasks if HUMAN_LABEL in labels_of(issues[n])]
     skipped = [n for n in open_children if n in skip]
-    blocked = [n for n in open_children
+    blocked = [n for n in tasks
                if READY_LABEL in labels_of(issues[n])
-               and any(is_open(issues.get(b)) for b in blockers_of(issues[n]["body"]))]
+               and open_blockers(issues[n], issues)]
     parts = []
+    if specs:
+        parts.append(f"{len(specs)} nested spec(s) to loop over separately ({_fmt(specs)})")
     if human:
         parts.append(f"{len(human)} need a human ({_fmt(human)})")
     if blocked:
