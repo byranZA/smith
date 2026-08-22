@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,6 +20,8 @@ import (
 // digest, and lets a write be failed.
 type fakeBox struct {
 	digest   string
+	digests  map[string]string
+	staged   []string
 	writeErr error
 
 	commands []string
@@ -27,12 +30,30 @@ type fakeBox struct {
 
 func (f *fakeBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
 	f.commands = append(f.commands, cmd)
-	if strings.Contains(cmd, "sha256sum") {
-		if _, err := io.WriteString(stdout, f.digest); err != nil {
+	switch {
+	case strings.Contains(cmd, "sha256sum"):
+		if _, err := io.WriteString(stdout, f.digestFor(cmd)); err != nil {
 			return err
+		}
+	case strings.Contains(cmd, "find"):
+		for _, path := range f.staged {
+			if _, err := io.WriteString(stdout, path+"\n"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// digestFor answers the digest probe with whatever the box is set up to hold at
+// the path the probe names, falling back to the box-wide digest.
+func (f *fakeBox) digestFor(cmd string) string {
+	for path, d := range f.digests {
+		if strings.Contains(cmd, path) {
+			return d
+		}
+	}
+	return f.digest
 }
 
 func (f *fakeBox) RunWithInput(_ context.Context, cmd string, stdin io.Reader, _, _ io.Writer) error {
@@ -232,5 +253,174 @@ func TestConvergeStagesOnlyTheDocumentWhenNoPlacementsAreDeclared(t *testing.T) 
 	}
 	if len(result.Entries) != 1 || result.Entries[0].Path != DocumentPath {
 		t.Errorf("Report() covered %v, want the document alone", result.Entries)
+	}
+}
+
+// resolvedTree plans a blueprint and attaches canned bytes to every placement,
+// standing in for sources that resolve only on the operator's machine.
+func resolvedTree(t *testing.T, b blueprint.Blueprint) Tree {
+	t.Helper()
+	tree, err := Resolve(Plan([]byte("access: public\n"), b), func(ref string) (string, error) {
+		return "bytes of " + ref, nil
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	return tree
+}
+
+func pruneOf(commands []string, path string) bool {
+	for _, cmd := range commands {
+		if strings.Contains(cmd, "rm -rf") && strings.Contains(cmd, connection.ShellArg(path)) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestConvergePrunesAPlacementRemovedFromTheBlueprint(t *testing.T) {
+	kept := BoxPlacementPathIn(Root, "/home/smith/.gitconfig")
+	removed := BoxPlacementPathIn(Root, "/home/smith/.npmrc")
+	tree := resolvedTree(t, blueprint.Blueprint{Placements: []blueprint.Placement{
+		{From: "env:GIT_CONFIG", To: "/home/smith/.gitconfig"},
+	}})
+	box := &fakeBox{staged: []string{boxDirIn(Root), kept, removed}}
+
+	result, err := Converge(context.Background(), box, tree)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if !pruneOf(box.commands, removed) {
+		t.Errorf("the removed placement was not deleted:\n%s", strings.Join(box.commands, "\n"))
+	}
+	if pruneOf(box.commands, kept) {
+		t.Errorf("a declared placement was deleted:\n%s", strings.Join(box.commands, "\n"))
+	}
+	if !strings.Contains(result.Report(), "pruned") || !strings.Contains(result.Report(), removed) {
+		t.Errorf("Report() = %q, want it to report %s as pruned", result.Report(), removed)
+	}
+}
+
+func TestConvergePrunesTheStagedDirectoryOfARemovedRepo(t *testing.T) {
+	tree := resolvedTree(t, blueprint.Blueprint{Repos: []blueprint.Repo{
+		{Name: "web", Placements: []blueprint.Placement{{From: "env:WEB_ENV", To: ".env"}}},
+	}})
+	gone := RepoPlacementPathIn(Root, "api", ".env")
+	repoDir := filepath.Join(repoDirIn(Root), "api")
+	box := &fakeBox{staged: []string{
+		repoDirIn(Root),
+		filepath.Join(repoDirIn(Root), "web"),
+		RepoPlacementPathIn(Root, "web", ".env"),
+		repoDir,
+		gone,
+	}}
+
+	result, err := Converge(context.Background(), box, tree)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if !pruneOf(box.commands, repoDir) {
+		t.Errorf("the removed repo's staged directory survived:\n%s", strings.Join(box.commands, "\n"))
+	}
+	if pruneOf(box.commands, gone) {
+		t.Errorf("a file inside a pruned directory was deleted separately:\n%s", strings.Join(box.commands, "\n"))
+	}
+	if strings.Count(result.Report(), "pruned") != 1 {
+		t.Errorf("Report() = %q, want the pruned repo reported once", result.Report())
+	}
+}
+
+func TestConvergePrunesAStrayFileLeftInTheStagedTree(t *testing.T) {
+	stray := filepath.Join(PlacementsDir, "left-by-a-human")
+	box := &fakeBox{staged: []string{stray}}
+
+	result, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}))
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if !pruneOf(box.commands, stray) {
+		t.Errorf("the stray file survived:\n%s", strings.Join(box.commands, "\n"))
+	}
+	if !strings.Contains(result.Report(), stray) {
+		t.Errorf("Report() = %q, want it to report %s as pruned", result.Report(), stray)
+	}
+}
+
+func TestConvergeReportsAChangedSourceAsUpdated(t *testing.T) {
+	tree := resolvedTree(t, blueprint.Blueprint{Repos: []blueprint.Repo{
+		{Name: "api", Placements: []blueprint.Placement{{From: "env:API_ENV", To: ".env"}}},
+	}})
+	key := RepoPlacementPathIn(Root, "api", ".env")
+	box := &fakeBox{
+		digests: map[string]string{key: sum([]byte("the old bytes")) + "  " + key + "\n"},
+		staged:  []string{key},
+	}
+
+	result, err := Converge(context.Background(), box, tree)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if !strings.Contains(result.Report(), "updated") {
+		t.Errorf("Report() = %q, want the changed placement reported as updated", result.Report())
+	}
+	var delivered bool
+	for _, in := range box.inputs {
+		if in == "bytes of env:API_ENV" {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Errorf("stdin carried %q, want the new bytes among it", box.inputs)
+	}
+}
+
+func TestConvergeLeavesAnUnchangedPlacementAlone(t *testing.T) {
+	tree := resolvedTree(t, blueprint.Blueprint{Placements: []blueprint.Placement{
+		{From: "env:NPM_TOKEN", To: "~/.npmrc"},
+	}})
+	key := BoxPlacementPathIn(Root, "/home/smith/.npmrc")
+	box := &fakeBox{
+		digests: map[string]string{key: sum([]byte("bytes of env:NPM_TOKEN")) + "  " + key + "\n"},
+		staged:  []string{boxDirIn(Root), key},
+	}
+
+	result, err := Converge(context.Background(), box, tree)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	for _, in := range box.inputs {
+		if in == "bytes of env:NPM_TOKEN" {
+			t.Errorf("an unchanged placement was rewritten with %q", in)
+		}
+	}
+	if pruneOf(box.commands, key) {
+		t.Errorf("a declared placement was pruned:\n%s", strings.Join(box.commands, "\n"))
+	}
+	for _, e := range result.Entries {
+		if e.Path == key && e.Change != Unchanged {
+			t.Errorf("%s reported as %v, want unchanged", key, e.Change)
+		}
+	}
+}
+
+func TestConvergeTouchesNothingOutsideTheBoxConfigDirectory(t *testing.T) {
+	tree := resolvedTree(t, blueprint.Blueprint{
+		Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "/home/smith/.npmrc"}},
+		Repos: []blueprint.Repo{
+			{Name: "api", Placements: []blueprint.Placement{{From: "env:API_ENV", To: ".env"}}},
+		},
+	})
+	box := &fakeBox{staged: []string{filepath.Join(PlacementsDir, "stray")}}
+
+	if _, err := Converge(context.Background(), box, tree); err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	for _, cmd := range box.commands {
+		for _, field := range strings.Fields(cmd) {
+			path := strings.Trim(field, "'")
+			if strings.HasPrefix(path, "/") && !strings.HasPrefix(path, Root) {
+				t.Errorf("command reaches outside %s: %q", Root, cmd)
+			}
+		}
 	}
 }

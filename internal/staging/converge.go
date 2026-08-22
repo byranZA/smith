@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -28,17 +29,29 @@ const (
 	// Unchanged means the box already held these exact bytes and nothing was
 	// written, so the file's modification time did not move.
 	Unchanged Change = iota
-	// Staged means the file was written: the box either held nothing there or
-	// held different bytes.
+	// Staged means the file was written for the first time: the box held
+	// nothing at that path.
 	Staged
+	// Updated means the box held different bytes there and they were replaced,
+	// which is what a placement whose source has changed reports.
+	Updated
+	// Pruned means the box held something under the placements tree that the
+	// blueprint no longer declares, and it was deleted.
+	Pruned
 )
 
 // String renders the change as the operator is told it.
 func (c Change) String() string {
-	if c == Staged {
+	switch c {
+	case Staged:
 		return "staged"
+	case Updated:
+		return "updated"
+	case Pruned:
+		return "pruned"
+	default:
+		return "unchanged"
 	}
-	return "unchanged"
 }
 
 // Entry is one file of the staged tree and what converging did to it.
@@ -77,6 +90,15 @@ func (r Result) Report() string {
 // placements still leaves an empty placements directory rather than none, and a
 // directory a human has widened is narrowed back.
 //
+// The tree is then pruned to exactly what the blueprint declares: anything
+// under the placements directory that is not a currently-declared scope and
+// destination is deleted and reported, so a placement an operator drops from
+// their blueprint does not leave live credential bytes on the box forever.
+//
+// Nothing outside /etc/smith/ is touched, so a session running against a
+// worktree keeps the copy it already has; a changed placement reaches that
+// worktree on the next `session start`.
+//
 // The bytes travel over stdin and never appear in an argument, and each write
 // lands on a temporary path beside its destination before it is chmod'ed,
 // chown'ed and moved into place, so the destination never exists holding
@@ -102,7 +124,82 @@ func Converge(ctx context.Context, conn Conn, tree Tree) (Result, error) {
 		}
 		result.Entries = append(result.Entries, Entry{Path: f.Path, Change: change})
 	}
+
+	pruned, err := prune(ctx, conn, tree)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Entries = append(result.Entries, pruned...)
 	return result, nil
+}
+
+// prune deletes everything under the placements directory the tree does not
+// declare, and reports each deletion.
+//
+// Parents are considered before their children, and a path inside one already
+// deleted is skipped, so a repo dropped from the blueprint is reported as the
+// one directory it is rather than as every file it happened to hold.
+func prune(ctx context.Context, conn Conn, tree Tree) ([]Entry, error) {
+	staged, err := stagedPaths(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	declared := declaredPaths(tree)
+
+	var entries []Entry
+	var deleted []string
+	for _, path := range staged {
+		if declared[path] || within(path, deleted) {
+			continue
+		}
+		if err := conn.Run(ctx, pruneCommand(path), io.Discard, io.Discard); err != nil {
+			return nil, fmt.Errorf("prune %s: %w", path, err)
+		}
+		deleted = append(deleted, path)
+		entries = append(entries, Entry{Path: path, Change: Pruned})
+	}
+	return entries, nil
+}
+
+// stagedPaths reads everything the box currently holds under the placements
+// directory, outermost first. A directory that does not exist yet lists as
+// nothing rather than failing, which is the ordinary first-run case.
+func stagedPaths(ctx context.Context, conn Conn) ([]string, error) {
+	var out bytes.Buffer
+	if err := conn.Run(ctx, listCommand(), &out, io.Discard); err != nil {
+		return nil, fmt.Errorf("list %s: %w", PlacementsDir, err)
+	}
+	var paths []string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if path := strings.TrimSpace(line); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// declaredPaths is every path under the placements directory the tree accounts
+// for: its scope directories and the staged file of each declared placement.
+func declaredPaths(tree Tree) map[string]bool {
+	declared := make(map[string]bool, len(tree.Dirs)+len(tree.Placements))
+	for _, d := range tree.Dirs {
+		declared[d.Path] = true
+	}
+	for _, p := range tree.Placements {
+		declared[p.File.Path] = true
+	}
+	return declared
+}
+
+// within reports whether path sits inside one of the given directories.
+func within(path string, dirs []string) bool {
+	for _, dir := range dirs {
+		if strings.HasPrefix(path, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // ensure makes one directory of the staged tree exist with the mode and owner
@@ -129,7 +226,10 @@ func write(ctx context.Context, conn Conn, f File) (Change, error) {
 	if err := conn.RunWithInput(ctx, writeCommand(f), bytes.NewReader(f.Bytes), io.Discard, io.Discard); err != nil {
 		return Unchanged, fmt.Errorf("stage %s: %w", f.Path, err)
 	}
-	return Staged, nil
+	if staged == "" {
+		return Staged, nil
+	}
+	return Updated, nil
 }
 
 // digest reads the sha256 of the file already staged at path, or "" when the
@@ -153,6 +253,20 @@ func sum(data []byte) string {
 // A missing file yields no output rather than a failed command.
 func digestCommand(path string) string {
 	return fmt.Sprintf("sudo sha256sum %s 2>/dev/null || true", connection.ShellArg(path))
+}
+
+// listCommand builds the remote listing of what the box already holds under the
+// placements directory, which is what the prune is computed against. An absent
+// directory yields no output rather than a failed command.
+func listCommand() string {
+	return fmt.Sprintf("sudo find %s -mindepth 1 2>/dev/null || true", connection.ShellArg(PlacementsDir))
+}
+
+// pruneCommand builds the remote delete of one undeclared path. It is recursive
+// because the path may be a whole repo's staged directory, and forced because a
+// prune of something already gone is not a failure.
+func pruneCommand(path string) string {
+	return fmt.Sprintf("sudo rm -rf %s", connection.ShellArg(path))
 }
 
 // dirCommand builds the remote directory ensure. install -d is idempotent: it

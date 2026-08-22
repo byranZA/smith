@@ -15,12 +15,21 @@ import (
 // it records every remote command and the stdin each one was handed, and no
 // test here reaches a real box.
 type fakeStagingBox struct {
+	staged []string
+
 	commands []string
 	inputs   []string
 }
 
-func (f *fakeStagingBox) Run(_ context.Context, cmd string, _, _ io.Writer) error {
+func (f *fakeStagingBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
 	f.commands = append(f.commands, cmd)
+	if strings.Contains(cmd, "find") {
+		for _, path := range f.staged {
+			if _, err := io.WriteString(stdout, path+"\n"); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -126,5 +135,20 @@ func TestStageConfigRefusesAnUnresolvableSourceBeforeTouchingTheBox(t *testing.T
 	}
 	if len(box.commands) != 0 {
 		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
+	}
+}
+
+func TestStageConfigReportsWhatItPruned(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+	stray := staging.PlacementsDir + "/left-by-a-human"
+	box := &fakeStagingBox{staged: []string{stray}}
+	var out bytes.Buffer
+
+	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err != nil {
+		t.Fatalf("stageConfig() err = %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "pruned") || !strings.Contains(out.String(), stray) {
+		t.Errorf("stageConfig() reported %q, want it to report %s as pruned", out.String(), stray)
 	}
 }
