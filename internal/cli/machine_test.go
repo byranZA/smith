@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/byranZA/smith/internal/config"
 )
 
@@ -208,6 +210,12 @@ func TestMachineCreateRefusesABlueprintWithNoProvider(t *testing.T) {
 	if !strings.Contains(stderr, "provider") {
 		t.Errorf("stderr = %q, want it to report that no provider adapter is configured", stderr)
 	}
+	// An adapter is optional, and absent one the bring-your-own-box path is
+	// unchanged: the refusal has to read as a choice rather than as a
+	// misconfiguration, so it names the alternative.
+	if !strings.Contains(stderr, "smith machine setup <login>@<host>") {
+		t.Errorf("stderr = %q, want it to name the bring-your-own-box path as the alternative", stderr)
+	}
 	if stdout != "" {
 		t.Errorf("stdout = %q, want nothing printed when the create is refused", stdout)
 	}
@@ -345,5 +353,166 @@ func TestMachineCreateNeverShowsARequiredVariablesValue(t *testing.T) {
 				t.Errorf("output = %q / %q, want no required variable's value in it", stdout, stderr)
 			}
 		})
+	}
+}
+
+func TestMachineCreateSurfacesAFailingProviderCommandsOwnOutput(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprint)
+	// The provider's own words, verbatim: smith knows nothing about any
+	// provider's error taxonomy and must not try to interpret one.
+	const refusal = "Error: POST https://api.example.com/v2/servers: 403 (request \"abc\") requires the tag:create scope"
+	runner := &fakeProviderRunner{stderr: refusal + "\n", err: errors.New("exit status 1")}
+
+	stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want non-zero when the provider command failed")
+	}
+	if !strings.Contains(stderr, "provider command") || !strings.Contains(stderr, "failed") {
+		t.Errorf("stderr = %q, want it to report that the provider command failed", stderr)
+	}
+	if !strings.Contains(stderr, refusal) {
+		t.Errorf("stderr = %q, want the provider's own error text %q shown verbatim", stderr, refusal)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed when the provider refused", stdout)
+	}
+}
+
+func TestMachineCreateRefusesAnInvalidBlueprintBeforeRunningAnyProviderCommand(t *testing.T) {
+	dir := t.TempDir()
+	// A valid adapter under a document the schema refuses: validation is free
+	// and a botched create costs money, so the refusal comes first.
+	writeBlueprint(t, dir, "acme", "terminals: tmux\n"+providerBlueprint)
+	runner := &fakeProviderRunner{}
+
+	stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want non-zero for a blueprint with a validation error")
+	}
+	if runner.runs != 0 {
+		t.Errorf("ran %d commands, want none before an invalid blueprint is reported", runner.runs)
+	}
+	if !strings.Contains(stderr, "terminals") {
+		t.Errorf("stderr = %q, want it to report the validation error", stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed when the create is refused", stdout)
+	}
+}
+
+// preferenceAdapter is a complete adapter for one provider, declared
+// operator-wide. Every field of it is one a blueprint's own adapter must not
+// pick up: a different CLI, a different key reference, and a requirement that
+// is deliberately unsatisfiable.
+const preferenceAdapter = `provider:
+  create: [doctl, compute, droplet, create, "{{name}}", --ssh-keys, "{{ssh_key}}", -o, json]
+  list: [doctl, compute, droplet, list, -o, json]
+  requires: [SMITH_TEST_PREFERENCE_TOKEN]
+  ssh_key: preference-key
+  marker:
+    arg: "smith:{{value}}"
+    read: "tags[*]"
+    expect: "smith:{{value}}"
+  extract:
+    id: id
+    ip: networks.v4[type=public].ip_address
+`
+
+func TestMachineCreateUsesNoFieldOfThePreferenceAdapter(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, preferenceAdapter)
+	writeBlueprint(t, dir, "acme", providerBlueprint)
+	// The preference's requirement is deliberately unsatisfiable, and set-then-
+	// unset is how a test unsets a variable and still has it restored.
+	t.Setenv("SMITH_TEST_PREFERENCE_TOKEN", "unset below")
+	if err := os.Unsetenv("SMITH_TEST_PREFERENCE_TOKEN"); err != nil {
+		t.Fatalf("unset SMITH_TEST_PREFERENCE_TOKEN: %v", err)
+	}
+	runner := &fakeProviderRunner{stdout: `{"id": 1, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+
+	stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+	// The preference's requires would refuse the create outright, and its
+	// ssh_key would be reported as passed: both are fields, and the blueprint's
+	// block replaces the preference block whole rather than field by field.
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for the blueprint's own adapter (stderr: %s)", code, stderr)
+	}
+	want := []string{"server", "create", "--name", "dev", "--type", "cpx31", "-o", "json"}
+	if runner.name != "hcloud" || !slices.Equal(runner.args, want) {
+		t.Errorf("ran %q %q, want the blueprint's own %q %q", runner.name, runner.args, "hcloud", want)
+	}
+	if strings.Contains(stdout, "preference-key") {
+		t.Errorf("stdout = %q, want no field of the preference adapter used", stdout)
+	}
+}
+
+// providerBlueprintWithDestroy declares the third verb. smith accepts it as
+// data so an adapter written today stays correct when destroy ships, and never
+// runs it.
+const providerBlueprintWithDestroy = `provider:
+  create: [hcloud, server, create, --name, "{{name}}", -o, json]
+  list: [hcloud, server, list, -o, json]
+  destroy: [hcloud, server, delete, "{{id}}"]
+  extract:
+    id: id
+    ip: public_net.ipv4.ip
+`
+
+func TestBlueprintCheckAcceptsADestroyTemplateAsData(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprintWithDestroy)
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a blueprint declaring a destroy template (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "valid") {
+		t.Errorf("stdout = %q, want the blueprint reported as valid", stdout)
+	}
+}
+
+func TestSmithExposesNoCommandThatExecutesDestroy(t *testing.T) {
+	// v1 ships no box teardown: the box exists and is billed, and a destroy
+	// needs a confirmation poll — a list right after a successful delete still
+	// returned the box — plus teardown safety settled first.
+	var found []string
+	var walk func(cmd *cobra.Command, path string)
+	walk = func(cmd *cobra.Command, path string) {
+		name := strings.TrimSpace(path + " " + cmd.Name())
+		for _, forbidden := range []string{"destroy", "delete"} {
+			if cmd.Name() == forbidden {
+				found = append(found, name)
+			}
+		}
+		for _, child := range cmd.Commands() {
+			walk(child, name)
+		}
+	}
+	walk(newRootCmd(), "")
+
+	if len(found) != 0 {
+		t.Errorf("commands %q exist, want no command that executes a provider destroy", found)
+	}
+}
+
+func TestMachineCreateNeverRunsTheDestroyTemplate(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprintWithDestroy)
+	runner := &fakeProviderRunner{stdout: `{"id": 1, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+
+	if _, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme"); code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a created box (stderr: %s)", code, stderr)
+	}
+
+	if runner.runs != 1 || !slices.Contains(runner.args, "create") {
+		t.Errorf("ran %d commands, last %q %q, want only the create template", runner.runs, runner.name, runner.args)
+	}
+	if slices.Contains(runner.args, "delete") {
+		t.Errorf("ran %q %q, want the destroy template never executed", runner.name, runner.args)
 	}
 }
