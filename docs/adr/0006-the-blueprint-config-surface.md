@@ -33,8 +33,10 @@ box, distinct from the marker, which records what a *particular* box did.
     prod.yaml
   cache/                # machine-local, gitignored
     boxes.json          # name → proven SSH target
-    placements/         # resolved bytes, staged for the box
 ```
+
+A provisioned box holds the other half of the surface, under `/etc/smith/` — see *The box's half*
+below.
 
 **The blueprint stays optional.** ADR-0003's flag path survives intact — a box can still be
 provisioned with flags alone, and preferences then sit alone between the flag and the built-in
@@ -113,15 +115,74 @@ identically and smith cannot enforce it. It binds the documentation and any futu
 
 ### The cache is not config
 
-`~/.smith/cache/` is machine-local and gitignored, and holds two things that are *derived*, never
+`~/.smith/cache/` is machine-local and gitignored, and holds one thing that is *derived*, never
 authored: the box address book (`boxes.json` — an operator-chosen name mapped to an SSH target
-smith has **proven** works, identity and nothing more) and resolved placement bytes staged for
-the box. smith writes the `.gitignore` itself. The cache is rebuildable but **not
-self-rebuilding** in v1: nothing in it is unique to it, but reconstruction is one `machine add`
-per box, by hand.
+smith has **proven** works, identity and nothing more). smith writes the `.gitignore` itself. The
+cache is rebuildable but **not self-rebuilding** in v1: nothing in it is unique to it, but
+reconstruction is one `machine add` per box, by hand.
 
-Because a box knows of no other boxes, **on-box smith carries no cache at all**; `list`, `add`
-and `forget` are the only local-only verbs.
+Because a box knows of no other boxes, **on-box smith carries no cache at all**; `machine list`,
+`add` and `forget` are local-only for that reason. (`machine upgrade` is local-only too, on
+entirely different grounds — self-replacement, not fleet knowledge — so "local-only" must not be
+read as implying "cache-related". See [ADR-0008](./0008-smith-runs-on-the-box.md).)
+
+### The box's half — `/etc/smith/`, and no config home on the box
+
+On-box smith ([ADR-0008](./0008-smith-runs-on-the-box.md)) needs `repos[]`, `workspace` and
+`tools` to run the workspace stage and to start a session, so the configuration has to reach the
+box. **The blueprint document itself is staged there, verbatim and unfiltered**, at
+`/etc/smith/blueprint.yaml`, with the resolved placement bytes beside it:
+
+```
+/etc/smith/
+  bootstrap.json                 # the marker
+  blueprint.yaml                 # the staged document, 0644 root-owned
+  placements/                    # resolved bytes, 0700 smith-owned
+    box/<flattened-absolute-path>
+    repo/<repo>/<flattened-worktree-relative-path>
+```
+
+On-box smith is the *same binary* by construction — version skew is refused before any verb runs
+— so it already contains the parser. Decomposing the blueprint into derived artifacts (a
+`mise.toml`, a worktree layout, a placement manifest) buys nothing and costs a second on-box
+format with its own schema, its own validation, and its own skew axis.
+
+**Verbatim, unfiltered** — no dropping `provider`/`access`/`packages` as "fields a box has no use
+for". Filtering requires operator-side smith to know which fields the box needs, which is a subset
+schema wearing a filter's clothes. Nothing sensitive rides along: the `provider` block holds
+references, never values ([ADR-0009](./0009-provisioned-secrets-sit-in-plaintext.md)).
+
+**`~/.smith/` is the operator's config home; `/etc/smith/` is a provisioned box's state.** The box
+gets no `~/.smith/` at all, which makes "on-box smith carries no cache" literally true of the whole
+directory rather than of one subdirectory. This is a separation of **location and role, not of
+format** — and it is precisely because a daily-driver machine acting as its own box would one day
+hold *both* that the two must not share a path.
+
+**This amends the placement staging location.** Resolved placement bytes were to sit under
+`~/.smith/cache/placements/`; they live at `/etc/smith/placements/` instead, keyed by `(scope,
+to)` — which the scope-matching rule above already makes unique — rather than by a hash of the
+source, so a human reading the staged tree can see what will land where.
+
+**On-box smith never resolves a `from:`.** Placement sources are resolved operator-side, so every
+`from:` in the staged document is a dead reference on the box; it is opaque provenance, and each
+placement maps to its already-staged blob by destination.
+
+**Strict validation runs again on-box, unconditionally.** This is *not* schema skew reintroduced —
+binary mismatch is refused before any verb executes, so the two parsers *are* the same parser.
+What the second pass catches is a hand-edited or truncated `/etc/smith/blueprint.yaml`: the only
+thing standing between a corrupted file and a session built on a half-parsed document. The response
+is refuse-and-point-at-`machine setup`, never migrate. Two refusals, deliberately worded apart:
+**malformed** (corruption or an on-box edit) and **absent** (a provisioning gap, not a user error).
+
+**`machine setup` is the sole writer**, in a staging stage of its own after the install stage —
+operator-side writes, so it cannot be a workspace-stage prologue. Whole-file replace, no history.
+**A live session is untouched**: repo placements re-converge only on the `start` paths that stand a
+session up, so a changed staged blueprint lands on the next `start` and never mid-session.
+
+**The marker records the blueprint name only, no content hash.** The staged file *is* ground
+truth, so read it rather than storing a claim about it; a hash would be stale the moment either
+side is edited, and a drift readout — if ever wanted — diffs the staged document against the local
+one directly, which is exactly what staging verbatim keeps cheap.
 
 ## Considered options
 
@@ -173,9 +234,10 @@ and `forget` are the only local-only verbs.
 - **The config home is shareable by construction.** `blueprints/` and `preferences.yaml` are
   committed and shared; the boundary between them and machine-local state is a `.gitignore` line
   smith writes, not a convention the operator maintains.
-- **Nothing here is secret-bearing at rest by design, but the staged cache is.** Resolved
-  placement bytes sit in `cache/placements/` in plaintext; that is a deliberate, separately
-  recorded non-goal and not a property of this ADR.
+- **Nothing here is secret-bearing at rest by design, but the staged placements are.** Resolved
+  placement bytes sit in `/etc/smith/placements/` in plaintext; that is a deliberate, separately
+  recorded non-goal ([ADR-0009](./0009-provisioned-secrets-sit-in-plaintext.md)) and not a
+  property of this ADR.
 - **Anyone adding a config location re-opens this decision.** A `./smith.yaml`, a `$SMITH_CONFIG`
   search path, or a per-repo overlay each reintroduces the working-directory dependence and the
   merge dimension this ADR removed, and must be weighed against them rather than slipped in
@@ -183,5 +245,6 @@ and `forget` are the only local-only verbs.
 
 See [issue #58](https://github.com/byranZA/smith/issues/58),
 [issue #62](https://github.com/byranZA/smith/issues/62),
-[issue #65](https://github.com/byranZA/smith/issues/65) and
-[issue #69](https://github.com/byranZA/smith/issues/69).
+[issue #65](https://github.com/byranZA/smith/issues/65),
+[issue #69](https://github.com/byranZA/smith/issues/69) and
+[issue #75](https://github.com/byranZA/smith/issues/75).
