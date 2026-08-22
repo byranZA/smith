@@ -331,7 +331,12 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			// The box is provisioned; what is left is writing down the address
 			// smith will reach it by from now on, which the operator would
 			// otherwise have to remember off a line that scrolls away.
-			conclusion := setupConclusion{accessMode: accessMode, target: boxTarget, names: names}
+			conclusion := setupConclusion{
+				accessMode: accessMode,
+				target:     boxTarget,
+				addressed:  target,
+				names:      names,
+			}
 			if accessMode == "tailscale" {
 				result, err := establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
 				if err != nil {
@@ -733,7 +738,7 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				Marker: box.Name,
 				Host:   hostOrTarget(target),
 			})
-			if err := registerBox(home, "", registered, target); err != nil {
+			if _, err := registerBox(home, registration{name: registered, target: target}); err != nil {
 				return reportInvalid(cmd, err)
 			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), addedReport(registered, target, origin, box.Blueprint)); err != nil {
@@ -746,34 +751,60 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return cmd
 }
 
-// registerBox reads the inventory, maps name to target in it, and writes it
-// back. The name is decided by the caller: each verb derives its own default
-// from what it knows, and this one only ever registers the name it is handed.
+// registration is one box's registration as the verb running it knows it: the
+// name to register, the target to register it under, the name the box's own
+// marker records, and the address this run reached the box over. The last two
+// are what decide whether the box already has an entry to move, and a verb with
+// nothing to move — `machine add`, which reads a marker it never wrote — leaves
+// them empty.
+type registration struct {
+	// recorded is the name the box's marker records, empty when the caller has
+	// no recorded name to move an entry off.
+	recorded string
+	// addressed is the address this run reached the box over, which is how a
+	// re-run of a registered box is told from a box carrying another box's name.
+	addressed string
+	// name is the name the box is registered under.
+	name string
+	// target is the proven address the name maps to.
+	target string
+}
+
+// registerBox reads the inventory, maps r.name to r.target in it, and writes it
+// back. It returns the name whose entry moved, empty when nothing moved, so the
+// caller reports a rename only when there was one. The name is decided by the
+// caller: each verb derives its own default from what it knows, and this one
+// only ever registers the name it is handed.
 //
-// previous is the name the box was already registered under, empty when the
-// caller has none to move. Passing one makes the registration a rename: the old
-// entry goes, so renaming a box leaves one entry rather than two names for one
-// machine, and a re-run whose address changed updates the entry it already has.
+// A registration is a rename when the box already has an entry under the name
+// its marker records: the old entry goes, so renaming a box leaves one entry
+// rather than two names for one machine, and a re-run whose address changed
+// updates the entry it already has. Whether that entry is this box's is the
+// inventory's call, not the marker's — see inventory.PreviousName.
 //
 // The config home is created here and only here on the registration paths:
 // reading never creates, so the directory comes into existence at the first
 // write into it.
-func registerBox(home config.Home, previous, name, target string) error {
+func registerBox(home config.Home, r registration) (string, error) {
 	inv, skew, err := inventory.Read(home.InventoryPath())
 	if err != nil {
-		return fmt.Errorf("read the box inventory: %w", err)
+		return "", fmt.Errorf("read the box inventory: %w", err)
 	}
-	next, err := inventory.Rename(inv, previous, name, target)
+	previous := inventory.PreviousName(inv, r.recorded, r.addressed, r.target)
+	next, err := inventory.Rename(inv, previous, r.name, r.target)
 	if err != nil {
-		return fmt.Errorf("cannot register %s: %w", target, err)
+		return "", fmt.Errorf("cannot register %s: %w", r.target, err)
 	}
 	if err := config.EnsureHome(home); err != nil {
-		return fmt.Errorf("create the config home: %w", err)
+		return "", fmt.Errorf("create the config home: %w", err)
 	}
 	if err := inventory.Write(home.InventoryPath(), next, skew); err != nil {
-		return fmt.Errorf("register %s: %w", target, err)
+		return "", fmt.Errorf("register %s: %w", r.target, err)
 	}
-	return nil
+	if previous == r.name {
+		return "", nil
+	}
+	return previous, nil
 }
 
 // addedReport renders what the operator is told by a successful registration:

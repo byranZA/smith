@@ -32,8 +32,10 @@ func TestSetupUpdatesTheOneEntryWhenTheBoxsAddressChanged(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
 
+	// The operator addressed the box by the name it is registered under, so the
+	// run came in over the address that entry holds.
 	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "tailscale", tailnetIP: "100.92.14.31",
+		accessMode: "tailscale", tailnetIP: "100.92.14.31", addressed: "smith@100.92.14.7",
 		names: inventory.Naming{Marker: "dev", Host: "203.0.113.10"},
 	})
 
@@ -223,5 +225,50 @@ func TestMachineAddRefusesAMarkerNameHeldByADifferentBox(t *testing.T) {
 	}
 	if got := inventoryContent(t, dir); !strings.Contains(got, `"smith@100.92.14.7"`) || strings.Contains(got, "198.51.100.7") {
 		t.Errorf("inventory = %q, want dev still mapped to the box that holds the name", got)
+	}
+}
+
+func TestSetupRefusesAgainWhenTheMarkerRecordsANameAnotherBoxHolds(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
+
+	stdout, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
+		accessMode: "public", addressed: "root@198.51.100.7",
+		names: inventory.Naming{Marker: "dev", Host: "198.51.100.7"},
+	})
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want a stamped marker name held by a different box refused a second time")
+	}
+	got := inventoryContent(t, dir)
+	if !strings.Contains(got, `"smith@203.0.113.10"`) {
+		t.Errorf("inventory = %q, want dev still mapped to the box that holds the name", got)
+	}
+	if strings.Contains(got, "198.51.100.7") {
+		t.Errorf("inventory = %q, want the colliding box registered under nothing", got)
+	}
+	if !strings.Contains(stdout+stderr, "--name") {
+		t.Errorf("output = %q, want it to name the flag to pass instead", stdout+stderr)
+	}
+}
+
+func TestSetupUnderAFreeNameLeavesTheHeldNameOnTheOtherBox(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
+
+	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
+		accessMode: "public", addressed: "root@198.51.100.7",
+		names: inventory.Naming{Flag: "other", Marker: "dev", Host: "198.51.100.7"},
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0: the name the operator passed is free (stderr: %s)", code, stderr)
+	}
+	got := inventoryContent(t, dir)
+	if !strings.Contains(got, `"other"`) || !strings.Contains(got, `"smith@198.51.100.7"`) {
+		t.Errorf("inventory = %q, want the box registered as other", got)
+	}
+	if !strings.Contains(got, `"smith@203.0.113.10"`) {
+		t.Errorf("inventory = %q, want dev left pointing at the box that holds it", got)
 	}
 }

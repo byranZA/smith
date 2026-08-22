@@ -124,3 +124,49 @@ func TestRenameOntoASecondNameForTheSameBoxUpdatesItRatherThanRefusing(t *testin
 		t.Errorf("dev is still registered, want the entry moved")
 	}
 }
+
+func TestPreviousNameIsTheMarkersNameWhenItsEntryReachesTheAddressTheRunCameInOver(t *testing.T) {
+	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{
+		"dev": {Target: "smith@100.92.14.7"},
+	}}
+
+	if got := PreviousName(inv, "dev", "smith@100.92.14.7", "smith@100.92.14.31"); got != "dev" {
+		t.Errorf("PreviousName() = %q, want %q: the entry is this box's, at the address it answered at before", got, "dev")
+	}
+}
+
+func TestPreviousNameIsTheMarkersNameWhenItsEntryAlreadyReachesTheTargetBeingRegistered(t *testing.T) {
+	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{
+		"dev": {Target: "smith@203.0.113.10"},
+	}}
+
+	if got := PreviousName(inv, "dev", "root@203.0.113.10", "smith@203.0.113.10"); got != "dev" {
+		t.Errorf("PreviousName() = %q, want %q: the entry already reaches this very box", got, "dev")
+	}
+}
+
+func TestPreviousNameIsEmptyWhenTheMarkersNameReachesADifferentBox(t *testing.T) {
+	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{
+		"dev": {Target: "smith@203.0.113.10"},
+	}}
+
+	if got := PreviousName(inv, "dev", "root@198.51.100.7", "smith@198.51.100.7"); got != "" {
+		t.Errorf("PreviousName() = %q, want no entry to move: %q names another machine", got, "dev")
+	}
+}
+
+func TestPreviousNameIsEmptyWhenNothingIsRegisteredUnderTheMarkersName(t *testing.T) {
+	if got := PreviousName(Empty(), "dev", "root@203.0.113.10", "smith@203.0.113.10"); got != "" {
+		t.Errorf("PreviousName() = %q, want no entry to move when the name is unregistered", got)
+	}
+}
+
+func TestPreviousNameIsEmptyWhenTheBoxRecordsNoName(t *testing.T) {
+	inv := Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{
+		"dev": {Target: "smith@203.0.113.10"},
+	}}
+
+	if got := PreviousName(inv, "", "smith@203.0.113.10", "smith@203.0.113.10"); got != "" {
+		t.Errorf("PreviousName() = %q, want no entry to move when the box records no name", got)
+	}
+}

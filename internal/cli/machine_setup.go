@@ -21,12 +21,13 @@ const smithLogin = "smith"
 
 // setupConclusion is what a finished setup knows about the box it provisioned:
 // the access layer it ran under, the tailnet address tailscale mode
-// established, the target the operator pointed smith at with --target, and
-// every source of a name for the box.
+// established, the target the operator pointed smith at with --target, the
+// address the run reached the box over, and every source of a name for the box.
 type setupConclusion struct {
 	accessMode string
 	tailnetIP  string
 	target     string
+	addressed  string
 	names      inventory.Naming
 }
 
@@ -48,7 +49,10 @@ type setupConclusion struct {
 //
 // The name is resolved by precedence, and a name that differs from the one the
 // box's marker already recorded is a rename: the entry moves rather than a
-// second name for one machine appearing beside the first.
+// second name for one machine appearing beside the first. The entry only moves
+// when it is this box's — the marker records the name setup stamped on it, and
+// a box whose first registration was refused for a name another machine holds
+// carries that name too.
 //
 // A box that will not answer is provisioned but unregistered: the phases
 // genuinely completed, so this reports the partial outcome and names the
@@ -64,10 +68,16 @@ func concludeSetup(ctx context.Context, exec connection.Exec, home config.Home, 
 		return reportUnregistered(stderr, unproved, c.names.Flag,
 			fmt.Errorf("smith could not reach the box as %s", unproved))
 	}
-	if err := registerBox(home, c.names.Marker, name, target); err != nil {
+	moved, err := registerBox(home, registration{
+		recorded:  c.names.Marker,
+		addressed: c.addressed,
+		name:      name,
+		target:    target,
+	})
+	if err != nil {
 		return reportUnnamed(stderr, target, err)
 	}
-	if _, err := fmt.Fprint(stdout, registeredReport(name, target, c.names.Marker)); err != nil {
+	if _, err := fmt.Fprint(stdout, registeredReport(name, target, moved)); err != nil {
 		return fmt.Errorf("write registration: %w", err)
 	}
 	return nil
@@ -105,14 +115,14 @@ func provenTarget(ctx context.Context, exec connection.Exec, c setupConclusion) 
 func smithTarget(host string) string { return smithLogin + "@" + host }
 
 // registeredReport renders what a successful setup's registration tells the
-// operator: the rename, when the name they passed moved the entry off the one
-// the box recorded; the name the box answers to from now on; the target it
+// operator: the rename, when the registration moved the box's entry off the
+// name it was registered under before; the name the box answers to from now on; the target it
 // resolves to; and the commands to type instead of an address — which is the
 // whole point of writing the target down.
-func registeredReport(name, target, previous string) string {
+func registeredReport(name, target, moved string) string {
 	var b strings.Builder
-	if previous != "" && previous != name {
-		fmt.Fprintf(&b, "renamed %q to %q\n", previous, name)
+	if moved != "" {
+		fmt.Fprintf(&b, "renamed %q to %q\n", moved, name)
 	}
 	fmt.Fprintf(&b, `registered %s as %q
 
