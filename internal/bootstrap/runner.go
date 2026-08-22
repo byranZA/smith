@@ -143,13 +143,17 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 }
 
 // SetupOptions carries the run parameters bootstrap.sh's setup needs: how the
-// box is reached, which smith version to stamp into the marker, and the
-// access-aware public-SSH firewall target.
+// box is reached, which smith version and blueprint pointer to stamp into the
+// marker, and the access-aware public-SSH firewall target.
 type SetupOptions struct {
 	// AccessMode is the access layer to record and drive: "public" or "tailscale".
 	AccessMode string
 	// SmithVersion is the smith build recorded in the marker.
 	SmithVersion string
+	// Blueprint is the blueprint pointer: the name of the blueprint the box is
+	// built from, recorded in the marker. Empty when the run names none, which
+	// is how a box built from no blueprint records none.
+	Blueprint string
 	// PublicSSH is the firewall target for public port 22 ("open" or "closed"),
 	// derived by the caller from the access mode and the door smith connected
 	// over. Empty defaults to "open".
@@ -190,8 +194,9 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 	if publicSSH == "" {
 		publicSSH = "open"
 	}
-	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s",
-		RemoteScriptPath, connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion), connection.ShellArg(publicSSH))
+	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s --blueprint %s",
+		RemoteScriptPath, connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion),
+		connection.ShellArg(publicSSH), connection.ShellArg(opts.Blueprint))
 	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return SetupResult{Outcome: OutcomeConnectFailed}, nil

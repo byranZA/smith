@@ -785,3 +785,59 @@ func writeFakeBin(t *testing.T, dir, name, body string) {
 		t.Fatalf("write fake %s: %v", name, err)
 	}
 }
+
+// TestScriptSetupRecordsTheBlueprintPointer drives the embedded bootstrap.sh
+// with a blueprint name and checks the marker records it, and that a follow-up
+// admin-invoked subcommand that rewrites the marker preserves it. The pointer is
+// how a later run — and `machine status` — learns which blueprint a box was
+// built from, so a rewrite that dropped it would leave the box unable to say.
+func TestScriptSetupRecordsTheBlueprintPointer(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProvisioningFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "ssh", "#!/usr/bin/env bash\nexit 0\n")
+
+	env := bootstrapTestEnv(t, dir, binDir)
+	markerPath := filepath.Join(dir, "bootstrap.json")
+
+	setup := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test", "--blueprint", "acme")
+	setup.Env = append(os.Environ(), env...)
+	if out, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	m, _, err := decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if m.Blueprint != "acme" {
+		t.Errorf("marker Blueprint = %q, want the blueprint the box was built from (acme)", m.Blueprint)
+	}
+
+	// A subcommand that rewrites the marker from the recorded run state must keep
+	// the pointer, exactly as it keeps the access mode and smith version.
+	closeCmd := exec.Command(bash, scriptPath, "close-public-ssh")
+	closeCmd.Env = append(os.Environ(), env...)
+	if out, err := closeCmd.CombinedOutput(); err != nil {
+		t.Fatalf("close-public-ssh failed: %v\n%s", err, out)
+	}
+	m, _, err = decodeMarker(t, markerPath)
+	if err != nil {
+		t.Fatalf("decode marker after rewrite: %v", err)
+	}
+	if m.Blueprint != "acme" {
+		t.Errorf("marker Blueprint = %q after a rewrite, want acme preserved", m.Blueprint)
+	}
+}

@@ -74,6 +74,47 @@ func Select(home Home, nameOrPath string) (string, error) {
 	return filepath.Join(home.path, "blueprints", nameOrPath+blueprintExt), nil
 }
 
+// Document is a blueprint as smith read it: the parsed declaration, the bytes
+// the file holds, and the file both came from.
+//
+// The bytes travel with the declaration because `machine setup` stages the
+// operator's blueprint onto the box verbatim, and re-rendering it from the
+// parsed declaration could only lose a field the operator wrote.
+type Document struct {
+	// Blueprint is the parsed declaration.
+	Blueprint blueprint.Blueprint
+	// Bytes is the blueprint file's content, exactly as it sits on disk.
+	Bytes []byte
+	// Path is the file the blueprint was read from.
+	Path string
+}
+
+// LoadDocument selects, reads, and parses the blueprint the operator named,
+// keeping its bytes verbatim alongside the declaration. A blueprint that does
+// not exist is an error naming the path smith looked for, so the operator can
+// see where it expected to find one.
+func LoadDocument(home Home, nameOrPath string) (Document, error) {
+	path, err := Select(home, nameOrPath)
+	if err != nil {
+		return Document{}, err
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- the operator names their own blueprint.
+	if err != nil {
+		if os.IsNotExist(err) {
+			if isPath(nameOrPath) {
+				return Document{Path: path}, fmt.Errorf("no blueprint at %s", path)
+			}
+			return Document{Path: path}, fmt.Errorf("no blueprint named %q: looked for %s", nameOrPath, path)
+		}
+		return Document{Path: path}, fmt.Errorf("read blueprint %s: %w", path, err)
+	}
+	b, err := blueprint.Parse(data)
+	if err != nil {
+		return Document{Path: path}, fmt.Errorf("%s: %w", path, err)
+	}
+	return Document{Blueprint: b, Bytes: data, Path: path}, nil
+}
+
 // Load selects, reads, and parses the blueprint the operator named, returning
 // it alongside the file it came from. A blueprint that does not exist is an
 // error naming the path smith looked for, so the operator can see where it
@@ -83,25 +124,11 @@ func Select(home Home, nameOrPath string) (string, error) {
 // the file it read, and asking selection a second time to learn it would let
 // the two answers drift apart.
 func Load(home Home, nameOrPath string) (blueprint.Blueprint, string, error) {
-	path, err := Select(home, nameOrPath)
+	doc, err := LoadDocument(home, nameOrPath)
 	if err != nil {
-		return blueprint.Blueprint{}, "", err
+		return blueprint.Blueprint{}, doc.Path, err
 	}
-	data, err := os.ReadFile(path) // #nosec G304 -- the operator names their own blueprint.
-	if err != nil {
-		if os.IsNotExist(err) {
-			if isPath(nameOrPath) {
-				return blueprint.Blueprint{}, path, fmt.Errorf("no blueprint at %s", path)
-			}
-			return blueprint.Blueprint{}, path, fmt.Errorf("no blueprint named %q: looked for %s", nameOrPath, path)
-		}
-		return blueprint.Blueprint{}, path, fmt.Errorf("read blueprint %s: %w", path, err)
-	}
-	b, err := blueprint.Parse(data)
-	if err != nil {
-		return blueprint.Blueprint{}, path, fmt.Errorf("%s: %w", path, err)
-	}
-	return b, path, nil
+	return doc.Blueprint, doc.Path, nil
 }
 
 // preferencesFile is the name of the operator-wide preferences file inside the

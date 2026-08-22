@@ -261,3 +261,32 @@ func writePreferences(t *testing.T, dir, body string) {
 		t.Fatalf("write preferences: %v", err)
 	}
 }
+
+func TestLoadDocumentKeepsTheBlueprintBytesVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	document := "# acme, the one we ship\naccess: tailscale\nterminal: tmux\nrepos:\n  - url: git@github.com:acme/api.git\n"
+	writeBlueprint(t, dir, "acme", document)
+
+	got, err := config.LoadDocument(config.NewHome(dir), "acme")
+	if err != nil {
+		t.Fatalf("LoadDocument() err = %v, want nil", err)
+	}
+	if string(got.Bytes) != document {
+		t.Errorf("LoadDocument() bytes = %q, want the file byte for byte, %q", got.Bytes, document)
+	}
+	if got.Blueprint.Access != "tailscale" {
+		t.Errorf("LoadDocument() blueprint = %+v, want access tailscale", got.Blueprint)
+	}
+	if want := filepath.Join(dir, "blueprints", "acme.yaml"); got.Path != want {
+		t.Errorf("LoadDocument() path = %q, want %q", got.Path, want)
+	}
+}
+
+func TestLoadDocumentRefusesAnInvalidBlueprint(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "nonsense: true\n")
+
+	if _, err := config.LoadDocument(config.NewHome(dir), "acme"); err == nil {
+		t.Fatal("LoadDocument() err = nil, want an error for an invalid blueprint")
+	}
+}

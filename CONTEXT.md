@@ -185,6 +185,14 @@ the staged blueprint, and the staged placement bytes. Separate locations and rol
 they must never share a directory, because one machine could one day hold both.
 _Avoid_: config dir (ambiguous between the two).
 
+**Staged blueprint**:
+`/etc/smith/blueprint.yaml` — the operator's blueprint document written onto the box by the
+config-staging stage, **verbatim**: the same YAML they wrote, byte for byte, no field filtered
+and no derived format. `machine setup` is its sole writer, and on-box smith reads it rather than
+fetching configuration of its own. Root-owned and `0644`, because it is a committed, non-secret
+artifact an SSHed-in operator is meant to be able to read.
+_Avoid_: box config, rendered blueprint.
+
 **Preferences**:
 `~/.smith/preferences.yaml` — the operator's own half of the config home, answering *if you built
 a completely different box tomorrow, should this value follow?* with yes. **Fixed-key fields

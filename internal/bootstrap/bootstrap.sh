@@ -106,6 +106,11 @@ SMITH_VERSION="unknown"
 # reachable, "closed" removes the allow rule so default-deny drops it). The Go
 # side owns the derivation; the firewall phase just obeys it.
 PUBLIC_SSH="open"
+# BLUEPRINT is the blueprint pointer: the name of the blueprint the box is built
+# from, recorded in the marker so a later run can tell what kind of box this is.
+# Empty when the box is built from no blueprint. It is a name and nothing else —
+# the staged document is ground truth, so no content hash is recorded.
+BLUEPRINT=""
 
 # The tailscale apt keyring and sources list. SMITH_TS_KEYRING and SMITH_TS_LIST
 # override them for tests; production uses the apt defaults. The keyring is the
@@ -194,6 +199,7 @@ write_marker() {
   \"schema_version\": ${SMITH_BOOTSTRAP_VERSION},
   \"smith_version\": \"${SMITH_VERSION}\",
   \"access_mode\": \"${ACCESS}\",
+  \"blueprint\": \"${BLUEPRINT}\",
   \"completed_phases\": [$(json_phases)],
   \"updated_at\": \"${ts}\"
 }" | as_root tee "$MARKER" >/dev/null
@@ -610,8 +616,8 @@ phase_access() {
   esac
 }
 
-# parse_setup_args reads the setup subcommand's flags: the access mode and the
-# smith version to stamp into the marker.
+# parse_setup_args reads the setup subcommand's flags: the access mode, the
+# smith version, and the blueprint pointer to stamp into the marker.
 parse_setup_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -621,6 +627,10 @@ parse_setup_args() {
         ;;
       --smith-version)
         SMITH_VERSION="${2:-}"
+        shift 2
+        ;;
+      --blueprint)
+        BLUEPRINT="${2:-}"
         shift 2
         ;;
       --public-ssh)
@@ -668,16 +678,19 @@ setup() {
   done
 }
 
-# load_marker_state restores the run parameters (access mode, smith version) and
-# completed phases from the existing marker, so a follow-up subcommand such as
-# close-public-ssh rewrites the marker without clobbering what setup recorded.
+# load_marker_state restores the run parameters (access mode, smith version,
+# blueprint pointer) and completed phases from the existing marker, so a
+# follow-up subcommand such as close-public-ssh rewrites the marker without
+# clobbering what setup recorded.
 load_marker_state() {
   [ -f "$MARKER" ] || return 0
-  local am sv
+  local am sv bp
   am="$(grep -o '"access_mode":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   sv="$(grep -o '"smith_version":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  bp="$(grep -o '"blueprint":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   [ -n "$am" ] && ACCESS="$am"
   [ -n "$sv" ] && SMITH_VERSION="$sv"
+  [ -n "$bp" ] && BLUEPRINT="$bp"
 
   COMPLETED_PHASES=()
   local arr item

@@ -19,6 +19,12 @@ import (
 	"fmt"
 )
 
+// Path is the marker's home on the box, /etc/smith/bootstrap.json.
+// bootstrap.sh writes it there and this package decodes what it finds; the two
+// sides hardcode the same path rather than deriving it, because the marker
+// predates everything else under /etc/smith and does not depend on it.
+const Path = "/etc/smith/bootstrap.json"
+
 // SchemaVersion is the marker schema version this build of smith writes and
 // fully understands. bootstrap.sh stamps the same number into schema_version,
 // so the two sides stay in lockstep.
@@ -32,6 +38,11 @@ type Marker struct {
 	SmithVersion string `json:"smith_version"`
 	// AccessMode is how the box is reached: "public" or "tailscale".
 	AccessMode string `json:"access_mode"`
+	// Blueprint is the blueprint pointer: the name of the blueprint the box was
+	// built from, empty when it was built from none. It is a name and nothing
+	// else — no content hash — because the staged document is ground truth and
+	// a hash would be stale the moment either side is edited.
+	Blueprint string `json:"blueprint"`
 	// CompletedPhases lists the phases that completed, in the order they ran.
 	CompletedPhases []string `json:"completed_phases"`
 	// UpdatedAt is when the marker was last written, as an RFC 3339 timestamp.

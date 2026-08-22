@@ -16,6 +16,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/secret"
+	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
 )
@@ -29,7 +30,7 @@ func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connecti
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(resolve), newStatusCmd())
 	return cmd
 }
 
@@ -177,9 +178,10 @@ nothing is provisioned yet. Run:
 // live progress. --access selects the access layer: public (default) leaves
 // hardened SSH open on the public IP; tailscale joins the box to the operator's
 // tailnet as a tag:smith node and closes public SSH once a live tailnet probe
-// proves reach.
-func newSetupCmd() *cobra.Command {
-	var accessMode, authKeyRef string
+// proves reach. --blueprint names the blueprint the box is built from, read
+// through the config home resolve locates and staged onto the box.
+func newSetupCmd(resolve homeResolver) *cobra.Command {
+	var accessMode, authKeyRef, blueprintName string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
@@ -194,6 +196,16 @@ func newSetupCmd() *cobra.Command {
 			}
 			host := hostOf(target)
 			ctx := cmd.Context()
+			// The config home is read only when there is a blueprint to stage, so
+			// an operator with no config home can still set a box up.
+			var home config.Home
+			if blueprintName != "" {
+				h, err := resolve()
+				if err != nil {
+					return err
+				}
+				home = h
+			}
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 			conn := connection.New(target, connection.System())
@@ -227,12 +239,34 @@ func newSetupCmd() *cobra.Command {
 				return &exitError{code: res.Outcome.ExitCode()}
 			}
 
+			// The blueprint pointer, checked once the box is known reachable and
+			// before the first mutating phase: a box built from a blueprint is
+			// only ever re-run with one.
+			if err := checkBlueprintPointer(ctx, conn, blueprintName, stderr); err != nil {
+				return err
+			}
+
+			// Every placement source is resolved on the operator's machine before
+			// the first mutating phase, because staging is
+			// resolve-all-then-write: a reference that will not resolve refuses
+			// the run with the box untouched, rather than landing a base layer
+			// the operator then has to discover is missing its credentials.
+			staged, err := resolveStagedConfig(home, blueprintName, stderr)
+			if err != nil {
+				return err
+			}
+
 			publicSSH, err := publicSSHTarget(ctx, runner, accessMode)
 			if err != nil {
 				return fmt.Errorf("derive firewall target: %w", err)
 			}
 
-			opts := bootstrap.SetupOptions{AccessMode: accessMode, SmithVersion: resolveVersion(), PublicSSH: publicSSH}
+			opts := bootstrap.SetupOptions{
+				AccessMode:   accessMode,
+				SmithVersion: resolveVersion(),
+				Blueprint:    blueprintName,
+				PublicSSH:    publicSSH,
+			}
 			setupRes, err := runner.Setup(ctx, opts, stdout, stderr)
 			if err != nil {
 				return fmt.Errorf("setup: %w", err)
@@ -246,6 +280,16 @@ func newSetupCmd() *cobra.Command {
 				return &exitError{code: setupRes.Outcome.ExitCode()}
 			}
 
+			// The config-staging stage: the base layer is in place, so the box can
+			// be told what kind of box it is. It runs before the access layer
+			// closes any door smith is still reached over.
+			if err := stageConfig(ctx, conn, staged, stdout); err != nil {
+				if _, werr := fmt.Fprintf(stderr, "config staging failed: %v\n", err); werr != nil {
+					return fmt.Errorf("write staging failure: %w", werr)
+				}
+				return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
+			}
+
 			if accessMode == "tailscale" {
 				return establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
 			}
@@ -255,7 +299,98 @@ func newSetupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&accessMode, "access", "public", "how the box is reached: public or tailscale")
 	cmd.Flags().StringVar(&authKeyRef, "tailscale-auth-key", "",
 		"reference to the Tailscale auth key for --access=tailscale (env:VAR or file:/path); prompts if omitted on a terminal")
+	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
+		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	return cmd
+}
+
+// checkBlueprintPointer applies the blueprint-pointer rule at the command
+// surface: a run naming no blueprint against a box whose marker records one is
+// refused, naming the blueprint the box was built from, and exits as a gate
+// rejection — the code the setup family already answers a refusal that mutated
+// nothing with.
+//
+// It runs after the preflight gate — which mutates nothing and owns the
+// connect-failure outcome — and before the first mutating phase, so a refusal
+// leaves the box, its staged document and its staged placements exactly as they
+// were.
+func checkBlueprintPointer(ctx context.Context, conn staging.Conn, blueprintName string, stderr io.Writer) error {
+	if err := staging.CheckPointer(ctx, conn, blueprintName); err != nil {
+		return refuseSetup(stderr, err)
+	}
+	return nil
+}
+
+// stagedConfig is the operator's blueprint resolved and ready to go onto the
+// box: the tree the staging stage converges, and the document it was read from,
+// named when a write fails so the operator knows which blueprint the box choked
+// on.
+type stagedConfig struct {
+	tree staging.Tree
+	path string
+}
+
+// resolveStagedConfig reads the named blueprint from the operator's config home
+// and resolves every placement source on the operator's machine. It takes no
+// connection and reaches no box, so a refusal here cannot have created or
+// modified a byte of /etc/smith.
+//
+// It runs before the first mutating phase because staging is
+// resolve-all-then-write: a from: reference naming a path or a variable this
+// machine does not have is a blueprint the operator has to fix, and finding
+// that out after the base layer landed would leave a provisioned box configured
+// for a session that cannot run. Every unresolvable reference is enumerated in
+// one refusal, so a blueprint full of typos is fixed in one pass rather than
+// one run per typo, and the refusal exits as a gate rejection -- the code the
+// setup family answers a refusal that mutated nothing with.
+//
+// A run naming no blueprint resolves nothing and stages nothing: the box keeps
+// whatever it already holds, and the flag-only path survives.
+func resolveStagedConfig(home config.Home, blueprintName string, stderr io.Writer) (*stagedConfig, error) {
+	if blueprintName == "" {
+		return nil, nil
+	}
+	doc, err := config.LoadDocument(home, blueprintName)
+	if err != nil {
+		return nil, refuseSetup(stderr, fmt.Errorf("read blueprint: %w", err))
+	}
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve)
+	if err != nil {
+		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
+	}
+	return &stagedConfig{tree: tree, path: doc.Path}, nil
+}
+
+// refuseSetup reports a setup refusal that mutated nothing and exits as a gate
+// rejection, the code the setup family already answers such a refusal with.
+func refuseSetup(stderr io.Writer, err error) error {
+	if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
+		return fmt.Errorf("write refusal: %w", werr)
+	}
+	return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
+}
+
+// stageConfig runs the config-staging stage: it writes the resolved blueprint
+// and its placement bytes onto the box at /etc/smith/, reporting what it staged
+// and what it left alone.
+//
+// It converges rather than resolves: the document was parsed and every source
+// resolved before the box was touched, so the only failures left here are the
+// box's own. It runs after the base layer because the staged placements are
+// owned by the smith user, who does not exist until then. Nothing to stage --
+// a run naming no blueprint -- leaves the box exactly as it was.
+func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, stdout io.Writer) error {
+	if staged == nil {
+		return nil
+	}
+	result, err := staging.Converge(ctx, conn, staged.tree)
+	if err != nil {
+		return fmt.Errorf("stage blueprint %s: %w", staged.path, err)
+	}
+	if _, err := fmt.Fprint(stdout, result.Report()); err != nil {
+		return fmt.Errorf("write staging report: %w", err)
+	}
+	return nil
 }
 
 // prepareTailscale performs the up-front, no-mutation tailscale steps: it
