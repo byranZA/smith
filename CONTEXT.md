@@ -182,7 +182,9 @@ _Avoid_: manifest (reserved, avoided for the marker), config file, template, pro
 `~/.smith/` is the **operator's** config home — `blueprints/`, `preferences`, and a gitignored
 `cache/` holding the box inventory. `/etc/smith/` is a **provisioned box's** state — the marker,
 the staged blueprint, and the staged placement bytes. Separate locations and roles, same format;
-they must never share a directory, because one machine could one day hold both.
+they must never share a directory, because one machine could one day hold both. The config home is
+created by the **first write** into it and never by a read, and its `.gitignore` is appended to
+rather than rewritten: the file is the operator's.
 _Avoid_: config dir (ambiguous between the two).
 
 **Staged blueprint**:
@@ -222,9 +224,21 @@ _Avoid_: provider-agnostic (reserved for the provider adapter), integration.
 **Box inventory**:
 `~/.smith/cache/boxes.json` — a name → proven-target address book and nothing else. An entry is an
 operator-chosen name plus the opaque SSH target smith **proved** works. Identity only: access mode,
-phases, blueprint pointer and destroy reference all stay marker-side. `machine list` is instant and
-offline; only `machine forget` removes.
+phases, blueprint pointer and destroy reference all stay marker-side, so there is nothing in it
+that can silently go stale — hence no TTL and no `last_seen`. Written by a successful `machine
+setup` and by `machine add`, which is read-only towards the box; `machine list` is instant and
+offline (`--probe` reports reach without storing it); only `machine forget` removes. **Rebuildable,
+not self-rebuilding**: a deleted file loses nothing unique, but v1 has no discovery path, so it is
+rebuilt by hand, one `machine add` per box ([docs/inventory.md](./docs/inventory.md)).
 _Avoid_: registry, database, state store.
+
+**The "@" decides**:
+The one resolution rule every verb shares. A value containing `@` is a literal SSH target, used as
+written and never looked up; a value without one is looked up in the **box inventory** and, on a
+miss, handed to `ssh` verbatim — so an `ssh_config` alias or a MagicDNS name works with no smith
+configuration, and an inventory name shadows an identically-named alias. No flag and no sigil, and
+the target is never parsed (*reference, not value*, extended to reach).
+_Avoid_: alias resolution, host lookup, DNS.
 
 **Provider adapter**:
 The operator-supplied description of one provider's CLI — command templates plus field extractors,
