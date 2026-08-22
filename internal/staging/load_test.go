@@ -133,7 +133,7 @@ func TestLoadReadsTheDocumentTheWriterStages(t *testing.T) {
 	}
 }
 
-// stagePlacement writes bytes at path inside a box config directory, creating
+// stagePlacement writes bytes at path inside a box state directory, creating
 // the scope directories the writer would have created.
 func stagePlacement(t *testing.T, path string, bytes string) {
 	t.Helper()

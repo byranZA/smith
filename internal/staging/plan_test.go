@@ -45,7 +45,7 @@ func TestPlanPlacesTheDocumentRootOwnedAt0644(t *testing.T) {
 	}
 }
 
-func TestPlanStagesUnderTheBoxConfigDirectoryOnly(t *testing.T) {
+func TestPlanStagesUnderTheBoxStateDirectoryOnly(t *testing.T) {
 	tree := Plan([]byte("access: public\n"), blueprint.Blueprint{})
 	if !strings.HasPrefix(tree.Document.Path, "/etc/smith/") {
 		t.Errorf("Document.Path = %q, want a path under /etc/smith/", tree.Document.Path)

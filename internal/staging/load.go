@@ -8,7 +8,7 @@ import (
 	"github.com/byranZA/smith/internal/blueprint"
 )
 
-// documentFile is the staged document's name inside the box config directory.
+// documentFile is the staged document's name inside the box state directory.
 // The writer and the reader both derive their path from it, so the two cannot
 // disagree about where the document sits.
 const documentFile = "blueprint.yaml"
@@ -51,7 +51,7 @@ func (e *MalformedError) Error() string {
 // Unwrap gives up the parse refusal underneath.
 func (e *MalformedError) Unwrap() error { return e.Err }
 
-// DocumentPathIn is where the staged blueprint sits under a box config
+// DocumentPathIn is where the staged blueprint sits under a box state
 // directory. On-box smith reads DocumentPathIn(Root); a test reads a directory
 // of its own, and both agree with what the writer staged because the name comes
 // from one place.

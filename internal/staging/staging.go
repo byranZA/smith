@@ -77,7 +77,7 @@ const (
 	// defaultPerms is what a placement carries when it declares none. A
 	// provisioned secret is readable by its consumer and nobody else.
 	defaultPerms = "0600"
-	// rootMode is the box config directory's permissions, and rootOwner its
+	// rootMode is the box state directory's permissions, and rootOwner its
 	// owner: the marker and the document live here and both are readable.
 	rootMode  = "0755"
 	rootOwner = "root:root"
@@ -221,7 +221,7 @@ func repoScoped(b blueprint.Blueprint) bool {
 }
 
 // BoxPlacementPathIn is where a box placement's bytes are staged under a box
-// config directory: the box scope's directory, then the destination flattened
+// state directory: the box scope's directory, then the destination flattened
 // into a single name.
 //
 // It is the whole of the box-scoped key derivation and it is pure, so the
@@ -234,7 +234,7 @@ func BoxPlacementPathIn(root, destination string) string {
 }
 
 // RepoPlacementPathIn is where a repo placement's bytes are staged under a box
-// config directory: the repo scope's directory, then the repo, then the
+// state directory: the repo scope's directory, then the repo, then the
 // destination flattened into a single name.
 //
 // Like the box-scoped key it is pure, so the writer and the on-box reader
@@ -245,12 +245,12 @@ func RepoPlacementPathIn(root, repo, destination string) string {
 	return filepath.Join(repoDirIn(root), repo, flatten(destination))
 }
 
-// boxDirIn is the box scope's directory under a box config directory.
+// boxDirIn is the box scope's directory under a box state directory.
 func boxDirIn(root string) string {
 	return filepath.Join(root, placementsSubdir, boxSubdir)
 }
 
-// repoDirIn is the repo scope's directory under a box config directory.
+// repoDirIn is the repo scope's directory under a box state directory.
 func repoDirIn(root string) string {
 	return filepath.Join(root, placementsSubdir, repoSubdir)
 }

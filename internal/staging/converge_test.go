@@ -403,7 +403,7 @@ func TestConvergeLeavesAnUnchangedPlacementAlone(t *testing.T) {
 	}
 }
 
-func TestConvergeTouchesNothingOutsideTheBoxConfigDirectory(t *testing.T) {
+func TestConvergeTouchesNothingOutsideTheBoxStateDirectory(t *testing.T) {
 	tree := resolvedTree(t, blueprint.Blueprint{
 		Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "/home/smith/.npmrc"}},
 		Repos: []blueprint.Repo{
