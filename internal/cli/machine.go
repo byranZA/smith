@@ -196,7 +196,7 @@ nothing is provisioned yet. Run:
 // reachable by from now on and registering it — the address setup used to print
 // once and throw away.
 func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
-	var accessMode, authKeyRef, blueprintName, boxName string
+	var accessMode, authKeyRef, blueprintName, boxName, boxTarget string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
@@ -257,12 +257,31 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return &exitError{code: res.Outcome.ExitCode()}
 			}
 
-			// The blueprint pointer, checked once the box is known reachable and
-			// before the first mutating phase: a box built from a blueprint is
-			// only ever re-run with one.
-			if err := checkBlueprintPointer(ctx, conn, blueprintName, stderr); err != nil {
-				return err
+			// The box's own marker, read once the preflight gate says the box
+			// answers and before the first mutating phase. It carries both the
+			// blueprint the box was built from and the name it is already
+			// registered under, so one read settles the pointer rule and the
+			// name a re-run inherits.
+			recorded, _, err := status.ReadMarker(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("read the box's marker: %w", err)
 			}
+			if err := staging.Pointer(recorded, blueprintName); err != nil {
+				return refuseSetup(stderr, err)
+			}
+
+			// The name, by precedence: what the operator passed, then what the
+			// box already records, then the blueprint it is built from, then its
+			// host. A --name that differs from the marker's is a rename, and the
+			// resolved name goes onto the marker so the box records what it is
+			// called.
+			names := inventory.Naming{
+				Flag:      boxName,
+				Marker:    recorded.Name,
+				Blueprint: blueprintName,
+				Host:      host,
+			}
+			resolvedName, _ := inventory.Name(names)
 
 			// Every placement source is resolved on the operator's machine before
 			// the first mutating phase, because staging is
@@ -282,7 +301,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			opts := bootstrap.SetupOptions{
 				AccessMode:   accessMode,
 				SmithVersion: resolveVersion(),
-				BoxName:      boxName,
+				BoxName:      resolvedName,
 				Blueprint:    blueprintName,
 				PublicSSH:    publicSSH,
 			}
@@ -312,7 +331,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			// The box is provisioned; what is left is writing down the address
 			// smith will reach it by from now on, which the operator would
 			// otherwise have to remember off a line that scrolls away.
-			conclusion := setupConclusion{accessMode: accessMode, host: host, name: boxName}
+			conclusion := setupConclusion{accessMode: accessMode, target: boxTarget, names: names}
 			if accessMode == "tailscale" {
 				result, err := establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
 				if err != nil {
@@ -329,25 +348,10 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
 		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	cmd.Flags().StringVar(&boxName, "name", "",
-		"the name the box is registered and recorded under; omitted, its host names it")
+		"the name the box is registered and recorded under; omitted, its marker, its blueprint or its host names it")
+	cmd.Flags().StringVar(&boxTarget, "target", "",
+		"the address to register the box under, stored verbatim and never probed; omitted, smith registers the address it proved")
 	return cmd
-}
-
-// checkBlueprintPointer applies the blueprint-pointer rule at the command
-// surface: a run naming no blueprint against a box whose marker records one is
-// refused, naming the blueprint the box was built from, and exits as a gate
-// rejection — the code the setup family already answers a refusal that mutated
-// nothing with.
-//
-// It runs after the preflight gate — which mutates nothing and owns the
-// connect-failure outcome — and before the first mutating phase, so a refusal
-// leaves the box, its staged document and its staged placements exactly as they
-// were.
-func checkBlueprintPointer(ctx context.Context, conn staging.Conn, blueprintName string, stderr io.Writer) error {
-	if err := staging.CheckPointer(ctx, conn, blueprintName); err != nil {
-		return refuseSetup(stderr, err)
-	}
-	return nil
 }
 
 // stagedConfig is the operator's blueprint resolved and ready to go onto the
@@ -690,14 +694,15 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			registered, source := name, nameFromOperator
-			if registered == "" {
-				registered, source = hostOrTarget(target), nameFromHost
-			}
-			if err := registerBox(home, registered, target); err != nil {
+			registered, origin := inventory.Name(inventory.Naming{
+				Flag:   name,
+				Marker: box.Name,
+				Host:   hostOrTarget(target),
+			})
+			if err := registerBox(home, "", registered, target); err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), addedReport(registered, target, source, box.Blueprint)); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), addedReport(registered, target, origin, box.Blueprint)); err != nil {
 				return fmt.Errorf("write registration: %w", err)
 			}
 			return nil
@@ -707,32 +712,24 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return cmd
 }
 
-// nameSource is where the name a box was registered under came from. The
-// operator is told, because a name smith derived is one they did not choose and
-// may want to replace.
-type nameSource int
-
-const (
-	// nameFromOperator means the operator named the box with --name.
-	nameFromOperator nameSource = iota
-	// nameFromHost means the name was derived from the target's host, because
-	// the operator named none and the box's marker records none either.
-	nameFromHost
-)
-
 // registerBox reads the inventory, maps name to target in it, and writes it
 // back. The name is decided by the caller: each verb derives its own default
 // from what it knows, and this one only ever registers the name it is handed.
 //
+// previous is the name the box was already registered under, empty when the
+// caller has none to move. Passing one makes the registration a rename: the old
+// entry goes, so renaming a box leaves one entry rather than two names for one
+// machine, and a re-run whose address changed updates the entry it already has.
+//
 // The config home is created here and only here on the registration paths:
 // reading never creates, so the directory comes into existence at the first
 // write into it.
-func registerBox(home config.Home, name, target string) error {
+func registerBox(home config.Home, previous, name, target string) error {
 	inv, skew, err := inventory.Read(home.InventoryPath())
 	if err != nil {
 		return fmt.Errorf("read the box inventory: %w", err)
 	}
-	next, err := inventory.Register(inv, name, target)
+	next, err := inventory.Rename(inv, previous, name, target)
 	if err != nil {
 		return fmt.Errorf("cannot register %s: %w", target, err)
 	}
@@ -747,14 +744,15 @@ func registerBox(home config.Home, name, target string) error {
 
 // addedReport renders what the operator is told by a successful registration:
 // the name the box is reached by from now on, the target it resolves to, and —
-// when smith had to derive the name — that the box's marker recorded none.
-func addedReport(name, target string, source nameSource, blueprint string) string {
+// when the name came off nothing better than the host — that the box's marker
+// recorded none.
+func addedReport(name, target string, origin inventory.Origin, blueprint string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "registered %s as %q\n", target, name)
 	if blueprint != "" {
 		fmt.Fprintf(&b, "built from the blueprint %q\n", blueprint)
 	}
-	if source == nameFromHost {
+	if origin == inventory.OriginHost {
 		fmt.Fprintf(&b, "\nthe box's marker records no name, so smith named it after its host.\n"+
 			"Register it under another name with: smith machine add %s --name <name>\n", target)
 	}

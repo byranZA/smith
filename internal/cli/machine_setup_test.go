@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/inventory"
 )
 
 // answeringSSH stands in for the local ssh binary in front of a box that
@@ -42,7 +43,7 @@ func TestSetupProvesTheSmithUserFromTheOperatorsMachineBeforeRegistering(t *test
 	dir := t.TempDir()
 	ssh := &answeringSSH{}
 
-	stdout, stderr, code := concludeAt(t, dir, ssh, setupConclusion{accessMode: "public", host: "203.0.113.10"})
+	stdout, stderr, code := concludeAt(t, dir, ssh, setupConclusion{accessMode: "public", names: inventory.Naming{Host: "203.0.113.10"}})
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 for a box that answered as the smith user (stderr: %s)", code, stderr)
@@ -64,7 +65,8 @@ func TestSetupRegistersTheTailnetAddressWithoutASecondProbe(t *testing.T) {
 	ssh := &answeringSSH{}
 
 	_, stderr, code := concludeAt(t, dir, ssh, setupConclusion{
-		accessMode: "tailscale", host: "203.0.113.10", tailnetIP: "100.92.14.7", name: "dev",
+		accessMode: "tailscale", tailnetIP: "100.92.14.7",
+		names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
 	})
 
 	if code != 0 {
@@ -86,7 +88,8 @@ func TestSetupNamesTheBoxInTheTailscaleReRunLine(t *testing.T) {
 	dir := t.TempDir()
 
 	stdout, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "tailscale", host: "203.0.113.10", tailnetIP: "100.92.14.7", name: "dev",
+		accessMode: "tailscale", tailnetIP: "100.92.14.7",
+		names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
 	})
 
 	if code != 0 {
@@ -104,7 +107,7 @@ func TestSetupRegistersUnderTheNameTheOperatorChose(t *testing.T) {
 	dir := t.TempDir()
 
 	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public", host: "203.0.113.10", name: "dev",
+		accessMode: "public", names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
 	})
 
 	if code != 0 {
@@ -119,7 +122,7 @@ func TestSetupReportsAProvisionedButUnregisteredBoxWhenItCannotProveReach(t *tes
 	dir := t.TempDir()
 
 	stdout, stderr, code := concludeAt(t, dir, &refusingSSH{}, setupConclusion{
-		accessMode: "public", host: "203.0.113.10", name: "dev",
+		accessMode: "public", names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
 	})
 
 	if code != 1 {
@@ -140,7 +143,7 @@ func TestSetupCreatesTheConfigHomeWhenItRegisters(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "smith")
 
 	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public", host: "203.0.113.10", name: "dev",
+		accessMode: "public", names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
 	})
 
 	if code != 0 {

@@ -36,18 +36,43 @@ func (e *NameCollisionError) Error() string {
 //
 // It does not mutate inv.
 func Register(inv Inventory, name, target string) (Inventory, error) {
+	if err := validate(name, target); err != nil {
+		return inv, err
+	}
+	if err := collision(inv, name, target); err != nil {
+		return inv, err
+	}
+	return put(inv, name, target), nil
+}
+
+// validate rejects the two registrations that name nothing: a box has a name
+// and an address, and an empty one of either is a caller's bug rather than an
+// operator's choice.
+func validate(name, target string) error {
 	if name == "" {
-		return inv, errors.New("no box name: a box is registered under a name, not an empty string")
+		return errors.New("no box name: a box is registered under a name, not an empty string")
 	}
 	if target == "" {
-		return inv, fmt.Errorf("no target for box %q: a box is registered by the address smith reaches it over", name)
+		return fmt.Errorf("no target for box %q: a box is registered by the address smith reaches it over", name)
 	}
+	return nil
+}
+
+// collision reports the refusal a registration under name is owed when the
+// name already reaches a different box, and nil when the name is free or
+// already reaches this very target.
+func collision(inv Inventory, name, target string) error {
 	if existing, ok := inv.Boxes[name]; ok && existing.Target != target {
-		return inv, &NameCollisionError{Name: name, Registered: existing.Target, Wanted: target}
+		return &NameCollisionError{Name: name, Registered: existing.Target, Wanted: target}
 	}
+	return nil
+}
+
+// put returns a copy of inv with name mapped to target, having decided nothing.
+func put(inv Inventory, name, target string) Inventory {
 	next := clone(inv)
 	next.Boxes[name] = Box{Target: target}
-	return next, nil
+	return next
 }
 
 // clone returns a copy of inv sharing none of its map, so a caller's inventory

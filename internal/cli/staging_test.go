@@ -10,6 +10,7 @@ import (
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -194,18 +195,17 @@ func TestResolveStagedConfigRefusesAnUnresolvableSourceAsAGateRejection(t *testi
 	}
 }
 
-func TestCheckBlueprintPointerRefusesABlueprintlessRerunAsAGateRejection(t *testing.T) {
-	box := &fakeStagingBox{reply: `{"schema_version":1,"access_mode":"public","blueprint":"acme"}`}
+func TestSetupReportsABlueprintPointerRefusalAsAGateRejection(t *testing.T) {
 	var errOut bytes.Buffer
 
-	err := checkBlueprintPointer(context.Background(), box, "", &errOut)
+	err := refuseSetup(&errOut, staging.Pointer(marker.Marker{Blueprint: "acme"}, ""))
 	if err == nil {
-		t.Fatal("checkBlueprintPointer() err = nil, want a box built from a blueprint to refuse a blueprint-less re-run")
+		t.Fatal("refuseSetup() err = nil, want a box built from a blueprint to refuse a blueprint-less re-run")
 	}
 	if code, ok := gateRejection(err); !ok || code != 2 {
-		t.Errorf("checkBlueprintPointer() err = %v, want a gate rejection (exit 2)", err)
+		t.Errorf("refuseSetup() err = %v, want a gate rejection (exit 2)", err)
 	}
 	if !strings.Contains(errOut.String(), "acme") {
-		t.Errorf("checkBlueprintPointer() reported %q, want it to name the blueprint the box was built from", errOut.String())
+		t.Errorf("refuseSetup() reported %q, want it to name the blueprint the box was built from", errOut.String())
 	}
 }
