@@ -1,17 +1,23 @@
 package workspace
 
-import "github.com/byranZA/smith/internal/blueprint"
+import (
+	"path/filepath"
+	"strings"
 
-// Plan derives the ordered units of work from the blueprint staged on the box.
+	"github.com/byranZA/smith/internal/blueprint"
+)
+
+// Plan derives the ordered units of work from the blueprint staged on the box,
+// with home the smith user's home the box's ~/-relative paths resolve against.
 // It is pure: it reads nothing, writes nothing, runs no command and reaches no
 // box, so the whole ordering rule can be read and tested without an apt.
 //
 // A step the blueprint declares nothing for plans nothing, so a blueprint with
 // no packages does not report a packages step that had nothing to do.
-func Plan(b blueprint.Blueprint) []Unit {
+func Plan(b blueprint.Blueprint, home string) []Unit {
 	var plan []Unit
 	for _, step := range Order() {
-		plan = append(plan, planStep(step, b)...)
+		plan = append(plan, planStep(step, b, home)...)
 	}
 	return plan
 }
@@ -20,9 +26,45 @@ func Plan(b blueprint.Blueprint) []Unit {
 // that are not yet built plan nothing and are named in Order regardless, so the
 // slice that builds one adds a case here and inherits its place in the
 // sequence rather than deciding it again.
-func planStep(step Step, b blueprint.Blueprint) []Unit {
-	if step != Packages || len(b.Packages) == 0 {
+func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
+	switch {
+	case step == Placements:
+		return planPlacements(b.Placements, home)
+	case step == Packages && len(b.Packages) > 0:
+		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
+	default:
 		return nil
 	}
-	return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
+}
+
+// planPlacements is one unit per box-scoped placement the blueprint declares,
+// so a placement that cannot be materialized is reported on its own and the
+// ones after it are still written.
+//
+// Only the box scope is planned. A repo's placements are worktree-relative and
+// converge when a session stands a worktree up, which is not this stage.
+func planPlacements(placements []blueprint.Placement, home string) []Unit {
+	units := make([]Unit, 0, len(placements))
+	for _, p := range placements {
+		units = append(units, Unit{Step: Placements, Placement: Placement{
+			Path:        boxPath(p.To, home),
+			Destination: p.To,
+			Mode:        p.Mode,
+			Perms:       p.Perms,
+		}})
+	}
+	return units
+}
+
+// boxPath expands a destination written the way an operator writes it —
+// ~/.npmrc — into the absolute path the file lands at. The destination itself
+// travels on unexpanded, because it is the key the staged bytes were keyed by.
+func boxPath(destination, home string) string {
+	if destination == "~" {
+		return home
+	}
+	if rest, ok := strings.CutPrefix(destination, "~/"); ok {
+		return filepath.Join(home, rest)
+	}
+	return destination
 }

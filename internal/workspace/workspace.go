@@ -63,6 +63,30 @@ type Unit struct {
 	Step Step
 	// Packages are the apt packages a packages unit installs.
 	Packages []string
+	// Placement is the box-scoped file a placements unit materializes.
+	Placement Placement
+}
+
+// Placement is one box-scoped placement of the plan: a file the blueprint
+// declares on the box, outside any worktree.
+//
+// Its bytes are not here and are never resolved on the box. They come from the
+// tree `machine setup` staged, looked up by the destination the blueprint
+// declared — every `from:` in a staged document names a path on the operator's
+// machine and means nothing here.
+type Placement struct {
+	// Path is where the file lands, absolute: a ~/-relative destination has
+	// already been resolved against the smith user's home.
+	Path string
+	// Destination is the destination exactly as the blueprint declared it,
+	// which is the key its staged bytes are read by.
+	Destination string
+	// Mode is how the file is maintained: "converge" replaces it whole on
+	// every run, "once" writes it only when it is absent.
+	Mode string
+	// Perms is the octal file mode the destination carries, empty for the
+	// owner-only default.
+	Perms string
 }
 
 // Runner launches a command on the box smith is running on. It is the system
@@ -81,4 +105,7 @@ type Env struct {
 	// Command launches the commands the stage converges with — apt today,
 	// mise and git as the later steps land.
 	Command Runner
+	// StateRoot is the box state directory `machine setup` staged the
+	// blueprint and its placement bytes under — /etc/smith on a real box.
+	StateRoot string
 }

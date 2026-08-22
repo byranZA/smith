@@ -41,10 +41,16 @@ func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Re
 // no converge yet reports itself as such rather than silently passing, so a
 // plan can never claim work the stage did not do.
 func converge(ctx context.Context, env Env, unit Unit, progress io.Writer) Outcome {
-	if unit.Step != Packages {
-		return Outcome{Step: unit.Step, Err: fmt.Errorf("the %s step is not built yet", unit.Step)}
+	var summary string
+	var err error
+	switch unit.Step {
+	case Placements:
+		summary, err = materialize(env.StateRoot, unit.Placement)
+	case Packages:
+		summary, err = installPackages(ctx, env.Command, unit.Packages, progress)
+	default:
+		err = fmt.Errorf("the %s step is not built yet", unit.Step)
 	}
-	summary, err := installPackages(ctx, env.Command, unit.Packages, progress)
 	return Outcome{Step: unit.Step, Summary: summary, Err: err}
 }
 

@@ -29,6 +29,15 @@ func stagedBlueprint() (blueprint.Blueprint, error) {
 	return b, nil
 }
 
+// pathResolver locates a directory on the box a verb acts against. It is
+// passed into the workspace command rather than read inside it, so a test
+// drives the real command against a directory of its own.
+type pathResolver func() (string, error)
+
+// boxHomeDir locates the smith user's home on this box, which is where a
+// ~/-relative placement destination lands.
+func boxHomeDir() (string, error) { return boxPath("~") }
+
 // workspaceWiring is everything the workspace verbs are built from: what they
 // need to run on a box, and what they need to relay to one. Both halves are
 // always present, because which one is used is decided by the operator's own
@@ -42,6 +51,12 @@ type workspaceWiring struct {
 	home homeResolver
 	// command launches the commands the stage converges the box with.
 	command workspace.Runner
+	// root is the box state directory `machine setup` staged the blueprint
+	// and its placement bytes under.
+	root string
+	// boxHome locates the smith user's home on this box, which the
+	// blueprint's ~/-relative paths resolve against.
+	boxHome pathResolver
 	// ssh launches the local ssh binary a relayed verb travels over.
 	ssh connection.Exec
 	// version is this smith's version, which every relayed invocation carries
@@ -98,8 +113,13 @@ func (w workspaceWiring) converge(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	home, err := w.boxHome()
+	if err != nil {
+		return fmt.Errorf("locate the smith user's home on this box: %w", err)
+	}
 	stdout := cmd.OutOrStdout()
-	result, err := workspace.Converge(cmd.Context(), workspace.Env{Command: w.command}, workspace.Plan(b), stdout)
+	env := workspace.Env{Command: w.command, StateRoot: w.root}
+	result, err := workspace.Converge(cmd.Context(), env, workspace.Plan(b, home), stdout)
 	if err != nil {
 		return fmt.Errorf("converge this box's workspace: %w", err)
 	}

@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,6 +51,12 @@ func staged(b blueprint.Blueprint) stagedResolver {
 	return func() (blueprint.Blueprint, error) { return b, nil }
 }
 
+// boxHomeAt answers with the home of the smith user on the box a test stands
+// in for.
+func boxHomeAt(dir string) pathResolver {
+	return func() (string, error) { return dir, nil }
+}
+
 // runWorkspace drives the assembled workspace command the way an operator
 // does, with every boundary faked, and returns what landed on each stream plus
 // the exit code.
@@ -72,6 +80,7 @@ func TestWorkspaceConvergeInstallsDeclaredPackages(t *testing.T) {
 	w := workspaceWiring{
 		blueprint: staged(blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}}),
 		command:   box,
+		boxHome:   boxHomeAt(t.TempDir()),
 	}
 	stdout, stderr, code := runWorkspace(t, w, "converge")
 
@@ -96,6 +105,7 @@ func TestWorkspaceConvergeRefusesWithNothingStaged(t *testing.T) {
 			return blueprint.Blueprint{}, &staging.AbsentError{Path: staging.DocumentPath}
 		},
 		command: box,
+		boxHome: boxHomeAt(t.TempDir()),
 	}
 	cmd := newWorkspaceCmd(w)
 	cmd.SetArgs([]string{"converge"})
@@ -120,6 +130,7 @@ func TestWorkspaceConvergeFailsOnAFailedStep(t *testing.T) {
 	w := workspaceWiring{
 		blueprint: staged(blueprint.Blueprint{Packages: []string{"jq"}}),
 		command:   box,
+		boxHome:   boxHomeAt(t.TempDir()),
 	}
 	stdout, _, code := runWorkspace(t, w, "converge")
 
@@ -163,5 +174,70 @@ func TestWorkspaceConvergeWithABoxRunsOnTheBox(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "1 step converged") {
 		t.Errorf("stdout = %q, want the box's own output", stdout)
+	}
+}
+
+// TestWorkspaceConvergeMaterializesBoxPlacements proves the verb run on the
+// box puts the files the blueprint declares on disk from the bytes `machine
+// setup` staged there, before it runs anything that needs them.
+func TestWorkspaceConvergeMaterializesBoxPlacements(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	path := staging.BoxPlacementPathIn(root, "~/.gitconfig")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("make the staged placements directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("[user]\n\tname = smith\n"), 0o600); err != nil {
+		t.Fatalf("stage the placement bytes: %v", err)
+	}
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{Placements: []blueprint.Placement{
+			{From: "file:/home/op/.gitconfig", To: "~/.gitconfig", Mode: "converge", Perms: "0644"},
+		}}),
+		command: &fakeBox{},
+		root:    root,
+		boxHome: boxHomeAt(home),
+	}
+
+	stdout, stderr, code := runWorkspace(t, w, "converge")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, stderr)
+	}
+	placed := filepath.Join(home, ".gitconfig")
+	data, err := os.ReadFile(placed)
+	if err != nil {
+		t.Fatalf("read %s: %v", placed, err)
+	}
+	if !strings.Contains(string(data), "name = smith") {
+		t.Errorf("%s holds %q, want the staged bytes", placed, data)
+	}
+	if !strings.Contains(stdout, "placements") {
+		t.Errorf("stdout = %q, want the step reported", stdout)
+	}
+}
+
+// TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes proves a blueprint
+// declaring a placement whose bytes never reached the box exits non-zero and
+// says which destination and which command stages it.
+func TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
+	home := t.TempDir()
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{Placements: []blueprint.Placement{
+			{From: "file:/home/op/.npmrc", To: "~/.npmrc", Mode: "converge"},
+		}}),
+		command: &fakeBox{},
+		root:    t.TempDir(),
+		boxHome: boxHomeAt(home),
+	}
+
+	stdout, _, code := runWorkspace(t, w, "converge")
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	for _, want := range []string{"~/.npmrc", "machine setup"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+		}
 	}
 }

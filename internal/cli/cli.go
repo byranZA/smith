@@ -108,6 +108,8 @@ func newRootCmd() *cobra.Command {
 		blueprint: stagedBlueprint,
 		home:      userConfigHome,
 		command:   connection.System(),
+		root:      staging.Root,
+		boxHome:   boxHomeDir,
 		ssh:       connection.System(),
 		version:   resolveVersion(),
 	}), newVersionCmd())
