@@ -41,8 +41,10 @@ decides how any value the operator types is read.**
 ```
 
 The name is the key and is *also* on the marker; the target is the opaque string smith proved works
-at the end of setup. **The access mode, the completed phases, the blueprint pointer and the provider
-destroy reference all live on the marker, on the box — one copy each, no second answer.**
+at the end of setup — or, when the operator passes `--target`, the string they told smith to store
+instead (see the consequence below). **The access mode, the completed phases, the blueprint pointer
+and the provider destroy reference all live on the marker, on the box — one copy each, no second
+answer.**
 
 This is not a minimalism preference, it is this repo's spine restated for a new file. The marker is
 a ledger, not a gate. Session running-state is a live `tmux has-session` probe with no daemon.
@@ -161,9 +163,20 @@ breaks.
   setup/status seam holds.
 - **The stored target is one smith proved**, never one it derived. Lock-out safety already forces a
   probe over the new door before the old one closes, so at the end of setup smith holds a working
-  address for free. The inventory is therefore structurally incapable of holding an address that
-  never worked, and a wrong MagicDNS name ([#74](https://github.com/byranZA/smith/issues/74)) cannot
-  reach it.
+  address for free. For every target smith chooses, the inventory is therefore structurally
+  incapable of holding an address that never worked, and a wrong MagicDNS name
+  ([#74](https://github.com/byranZA/smith/issues/74)) cannot reach it.
+- **`--target` is the one exception, and it is deliberate.** An operator who passes
+  `--target dev.internal` has smith store that string verbatim; smith does **not** probe it, so an
+  entry written that way can be an address that never worked. This is not an oversight in the
+  guarantee above — it is the guarantee stepping aside. A `--target` is an `ssh_config` alias, a
+  MagicDNS name or a bastion hop out of the operator's own naming scheme, resolvable from their
+  machine and by their DNS, and often not from wherever setup happened to run; probing it would
+  fail on addresses that are correct and would make smith second-guess a scheme it cannot see. It
+  is *reference, not value* ([ADR-0002](./0002-secrets-are-references-not-values.md)) once more: the
+  string is handed to `ssh`, and `ssh` is what says whether it resolves. The failure mode is the
+  loud one this ADR already accepts everywhere else — a wrong `--target` fails on the next connect,
+  in a message naming what smith tried, and `machine forget` plus `machine add` repairs it.
 - **The marker is now the only home for per-box facts**, which raises the bar on marker schema
   changes rather than lowering it: a fact that belongs to a box and is not on the marker has nowhere
   else to live.

@@ -22,11 +22,14 @@ the provider destroy reference all live on the box's marker
 and no `last_seen`, because nothing here can silently go stale: a wrong address
 fails loudly the moment you connect.
 
-**The target is one smith proved.** Setup stores the address it has just opened
-a connection over — not the address you typed, which hardening kills (root
-login is closed), and not one smith derived but never opened. Over tailscale
-that is the tailnet address the lock-out-safety probe came in on, so a wrong
-MagicDNS name cannot reach the file.
+**The target is one smith proved**, unless you name one yourself. Setup stores
+the address it has just opened a connection over — not the address you typed,
+which hardening kills (root login is closed), and not one smith derived but
+never opened. Over tailscale that is the tailnet address the lock-out-safety
+probe came in on, so a wrong MagicDNS name cannot reach the file. The one way
+an unproved address gets in is [`--target`](#--target-register-an-address-of-your-own),
+where you are pointing at your own naming scheme and smith takes you at your
+word.
 
 ## Naming a box on setup
 
