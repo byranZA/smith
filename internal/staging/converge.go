@@ -73,16 +73,47 @@ func (r Result) Report() string {
 // time. A file that differs is replaced whole — no history, no merge — because
 // the blueprint is desired state and half of one describes no box.
 //
+// The tree's directories are ensured first, so a blueprint declaring no
+// placements still leaves an empty placements directory rather than none, and a
+// directory a human has widened is narrowed back.
+//
 // The bytes travel over stdin and never appear in an argument, and each write
 // lands on a temporary path beside its destination before it is chmod'ed,
 // chown'ed and moved into place, so the destination never exists holding
-// partial content or a wider mode.
+// partial content or a wider mode. That matters most for a placement: its bytes
+// are a provisioned secret, and argv is readable by every process on the box.
 func Converge(ctx context.Context, conn Conn, tree Tree) (Result, error) {
-	change, err := write(ctx, conn, tree.Document)
-	if err != nil {
-		return Result{}, err
+	for _, d := range tree.Dirs {
+		if err := ensure(ctx, conn, d); err != nil {
+			return Result{}, err
+		}
 	}
-	return Result{Entries: []Entry{{Path: tree.Document.Path, Change: change}}}, nil
+	files := make([]File, 0, 1+len(tree.Placements))
+	files = append(files, tree.Document)
+	for _, p := range tree.Placements {
+		files = append(files, p.File)
+	}
+
+	var result Result
+	for _, f := range files {
+		change, err := write(ctx, conn, f)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Entries = append(result.Entries, Entry{Path: f.Path, Change: change})
+	}
+	return result, nil
+}
+
+// ensure makes one directory of the staged tree exist with the mode and owner
+// it is to carry. It runs unconditionally, so a blueprint declaring no
+// placements still leaves an empty placements directory behind rather than
+// none, and a directory that already exists keeps whatever it holds.
+func ensure(ctx context.Context, conn Conn, d Dir) error {
+	if err := conn.Run(ctx, dirCommand(d), io.Discard, io.Discard); err != nil {
+		return fmt.Errorf("make %s: %w", d.Path, err)
+	}
+	return nil
 }
 
 // write stages one file, skipping the write when the box already holds its
@@ -124,16 +155,24 @@ func digestCommand(path string) string {
 	return fmt.Sprintf("sudo sha256sum %s 2>/dev/null || true", connection.ShellArg(path))
 }
 
-// writeCommand builds the remote write: ensure the config directory, take the
-// bytes from stdin into a temporary path beside the destination, give the
-// temporary file the mode and owner the destination is to carry, and move it
-// into place. Every step runs through sudo, as the rest of the setup domain
-// does, and the content is never named on the command line.
+// dirCommand builds the remote directory ensure. install -d is idempotent: it
+// creates the directory when it is absent and applies the mode and owner
+// either way, so a re-run converges a directory a human has widened.
+func dirCommand(d Dir) string {
+	user, group, _ := strings.Cut(d.Owner, ":")
+	return fmt.Sprintf("sudo install -d -m %s -o %s -g %s %s", d.Mode, user, group, connection.ShellArg(d.Path))
+}
+
+// writeCommand builds the remote write: take the bytes from stdin into a
+// temporary path beside the destination — inside the directory the destination
+// already sits in, so a placement's bytes never leave the 0700 placements
+// directory — give the temporary file the mode and owner the destination is to
+// carry, and move it into place. Every step runs through sudo, as the rest of
+// the setup domain does, and the content is never named on the command line.
 func writeCommand(f File) string {
 	tmp := connection.ShellArg(f.Path + ".staging")
 	dest := connection.ShellArg(f.Path)
 	return strings.Join([]string{
-		fmt.Sprintf("sudo install -d -m 0755 -o root -g root %s", connection.ShellArg(Root)),
 		fmt.Sprintf("sudo rm -f %s", tmp),
 		fmt.Sprintf("sudo tee %s >/dev/null", tmp),
 		fmt.Sprintf("sudo chmod %s %s", f.Mode, tmp),

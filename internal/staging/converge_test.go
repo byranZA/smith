@@ -8,6 +8,10 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/secret"
 )
 
 // fakeBox stands in for a box reached over ssh. It records every remote command
@@ -50,7 +54,7 @@ func TestConvergeStagesTheDocumentByteForByte(t *testing.T) {
 	document := "access: tailscale\nprovider:\n  create: [hcloud]\n"
 	box := &fakeBox{}
 
-	result, err := Converge(context.Background(), box, Plan([]byte(document)))
+	result, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{}))
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
@@ -64,7 +68,7 @@ func TestConvergeStagesTheDocumentByteForByte(t *testing.T) {
 
 func TestConvergePutsTheDocumentInPlaceRootOwnedAt0644(t *testing.T) {
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"))); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	joined := strings.Join(box.commands, "\n")
@@ -79,7 +83,7 @@ func TestConvergeLeavesAnUnchangedDocumentAlone(t *testing.T) {
 	document := "access: public\n"
 	box := &fakeBox{digest: digestOf(document)}
 
-	result, err := Converge(context.Background(), box, Plan([]byte(document)))
+	result, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{}))
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
@@ -100,7 +104,7 @@ func TestConvergeReplacesAnEditedDocumentWholesale(t *testing.T) {
 	edited := "access: public\n"
 	box := &fakeBox{digest: digestOf(staged)}
 
-	if _, err := Converge(context.Background(), box, Plan([]byte(edited))); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte(edited), blueprint.Blueprint{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	if len(box.inputs) != 1 || box.inputs[0] != edited {
@@ -117,7 +121,7 @@ func TestConvergeReplacesAnEditedDocumentWholesale(t *testing.T) {
 
 func TestConvergeCreatesNoOperatorConfigHomeOnTheBox(t *testing.T) {
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"))); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	for _, cmd := range box.commands {
@@ -130,7 +134,7 @@ func TestConvergeCreatesNoOperatorConfigHomeOnTheBox(t *testing.T) {
 func TestConvergeDeliversTheDocumentOverStdinNotArgv(t *testing.T) {
 	document := "env:\n  NPM_TOKEN: env:NPM_TOKEN\n"
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte(document))); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	for _, cmd := range box.commands {
@@ -142,11 +146,91 @@ func TestConvergeDeliversTheDocumentOverStdinNotArgv(t *testing.T) {
 
 func TestConvergeNamesTheWriteThatFailed(t *testing.T) {
 	box := &fakeBox{writeErr: errors.New("permission denied")}
-	_, err := Converge(context.Background(), box, Plan([]byte("access: public\n")))
+	_, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}))
 	if err == nil {
 		t.Fatal("Converge() error = nil, want the failed write reported")
 	}
 	if !strings.Contains(err.Error(), DocumentPath) {
 		t.Errorf("Converge() error = %v, want it to name %s", err, DocumentPath)
+	}
+}
+
+func TestConvergeStagesABoxPlacementsBytesUnderItsKey(t *testing.T) {
+	t.Setenv("NPM_TOKEN", "s3cr3t-token")
+	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc", Perms: "0640"}}}
+	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	box := &fakeBox{}
+
+	result, err := Converge(context.Background(), box, tree)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	key := BoxPlacementPathIn(Root, "/home/smith/.npmrc")
+	joined := strings.Join(box.commands, "\n")
+	for _, want := range []string{key, "chmod 0640", "chown smith:smith"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("commands missing %q:\n%s", want, joined)
+		}
+	}
+	if !strings.Contains(result.Report(), key) {
+		t.Errorf("Report() = %q, want it to name the staged placement %s", result.Report(), key)
+	}
+}
+
+func TestConvergeDeliversPlacementBytesOverStdinNotArgv(t *testing.T) {
+	const credential = "s3cr3t-token"
+	t.Setenv("NPM_TOKEN", credential)
+	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "/home/smith/.npmrc"}}}
+	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	box := &fakeBox{}
+
+	if _, err := Converge(context.Background(), box, tree); err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	for _, cmd := range box.commands {
+		if strings.Contains(cmd, credential) {
+			t.Errorf("the credential reached a command line: %q", cmd)
+		}
+	}
+	var delivered bool
+	for _, in := range box.inputs {
+		if in == credential {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Errorf("stdin carried %q, want the credential among it", box.inputs)
+	}
+}
+
+func TestConvergeMakesThePlacementsDirectorySmithOwnedAt0700(t *testing.T) {
+	box := &fakeBox{}
+	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{})); err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	joined := strings.Join(box.commands, "\n")
+	want := "install -d -m 0700 -o smith -g smith " + connection.ShellArg(PlacementsDir)
+	if !strings.Contains(joined, want) {
+		t.Errorf("commands do not make %s smith-owned at 0700:\n%s", PlacementsDir, joined)
+	}
+}
+
+func TestConvergeStagesOnlyTheDocumentWhenNoPlacementsAreDeclared(t *testing.T) {
+	box := &fakeBox{}
+	result, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}))
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if len(box.inputs) != 1 {
+		t.Errorf("stdin delivered %q, want the document alone", box.inputs)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].Path != DocumentPath {
+		t.Errorf("Report() covered %v, want the document alone", result.Entries)
 	}
 }

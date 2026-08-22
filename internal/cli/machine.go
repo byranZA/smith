@@ -286,8 +286,9 @@ func newSetupCmd(resolve homeResolver) *cobra.Command {
 // the operator's config home and stages it onto the box at
 // /etc/smith/blueprint.yaml, reporting what it staged and what it left alone.
 //
-// The blueprint is parsed before the box is touched, so a document smith cannot
-// read refuses the stage rather than half-configuring a box. A run naming no
+// The blueprint is parsed and every placement source resolved before the box is
+// touched, so a document smith cannot read — or a source it cannot resolve —
+// refuses the stage rather than half-configuring a box. A run naming no
 // blueprint stages nothing: the box keeps whatever it already holds, and the
 // flag-only path survives.
 func stageConfig(ctx context.Context, conn staging.Conn, home config.Home, blueprintName string, stdout io.Writer) error {
@@ -298,7 +299,11 @@ func stageConfig(ctx context.Context, conn staging.Conn, home config.Home, bluep
 	if err != nil {
 		return fmt.Errorf("read blueprint: %w", err)
 	}
-	result, err := staging.Converge(ctx, conn, staging.Plan(doc.Bytes))
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve)
+	if err != nil {
+		return fmt.Errorf("stage blueprint %s: %w", doc.Path, err)
+	}
+	result, err := staging.Converge(ctx, conn, tree)
 	if err != nil {
 		return fmt.Errorf("stage blueprint %s: %w", doc.Path, err)
 	}

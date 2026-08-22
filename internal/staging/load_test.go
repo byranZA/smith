@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/blueprint"
 )
 
 // stage writes document as the staged blueprint of a box rooted at a fresh
@@ -119,7 +121,7 @@ func TestLoadWordsTheTwoRefusalsApart(t *testing.T) {
 
 func TestLoadReadsTheDocumentTheWriterStages(t *testing.T) {
 	document := []byte("access: tailscale\n")
-	tree := Plan(document)
+	tree := Plan(document, blueprint.Blueprint{})
 	root := stage(t, string(document))
 
 	if got := filepath.Join(root, filepath.Base(tree.Document.Path)); got != DocumentPathIn(root) {

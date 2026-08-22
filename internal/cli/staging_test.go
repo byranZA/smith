@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // fakeStagingBox stands in for a box reached over ssh during the staging stage:
@@ -81,5 +82,49 @@ func TestSetupTakesTheBlueprintToStage(t *testing.T) {
 	cmd := newSetupCmd(func() (config.Home, error) { return config.NewHome(t.TempDir()), nil })
 	if cmd.Flags().Lookup("blueprint") == nil {
 		t.Error("machine setup has no --blueprint flag, so no box can be told what kind of box it is")
+	}
+}
+
+func TestStageConfigStagesABoxPlacementsBytesOverStdin(t *testing.T) {
+	const credential = "//registry.npmjs.org/:_authToken=s3cr3t"
+	t.Setenv("NPM_TOKEN", credential)
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN\n    to: ~/.npmrc\n    perms: \"0640\"\n")
+	box := &fakeStagingBox{}
+	var out bytes.Buffer
+
+	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err != nil {
+		t.Fatalf("stageConfig() err = %v, want nil", err)
+	}
+	var delivered bool
+	for _, in := range box.inputs {
+		if in == credential {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Errorf("stdin carried %q, want the resolved credential among it", box.inputs)
+	}
+	for _, cmd := range box.commands {
+		if strings.Contains(cmd, credential) {
+			t.Errorf("the credential reached a command line: %q", cmd)
+		}
+	}
+	if !strings.Contains(out.String(), staging.BoxPlacementPathIn(staging.Root, "/home/smith/.npmrc")) {
+		t.Errorf("stageConfig() reported %q, want it to name the staged placement", out.String())
+	}
+}
+
+func TestStageConfigRefusesAnUnresolvableSourceBeforeTouchingTheBox(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n")
+	box := &fakeStagingBox{}
+	var out bytes.Buffer
+
+	if err := stageConfig(context.Background(), box, config.NewHome(dir), "acme", &out); err == nil {
+		t.Fatal("stageConfig() err = nil, want the unresolvable source refused")
+	}
+	if len(box.commands) != 0 {
+		t.Errorf("stageConfig() ran %q on the box, want it untouched", box.commands)
 	}
 }
