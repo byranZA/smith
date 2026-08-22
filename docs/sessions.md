@@ -3,7 +3,7 @@
 A **session** is one `tmux` session plus one git worktree of one repo on one
 branch. It is the unit of parallel work on a box: a feature on one branch, a
 review of someone else's on another, a long test run on a third — each with its
-own checkout, its own shell, and its own long-running processes.
+own worktree, its own shell, and its own long-running processes.
 
 Five verbs manage them:
 
