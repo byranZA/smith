@@ -249,3 +249,66 @@ func TestBlueprintCheckFailsWhenThePreferencesAreInvalid(t *testing.T) {
 		t.Errorf("stderr = %q, want it to report the preferences error", stderr)
 	}
 }
+
+func TestBlueprintCheckPrintsTheResolvedConfigurationWithEachOrigin(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "workspace: ~/dev\n")
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint (stderr: %s)", code, stderr)
+	}
+	for _, want := range []string{"access", "tailscale", "blueprint", "workspace", "~/dev", "preferences", "terminal", "tmux", "built-in default"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want the resolved configuration to contain %q", stdout, want)
+		}
+	}
+}
+
+func TestBlueprintCheckTakesTheAccessFlagOverEverything(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: public\n")
+	writeBlueprint(t, dir, "acme", "access: public\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme", "--access", "tailscale")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "tailscale (flag)") {
+		t.Errorf("stdout = %q, want access resolved to tailscale from the flag", stdout)
+	}
+}
+
+func TestBlueprintCheckRefusesAnUnrecognisedAccessFlag(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: public\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme", "--access", "wireguard")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want non-zero for an access mode smith does not recognise")
+	}
+	if !strings.Contains(stderr, "wireguard") {
+		t.Errorf("stderr = %q, want it to name the value it refused", stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want no resolved configuration printed", stdout)
+	}
+}
+
+func TestBlueprintCheckResolvesPreferencesWithNoBlueprintNamed(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: tailscale\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for valid preferences (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "tailscale (preferences)") {
+		t.Errorf("stdout = %q, want access resolved to tailscale from preferences", stdout)
+	}
+}

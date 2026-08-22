@@ -1,6 +1,7 @@
 package blueprint
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -202,4 +203,16 @@ func list(known []string) string {
 	default:
 		return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
 	}
+}
+
+// ValidateAccess refuses an access mode smith does not recognise, so a caller
+// taking one from somewhere outside a config document — a command-line flag,
+// which outranks every declared value — refuses it in the same words and
+// against the same set as a blueprint declaring it.
+func ValidateAccess(mode string) error {
+	report := choice("access", mode, accessModes)
+	if len(report) == 0 {
+		return nil
+	}
+	return errors.New(report[0].Message)
 }

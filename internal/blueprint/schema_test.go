@@ -233,3 +233,23 @@ repos:
 		}
 	}
 }
+
+func TestValidateAccessAcceptsTheModesSmithKnows(t *testing.T) {
+	for _, mode := range []string{"public", "tailscale"} {
+		if err := blueprint.ValidateAccess(mode); err != nil {
+			t.Errorf("blueprint.ValidateAccess(%q) = %v, want it accepted", mode, err)
+		}
+	}
+}
+
+func TestValidateAccessRefusesAnUnrecognisedMode(t *testing.T) {
+	err := blueprint.ValidateAccess("wireguard")
+	if err == nil {
+		t.Fatal("blueprint.ValidateAccess(\"wireguard\") = nil, want it refused")
+	}
+	for _, want := range []string{"wireguard", "public", "tailscale"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("blueprint.ValidateAccess(\"wireguard\") = %q, want it to contain %q", err, want)
+		}
+	}
+}
