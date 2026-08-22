@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"maps"
 	"path/filepath"
 	"strings"
 
@@ -32,6 +33,13 @@ func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
 		return planPlacements(b.Placements, home)
 	case step == Packages && len(b.Packages) > 0:
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
+	case step == Toolchain && needsToolchain(b):
+		return []Unit{{Step: Toolchain, Fragment: Fragment{
+			Path:  filepath.Join(home, fragmentDir, fragmentFile),
+			Mise:  filepath.Join(home, miseDir, miseFile),
+			Tools: maps.Clone(b.Tools),
+			Env:   maps.Clone(b.Env),
+		}}}
 	default:
 		return nil
 	}
@@ -67,4 +75,12 @@ func boxPath(destination, home string) string {
 		return filepath.Join(home, rest)
 	}
 	return destination
+}
+
+// needsToolchain reports whether the box is owed a toolchain at all. Declared
+// tools and env are the obvious halves; a declared repo is the third, because
+// a clone runs under mise exec so that the blueprint's env is in scope for it,
+// and a box with repos and no mise could not clone one.
+func needsToolchain(b blueprint.Blueprint) bool {
+	return len(b.Tools) > 0 || len(b.Env) > 0 || len(b.Repos) > 0
 }

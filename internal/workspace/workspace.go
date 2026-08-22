@@ -65,6 +65,8 @@ type Unit struct {
 	Packages []string
 	// Placement is the box-scoped file a placements unit materializes.
 	Placement Placement
+	// Fragment is the generated mise config a toolchain unit writes.
+	Fragment Fragment
 }
 
 // Placement is one box-scoped placement of the plan: a file the blueprint
@@ -98,6 +100,12 @@ type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
+// Resolver turns a reference a blueprint value carries — a scheme:arg string
+// such as env:GITHUB_TOKEN or literal:production — into the value it names. It
+// is the seam onto the blueprint's own value resolver, injected so a test
+// drives the real converge without reaching the environment it runs in.
+type Resolver func(ref string) (string, error)
+
 // Env is what a converge run acts through: the commands it drives the box
 // with. It is a struct rather than a bare runner because the steps that follow
 // this slice add the roots and readers they need beside it.
@@ -108,4 +116,7 @@ type Env struct {
 	// StateRoot is the box state directory `machine setup` staged the
 	// blueprint and its placement bytes under — /etc/smith on a real box.
 	StateRoot string
+	// Secret resolves the references the blueprint's env values carry into the
+	// values the toolchain step exports.
+	Secret Resolver
 }

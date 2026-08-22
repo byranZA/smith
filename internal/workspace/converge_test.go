@@ -20,6 +20,11 @@ type fakeBox struct {
 	installed map[string]bool
 	aptOutput string
 	aptErr    error
+	// hasMise is whether the box already holds mise, which the install turns
+	// on the way a real one does.
+	hasMise bool
+	// miseErr fails the mise commands the way a box with no network does.
+	miseErr error
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
@@ -36,6 +41,17 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 			return fmt.Errorf("write canned status: %w", err)
 		}
 		return nil
+	case strings.Contains(line, "mise.run"):
+		f.hasMise = true
+		return f.miseErr
+	case strings.HasSuffix(name, "mise"):
+		if !f.hasMise {
+			return fmt.Errorf("mise: command not found")
+		}
+		if _, err := io.WriteString(stdout, "2025.8.0 macos-arm64\n"); err != nil {
+			return fmt.Errorf("write canned mise output: %w", err)
+		}
+		return f.miseErr
 	case strings.Contains(line, "apt-get"):
 		if _, err := io.WriteString(stdout, f.aptOutput); err != nil {
 			return fmt.Errorf("write canned apt output: %w", err)
@@ -59,6 +75,17 @@ func (f *fakeBox) installs(t *testing.T) string {
 		t.Fatalf("apt-get ran %d times, want 1: %v", len(found), f.calls)
 	}
 	return found[0]
+}
+
+// ran reports whether any command the run launched carried the given text,
+// which is how a test asks what the stage did to the box.
+func (f *fakeBox) ran(text string) bool {
+	for _, argv := range f.calls {
+		if strings.Contains(strings.Join(argv, " "), text) {
+			return true
+		}
+	}
+	return false
 }
 
 // ranApt reports whether the run reached apt-get at all.

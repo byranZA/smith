@@ -48,6 +48,8 @@ func converge(ctx context.Context, env Env, unit Unit, progress io.Writer) Outco
 		summary, err = materialize(env.StateRoot, unit.Placement)
 	case Packages:
 		summary, err = installPackages(ctx, env.Command, unit.Packages, progress)
+	case Toolchain:
+		summary, err = convergeToolchain(ctx, env, unit.Fragment, progress)
 	default:
 		err = fmt.Errorf("the %s step is not built yet", unit.Step)
 	}

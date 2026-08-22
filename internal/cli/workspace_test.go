@@ -21,11 +21,24 @@ import (
 type fakeBox struct {
 	calls [][]string
 	err   error
+	// hasMise is whether the box holds mise, which its install turns on the
+	// way a real one does.
+	hasMise bool
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
 	f.calls = append(f.calls, append([]string{name}, args...))
-	if strings.Contains(strings.Join(args, " "), "apt-get") {
+	line := strings.Join(args, " ")
+	switch {
+	case strings.Contains(line, "apt-get"):
+		return f.err
+	case strings.Contains(line, "mise.run"):
+		f.hasMise = true
+		return f.err
+	case strings.HasSuffix(name, "mise"):
+		if !f.hasMise {
+			return errors.New("mise: command not found")
+		}
 		return f.err
 	}
 	return errors.New("no packages found matching")
@@ -239,5 +252,40 @@ func TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout = %q, want it to contain %q", stdout, want)
 		}
+	}
+}
+
+// TestWorkspaceConvergePinsTheDeclaredToolchain proves the assembled verb gives
+// the box its toolchain end to end: mise installed, the blueprint's tools
+// pinned in the fragment smith owns, and its env exported with the reference
+// resolved.
+func TestWorkspaceConvergePinsTheDeclaredToolchain(t *testing.T) {
+	home := t.TempDir()
+	box := &fakeBox{}
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{
+			Tools: map[string]string{"node": "20"},
+			Env:   map[string]string{"NODE_ENV": "literal:production"},
+		}),
+		command: box,
+		boxHome: boxHomeAt(home),
+		secret:  blueprint.Value,
+	}
+	stdout, stderr, code := runWorkspace(t, w, "converge")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q, stdout %q)", code, stderr, stdout)
+	}
+	fragment, err := os.ReadFile(filepath.Join(home, ".config", "mise", "conf.d", "smith.toml"))
+	if err != nil {
+		t.Fatalf("read the generated fragment: %v", err)
+	}
+	for _, want := range []string{`node = "20"`, `NODE_ENV = "production"`} {
+		if !strings.Contains(string(fragment), want) {
+			t.Errorf("fragment = %q, want it to carry %s", fragment, want)
+		}
+	}
+	if !strings.Contains(stdout, "toolchain") {
+		t.Errorf("stdout = %q, want the toolchain step reported", stdout)
 	}
 }

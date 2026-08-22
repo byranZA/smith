@@ -58,7 +58,11 @@ func materialize(root string, p Placement) (string, error) {
 	if exists && bytes.Equal(current, staged) {
 		return "unchanged " + p.Path, nil
 	}
-	if err := put(p, staged); err != nil {
+	mode, err := fileMode(p.Perms)
+	if err != nil {
+		return "", err
+	}
+	if err := put(p.Path, staged, mode); err != nil {
 		return "", err
 	}
 	if exists {
@@ -81,26 +85,22 @@ func onBox(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// put writes the staged bytes at the destination with the mode the placement
-// declares, through a temporary path beside it, so the destination is never
-// seen holding partial content or a wider mode than was asked for.
-func put(p Placement, data []byte) error {
-	mode, err := fileMode(p.Perms)
-	if err != nil {
-		return err
+// put writes bytes at path with the given mode, through a temporary file
+// beside it, so the destination is never seen holding partial content or a
+// wider mode than was asked for.
+func put(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
+		return fmt.Errorf("make the directory above %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(p.Path), dirMode); err != nil {
-		return fmt.Errorf("make the directory above %s: %w", p.Path, err)
-	}
-	tmp := p.Path + ".placing"
+	tmp := path + ".placing"
 	if err := os.WriteFile(tmp, data, mode); err != nil {
 		return fmt.Errorf("write %s: %w", tmp, err)
 	}
 	if err := os.Chmod(tmp, mode); err != nil {
 		return fmt.Errorf("set the mode of %s: %w", tmp, err)
 	}
-	if err := os.Rename(tmp, p.Path); err != nil {
-		return fmt.Errorf("move %s into place at %s: %w", tmp, p.Path, err)
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("move %s into place at %s: %w", tmp, path, err)
 	}
 	return nil
 }
