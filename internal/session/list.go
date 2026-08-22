@@ -45,7 +45,7 @@ func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
 			Repo:     p.repo.Name,
 			Branch:   p.wt.branch,
 			Live:     isLive(ctx, env.Tmux, name),
-			Dirty:    dirty,
+			Dirty:    dirty.any(),
 			Unpushed: unpushed,
 		})
 	}

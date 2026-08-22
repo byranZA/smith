@@ -55,6 +55,7 @@ func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner, c
 	cmd.AddCommand(newSessionAttachCmd(resolve, root, git, tmux, connect))
 	cmd.AddCommand(newSessionListCmd(resolve, root, git, tmux))
 	cmd.AddCommand(newSessionStopCmd(resolve, root, git, tmux))
+	cmd.AddCommand(newSessionRemoveCmd(resolve, root, git, tmux))
 	return cmd
 }
 
@@ -207,6 +208,62 @@ func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runne
 			return nil
 		},
 	}
+}
+
+// newSessionRemoveCmd builds `smith session rm <name> [--force]`. It reclaims
+// the session's worktree and keeps its branch, refusing on a dirty worktree or
+// a live session and on nothing else.
+//
+// It never prompts, with a terminal or without: a refusal prints what would be
+// lost and the exact --force command that overrides it, and exits non-zero, so
+// a human and a loop are answered identically.
+func newSessionRemoveCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "rm <name>",
+		Short: "Reclaim a session's worktree, keeping its branch",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolved, err := resolve()
+			if err != nil {
+				return err
+			}
+			env, err := sessionEnv(resolved, root, git, tmux, nil)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			removed, err := session.Remove(cmd.Context(), env, args[0], force)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			return writeRemoved(cmd, removed)
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "reclaim the worktree even if the session is running or its worktree is dirty")
+	return cmd
+}
+
+// writeRemoved reports what the removal cost and what it kept: the branch
+// always survives, and the commits on it that no remote has are named so the
+// operator learns of them here rather than the next time they look for the
+// work.
+func writeRemoved(cmd *cobra.Command, removed session.Removal) error {
+	report := fmt.Sprintf("session %s removed", removed.Name)
+	if removed.Killed {
+		report += ", its tmux session killed"
+	}
+	report += fmt.Sprintf("; branch %s kept", removed.Branch)
+	switch removed.Unpushed {
+	case 0:
+	case 1:
+		report += ", 1 commit not on any remote"
+	default:
+		report += fmt.Sprintf(", %d commits not on any remote", removed.Unpushed)
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), report); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return nil
 }
 
 // sessionEnv turns the box's resolved configuration into what a session verb

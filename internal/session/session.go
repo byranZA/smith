@@ -377,6 +377,17 @@ func defaultBranch(ctx context.Context, git Runner, bare string) (string, error)
 // stdout. A command that fails carries its stderr into the error, because what
 // git or tmux said is the whole diagnosis and an exit status alone is not.
 func run(ctx context.Context, runner Runner, name string, args ...string) (string, error) {
+	out, err := runRaw(ctx, runner, name, args...)
+	return strings.TrimSpace(out), err
+}
+
+// runRaw is run without the trim: it answers with stdout exactly as the
+// command wrote it. It exists for the machine-readable reports, where the
+// first byte can be significant — a `git status -z` entry's status code
+// begins with a space whenever the change is in the checkout rather than the
+// index, and trimming it would read that entry as a staged one and take its
+// path apart one byte off.
+func runRaw(ctx context.Context, runner Runner, name string, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	if err := runner.Run(ctx, name, args, nil, &stdout, &stderr); err != nil {
 		if said := strings.TrimSpace(stderr.String()); said != "" {
@@ -384,5 +395,5 @@ func run(ctx context.Context, runner Runner, name string, args ...string) (strin
 		}
 		return "", fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -585,5 +586,151 @@ func TestSessionStartPlacesTheBlueprintsFilesInTheWorktree(t *testing.T) {
 	}
 	if string(data) != "TOKEN=staged\n" {
 		t.Errorf("placed file = %q, want the staged bytes", string(data))
+	}
+}
+
+// stoppedTmux stands in for the tmux binary on a box where the session is not
+// running: has-session fails the way tmux does when it holds no session of
+// that name, which is how a test reaches the stopped half of the live probe.
+type stoppedTmux struct {
+	calls [][]string
+}
+
+func (s *stoppedTmux) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
+	s.calls = append(s.calls, append([]string{name}, args...))
+	if len(args) > 0 && args[0] == "has-session" {
+		return errNoTmuxSession
+	}
+	return nil
+}
+
+var _ session.Runner = (*stoppedTmux)(nil)
+
+// errNoTmuxSession is what tmux exiting non-zero on has-session looks like
+// here.
+var errNoTmuxSession = errors.New("no such session")
+
+// refusingReader stands in for the terminal a prompt would read from, and
+// fails the test the moment anything reads it: rm must never ask.
+type refusingReader struct {
+	t *testing.T
+}
+
+func (r *refusingReader) Read([]byte) (int, error) {
+	r.t.Error("the command read stdin, want no confirmation prompt ever")
+	return 0, io.EOF
+}
+
+// TestSessionRemoveReclaimsTheWorktreeOfACleanStoppedSession drives the
+// assembled command the way an operator on the box does: the checkout is gone
+// and the branch it was on is still in the repo.
+func TestSessionRemoveReclaimsTheWorktreeOfACleanStoppedSession(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	standUp(t, resolve)
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &stoppedTmux{}, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "smith-spec-42"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("worktree at %s survived the removal: %v", dir, err)
+	}
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	if got := gitStdout(t, bare, "branch", "--list", "spec-42", "--format=%(refname:short)"); got != "spec-42" {
+		t.Errorf("branch listing = %q, want the branch to survive the removal", got)
+	}
+	if got := out.String(); !strings.Contains(got, "smith-spec-42") {
+		t.Errorf("stdout = %q, want it to name the session it removed", got)
+	}
+}
+
+// TestSessionRemoveRefusesADirtyWorktreeWithoutPrompting locks in the refusal
+// exit path: the enumeration and the force command go to stderr, the exit code
+// is non-zero, the worktree is untouched, and nothing was ever asked.
+func TestSessionRemoveRefusesADirtyWorktreeWithoutPrompting(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	standUp(t, resolve)
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatalf("modify the worktree: %v", err)
+	}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &stoppedTmux{}, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "smith-spec-42"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetIn(&refusingReader{t: t})
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code == 0 {
+		t.Fatalf("exit code = 0, want non-zero for a dirty worktree")
+	}
+	for _, want := range []string{"1 modified", "smith session rm smith-spec-42 --force"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr = %q, want it to carry %q", errOut.String(), want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+		t.Errorf("worktree at %s did not survive the refusal: %v", dir, err)
+	}
+}
+
+// TestSessionRemoveForceOverridesALiveDirtySession locks in that one flag
+// covers both gates end to end: tmux is killed by name and the checkout is
+// reclaimed.
+func TestSessionRemoveForceOverridesALiveDirtySession(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	standUp(t, resolve)
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatalf("modify the worktree: %v", err)
+	}
+	tmux := &fakeTmux{}
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), tmux, &fakeExec{})
+	cmd.SetArgs([]string{"rm", "smith-spec-42", "--force"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	var killed bool
+	for _, argv := range tmux.calls {
+		if strings.Contains(strings.Join(argv, " "), "kill-session -t smith/smith-spec-42") {
+			killed = true
+		}
+	}
+	if !killed {
+		t.Errorf("tmux calls = %v, want the live session killed by name", tmux.calls)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("worktree at %s survived the forced removal: %v", dir, err)
+	}
+}
+
+// TestSessionRemoveIsUnderTheRootCommand locks in the surface an operator on
+// the box types.
+func TestSessionRemoveIsUnderTheRootCommand(t *testing.T) {
+	found, _, err := newRootCmd().Find([]string{"session", "rm"})
+	if err != nil {
+		t.Fatalf("Find(session rm) err = %v", err)
+	}
+	if found.Name() != "rm" {
+		t.Errorf("Find(session rm) = %q, want the rm command", found.Name())
 	}
 }
