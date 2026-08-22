@@ -194,15 +194,14 @@ func TestScriptProbeReadsAFirewallStatusLongerThanAPipe(t *testing.T) {
 	}
 	writeProbeFakeBins(t, binDir)
 	// An active firewall whose rule list is longer than a pipe buffer: the facts
-	// are on the first lines, the bulk after them.
+	// are on the first lines, the bulk after them. Generated in one shot rather
+	// than a loop so proving the race costs the suite no real time.
 	writeFakeBin(t, binDir, "ufw", `#!/usr/bin/env bash
 if [ "$1" = "status" ]; then
   echo "Status: active"
   echo "Default: deny (incoming), allow (outgoing), disabled (routed)"
   echo "22/tcp                     ALLOW       Anywhere"
-  for i in $(seq 1 20000); do
-    echo "${i}/tcp                     ALLOW       Anywhere"
-  done
+  yes "8080/tcp                   ALLOW       Anywhere" | head -n 4000
 fi
 exit 0
 `)

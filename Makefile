@@ -4,7 +4,13 @@
 BIN := bin/smith
 PKG := ./...
 
-.PHONY: check build test race cover fmt lint vet fmt-check vuln snapshot tidy tools clean
+# Dev tool versions, pinned. CI installs golangci-lint at GOLANGCI_LINT_VERSION
+# (read back through `make tools-version`) so the linter that gates a PR and the
+# one a developer runs locally are the same build, not two floating ones.
+GOLANGCI_LINT_VERSION := v2.12.2
+GOVULNCHECK_VERSION := v1.6.0
+
+.PHONY: check build test race cover fmt lint vet fmt-check vuln snapshot tidy tools tools-version clean
 
 check: fmt-check vet lint test ## full gate: fmt-check + vet + lint + test
 
@@ -43,10 +49,18 @@ tidy: ## go mod tidy + verify
 	go mod tidy
 	go mod verify
 
-tools: ## print how to install dev tools
-	@echo "install golangci-lint v2: https://golangci-lint.run/welcome/install/"
-	@echo "install goimports: go install golang.org/x/tools/cmd/goimports@latest"
-	@echo "install govulncheck: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0"
+tools: ## print how to install dev tools, at the versions CI uses
+	@echo "go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)"
+	@echo "go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)"
+	@echo "go install golang.org/x/tools/cmd/goimports@latest"
+	@echo ""
+	@echo "They install into $$(go env GOPATH)/bin, which must be on PATH:"
+	@echo '  export PATH="$$PATH:$$(go env GOPATH)/bin"'
+	@echo "Without it 'make lint' and 'make vuln' skip with a note and the gate"
+	@echo "still passes, so 'make check' reports green having linted nothing."
+
+tools-version: ## print the pinned golangci-lint version (CI installs this)
+	@echo $(GOLANGCI_LINT_VERSION)
 
 clean: ## remove build artifacts
 	rm -rf bin
