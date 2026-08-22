@@ -2,14 +2,17 @@ package session_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/session"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // fakeTmux stands in for the tmux binary, which needs a server and a TTY that
@@ -561,4 +564,173 @@ func worktreeCount(t *testing.T, bare string) int {
 		}
 	}
 	return n - 1
+}
+
+// placer materializes a repo's declared placements from a staged tree the test
+// wrote, wiring the real converge the way the command surface does rather than
+// standing a fake in for it.
+type placer struct {
+	root       string
+	placements []blueprint.Placement
+	calls      int
+}
+
+func (p *placer) Place(repo, worktree string) error {
+	p.calls++
+	if _, err := staging.Place(p.root, repo, worktree, p.placements); err != nil {
+		return fmt.Errorf("place into %s: %w", worktree, err)
+	}
+	return nil
+}
+
+// stagePlacement writes the bytes of a repo placement where `machine setup`
+// stages them, and answers with the placer that reads them back.
+func stagePlacement(t *testing.T, repo string, p blueprint.Placement, content string) *placer {
+	t.Helper()
+	root := t.TempDir()
+	path := staging.RepoPlacementPathIn(root, repo, p.To)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("make %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("stage %s: %v", path, err)
+	}
+	return &placer{root: root, placements: []blueprint.Placement{p}}
+}
+
+// TestStartPlacesTheDeclaredFilesInANewWorktree locks in the create path: a
+// worktree smith cuts carries the files the blueprint declares for its repo.
+func TestStartPlacesTheDeclaredFilesInANewWorktree(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	placed := stagePlacement(t, "smith", blueprint.Placement{From: "env:TOKEN", To: ".env"}, "TOKEN=staged\n")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith", Placements: []string{".env"}}},
+		Git:       connection.System(),
+		Tmux:      &fakeTmux{},
+		Placer:    placed,
+	}
+
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if got := readFile(t, filepath.Join(dir, ".env")); got != "TOKEN=staged\n" {
+		t.Errorf("placed file = %q, want the staged bytes %q", got, "TOKEN=staged\n")
+	}
+}
+
+// TestStartReconvergesPlacementsOnResume locks in why stop then start is how
+// an operator picks up changed config: standing a stopped session back up
+// replaces the placed file with the staged bytes.
+func TestStartReconvergesPlacementsOnResume(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	placed := stagePlacement(t, "smith", blueprint.Placement{To: ".env", Mode: "converge"}, "TOKEN=staged\n")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith", Placements: []string{".env"}}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+		Placer:    placed,
+	}
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("first Start() err = %v", err)
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("TOKEN=edited\n"), 0o600); err != nil {
+		t.Fatalf("edit the placed file: %v", err)
+	}
+	tmux.kill(session.TmuxSession("smith-spec-42"))
+
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	if got := readFile(t, filepath.Join(dir, ".env")); got != "TOKEN=staged\n" {
+		t.Errorf("placed file = %q, want it restored from the staged bytes", got)
+	}
+}
+
+// TestStartLeavesAWriteOncePlacementAloneOnResume locks in that the worktree
+// owns a write-once file once it exists: a resume does not take it back.
+func TestStartLeavesAWriteOncePlacementAloneOnResume(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	placed := stagePlacement(t, "smith", blueprint.Placement{To: ".env", Mode: "once"}, "TOKEN=staged\n")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith", Placements: []string{".env"}}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+		Placer:    placed,
+	}
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("first Start() err = %v", err)
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("TOKEN=mine\n"), 0o600); err != nil {
+		t.Fatalf("edit the placed file: %v", err)
+	}
+	tmux.kill(session.TmuxSession("smith-spec-42"))
+
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	if got := readFile(t, filepath.Join(dir, ".env")); got != "TOKEN=mine\n" {
+		t.Errorf("placed file = %q, want the worktree's own copy left alone", got)
+	}
+}
+
+// TestStartOnALiveSessionPlacesNothing locks in the asymmetry the slice is
+// about: converging a file out from under a running process is never wanted,
+// so the connect path leaves the worktree exactly as it is.
+func TestStartOnALiveSessionPlacesNothing(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	placed := stagePlacement(t, "smith", blueprint.Placement{To: ".env", Mode: "converge"}, "TOKEN=staged\n")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith", Placements: []string{".env"}}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+		Placer:    placed,
+	}
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("first Start() err = %v", err)
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("TOKEN=edited\n"), 0o600); err != nil {
+		t.Fatalf("edit the placed file: %v", err)
+	}
+	before := placed.calls
+
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	if got := readFile(t, filepath.Join(dir, ".env")); got != "TOKEN=edited\n" {
+		t.Errorf("placed file = %q, want it left as the live session had it", got)
+	}
+	if placed.calls != before {
+		t.Errorf("placements converged %d times, want the live path to converge none", placed.calls-before)
+	}
+}
+
+// readFile answers with the content at path.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }

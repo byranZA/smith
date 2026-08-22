@@ -38,6 +38,17 @@ type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
+// Placer materializes into a worktree the repo placements the blueprint
+// declares — the files smith puts there itself, from the bytes `machine setup`
+// staged on the box. It is injected because reading the staged tree is the
+// box's config contract, which this package does not own and never resolves a
+// source reference for.
+type Placer interface {
+	// Place converges the named repo's declared placements into the worktree
+	// at dir.
+	Place(repo, dir string) error
+}
+
 // Repo is a repo the box carries, as the caller resolved it from the
 // blueprint: the workspace directory it lives in and the branch its worktrees
 // start from.
@@ -68,6 +79,10 @@ type Env struct {
 	Git Runner
 	// Tmux runs tmux.
 	Tmux Runner
+	// Placer materializes a repo's declared placements into a worktree. A nil
+	// Placer places nothing, which is what a caller with no staged tree behind
+	// it has.
+	Placer Placer
 }
 
 // Session is one tmux session in one git worktree — the canonical record every
@@ -127,6 +142,13 @@ type StartRequest struct {
 // that already exists, and a branch checked out somewhere that is not a
 // session smith stood up.
 //
+// Both paths that stand a session up — cutting the worktree, and relaunching
+// tmux in the one the operator left — converge the blueprint's repo placements
+// into the worktree first, so start is an ensure-desired-state verb the way
+// `machine setup` is. The third path does not: swapping a file out from under
+// a running process is never wanted, which is what makes stop then start the
+// way to pick up changed config.
+//
 // It stands the session up and returns without connecting to it, which is what
 // makes it drivable with no human present.
 func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
@@ -174,6 +196,9 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		if isLive(ctx, env.Tmux, name) {
 			return stood, nil
 		}
+		if err := env.place(repo, existing.path); err != nil {
+			return Session{}, err
+		}
 		if err := launch(ctx, env.Tmux, name, existing.path); err != nil {
 			return Session{}, err
 		}
@@ -182,6 +207,9 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 
 	dir := filepath.Join(root, worktreesDir, worktreeDir(branch))
 	if err := checkout(ctx, env, repo, bare, dir, branch, base, exists); err != nil {
+		return Session{}, err
+	}
+	if err := env.place(repo, dir); err != nil {
 		return Session{}, err
 	}
 	if err := launch(ctx, env.Tmux, name, dir); err != nil {
@@ -303,6 +331,20 @@ func (e Env) repo(name string) (Repo, error) {
 		}
 	}
 	return Repo{}, fmt.Errorf("repo %q is not declared in the blueprint this box was built from%s", name, declared(e.Repos))
+}
+
+// place converges the repo's declared placements into the worktree at dir. It
+// runs on the two paths that stand a session up and on neither the connect
+// path nor any read verb, so a file only ever moves at the moment nothing is
+// running against it.
+func (e Env) place(repo Repo, dir string) error {
+	if e.Placer == nil {
+		return nil
+	}
+	if err := e.Placer.Place(repo.Name, dir); err != nil {
+		return fmt.Errorf("converge the placements of repo %q into the worktree at %s: %w", repo.Name, dir, err)
+	}
+	return nil
 }
 
 // declared names the repos the blueprint does declare, so a refusal hands the

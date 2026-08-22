@@ -13,6 +13,7 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/session"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // fakeTmux stands in for the tmux binary, which needs a server and a TTY that
@@ -34,7 +35,7 @@ func TestSessionStartStandsUpAWorktreeAndATmuxSession(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -62,7 +63,7 @@ func TestSessionStartRefusesAnUndeclaredRepo(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
 	cmd.SetArgs([]string{"start", "--repo", "ghost", "--branch", "spec-42"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -90,7 +91,7 @@ func TestSessionStartCutsFromTheRequestedBase(t *testing.T) {
 	bare := filepath.Join(workspace, "smith", "repo.git")
 	runGit(t, bare, "branch", "release-2", "main")
 	moveOn(t, bare, "main")
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{})
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -116,7 +117,7 @@ func TestSessionStartRefusesABaseAgainstAnExistingBranch(t *testing.T) {
 	runGit(t, bare, "branch", "release-2", "main")
 	runGit(t, bare, "branch", "spec-42", "main")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--base", "release-2"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -218,7 +219,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	start := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "smith/spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
@@ -226,7 +227,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 		t.Fatalf("session start err = %v", err)
 	}
 
-	cmd := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -252,7 +253,7 @@ func TestSessionListReportsTheSessionsOnTheBox(t *testing.T) {
 func TestSessionListSaysSoWhenThereIsNothingToList(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), &fakeTmux{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -287,14 +288,14 @@ func TestSessionListExitsZeroWithUnpushedWork(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	start := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	start := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
 	if err := start.Execute(); err != nil {
 		t.Fatalf("session start err = %v", err)
 	}
-	cmd := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolve, t.TempDir(), connection.System(), &fakeTmux{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -317,18 +318,15 @@ func TestSessionListSubtractsTheBlueprintsPlacements(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBoxPlacing(workspace, "smith", ".env")
-	start := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	root := stageRepoPlacement(t, "smith", ".env", "TOKEN=1\n")
+	start := newSessionCmd(resolve, root, connection.System(), &fakeTmux{})
 	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	start.SetOut(io.Discard)
 	start.SetErr(io.Discard)
 	if err := start.Execute(); err != nil {
 		t.Fatalf("session start err = %v", err)
 	}
-	placed := filepath.Join(workspace, "smith", "worktrees", "spec-42", ".env")
-	if err := os.WriteFile(placed, []byte("TOKEN=1\n"), 0o600); err != nil {
-		t.Fatalf("write %s: %v", placed, err)
-	}
-	cmd := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	cmd := newSessionCmd(resolve, root, connection.System(), &fakeTmux{})
 	cmd.SetArgs([]string{"list"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -369,7 +367,7 @@ func TestSessionStopEndsTheTmuxSessionAndKeepsTheWorktree(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	tmux := &fakeTmux{}
-	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), tmux)
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), t.TempDir(), connection.System(), tmux)
 	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
@@ -411,5 +409,47 @@ func TestSessionStopIsUnderTheRootCommand(t *testing.T) {
 	}
 	if found.Name() != "stop" {
 		t.Errorf("Find(session stop) = %q, want the stop command", found.Name())
+	}
+}
+
+// stageRepoPlacement writes the bytes of a repo placement where `machine
+// setup` stages them, and answers with the box state directory holding them.
+func stageRepoPlacement(t *testing.T, repo, to, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	path := staging.RepoPlacementPathIn(root, repo, to)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("make %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("stage %s: %v", path, err)
+	}
+	return root
+}
+
+// TestSessionStartPlacesTheBlueprintsFilesInTheWorktree drives the assembled
+// command end to end: the worktree it stands up carries the file the box's
+// blueprint declares, from the bytes `machine setup` staged for it.
+func TestSessionStartPlacesTheBlueprintsFilesInTheWorktree(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	root := stageRepoPlacement(t, "smith", "config/.env", "TOKEN=staged\n")
+	cmd := newSessionCmd(resolvedBoxPlacing(workspace, "smith", "config/.env"), root, connection.System(), &fakeTmux{})
+	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	placed := filepath.Join(workspace, "smith", "worktrees", "spec-42", "config", ".env")
+	data, err := os.ReadFile(placed)
+	if err != nil {
+		t.Fatalf("read the placed file: %v", err)
+	}
+	if string(data) != "TOKEN=staged\n" {
+		t.Errorf("placed file = %q, want the staged bytes", string(data))
 	}
 }

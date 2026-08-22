@@ -38,19 +38,21 @@ func stagedBoxConfig() (config.Resolved, error) {
 
 // newSessionCmd builds `smith session` and its subcommands, reading the box's
 // staged configuration through resolve and driving the box through the git and
-// tmux runners.
+// tmux runners. Placements are materialized from the box state directory at
+// root — /etc/smith on a real box — which is passed in rather than reached for
+// so a test drives the real command against a staged tree of its own.
 //
 // The verbs run against the local machine: on a provisioned box smith is on
 // the operator's PATH, so an operator who has connected to the box gets the
 // same surface a relay will later render for them from their laptop.
-func newSessionCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
+func newSessionCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "session",
 		Short: "Work on a branch in its own worktree and tmux session",
 	}
-	cmd.AddCommand(newSessionStartCmd(resolve, git, tmux))
-	cmd.AddCommand(newSessionListCmd(resolve, git, tmux))
-	cmd.AddCommand(newSessionStopCmd(resolve, git, tmux))
+	cmd.AddCommand(newSessionStartCmd(resolve, root, git, tmux))
+	cmd.AddCommand(newSessionListCmd(resolve, root, git, tmux))
+	cmd.AddCommand(newSessionStopCmd(resolve, root, git, tmux))
 	return cmd
 }
 
@@ -61,7 +63,7 @@ func newSessionCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command
 // It exits zero whatever it finds: a non-zero exit on "something is unpushed"
 // would conflate the command failing with the data having a property, and the
 // listing exists to be read before a teardown the operator does by hand.
-func newSessionListCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
+func newSessionListCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List the sessions on this box and whether they are running",
@@ -71,7 +73,7 @@ func newSessionListCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Com
 			if err != nil {
 				return err
 			}
-			env, err := sessionEnv(resolved, git, tmux)
+			env, err := sessionEnv(resolved, root, git, tmux)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -98,7 +100,7 @@ func newSessionListCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Com
 // --detach asks for and, for now, all start does: connecting is a later slice,
 // and a verb that always detaches is the one a caller with no human present
 // can drive.
-func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
+func newSessionStartCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
 	var repo, branch, base string
 	var detach bool
 	cmd := &cobra.Command{
@@ -113,7 +115,7 @@ func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Co
 			if err != nil {
 				return err
 			}
-			env, err := sessionEnv(resolved, git, tmux)
+			env, err := sessionEnv(resolved, root, git, tmux)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -137,7 +139,7 @@ func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Co
 // It takes no confirmation and has no --force: nothing it does loses work, so
 // a gate here would only teach the operator to wave one away at the verb that
 // is safe, and mean it at the one that is not.
-func newSessionStopCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
+func newSessionStopCmd(resolve boxResolver, root string, git, tmux session.Runner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <name>",
 		Short: "End a session's tmux session, keeping its worktree and branch",
@@ -147,7 +149,7 @@ func newSessionStopCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Com
 			if err != nil {
 				return err
 			}
-			env, err := sessionEnv(resolved, git, tmux)
+			env, err := sessionEnv(resolved, root, git, tmux)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -166,7 +168,7 @@ func newSessionStopCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Com
 // sessionEnv turns the box's resolved configuration into what a session verb
 // runs against: an absolute workspace root and the repos the blueprint
 // declares, paired with the commands smith drives the box with.
-func sessionEnv(resolved config.Resolved, git, tmux session.Runner) (session.Env, error) {
+func sessionEnv(resolved config.Resolved, root string, git, tmux session.Runner) (session.Env, error) {
 	workspace, err := boxPath(resolved.Workspace.Value)
 	if err != nil {
 		return session.Env{}, err
@@ -176,7 +178,37 @@ func sessionEnv(resolved config.Resolved, git, tmux session.Runner) (session.Env
 		Repos:     declaredRepos(resolved.Repos),
 		Git:       git,
 		Tmux:      tmux,
+		Placer:    stagedPlacer{root: root, repos: resolved.Repos},
 	}, nil
+}
+
+// stagedPlacer materializes a repo's declared placements into a worktree from
+// the bytes `machine setup` staged on this box. It is the seam between what
+// the blueprint declares and where the bytes live: internal/session decides
+// when a placement converges, internal/staging owns how, and nothing on the
+// box resolves a source reference.
+type stagedPlacer struct {
+	// root is the box state directory the bytes were staged under.
+	root string
+	// repos are the repos the box's blueprint declares, carrying the
+	// placements each one asks for in its worktrees.
+	repos []blueprint.Repo
+}
+
+// Place converges the named repo's declared placements into the worktree at
+// dir. A repo the blueprint does not declare places nothing, which is the case
+// the session verbs have already refused before reaching here.
+func (p stagedPlacer) Place(repo, dir string) error {
+	for _, r := range p.repos {
+		if r.Name != repo {
+			continue
+		}
+		if _, err := staging.Place(p.root, repo, dir, r.Placements); err != nil {
+			return fmt.Errorf("place the files repo %q declares into %s: %w", repo, dir, err)
+		}
+		return nil
+	}
+	return nil
 }
 
 // declaredRepos narrows the blueprint's repos to what a session needs of them:

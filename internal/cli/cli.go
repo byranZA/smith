@@ -82,6 +82,6 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System(), connection.SystemDialer(), provider.SystemClock()), newSessionCmd(stagedBoxConfig, connection.System(), connection.System()), newVersionCmd())
+	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System(), connection.SystemDialer(), provider.SystemClock()), newSessionCmd(stagedBoxConfig, staging.Root, connection.System(), connection.System()), newVersionCmd())
 	return root
 }
