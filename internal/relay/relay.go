@@ -80,6 +80,10 @@ type Execer interface {
 // terminal talks to the box's tmux with no smith process in the middle; with
 // no box named it runs local, which execs into tmux itself.
 //
+// A box with no smith installed is named as such here too, though nothing
+// local is left to classify the exit: the check travels to the box ahead of
+// the verb, so the operator gets the same setup nudge a listing gives them.
+//
 // What that tmux session is called never travels: the box is handed the same
 // session verb the operator typed, and the mapping from a session name to a
 // tmux session stays in internal/session, on the box.
@@ -87,7 +91,7 @@ func Connect(exec Execer, v Verb, local Local) error {
 	if v.Target == "" {
 		return local()
 	}
-	if err := exec.Exec("ssh", connection.TerminalArgs(v.Target, v.remoteCmd())); err != nil {
+	if err := exec.Exec("ssh", connection.TerminalArgs(v.Target, v.connectCmd())); err != nil {
 		return fmt.Errorf("hand the terminal to box %s: %w", v.Target, err)
 	}
 	return nil
@@ -140,6 +144,19 @@ func classify(target, stderr string, err error) error {
 		return &NotInstalledError{Target: target}
 	}
 	return &ExitError{Code: coder.ExitCode(), Target: target}
+}
+
+// connectCmd renders the command line a connecting verb hands the box: the
+// same invocation, but exec'd behind a test for the smith that is to run it.
+// Replacing smith with ssh gives up ever seeing the box's exit code, so the
+// judgement classify makes after the fact is made on the box before it, and
+// the box answers a missing smith with the words and the exit code the other
+// verbs answer it with. On a box that has smith the shell is exec'd away, so
+// the guard leaves nothing between the operator's terminal and tmux.
+func (v Verb) connectCmd() string {
+	absent := &NotInstalledError{Target: v.Target}
+	return fmt.Sprintf("if [ -x %s ]; then exec %s; fi; printf '%%s\\n' %s >&2; exit 1",
+		BoxSmith, v.remoteCmd(), connection.ShellArg(absent.Error()))
 }
 
 // remoteCmd renders the command line the box runs: the absolute path, the

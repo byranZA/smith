@@ -228,3 +228,32 @@ func TestConnectWithNoTargetRunsTheVerbLocally(t *testing.T) {
 		t.Errorf("exec called %v, want no connection opened", execer.calls)
 	}
 }
+
+// TestConnectNamesSetupWhenTheBoxHasNoSmith checks the connecting path's half
+// of the provisioning gap: Connect replaces smith with ssh and so never sees
+// the box's exit code, so the box must be the one to say what a listing's
+// classify would have said — the same words, naming the same setup command,
+// and the same exit code the other verbs answer that gap with.
+func TestConnectNamesSetupWhenTheBoxHasNoSmith(t *testing.T) {
+	execer := &fakeExecer{}
+
+	err := Connect(execer, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "attach", "smith-main"},
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+
+	if len(execer.calls) != 1 {
+		t.Fatalf("exec called %d times, want 1: %v", len(execer.calls), execer.calls)
+	}
+	line := strings.Join(execer.calls[0], " ")
+	absent := &NotInstalledError{Target: "smith@box"}
+	for _, want := range []string{"exec " + BoxSmith, absent.Error(), "exit 1"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("exec argv = %q, want it to contain %q", line, want)
+		}
+	}
+}
