@@ -73,6 +73,7 @@ func validate(b Blueprint) []Finding {
 	var report []Finding
 	report = append(report, choice("access", b.Access, accessModes)...)
 	report = append(report, choice("terminal", b.Terminal, terminals)...)
+	report = append(report, envFindings("env", b.Env)...)
 	report = append(report, placementFindings("placements", b.Placements, boxScope)...)
 	report = append(report, repoFindings(b.Repos)...)
 	return report
@@ -98,6 +99,7 @@ func repoFindings(repos []Repo) []Finding {
 		default:
 			claimed[r.Name] = true
 		}
+		report = append(report, envFindings(at+".env", r.Env)...)
 		report = append(report, placementFindings(at+".placements", r.Placements, repoScope)...)
 	}
 	return report
@@ -109,6 +111,7 @@ func placementFindings(path string, placements []Placement, scope placementScope
 	var report []Finding
 	for i, p := range placements {
 		at := fmt.Sprintf("%s[%d]", path, i)
+		report = append(report, source(at+".from", p.From)...)
 		report = append(report, destination(at+".to", p.To, scope)...)
 		report = append(report, choice(at+".mode", p.Mode, placementModes)...)
 		if p.Perms != "" && !octalPerms.MatchString(p.Perms) {

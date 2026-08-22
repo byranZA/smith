@@ -123,3 +123,32 @@ func TestResolveTrimsWhitespace(t *testing.T) {
 		}
 	})
 }
+
+func TestSplitCutsOnTheFirstColonOnly(t *testing.T) {
+	tests := []struct {
+		name       string
+		ref        string
+		wantScheme string
+		wantArg    string
+		wantOK     bool
+	}{
+		{"env reference", "env:GH_TOKEN", "env", "GH_TOKEN", true},
+		{"windows path keeps its drive letter", `file:C:\keys\ts`, "file", `C:\keys\ts`, true},
+		{"no scheme", "ghp_realtokenhere", "", "", false},
+		{"empty argument", "env:", "env", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme, arg, ok := Split(tt.ref)
+			if ok != tt.wantOK {
+				t.Fatalf("Split(%q) ok = %v, want %v", tt.ref, ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if scheme != tt.wantScheme || arg != tt.wantArg {
+				t.Errorf("Split(%q) = %q, %q, want %q, %q", tt.ref, scheme, arg, tt.wantScheme, tt.wantArg)
+			}
+		})
+	}
+}

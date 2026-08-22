@@ -16,7 +16,8 @@
 // repos that would collide in the workspace, a field whose value is outside
 // the set smith recognises, a schema field name misindented into one of the
 // open maps, where it becomes a phantom tool or environment variable, and a
-// placement destination that disagrees with the scope it was declared in.
+// placement destination that disagrees with the scope it was declared in, and
+// a value naming a secret that is not a reference to one.
 package blueprint
 
 import (
