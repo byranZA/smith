@@ -361,3 +361,38 @@ func TestBlueprintCheckReportsAnInheritedPreferenceProvider(t *testing.T) {
 		t.Errorf("stdout = %q, want the preference adapter inherited entire", stdout)
 	}
 }
+
+func TestBlueprintCheckPrintsTheResolvedCollectionsAndGitIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "git:\n  user_email: ada@example.com\n")
+	writeBlueprint(t, dir, "acme", `git:
+  user_name: Ada Lovelace
+repos:
+  - url: git@github.com:acme/api.git
+packages:
+  - ripgrep
+tools:
+  node: "22"
+env:
+  GH_TOKEN: env:GH_TOKEN
+placements:
+  - from: file:~/.secrets/tok
+    to: ~/.netrc
+`)
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint (stderr: %s)", code, stderr)
+	}
+	for _, want := range []string{
+		"user_name", "Ada Lovelace", "blueprint",
+		"user_email", "ada@example.com", "preferences",
+		"api", "git@github.com:acme/api.git",
+		"ripgrep", "node", "22", "GH_TOKEN", "env:GH_TOKEN", "~/.netrc",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want the resolved configuration to contain %q", stdout, want)
+		}
+	}
+}

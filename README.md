@@ -254,11 +254,22 @@ It prints what smith would actually use, and where each value came from:
 blueprint "acme" is valid (/home/ada/.smith/blueprints/acme.yaml)
 
 resolved configuration:
-access:    tailscale (blueprint)
-terminal:  tmux (blueprint)
-workspace: ~/workspace (blueprint)
-provider:  hcloud (blueprint, replacing the preference)
+access:     tailscale (blueprint)
+terminal:   tmux (blueprint)
+workspace:  ~/workspace (blueprint)
+provider:   hcloud (blueprint, replacing the preference)
+git:
+  user_name:  Ada Lovelace (blueprint)
+  user_email: ada@acme.example (blueprint)
+repos:
+  acme-api (git@github.com:acme/api.git)
+    base: develop
 ```
+
+Then the rest of what the blueprint declared — each repo's tools, env and
+placements, followed by the box-wide `packages`, `tools`, `env` and
+`placements`. Repos appear under the name they resolve to, so a name defaulted
+from a clone URL is visible before any box exists.
 
 Start from the worked examples — a full
 [blueprint](docs/examples/blueprints/acme.yaml) and matching

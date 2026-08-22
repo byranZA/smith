@@ -203,3 +203,109 @@ func TestEffectiveReportsWhichAdapterIsInPlay(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveResolvesTheGitIdentityFieldByField(t *testing.T) {
+	b := &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}
+	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Someone Else", UserEmail: "ada@example.com"}}
+
+	got := Resolve(Overrides{}, b, p).Git
+
+	if got.UserName.Value != "Ada Lovelace" || got.UserName.Origin != FromBlueprint {
+		t.Errorf("resolved git user_name = %q from %q, want %q from %q", got.UserName.Value, got.UserName.Origin, "Ada Lovelace", FromBlueprint)
+	}
+	if got.UserEmail.Value != "ada@example.com" || got.UserEmail.Origin != FromPreferences {
+		t.Errorf("resolved git user_email = %q from %q, want the untouched preference %q from %q", got.UserEmail.Value, got.UserEmail.Origin, "ada@example.com", FromPreferences)
+	}
+}
+
+func TestResolveInventsNoGitIdentityWhenNobodyDeclaresOne(t *testing.T) {
+	got := Resolve(Overrides{}, nil, nil)
+
+	if got.Git.UserName.Value != "" || got.Git.UserEmail.Value != "" {
+		t.Errorf("resolved git = %+v, want nothing invented", got.Git)
+	}
+	if strings.Contains(got.String(), "user_name") {
+		t.Errorf("resolved configuration = %q, want no git identity reported when none is declared", got.String())
+	}
+}
+
+func TestResolveSurfacesTheBlueprintCollections(t *testing.T) {
+	document := `
+repos:
+  - url: git@github.com:acme/api.git
+    base: main
+packages:
+  - ripgrep
+tools:
+  node: "22"
+env:
+  GH_TOKEN: env:GH_TOKEN
+placements:
+  - from: file:~/.secrets/tok
+    to: ~/.netrc
+`
+	b, err := blueprint.Parse([]byte(document))
+	if err != nil {
+		t.Fatalf("Parse(document) err = %v, want nil", err)
+	}
+
+	got := Resolve(Overrides{}, &b, nil)
+
+	if len(got.Repos) != 1 || got.Repos[0].Name != "api" {
+		t.Errorf("resolved repos = %+v, want the one repo named by its URL's last segment", got.Repos)
+	}
+	if len(got.Packages) != 1 || got.Packages[0] != "ripgrep" {
+		t.Errorf("resolved packages = %v, want the blueprint's", got.Packages)
+	}
+	if got.Tools["node"] != "22" || got.Env["GH_TOKEN"] != "env:GH_TOKEN" {
+		t.Errorf("resolved tools = %v and env = %v, want the blueprint's", got.Tools, got.Env)
+	}
+	if len(got.Placements) != 1 || got.Placements[0].To != "~/.netrc" {
+		t.Errorf("resolved placements = %+v, want the blueprint's", got.Placements)
+	}
+}
+
+func TestEffectiveReportsTheGitIdentityAndTheCollections(t *testing.T) {
+	b := &blueprint.Blueprint{
+		Git:        blueprint.Git{UserName: "Ada Lovelace"},
+		Packages:   []string{"ripgrep"},
+		Tools:      map[string]string{"node": "22"},
+		Env:        map[string]string{"GH_TOKEN": "env:GH_TOKEN"},
+		Placements: []blueprint.Placement{{From: "file:~/.secrets/tok", To: "~/.netrc", Mode: "once", Perms: "0600"}},
+		Repos: []blueprint.Repo{{
+			Name:       "api",
+			URL:        "git@github.com:acme/api.git",
+			Base:       "main",
+			Tools:      map[string]string{"go": "1.26"},
+			Env:        map[string]string{"DATABASE_URL": "env:DB_URL"},
+			Placements: []blueprint.Placement{{From: "file:~/.secrets/api.env", To: "packages/api/.env"}},
+		}},
+	}
+	p := &blueprint.Preferences{Git: blueprint.Git{UserEmail: "ada@example.com"}}
+
+	got := Resolve(Overrides{}, b, p).String()
+
+	for _, want := range []string{
+		"user_name", "Ada Lovelace", string(FromBlueprint),
+		"user_email", "ada@example.com", string(FromPreferences),
+		"repos", "api", "git@github.com:acme/api.git", "main", "go", "1.26", "DATABASE_URL", "packages/api/.env",
+		"packages", "ripgrep",
+		"tools", "node", "22",
+		"env", "GH_TOKEN", "env:GH_TOKEN",
+		"placements", "file:~/.secrets/tok", "~/.netrc", "once", "0600",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("resolved configuration = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+func TestEffectiveOmitsCollectionsNobodyDeclared(t *testing.T) {
+	got := Resolve(Overrides{}, nil, nil).String()
+
+	for _, unwanted := range []string{"repos", "packages", "tools", "env", "placements", "git"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("resolved configuration = %q, want no empty %q section", got, unwanted)
+		}
+	}
+}

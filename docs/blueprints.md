@@ -111,11 +111,50 @@ $ smith blueprint check acme
 blueprint "acme" is valid (/home/ada/.smith/blueprints/acme.yaml)
 
 resolved configuration:
-access:    tailscale (blueprint)
-terminal:  tmux (blueprint)
-workspace: ~/workspace (blueprint)
-provider:  hcloud (blueprint, replacing the preference)
+access:     tailscale (blueprint)
+terminal:   tmux (blueprint)
+workspace:  ~/workspace (blueprint)
+provider:   hcloud (blueprint, replacing the preference)
+git:
+  user_name:  Ada Lovelace (blueprint)
+  user_email: ada@acme.example (blueprint)
+repos:
+  acme-api (git@github.com:acme/api.git)
+    base: develop
+    tools:
+      node: 22
+    env:
+      ACME_DB_PASSWORD: file:~/.secrets/acme/db-password
+      ACME_REGION: literal:eu-central
+    placements:
+      file:~/.secrets/acme/api.env -> packages/api/.env (converge, 0600)
+      file:~/fixtures/acme.sql -> seed.sql (once, 0644)
+  web (git@github.com:acme/web.git)
+    base: main
+    placements:
+      file:~/.secrets/acme/web.env -> .env.local (converge, 0600)
+packages:
+  ripgrep
+  jq
+  postgresql-client
+tools:
+  go: 1.23
+  node: 20
+env:
+  ANTHROPIC_API_KEY: file:~/.secrets/acme/anthropic-key
+  GITHUB_TOKEN: env:GH_TOKEN
+  LOG_LEVEL: literal:debug
+placements:
+  file:~/.secrets/acme/id_forge -> ~/.ssh/id_forge (converge, 0600)
+  file:~/.config/acme/agent-instructions.md -> ~/.config/acme/agent-instructions.md (once, 0644)
 ```
+
+Fixed-key fields carry the origin of their value; the collections are
+blueprint-only, so they are printed as the blueprint declared them. A repo
+appears under the name it resolves to — its own, or the last segment of its
+clone URL — which is the directory it lands in under the workspace. A field
+nobody declared and smith has no default for, such as a git identity, is left
+out rather than shown empty.
 
 `--access public|tailscale` overrides both the blueprint and your preferences,
 which is how you see the top of the precedence chain at work:
@@ -123,7 +162,7 @@ which is how you see the top of the precedence chain at work:
 ```
 $ smith blueprint check acme --access public
 ...
-access:    public (flag)
+access:     public (flag)
 ```
 
 The failure case is every problem in the document at once, in the order they
