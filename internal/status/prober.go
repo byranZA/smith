@@ -53,7 +53,7 @@ func NewProber(conn bootstrap.Conn, admin tailscale.Admin) *Prober {
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 	reachable, err := connection.Reachable(ctx, p.conn)
 	if err != nil {
-		return Gathered{}, err
+		return Gathered{}, fmt.Errorf("probe reachability: %w", err)
 	}
 	if !reachable {
 		return Gathered{Reachable: false}, nil

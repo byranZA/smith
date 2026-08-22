@@ -114,7 +114,7 @@ func NewRunner(conn Conn) *Runner {
 func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 	reachable, err := connection.Reachable(ctx, r.conn)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("probe reachability: %w", err)
 	}
 	if !reachable {
 		return Result{Outcome: OutcomeConnectFailed, Reason: connection.ErrConnect.Error()}, nil
