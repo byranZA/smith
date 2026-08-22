@@ -1,5 +1,11 @@
 # Secrets are references, not values — over SSH stdin, never argv
 
+> **Extended by [ADR-0009](./0009-provisioned-secrets-sit-in-plaintext.md).** The `scheme:arg`
+> primitive below is now also the Blueprint's value grammar for *provisioned* secrets, where the
+> known-scheme set gains `literal:` and an unrecognised scheme is a hard validation error. The
+> rule for the operational secret this ADR is about — a bare literal on argv is a hard error — is
+> unchanged.
+
 ## Context
 
 Bootstrap needs the Tailscale auth key on the box transiently. The tempting shortcut is to accept
