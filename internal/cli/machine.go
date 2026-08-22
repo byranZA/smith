@@ -59,7 +59,7 @@ func newCreateCmd(resolve homeResolver, runner provider.Runner) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			return writeCreated(cmd, box)
+			return writeCreated(cmd, box, adapter.SSHKey)
 		},
 	}
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
@@ -99,15 +99,47 @@ func resolveAdapter(home config.Home, blueprintName string) (provider.Adapter, e
 }
 
 // writeCreated reports the box the provider returned and the command to run
-// next. The login is the one a stock cloud image boots with; an image that
-// grants a different one takes that login instead.
-func writeCreated(cmd *cobra.Command, box provider.Box) error {
-	report := fmt.Sprintf("box created: %s\naddress:     %s\n\nnothing is provisioned yet. Run:\n  smith machine setup root@%s\n",
-		box.ID, box.IP, box.IP)
-	if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
+// next.
+func writeCreated(cmd *cobra.Command, box provider.Box, sshKey string) error {
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), createdReport(box, sshKey)); err != nil {
 		return fmt.Errorf("write created report: %w", err)
 	}
 	return nil
+}
+
+// createdReport renders what the operator is handed by a successful create: the
+// box, the ssh key reference smith passed to the provider, the command to run
+// next, and what to check first when that command cannot get in. The login is
+// the one a stock cloud image boots with; an image that grants a different one
+// takes that login instead.
+//
+// The key reference is reported because no pre-flight can validate it. A key
+// reference that names nothing, a key registered under another name, and a
+// token without permission to read keys are indistinguishable to smith and
+// identical to the operator: the box boots, port 22 answers, and the first ssh
+// returns Permission denied (publickey). Naming the reference here is what
+// turns that into a pointed failure.
+func createdReport(box provider.Box, sshKey string) string {
+	passed := fmt.Sprintf("%q", sshKey)
+	advice := fmt.Sprintf(`If that is refused with "Permission denied (publickey)", the ssh key reference
+is the first thing to check. smith passed %q to the provider without
+interpreting it, so it cannot tell a wrong reference from a token that may not
+read keys.`, sshKey)
+	if sshKey == "" {
+		passed = "none passed"
+		advice = `If that is refused with "Permission denied (publickey)", the ssh key is the
+first thing to check. smith passed none, so the box carries only the keys the
+provider put on it itself.`
+	}
+	return fmt.Sprintf(`box created: %s
+address:     %s
+ssh key:     %s
+
+nothing is provisioned yet. Run:
+  smith machine setup root@%s
+
+%s
+`, box.ID, box.IP, passed, box.IP, advice)
 }
 
 // newSetupCmd builds `smith machine setup <login>@<host>`. It connects, runs the

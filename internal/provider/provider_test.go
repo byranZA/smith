@@ -438,3 +438,31 @@ func TestValidateAcceptsTheBoxNamePlaceholderInTheMarker(t *testing.T) {
 		t.Errorf("Validate() err = %v, want {{value}} accepted in the marker", err)
 	}
 }
+
+func TestCreatePassesTheSSHKeyReferenceThroughUnaltered(t *testing.T) {
+	tests := []struct {
+		name   string
+		sshKey string
+	}{
+		{"a key name registered at the provider", "my-laptop"},
+		{"a raw public key line", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8Q ada@laptop"},
+		{"a value that reads like a reference scheme", "env:SSH_KEY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := hetzner()
+			adapter.Create = []string{"hcloud", "server", "create", "--ssh-key", "{{ssh_key}}"}
+			adapter.SSHKey = tt.sshKey
+			runner := &fakeRunner{stdout: hetznerResponse}
+
+			if _, err := provider.Create(context.Background(), runner, adapter, "dev"); err != nil {
+				t.Fatalf("Create() err = %v", err)
+			}
+
+			want := []string{"server", "create", "--ssh-key", tt.sshKey}
+			if !slices.Equal(runner.args, want) {
+				t.Errorf("args = %q, want %q", runner.args, want)
+			}
+		})
+	}
+}

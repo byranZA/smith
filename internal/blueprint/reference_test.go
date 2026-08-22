@@ -126,3 +126,31 @@ func TestParseSplitsAReferenceOnTheFirstColonOnly(t *testing.T) {
 		t.Fatalf("Parse() err = %v, want a Windows-style path to survive the split", err)
 	}
 }
+
+// The ssh key reference is the one field where a bare literal and a known
+// scheme must both stay legal: Hetzner wants a key name, Linode wants the raw
+// public key line, and a public key is not a secret. So the scheme rule does
+// not reach it, and Parse leaves whatever the operator wrote alone.
+func TestParseChecksNoSchemeOnTheProviderSSHKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		sshKey string
+	}{
+		{"a key name registered at the provider", "my-laptop"},
+		{"a raw public key line", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8Q ada@laptop"},
+		{"a value that reads like a reference scheme", "env:SSH_KEY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := "provider:\n  create: [hcloud, server, create]\n  ssh_key: \"" + tt.sshKey + "\"\n"
+
+			b, err := blueprint.Parse([]byte(doc))
+			if err != nil {
+				t.Fatalf("Parse() err = %v, want the ssh key reference accepted as written", err)
+			}
+			if b.Provider.SSHKey != tt.sshKey {
+				t.Errorf("Provider.SSHKey = %q, want %q unaltered", b.Provider.SSHKey, tt.sshKey)
+			}
+		})
+	}
+}

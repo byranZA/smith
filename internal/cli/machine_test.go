@@ -113,3 +113,78 @@ func TestMachineCreateRefusesABlueprintWithNoProvider(t *testing.T) {
 		t.Errorf("stdout = %q, want nothing printed when the create is refused", stdout)
 	}
 }
+
+// providerBlueprintWithSSHKey is the same adapter passing an ssh key reference
+// the operator registered at the provider themselves.
+const providerBlueprintWithSSHKey = `provider:
+  create: [hcloud, server, create, --name, "{{name}}", --ssh-key, "{{ssh_key}}", -o, json]
+  ssh_key: my-laptop
+  extract:
+    id: id
+    ip: public_net.ipv4.ip
+`
+
+func TestMachineCreateNamesTheSSHKeyReferenceItPassed(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprintWithSSHKey)
+	runner := &fakeProviderRunner{stdout: `{"id": 1, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+
+	stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a created box (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "ssh key") || !strings.Contains(stdout, "my-laptop") {
+		t.Errorf("stdout = %q, want it to name %q as the ssh key reference passed", stdout, "my-laptop")
+	}
+}
+
+func TestMachineCreateStatesThatItPassedNoSSHKeyReference(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprint)
+	runner := &fakeProviderRunner{stdout: `{"id": 1, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+
+	stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a created box (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "ssh key") || !strings.Contains(stdout, "none") {
+		t.Errorf("stdout = %q, want it to state that no ssh key reference was passed", stdout)
+	}
+	// Absence is legal: it is reported, never warned about.
+	if stderr != "" {
+		t.Errorf("stderr = %q, want no warning about an absent ssh key reference", stderr)
+	}
+}
+
+func TestMachineCreateNamesTheSSHKeyReferenceAsTheFirstSuspectOnARefusedConnect(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  string
+		want string
+	}{
+		{"a reference was passed", providerBlueprintWithSSHKey, "my-laptop"},
+		{"none was passed", providerBlueprint, "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeBlueprint(t, dir, "acme", tt.doc)
+			runner := &fakeProviderRunner{stdout: `{"id": 1, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+
+			stdout, stderr, code := runCreate(t, dir, runner, "create", "dev", "--blueprint", "acme")
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 for a created box (stderr: %s)", code, stderr)
+			}
+			advice := stdout[strings.Index(stdout, "smith machine setup"):]
+			if !strings.Contains(advice, "Permission denied (publickey)") {
+				t.Errorf("stdout = %q, want the refused-connect failure named after the setup line", stdout)
+			}
+			if !strings.Contains(advice, tt.want) {
+				t.Errorf("stdout = %q, want the refused-connect advice to name %q", stdout, tt.want)
+			}
+		})
+	}
+}
