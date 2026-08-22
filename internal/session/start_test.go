@@ -74,8 +74,6 @@ func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 	t.Helper()
 	src := t.TempDir()
 	git(t, src, "init", "-b", defaultBranch)
-	git(t, src, "config", "user.email", "smith@example.com")
-	git(t, src, "config", "user.name", "smith")
 	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("base\n"), 0o600); err != nil {
 		t.Fatalf("write README: %v", err)
 	}
@@ -86,11 +84,6 @@ func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 		t.Fatalf("make repo directory: %v", err)
 	}
 	git(t, src, "clone", "--bare", src, bare)
-	// A bare clone carries none of the source's config, and the worktrees cut
-	// from it are where the tests commit — so the identity lives here, not in
-	// whatever ambient git config the machine running the tests happens to have.
-	git(t, bare, "config", "user.email", "smith@example.com")
-	git(t, bare, "config", "user.name", "smith")
 }
 
 // git runs a real git command in dir and fails the test if it does not.
@@ -103,7 +96,11 @@ func git(t *testing.T, dir string, args ...string) {
 func gitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	var out, errOut strings.Builder
-	err := connection.System().Run(context.Background(), "git", append([]string{"-C", dir}, args...), nil, &out, &errOut)
+	// The identity rides on every command: the tests commit in worktrees and
+	// clones nobody configured, and a machine with no git identity of its own
+	// — CI is one — would have git refuse those commits.
+	full := []string{"-C", dir, "-c", "user.email=smith@example.com", "-c", "user.name=smith"}
+	err := connection.System().Run(context.Background(), "git", append(full, args...), nil, &out, &errOut)
 	if err != nil {
 		t.Fatalf("git %s: %v (%s)", strings.Join(args, " "), err, errOut.String())
 	}
