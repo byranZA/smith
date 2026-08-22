@@ -9,9 +9,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/byranZA/smith/internal/config"
-	"github.com/byranZA/smith/internal/provider"
 )
 
 // fakeProviderRunner stands in for the provider CLI: no test in this package
@@ -44,19 +44,115 @@ const providerBlueprint = `provider:
     ip: public_net.ipv4.ip
 `
 
+// fakeDialer stands in for the network at the port-22 readiness poll: no test
+// in this package opens a real socket. It refuses a fixed number of dials
+// before accepting, the shape a box that is still booting has.
+type fakeDialer struct {
+	refusals int
+
+	dialed []string
+}
+
+func (d *fakeDialer) Dial(_ context.Context, address string) error {
+	d.dialed = append(d.dialed, address)
+	if len(d.dialed) <= d.refusals {
+		return errors.New("connection refused")
+	}
+	return nil
+}
+
+// fakeClock drives the create command's polls without waiting: every wait it is
+// asked for has already elapsed.
+type fakeClock struct {
+	now time.Time
+}
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+func (c *fakeClock) After(d time.Duration) <-chan time.Time {
+	c.now = c.now.Add(d)
+	fired := make(chan time.Time, 1)
+	fired <- c.now
+	return fired
+}
+
 // runCreate runs `machine create` against a config home rooted at dir and the
-// given fake provider CLI, returning what landed on each stream plus the exit
-// code.
+// given fake provider CLI, against a box whose port 22 answers at once.
 func runCreate(t *testing.T, dir string, runner *fakeProviderRunner, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := newMachineCmd(func() (config.Home, error) { return config.NewHome(dir), nil }, runner, provider.SystemClock())
+	return runCreateDialing(t, context.Background(), dir, runner, &fakeDialer{}, args...)
+}
+
+// runCreateDialing runs `machine create` with the readiness poll pointed at the
+// given dialer, returning what landed on each stream plus the exit code.
+func runCreateDialing(t *testing.T, ctx context.Context, dir string, runner *fakeProviderRunner, dialer *fakeDialer, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	cmd := newMachineCmd(func() (config.Home, error) { return config.NewHome(dir), nil }, runner, dialer, &fakeClock{})
 	cmd.SetArgs(args)
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
-	code = codeFromError(cmd.Execute())
+	code = codeFromError(cmd.ExecuteContext(ctx))
 	return out.String(), errBuf.String(), code
+}
+
+func TestMachineCreateReportsABoxReachableOncePort22Answers(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprint)
+	runner := &fakeProviderRunner{stdout: `{"id": 519823476123, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+	dialer := &fakeDialer{refusals: 2}
+
+	stdout, stderr, code := runCreateDialing(t, context.Background(), dir, runner, dialer, "create", "dev", "--blueprint", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a box that answered (stderr: %s)", code, stderr)
+	}
+	if len(dialer.dialed) != 3 || dialer.dialed[0] != "203.0.113.10:22" {
+		t.Errorf("dialed %q, want the poll to retry port 22 at the box address until it answered", dialer.dialed)
+	}
+	if !strings.Contains(stdout, "reachable") {
+		t.Errorf("stdout = %q, want it to report the box as reachable", stdout)
+	}
+}
+
+func TestMachineCreateReportsABoxThatNeverBecameReachable(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprint)
+	runner := &fakeProviderRunner{stdout: `{"id": 519823476123, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+
+	stdout, stderr, code := runCreateDialing(t, context.Background(), dir, runner, &fakeDialer{refusals: 1000}, "create", "dev", "--blueprint", "acme")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want non-zero when the box never became reachable")
+	}
+	for _, fragment := range []string{"519823476123", "203.0.113.10"} {
+		if !strings.Contains(stderr, fragment) {
+			t.Errorf("stderr = %q, want it to name %q so the operator can find the box", stderr, fragment)
+		}
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want no setup line for a box that never answered", stdout)
+	}
+}
+
+func TestMachineCreateInterruptedStillNamesTheBox(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", providerBlueprint)
+	runner := &fakeProviderRunner{stdout: `{"id": 519823476123, "public_net": {"ipv4": {"ip": "203.0.113.10"}}}`}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, stderr, code := runCreateDialing(t, ctx, dir, runner, &fakeDialer{refusals: 1000}, "create", "dev", "--blueprint", "acme")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want non-zero when the create was interrupted")
+	}
+	for _, fragment := range []string{"519823476123", "203.0.113.10"} {
+		if !strings.Contains(stderr, fragment) {
+			t.Errorf("stderr = %q, want it to name %q the poll had reached", stderr, fragment)
+		}
+	}
 }
 
 func TestMachineCreateReportsTheBoxAndTheNextCommand(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,14 +21,15 @@ import (
 )
 
 // newMachineCmd builds `smith machine` and its subcommands, reading the config
-// home through resolve, running provider CLIs through runner, and timing the
-// create command's address poll by clock.
-func newMachineCmd(resolve homeResolver, runner provider.Runner, clock provider.Clock) *cobra.Command {
+// home through resolve, running provider CLIs through runner, probing a new
+// box's ssh port through dialer, and timing the create command's polls by
+// clock.
+func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner, clock), newSetupCmd(), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(), newStatusCmd())
 	return cmd
 }
 
@@ -44,8 +46,11 @@ func newMachineCmd(resolve homeResolver, runner provider.Runner, clock provider.
 //
 // A provider that assigns the address after the create returns is waited out on
 // clock, so the operator sees one command whether the address came back with
-// the box or a moment later.
-func newCreateCmd(resolve homeResolver, runner provider.Runner, clock provider.Clock) *cobra.Command {
+// the box or a moment later. Once the address is known the box's ssh port is
+// polled until it answers, because no provider CLI waits for sshd: a create
+// that returned the moment the provider did would hand the operator a setup
+// line that is refused for the next half minute.
+func newCreateCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
 	var blueprintName string
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -64,12 +69,31 @@ func newCreateCmd(resolve homeResolver, runner provider.Runner, clock provider.C
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			if err := awaitReachable(cmd.Context(), dialer, clock, box); err != nil {
+				return reportInvalid(cmd, err)
+			}
 			return writeCreated(cmd, box, adapter.SSHKey)
 		},
 	}
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
 		"the blueprint whose provider adapter creates the box; omitted, the adapter comes from preferences")
 	return cmd
+}
+
+// readinessTimeout is how long create waits for a new box's ssh port to answer.
+// A box that boots normally answers well inside it; a box that does not is one
+// the operator has to look at themselves, and waiting longer only delays that.
+const readinessTimeout = 5 * time.Minute
+
+// awaitReachable polls the box's ssh port until it answers, and names the box
+// when it does not. The box exists and is being billed whatever the poll does,
+// and v1 ships no destroy, so a failure that lost the id and the address would
+// leave the operator hunting for a box smith made.
+func awaitReachable(ctx context.Context, dialer connection.Dialer, clock connection.Clock, box provider.Box) error {
+	if err := connection.WaitForSSH(ctx, dialer, clock, box.IP, readinessTimeout); err != nil {
+		return fmt.Errorf("box %s was created at %s but never became reachable: %w", box.ID, box.IP, err)
+	}
+	return nil
 }
 
 // resolveAdapter reads the adapter smith would create through, from the named
@@ -139,6 +163,7 @@ provider put on it itself.`
 	return fmt.Sprintf(`box created: %s
 address:     %s
 ssh key:     %s
+reachable:   port 22 is answering
 
 nothing is provisioned yet. Run:
   smith machine setup root@%s
