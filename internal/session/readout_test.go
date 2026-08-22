@@ -79,3 +79,73 @@ func TestReadoutAlwaysPrintsTheSummary(t *testing.T) {
 		})
 	}
 }
+
+// TestReadoutRendersTheWorkState locks in what the two work-state columns say:
+// dirty is a word or a dash, unpushed is a count, and a detached worktree —
+// which has no branch to count — is a dash rather than a zero.
+func TestReadoutRendersTheWorkState(t *testing.T) {
+	tests := []struct {
+		name            string
+		session         session.Session
+		dirty, unpushed string
+	}{
+		{"clean and pushed", session.Session{Name: "a", Branch: "spec-42"}, "-", "0"},
+		{"dirty", session.Session{Name: "a", Branch: "spec-42", Dirty: true}, "dirty", "0"},
+		{"unpushed commits", session.Session{Name: "a", Branch: "spec-42", Unpushed: 3}, "-", "3"},
+		{"detached", session.Session{Name: "a"}, "-", "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := strings.Fields(strings.Split(session.Readout([]session.Session{tt.session}), "\n")[1])
+
+			if len(row) != 4 {
+				t.Fatalf("Readout() row = %v, want four columns", row)
+			}
+			if row[2] != tt.dirty || row[3] != tt.unpushed {
+				t.Errorf("Readout() dirty, unpushed = %q, %q, want %q, %q", row[2], row[3], tt.dirty, tt.unpushed)
+			}
+		})
+	}
+}
+
+// TestReadoutSummarizesTheWorkState locks in the line an operator reads before
+// tearing a box down by hand: what is at risk, or that nothing is.
+func TestReadoutSummarizesTheWorkState(t *testing.T) {
+	tests := []struct {
+		name     string
+		sessions []session.Session
+		want     string
+	}{
+		{
+			"one dirty and one unpushed",
+			[]session.Session{
+				{Name: "a", Branch: "a", Dirty: true},
+				{Name: "b", Branch: "b", Unpushed: 2},
+				{Name: "c", Branch: "c"},
+			},
+			"3 sessions · 1 dirty · 1 with unpushed commits",
+		},
+		{
+			"everything clean",
+			[]session.Session{{Name: "a", Branch: "a"}, {Name: "b", Branch: "b"}, {Name: "c", Branch: "c"}},
+			"3 sessions · all clean",
+		},
+		{
+			"only dirty work",
+			[]session.Session{{Name: "a", Branch: "a", Dirty: true}, {Name: "b", Branch: "b"}},
+			"2 sessions · 1 dirty",
+		},
+		{
+			"a detached worktree counts nothing unpushed",
+			[]session.Session{{Name: "a"}},
+			"1 session · all clean",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.TrimSpace(session.Readout(tt.sessions)); !strings.HasSuffix(got, tt.want) {
+				t.Errorf("Readout() = %q, want a summary reading %q", got, tt.want)
+			}
+		})
+	}
+}

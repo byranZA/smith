@@ -44,11 +44,17 @@ func List(ctx context.Context, env Env, _ Filter) ([]Session, error) {
 		}
 		for _, wt := range parseWorktrees(listing) {
 			name := listedName(repo.Name, wt)
+			dirty, unpushed, err := workState(ctx, env.Git, wt, repo.Placements)
+			if err != nil {
+				return nil, err
+			}
 			sessions = append(sessions, Session{
-				Name:   name,
-				Repo:   repo.Name,
-				Branch: wt.branch,
-				Live:   isLive(ctx, env.Tmux, name),
+				Name:     name,
+				Repo:     repo.Name,
+				Branch:   wt.branch,
+				Live:     isLive(ctx, env.Tmux, name),
+				Dirty:    dirty,
+				Unpushed: unpushed,
 			})
 		}
 	}

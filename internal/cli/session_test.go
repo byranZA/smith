@@ -208,3 +208,85 @@ func TestSessionListIsUnderTheRootCommand(t *testing.T) {
 		t.Errorf("Find(session list) = %q, want the list command", found.Name())
 	}
 }
+
+// TestSessionListExitsZeroWithUnpushedWork locks in that list reports what it
+// found rather than failing on it: a non-zero exit on "something is unpushed"
+// would conflate the command failing with the data having a property.
+func TestSessionListExitsZeroWithUnpushedWork(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	start := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
+	start.SetOut(io.Discard)
+	start.SetErr(io.Discard)
+	if err := start.Execute(); err != nil {
+		t.Fatalf("session start err = %v", err)
+	}
+	cmd := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	cmd.SetArgs([]string{"list"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	err := cmd.Execute()
+
+	if code := codeFromError(err); code != 0 {
+		t.Fatalf("exit code = %d, want 0 with unpushed work present (stderr: %s)", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "1 with unpushed commits") {
+		t.Errorf("stdout = %q, want the summary to report the unpushed work", out.String())
+	}
+}
+
+// TestSessionListSubtractsTheBlueprintsPlacements locks in that the placement
+// paths reach the dirty check from the blueprint the box was built from: a
+// file smith placed itself is not the operator's work.
+func TestSessionListSubtractsTheBlueprintsPlacements(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBoxPlacing(workspace, "smith", ".env")
+	start := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	start.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
+	start.SetOut(io.Discard)
+	start.SetErr(io.Discard)
+	if err := start.Execute(); err != nil {
+		t.Fatalf("session start err = %v", err)
+	}
+	placed := filepath.Join(workspace, "smith", "worktrees", "spec-42", ".env")
+	if err := os.WriteFile(placed, []byte("TOKEN=1\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", placed, err)
+	}
+	cmd := newSessionCmd(resolve, connection.System(), &fakeTmux{})
+	cmd.SetArgs([]string{"list"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	if strings.Contains(out.String(), "dirty") {
+		t.Errorf("stdout = %q, want the placed file subtracted from the dirty check", out.String())
+	}
+}
+
+// resolvedBoxPlacing stands in for a box whose blueprint declares placements
+// into the repo's worktrees.
+func resolvedBoxPlacing(workspace, repo string, to ...string) boxResolver {
+	placements := make([]blueprint.Placement, len(to))
+	for i, at := range to {
+		placements[i] = blueprint.Placement{From: "file:secrets/env", To: at}
+	}
+	return func() (config.Resolved, error) {
+		return config.Resolved{
+			Workspace: config.Value{Value: workspace, Origin: config.FromBlueprint},
+			Repos: []blueprint.Repo{{
+				Name:       repo,
+				URL:        "git@example.com:acme/" + repo + ".git",
+				Placements: placements,
+			}},
+		}, nil
+	}
+}

@@ -144,14 +144,29 @@ func sessionEnv(resolved config.Resolved, git, tmux session.Runner) (session.Env
 }
 
 // declaredRepos narrows the blueprint's repos to what a session needs of them:
-// the workspace directory each lives in, and the branch its worktrees start
-// from.
+// the workspace directory each lives in, the branch its worktrees start from,
+// and the paths it places files at — which the work-state predicate subtracts
+// so a file smith wrote is not read as the operator's work.
 func declaredRepos(repos []blueprint.Repo) []session.Repo {
 	out := make([]session.Repo, len(repos))
 	for i, r := range repos {
-		out[i] = session.Repo{Name: r.Name, Base: r.Base}
+		out[i] = session.Repo{Name: r.Name, Base: r.Base, Placements: placedAt(r.Placements)}
 	}
 	return out
+}
+
+// placedAt narrows a repo's placements to the destination paths, which is all
+// the dirty check needs of them: resolving a from: reference belongs to the
+// stages that stage the bytes.
+func placedAt(placements []blueprint.Placement) []string {
+	if len(placements) == 0 {
+		return nil
+	}
+	to := make([]string, len(placements))
+	for i, p := range placements {
+		to[i] = p.To
+	}
+	return to
 }
 
 // boxPath expands a workspace root written the way an operator writes it —

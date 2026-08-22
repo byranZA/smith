@@ -48,6 +48,11 @@ type Repo struct {
 	// Base is the branch worktrees start from. Left empty, the repo's own
 	// default branch is read from git.
 	Base string
+	// Placements are the placement to: paths the blueprint declares for this
+	// repo, relative to a worktree's root. They are the files smith puts in a
+	// worktree itself, and are subtracted from the dirty check: the operator
+	// did not write them, so they are not the operator's work.
+	Placements []string
 }
 
 // Env is what a session verb runs against: the box configuration the caller
