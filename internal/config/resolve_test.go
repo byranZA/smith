@@ -1,4 +1,4 @@
-package config
+package config_test
 
 import (
 	"reflect"
@@ -6,16 +6,17 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/config"
 )
 
 func TestResolveTakesTheBlueprintOverAPreference(t *testing.T) {
 	b := &blueprint.Blueprint{Access: "public"}
 	p := &blueprint.Preferences{Access: "tailscale"}
 
-	got := Resolve(Overrides{}, b, p).Access
+	got := config.Resolve(config.Overrides{}, b, p).Access
 
-	if got.Value != "public" || got.Origin != FromBlueprint {
-		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "public", FromBlueprint)
+	if got.Value != "public" || got.Origin != config.FromBlueprint {
+		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "public", config.FromBlueprint)
 	}
 }
 
@@ -23,27 +24,27 @@ func TestResolveTakesAPreferenceOverTheBuiltInDefault(t *testing.T) {
 	b := &blueprint.Blueprint{}
 	p := &blueprint.Preferences{Access: "tailscale"}
 
-	got := Resolve(Overrides{}, b, p).Access
+	got := config.Resolve(config.Overrides{}, b, p).Access
 
-	if got.Value != "tailscale" || got.Origin != FromPreferences {
-		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "tailscale", FromPreferences)
+	if got.Value != "tailscale" || got.Origin != config.FromPreferences {
+		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "tailscale", config.FromPreferences)
 	}
 }
 
 func TestResolveFallsThroughToTheBuiltInDefaults(t *testing.T) {
-	got := Resolve(Overrides{}, nil, nil)
+	got := config.Resolve(config.Overrides{}, nil, nil)
 
 	for _, tt := range []struct {
 		field string
-		got   Value
+		got   config.Value
 		want  string
 	}{
 		{"access", got.Access, "public"},
 		{"terminal", got.Terminal, "tmux"},
 		{"workspace", got.Workspace, "~/workspace"},
 	} {
-		if tt.got.Value != tt.want || tt.got.Origin != FromDefault {
-			t.Errorf("resolved %s = %q from %q, want %q from %q", tt.field, tt.got.Value, tt.got.Origin, tt.want, FromDefault)
+		if tt.got.Value != tt.want || tt.got.Origin != config.FromDefault {
+			t.Errorf("resolved %s = %q from %q, want %q from %q", tt.field, tt.got.Value, tt.got.Origin, tt.want, config.FromDefault)
 		}
 	}
 }
@@ -52,10 +53,10 @@ func TestResolveTakesTheFlagOverEverything(t *testing.T) {
 	b := &blueprint.Blueprint{Access: "public"}
 	p := &blueprint.Preferences{Access: "public"}
 
-	got := Resolve(Overrides{Access: "tailscale"}, b, p).Access
+	got := config.Resolve(config.Overrides{Access: "tailscale"}, b, p).Access
 
-	if got.Value != "tailscale" || got.Origin != FromFlag {
-		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "tailscale", FromFlag)
+	if got.Value != "tailscale" || got.Origin != config.FromFlag {
+		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "tailscale", config.FromFlag)
 	}
 }
 
@@ -63,12 +64,12 @@ func TestResolveResolvesEachFieldOnItsOwn(t *testing.T) {
 	b := &blueprint.Blueprint{Access: "public"}
 	p := &blueprint.Preferences{Access: "tailscale", Workspace: "~/dev"}
 
-	got := Resolve(Overrides{}, b, p)
+	got := config.Resolve(config.Overrides{}, b, p)
 
 	if got.Access.Value != "public" {
 		t.Errorf("resolved access = %q, want the blueprint's %q", got.Access.Value, "public")
 	}
-	if got.Workspace.Value != "~/dev" || got.Workspace.Origin != FromPreferences {
+	if got.Workspace.Value != "~/dev" || got.Workspace.Origin != config.FromPreferences {
 		t.Errorf("resolved workspace = %q from %q, want the untouched preference %q", got.Workspace.Value, got.Workspace.Origin, "~/dev")
 	}
 }
@@ -76,17 +77,17 @@ func TestResolveResolvesEachFieldOnItsOwn(t *testing.T) {
 func TestResolveAppliesPreferencesWithNoBlueprintAtAll(t *testing.T) {
 	p := &blueprint.Preferences{Access: "tailscale"}
 
-	got := Resolve(Overrides{}, nil, p).Access
+	got := config.Resolve(config.Overrides{}, nil, p).Access
 
-	if got.Value != "tailscale" || got.Origin != FromPreferences {
-		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "tailscale", FromPreferences)
+	if got.Value != "tailscale" || got.Origin != config.FromPreferences {
+		t.Errorf("resolved access = %q from %q, want %q from %q", got.Value, got.Origin, "tailscale", config.FromPreferences)
 	}
 }
 
 func TestResolvedReportsEveryFieldWithItsOrigin(t *testing.T) {
-	got := Resolve(Overrides{Access: "tailscale"}, &blueprint.Blueprint{Terminal: "tmux"}, nil).String()
+	got := config.Resolve(config.Overrides{Access: "tailscale"}, &blueprint.Blueprint{Terminal: "tmux"}, nil).String()
 
-	for _, want := range []string{"access", "tailscale", string(FromFlag), "terminal", string(FromBlueprint), "workspace", "~/workspace", string(FromDefault)} {
+	for _, want := range []string{"access", "tailscale", string(config.FromFlag), "terminal", string(config.FromBlueprint), "workspace", "~/workspace", string(config.FromDefault)} {
 		if !strings.Contains(got, want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", got, want)
 		}
@@ -105,7 +106,7 @@ func TestResolveReplacesThePreferenceProviderWholesale(t *testing.T) {
 		Extract:  blueprint.ProviderExtract{ID: ".id", IP: ".public_net.ipv4.ip"},
 	}}
 
-	got := Resolve(Overrides{}, b, p).Provider
+	got := config.Resolve(config.Overrides{}, b, p).Provider
 
 	if got.Provider != b.Provider {
 		t.Fatalf("resolved provider = %+v, want the blueprint's adapter %+v", got.Provider, b.Provider)
@@ -125,8 +126,8 @@ func TestResolveReplacesThePreferenceProviderWholesale(t *testing.T) {
 			t.Errorf("resolved provider %s = %+v, want nothing inherited from the foreign preference adapter", tt.field, tt.got)
 		}
 	}
-	if got.Origin != FromBlueprintReplacing {
-		t.Errorf("resolved provider origin = %q, want %q", got.Origin, FromBlueprintReplacing)
+	if got.Origin != config.FromBlueprintReplacing {
+		t.Errorf("resolved provider origin = %q, want %q", got.Origin, config.FromBlueprintReplacing)
 	}
 }
 
@@ -138,15 +139,15 @@ func TestResolveInheritsThePreferenceProviderEntire(t *testing.T) {
 	}
 	p := &blueprint.Preferences{Provider: adapter}
 
-	got := Resolve(Overrides{}, &blueprint.Blueprint{Access: "public"}, p).Provider
+	got := config.Resolve(config.Overrides{}, &blueprint.Blueprint{Access: "public"}, p).Provider
 
-	if got.Provider != adapter || got.Origin != FromPreferences {
-		t.Errorf("resolved provider = %+v from %q, want the preference adapter from %q", got.Provider, got.Origin, FromPreferences)
+	if got.Provider != adapter || got.Origin != config.FromPreferences {
+		t.Errorf("resolved provider = %+v from %q, want the preference adapter from %q", got.Provider, got.Origin, config.FromPreferences)
 	}
 }
 
 func TestResolveLeavesTheProviderAbsentWhenNobodyDeclaresOne(t *testing.T) {
-	got := Resolve(Overrides{}, nil, nil).Provider
+	got := config.Resolve(config.Overrides{}, nil, nil).Provider
 
 	if got.Provider != nil {
 		t.Errorf("resolved provider = %+v, want none", got.Provider)
@@ -165,26 +166,26 @@ func TestResolveKeepsEveryOtherFieldFieldLevelWhenTheProviderIsReplaced(t *testi
 		Provider:  &blueprint.Provider{Create: []string{"hcloud", "server", "create"}},
 	}
 
-	got := Resolve(Overrides{}, b, p)
+	got := config.Resolve(config.Overrides{}, b, p)
 
-	if got.Workspace.Value != "~/dev" || got.Workspace.Origin != FromPreferences {
+	if got.Workspace.Value != "~/dev" || got.Workspace.Origin != config.FromPreferences {
 		t.Errorf("resolved workspace = %q from %q, want the untouched preference %q", got.Workspace.Value, got.Workspace.Origin, "~/dev")
 	}
-	if got.Terminal.Value != "tmux" || got.Terminal.Origin != FromPreferences {
+	if got.Terminal.Value != "tmux" || got.Terminal.Origin != config.FromPreferences {
 		t.Errorf("resolved terminal = %q from %q, want the untouched preference %q", got.Terminal.Value, got.Terminal.Origin, "tmux")
 	}
-	if got.Access.Value != "public" || got.Access.Origin != FromBlueprint {
+	if got.Access.Value != "public" || got.Access.Origin != config.FromBlueprint {
 		t.Errorf("resolved access = %q from %q, want the blueprint's %q", got.Access.Value, got.Access.Origin, "public")
 	}
 }
 
 func TestResolvedReportsWhichAdapterIsInPlay(t *testing.T) {
-	replaced := Resolve(Overrides{},
+	replaced := config.Resolve(config.Overrides{},
 		&blueprint.Blueprint{Provider: &blueprint.Provider{Create: []string{"doctl", "compute", "droplet", "create"}}},
 		&blueprint.Preferences{Provider: &blueprint.Provider{Create: []string{"hcloud", "server", "create"}}},
 	).String()
 
-	for _, want := range []string{"provider", "doctl", string(FromBlueprintReplacing)} {
+	for _, want := range []string{"provider", "doctl", string(config.FromBlueprintReplacing)} {
 		if !strings.Contains(replaced, want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", replaced, want)
 		}
@@ -193,11 +194,11 @@ func TestResolvedReportsWhichAdapterIsInPlay(t *testing.T) {
 		t.Errorf("resolved configuration = %q, want no trace of the replaced preference adapter", replaced)
 	}
 
-	inherited := Resolve(Overrides{}, &blueprint.Blueprint{},
+	inherited := config.Resolve(config.Overrides{}, &blueprint.Blueprint{},
 		&blueprint.Preferences{Provider: &blueprint.Provider{Create: []string{"hcloud", "server", "create"}}},
 	).String()
 
-	for _, want := range []string{"provider", "hcloud", string(FromPreferences)} {
+	for _, want := range []string{"provider", "hcloud", string(config.FromPreferences)} {
 		if !strings.Contains(inherited, want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", inherited, want)
 		}
@@ -208,13 +209,13 @@ func TestResolveResolvesTheGitIdentityFieldByField(t *testing.T) {
 	b := &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Someone Else", UserEmail: "ada@example.com"}}
 
-	got := Resolve(Overrides{}, b, p).Git
+	got := config.Resolve(config.Overrides{}, b, p).Git
 
-	if got.UserName.Value != "Ada Lovelace" || got.UserName.Origin != FromBlueprint {
-		t.Errorf("resolved git user_name = %q from %q, want %q from %q", got.UserName.Value, got.UserName.Origin, "Ada Lovelace", FromBlueprint)
+	if got.UserName.Value != "Ada Lovelace" || got.UserName.Origin != config.FromBlueprint {
+		t.Errorf("resolved git user_name = %q from %q, want %q from %q", got.UserName.Value, got.UserName.Origin, "Ada Lovelace", config.FromBlueprint)
 	}
-	if got.UserEmail.Value != "ada@example.com" || got.UserEmail.Origin != FromPreferences {
-		t.Errorf("resolved git user_email = %q from %q, want the untouched preference %q from %q", got.UserEmail.Value, got.UserEmail.Origin, "ada@example.com", FromPreferences)
+	if got.UserEmail.Value != "ada@example.com" || got.UserEmail.Origin != config.FromPreferences {
+		t.Errorf("resolved git user_email = %q from %q, want the untouched preference %q from %q", got.UserEmail.Value, got.UserEmail.Origin, "ada@example.com", config.FromPreferences)
 	}
 }
 
@@ -222,15 +223,15 @@ func TestResolveKeepsAPreferenceNameUnderABlueprintEmail(t *testing.T) {
 	b := &blueprint.Blueprint{Git: blueprint.Git{UserEmail: "bot@example.com"}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
 
-	got := Resolve(Overrides{}, b, p)
+	got := config.Resolve(config.Overrides{}, b, p)
 
-	if got.Git.UserEmail.Value != "bot@example.com" || got.Git.UserEmail.Origin != FromBlueprint {
-		t.Errorf("resolved git user_email = %q from %q, want %q from %q", got.Git.UserEmail.Value, got.Git.UserEmail.Origin, "bot@example.com", FromBlueprint)
+	if got.Git.UserEmail.Value != "bot@example.com" || got.Git.UserEmail.Origin != config.FromBlueprint {
+		t.Errorf("resolved git user_email = %q from %q, want %q from %q", got.Git.UserEmail.Value, got.Git.UserEmail.Origin, "bot@example.com", config.FromBlueprint)
 	}
-	if got.Git.UserName.Value != "Ada Lovelace" || got.Git.UserName.Origin != FromPreferences {
-		t.Errorf("resolved git user_name = %q from %q, want the untouched preference %q from %q", got.Git.UserName.Value, got.Git.UserName.Origin, "Ada Lovelace", FromPreferences)
+	if got.Git.UserName.Value != "Ada Lovelace" || got.Git.UserName.Origin != config.FromPreferences {
+		t.Errorf("resolved git user_name = %q from %q, want the untouched preference %q from %q", got.Git.UserName.Value, got.Git.UserName.Origin, "Ada Lovelace", config.FromPreferences)
 	}
-	for _, want := range []string{"user_name", "Ada Lovelace", string(FromPreferences), "user_email", "bot@example.com", string(FromBlueprint)} {
+	for _, want := range []string{"user_name", "Ada Lovelace", string(config.FromPreferences), "user_email", "bot@example.com", string(config.FromBlueprint)} {
 		if !strings.Contains(got.String(), want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", got.String(), want)
 		}
@@ -238,7 +239,7 @@ func TestResolveKeepsAPreferenceNameUnderABlueprintEmail(t *testing.T) {
 }
 
 func TestResolveLeavesAnUndeclaredHalfOfTheIdentityUnset(t *testing.T) {
-	got := Resolve(Overrides{}, &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}, nil)
+	got := config.Resolve(config.Overrides{}, &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}, nil)
 
 	if got.Git.UserEmail.Value != "" || got.Git.UserEmail.Origin != "" {
 		t.Errorf("resolved git user_email = %q from %q, want it left unset with no origin", got.Git.UserEmail.Value, got.Git.UserEmail.Origin)
@@ -249,7 +250,7 @@ func TestResolveLeavesAnUndeclaredHalfOfTheIdentityUnset(t *testing.T) {
 }
 
 func TestResolveInventsNoGitIdentityWhenNobodyDeclaresOne(t *testing.T) {
-	got := Resolve(Overrides{}, nil, nil)
+	got := config.Resolve(config.Overrides{}, nil, nil)
 
 	if got.Git.UserName.Value != "" || got.Git.UserEmail.Value != "" {
 		t.Errorf("resolved git = %+v, want nothing invented", got.Git)
@@ -279,7 +280,7 @@ placements:
 		t.Fatalf("Parse(document) err = %v, want nil", err)
 	}
 
-	got := Resolve(Overrides{}, &b, nil)
+	got := config.Resolve(config.Overrides{}, &b, nil)
 
 	if len(got.Repos) != 1 || got.Repos[0].Name != "api" {
 		t.Errorf("resolved repos = %+v, want the one repo named by its URL's last segment", got.Repos)
@@ -313,11 +314,11 @@ func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
 	}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserEmail: "ada@example.com"}}
 
-	got := Resolve(Overrides{}, b, p).String()
+	got := config.Resolve(config.Overrides{}, b, p).String()
 
 	for _, want := range []string{
-		"user_name", "Ada Lovelace", string(FromBlueprint),
-		"user_email", "ada@example.com", string(FromPreferences),
+		"user_name", "Ada Lovelace", string(config.FromBlueprint),
+		"user_email", "ada@example.com", string(config.FromPreferences),
 		"repos", "api", "git@github.com:acme/api.git", "main", "go", "1.26", "DATABASE_URL", "packages/api/.env",
 		"packages", "ripgrep",
 		"tools", "node", "22",
@@ -331,7 +332,7 @@ func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
 }
 
 func TestResolvedOmitsCollectionsNobodyDeclared(t *testing.T) {
-	got := Resolve(Overrides{}, nil, nil).String()
+	got := config.Resolve(config.Overrides{}, nil, nil).String()
 
 	for _, unwanted := range []string{"repos", "packages", "tools", "env", "placements", "git"} {
 		if strings.Contains(got, unwanted) {
@@ -344,7 +345,7 @@ func TestResolvedRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *test
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
 
-	err := Resolve(Overrides{}, b, p).Conflicts()
+	err := config.Resolve(config.Overrides{}, b, p).Conflicts()
 
 	if err == nil {
 		t.Fatal("Conflicts() err = nil, want the two writers of ~/.gitconfig refused")
@@ -359,7 +360,7 @@ func TestResolvedRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *test
 func TestResolvedAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T) {
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
 
-	if err := Resolve(Overrides{}, b, nil).Conflicts(); err != nil {
+	if err := config.Resolve(config.Overrides{}, b, nil).Conflicts(); err != nil {
 		t.Errorf("Conflicts() err = %v, want a gitconfig placement accepted on its own", err)
 	}
 }
@@ -368,7 +369,7 @@ func TestResolvedAcceptsAGitIdentityWithNoGitconfigPlacement(t *testing.T) {
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/tok", To: "~/.config/gh/hosts.yml"}}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace"}}
 
-	if err := Resolve(Overrides{}, b, p).Conflicts(); err != nil {
+	if err := config.Resolve(config.Overrides{}, b, p).Conflicts(); err != nil {
 		t.Errorf("Conflicts() err = %v, want an identity accepted beside unrelated placements", err)
 	}
 }
