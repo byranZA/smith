@@ -10,12 +10,6 @@ import (
 	"github.com/byranZA/smith/internal/marker"
 )
 
-// MarkerPath is the on-box marker, /etc/smith/bootstrap.json. bootstrap.sh
-// writes it and it predates the staged config, but it sits in the same
-// directory and carries the blueprint pointer — the name of the blueprint the
-// box was built from — which is what keeps the staged config honest.
-const MarkerPath = Root + "/bootstrap.json"
-
 // PointerError reports a run that supplied no blueprint against a box whose
 // marker records one. It names the blueprint the box was built from, because
 // that is the thing the operator has to pass to re-run.
@@ -69,9 +63,9 @@ func CheckPointer(ctx context.Context, conn Conn, blueprintName string) error {
 // the read swallows the absent file rather than the whole run failing on it.
 func pointer(ctx context.Context, conn Conn) (string, error) {
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("cat %s 2>/dev/null || true", MarkerPath)
+	cmd := fmt.Sprintf("cat %s 2>/dev/null || true", marker.Path)
 	if err := conn.Run(ctx, cmd, &out, io.Discard); err != nil {
-		return "", fmt.Errorf("read the box's marker at %s: %w", MarkerPath, err)
+		return "", fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
 	}
 	raw := strings.TrimSpace(out.String())
 	if raw == "" {
@@ -82,7 +76,7 @@ func pointer(ctx context.Context, conn Conn) (string, error) {
 	// this rule's business.
 	m, _, err := marker.Decode([]byte(raw))
 	if err != nil {
-		return "", fmt.Errorf("read the box's marker at %s: %w", MarkerPath, err)
+		return "", fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
 	}
 	return m.Blueprint, nil
 }

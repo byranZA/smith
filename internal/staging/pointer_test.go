@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/marker"
 )
 
 // pointerBox stands in for a box whose marker the pointer rule reads. It
@@ -18,7 +20,7 @@ type pointerBox struct {
 
 func (b *pointerBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
 	b.commands = append(b.commands, cmd)
-	if strings.Contains(cmd, MarkerPath) {
+	if strings.Contains(cmd, marker.Path) {
 		if _, err := io.WriteString(stdout, b.marker); err != nil {
 			return err
 		}
@@ -43,7 +45,7 @@ func TestCheckPointerRefusesABlueprintlessRerunNamingTheBlueprint(t *testing.T) 
 		t.Errorf("CheckPointer() err = %v, want it to name the blueprint the box was built from", err)
 	}
 	for _, cmd := range box.commands {
-		if !strings.Contains(cmd, MarkerPath) {
+		if !strings.Contains(cmd, marker.Path) {
 			t.Errorf("CheckPointer() ran %q on the box, want the refusal to read and write nothing", cmd)
 		}
 	}

@@ -19,6 +19,12 @@ import (
 	"fmt"
 )
 
+// Path is the marker's home on the box, /etc/smith/bootstrap.json.
+// bootstrap.sh writes it there and this package decodes what it finds; the two
+// sides hardcode the same path rather than deriving it, because the marker
+// predates everything else under /etc/smith and does not depend on it.
+const Path = "/etc/smith/bootstrap.json"
+
 // SchemaVersion is the marker schema version this build of smith writes and
 // fully understands. bootstrap.sh stamps the same number into schema_version,
 // so the two sides stay in lockstep.
