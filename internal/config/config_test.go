@@ -290,3 +290,14 @@ func TestLoadDocumentRefusesAnInvalidBlueprint(t *testing.T) {
 		t.Fatal("LoadDocument() err = nil, want an error for an invalid blueprint")
 	}
 }
+
+func TestHomeNamesTheCacheAndTheInventoryInsideIt(t *testing.T) {
+	home := config.NewHome("/tmp/smith-home")
+
+	if got, want := home.CachePath(), filepath.Join("/tmp/smith-home", "cache"); got != want {
+		t.Errorf("CachePath() = %q, want %q", got, want)
+	}
+	if got, want := home.InventoryPath(), filepath.Join("/tmp/smith-home", "cache", "boxes.json"); got != want {
+		t.Errorf("InventoryPath() = %q, want %q", got, want)
+	}
+}

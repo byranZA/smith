@@ -14,6 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/inventory"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
@@ -30,7 +31,7 @@ func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connecti
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(resolve), newStatusCmd())
+	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(resolve), newStatusCmd(), newListCmd(resolve))
 	return cmd
 }
 
@@ -467,6 +468,37 @@ func establishTailscale(ctx context.Context, access *tailscale.Access, host stri
 		return fmt.Errorf("write success: %w", err)
 	}
 	return nil
+}
+
+// newListCmd builds `smith machine list`. It reads the box inventory out of the
+// config home and prints what it finds, sorted by name with a summary line.
+//
+// It is instant and offline: nothing is connected to, no command is run on any
+// box, and no file or directory is created — a box knows of no other boxes, so
+// there is nothing out there to ask. An absent inventory is not a failure but
+// the ordinary state before the first box is registered, so it reports that and
+// exits 0; only a file smith cannot read is an error, and that error names the
+// file rather than being papered over as empty.
+func newListCmd(resolve homeResolver) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List the boxes smith knows how to reach",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			inv, skew, err := inventory.Read(home.InventoryPath())
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), inventory.Readout(inv, skew)); err != nil {
+				return fmt.Errorf("write box listing: %w", err)
+			}
+			return nil
+		},
+	}
 }
 
 // newStatusCmd builds `smith machine status <host>`. It connects as smith@host
