@@ -119,7 +119,9 @@ identically and smith cannot enforce it. It binds the documentation and any futu
 authored: the box address book (`boxes.json` — an operator-chosen name mapped to an SSH target
 smith has **proven** works, identity and nothing more). smith writes the `.gitignore` itself. The
 cache is rebuildable but **not self-rebuilding** in v1: nothing in it is unique to it, but
-reconstruction is one `machine add` per box, by hand.
+reconstruction is one `machine add` per box, by hand. Its shape — identity only, and why it holds
+no state that could go stale — is
+[ADR-0011](./0011-the-box-inventory-is-identity-only.md).
 
 Because a box knows of no other boxes, **on-box smith carries no cache at all**; `machine list`,
 `add` and `forget` are local-only for that reason. (`machine upgrade` is local-only too, on

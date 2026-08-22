@@ -229,7 +229,9 @@ that can silently go stale — hence no TTL and no `last_seen`. Written by a suc
 setup` and by `machine add`, which is read-only towards the box; `machine list` is instant and
 offline (`--probe` reports reach without storing it); only `machine forget` removes. **Rebuildable,
 not self-rebuilding**: a deleted file loses nothing unique, but v1 has no discovery path, so it is
-rebuilt by hand, one `machine add` per box ([docs/inventory.md](./docs/inventory.md)).
+rebuilt by hand, one `machine add` per box
+([ADR-0011](./docs/adr/0011-the-box-inventory-is-identity-only.md),
+[docs/inventory.md](./docs/inventory.md)).
 _Avoid_: registry, database, state store.
 
 **The "@" decides**:
@@ -237,7 +239,8 @@ The one resolution rule every verb shares. A value containing `@` is a literal S
 written and never looked up; a value without one is looked up in the **box inventory** and, on a
 miss, handed to `ssh` verbatim — so an `ssh_config` alias or a MagicDNS name works with no smith
 configuration, and an inventory name shadows an identically-named alias. No flag and no sigil, and
-the target is never parsed (*reference, not value*, extended to reach).
+the target is never parsed (*reference, not value*, extended to reach)
+([ADR-0011](./docs/adr/0011-the-box-inventory-is-identity-only.md)).
 _Avoid_: alias resolution, host lookup, DNS.
 
 **Provider adapter**:
