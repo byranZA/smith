@@ -185,6 +185,73 @@ func reportRelay(cmd *cobra.Command, err error) error {
 	return err
 }
 
+// sessionVerb is what a session subcommand hands the dispatcher: the name it
+// travels to the box as, how many arguments of its own it takes, whether it
+// hands the operator's terminal over, and what it does when it runs here.
+type sessionVerb struct {
+	// name is the subcommand the box is handed the verb back as.
+	name string
+	// takes is how many positional arguments the verb itself takes, so an
+	// argument beyond them can only be the box.
+	takes int
+	// batch marks the verb that takes any number of names, whose leading
+	// argument is read as a box only when it is one.
+	batch bool
+	// terminal marks a verb that may hand the box's tmux the operator's
+	// terminal, which is what its local implementation is given an execer
+	// for.
+	terminal bool
+	// connects marks a verb handing that terminal over on this invocation, so
+	// it travels by replacing smith with ssh rather than by streaming.
+	connects bool
+	// local is what the verb does when it runs on this machine: the arguments
+	// left after the box was taken off the front, against the box the
+	// blueprint staged here describes.
+	local func(args []string, env session.Env) error
+}
+
+// dispatch runs a session verb under the one rule all five share. The leading
+// argument names the box or is the verb's own; a named box relays the command
+// line the operator typed to the smith installed there; no box named runs the
+// verb here, against the blueprint staged on this machine. A verb handing the
+// terminal over replaces smith with ssh, and every other one streams the box's
+// output back and carries its exit out.
+func (w sessionWiring) dispatch(cmd *cobra.Command, args []string, v sessionVerb) error {
+	box, rest, err := w.splitBox(args, v)
+	if err != nil {
+		return reportInvalid(cmd, err)
+	}
+	verb, err := w.verb(cmd, v.name, box, rest...)
+	if err != nil {
+		return reportInvalid(cmd, err)
+	}
+	local := func() error {
+		var connect session.Execer
+		if v.terminal {
+			connect = w.connect
+		}
+		env, err := w.localEnv(cmd, connect)
+		if err != nil {
+			return err
+		}
+		return v.local(rest, env)
+	}
+	if v.connects {
+		return reportRelay(cmd, relay.Connect(w.connect, verb, local))
+	}
+	return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr()))
+}
+
+// splitBox takes the box off the front of a verb's positional arguments,
+// under the rule the verb's own arity gives it.
+func (w sessionWiring) splitBox(args []string, v sessionVerb) (string, []string, error) {
+	if v.batch {
+		return w.leadingBox(args)
+	}
+	box, rest := leading(args, v.takes)
+	return box, rest, nil
+}
+
 // newSessionListCmd builds
 // `smith session list [--repo <name>] [--live|--stopped] [--names]`. It
 // enumerates the sessions on the box and prints them under the four columns
@@ -206,19 +273,10 @@ func newSessionListCmd(w sessionWiring) *cobra.Command {
 		Short: "List the sessions on a box and whether they are running",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, _ := leading(args, 0)
-			verb, err := w.verb(cmd, "list", box)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, func() error {
+			return w.dispatch(cmd, args, sessionVerb{name: "list", local: func(_ []string, env session.Env) error {
 				filter, err := sessionFilter(repo, live, stopped)
 				if err != nil {
 					return reportInvalid(cmd, err)
-				}
-				env, err := w.localEnv(cmd, nil)
-				if err != nil {
-					return err
 				}
 				sessions, err := session.List(cmd.Context(), env, filter)
 				if err != nil {
@@ -232,7 +290,7 @@ func newSessionListCmd(w sessionWiring) *cobra.Command {
 					return fmt.Errorf("write session listing: %w", err)
 				}
 				return nil
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr()))
+			}})
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "list only the sessions of one declared repo")
@@ -277,18 +335,12 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 		Short: "Stand up a worktree and a tmux session for a branch",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, _ := leading(args, 0)
-			verb, err := w.verb(cmd, "start", box)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			local := func() error {
+			// A start that will connect hands the terminal to the box's tmux,
+			// so it travels the same way attach does; one that detaches is an
+			// ordinary command whose report the operator reads.
+			return w.dispatch(cmd, args, sessionVerb{name: "start", terminal: true, connects: !detach, local: func(_ []string, env session.Env) error {
 				if repo == "" || branch == "" {
 					return reportInvalid(cmd, errors.New("session start needs --repo naming a declared repo and --branch naming the branch to work on"))
-				}
-				env, err := w.localEnv(cmd, w.connect)
-				if err != nil {
-					return err
 				}
 				started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch, Base: base})
 				if err != nil {
@@ -301,14 +353,7 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 					return reportInvalid(cmd, err)
 				}
 				return nil
-			}
-			// A start that will connect hands the terminal to the box's
-			// tmux, so it travels the same way attach does; one that detaches
-			// is an ordinary command whose report the operator reads.
-			if detach {
-				return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr()))
-			}
-			return reportRelay(cmd, relay.Connect(w.connect, verb, local))
+			}})
 		},
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "the declared repo to cut the worktree from")
@@ -333,16 +378,7 @@ func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 		Short: "Connect a terminal to a session, read-only unless asked to interact",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, names := leading(args, 1)
-			verb, err := w.verb(cmd, "attach", box, names...)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			return reportRelay(cmd, relay.Connect(w.connect, verb, func() error {
-				env, err := w.localEnv(cmd, w.connect)
-				if err != nil {
-					return err
-				}
+			return w.dispatch(cmd, args, sessionVerb{name: "attach", takes: 1, terminal: true, connects: true, local: func(names []string, env session.Env) error {
 				mode := session.Observe
 				if interact {
 					mode = session.Interact
@@ -351,7 +387,7 @@ func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 					return reportInvalid(cmd, err)
 				}
 				return nil
-			}))
+			}})
 		},
 	}
 	cmd.Flags().BoolVar(&interact, "interact", false, "connect writable rather than read-only")
@@ -370,16 +406,7 @@ func newSessionStopCmd(w sessionWiring) *cobra.Command {
 		Short: "End a session's tmux session, keeping its worktree and branch",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, names := leading(args, 1)
-			verb, err := w.verb(cmd, "stop", box, names...)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, func() error {
-				env, err := w.localEnv(cmd, nil)
-				if err != nil {
-					return err
-				}
+			return w.dispatch(cmd, args, sessionVerb{name: "stop", takes: 1, local: func(names []string, env session.Env) error {
 				name := names[0]
 				if err := session.Stop(cmd.Context(), env, name); err != nil {
 					return reportInvalid(cmd, err)
@@ -388,7 +415,7 @@ func newSessionStopCmd(w sessionWiring) *cobra.Command {
 					return fmt.Errorf("write report: %w", err)
 				}
 				return nil
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr()))
+			}})
 		},
 	}
 }
@@ -414,25 +441,13 @@ func newSessionRemoveCmd(w sessionWiring) *cobra.Command {
 		Short: "Reclaim the worktrees of one or more sessions, keeping their branches",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			box, names, err := w.leadingBox(args)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			verb, err := w.verb(cmd, "rm", box, names...)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, func() error {
-				env, err := w.localEnv(cmd, nil)
-				if err != nil {
-					return err
-				}
+			return w.dispatch(cmd, args, sessionVerb{name: "rm", batch: true, local: func(names []string, env session.Env) error {
 				removed, err := session.Remove(cmd.Context(), env, names, force)
 				if err != nil {
 					return reportInvalid(cmd, err)
 				}
 				return writeRemoved(cmd, removed)
-			}, cmd.OutOrStdout(), cmd.ErrOrStderr()))
+			}})
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "reclaim the worktrees even if a session is running or its worktree is dirty")
