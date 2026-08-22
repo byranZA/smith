@@ -50,6 +50,7 @@ func newSessionCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command
 	}
 	cmd.AddCommand(newSessionStartCmd(resolve, git, tmux))
 	cmd.AddCommand(newSessionListCmd(resolve, git, tmux))
+	cmd.AddCommand(newSessionStopCmd(resolve, git, tmux))
 	return cmd
 }
 
@@ -125,6 +126,38 @@ func newSessionStartCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Co
 	cmd.Flags().StringVar(&branch, "branch", "", "the branch to work on, cut from the repo's default branch when it is new")
 	cmd.Flags().BoolVar(&detach, "detach", false, "stand the session up without connecting to it, which is what start does either way for now")
 	return cmd
+}
+
+// newSessionStopCmd builds `smith session stop <name>`. It ends the session's
+// tmux session and leaves its worktree and its branch exactly where they are.
+//
+// It takes no confirmation and has no --force: nothing it does loses work, so
+// a gate here would only teach the operator to wave one away at the verb that
+// is safe, and mean it at the one that is not.
+func newSessionStopCmd(resolve boxResolver, git, tmux session.Runner) *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop <name>",
+		Short: "End a session's tmux session, keeping its worktree and branch",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolved, err := resolve()
+			if err != nil {
+				return err
+			}
+			env, err := sessionEnv(resolved, git, tmux)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			name := args[0]
+			if err := session.Stop(cmd.Context(), env, name); err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s is stopped; its worktree and branch are untouched\n", name); err != nil {
+				return fmt.Errorf("write report: %w", err)
+			}
+			return nil
+		},
+	}
 }
 
 // sessionEnv turns the box's resolved configuration into what a session verb

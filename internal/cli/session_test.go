@@ -290,3 +290,55 @@ func resolvedBoxPlacing(workspace, repo string, to ...string) boxResolver {
 		}, nil
 	}
 }
+
+// TestSessionStopEndsTheTmuxSessionAndKeepsTheWorktree drives the assembled
+// command: the tmux session is killed by name and the checkout it was working
+// in is still on the box afterwards.
+func TestSessionStopEndsTheTmuxSessionAndKeepsTheWorktree(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	tmux := &fakeTmux{}
+	cmd := newSessionCmd(resolvedBox(workspace, "smith"), connection.System(), tmux)
+	cmd.SetArgs([]string{"start", "--repo", "smith", "--branch", "spec-42", "--detach"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("start Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+	out.Reset()
+	cmd.SetArgs([]string{"stop", "smith-spec-42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("stop Execute() err = %v (stderr: %s)", err, errOut.String())
+	}
+
+	var killed bool
+	for _, argv := range tmux.calls {
+		if strings.Contains(strings.Join(argv, " "), "kill-session -t smith/smith-spec-42") {
+			killed = true
+		}
+	}
+	if !killed {
+		t.Errorf("tmux calls = %v, want the session killed by name", tmux.calls)
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+		t.Errorf("worktree at %s did not survive the stop: %v", dir, err)
+	}
+	if got := out.String(); !strings.Contains(got, "smith-spec-42") {
+		t.Errorf("stdout = %q, want it to name the session it stopped", got)
+	}
+}
+
+// TestSessionStopIsUnderTheRootCommand locks in the surface an operator on the
+// box types.
+func TestSessionStopIsUnderTheRootCommand(t *testing.T) {
+	found, _, err := newRootCmd().Find([]string{"session", "stop"})
+	if err != nil {
+		t.Fatalf("Find(session stop) err = %v", err)
+	}
+	if found.Name() != "stop" {
+		t.Errorf("Find(session stop) = %q, want the stop command", found.Name())
+	}
+}

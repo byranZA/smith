@@ -208,3 +208,88 @@ func TestStartRefusesAnUndeclaredRepo(t *testing.T) {
 		t.Errorf("tmux was invoked %v, want no session for an undeclared repo", tmux.calls)
 	}
 }
+
+// TestStartRelaunchesTmuxInTheExistingWorktree drives the resume path: a
+// worktree whose tmux session is gone gets a tmux session again, in the
+// checkout the operator left, with no branch cut.
+func TestStartRelaunchesTmuxInTheExistingWorktree(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+	}
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("first Start() err = %v", err)
+	}
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if err := os.WriteFile(filepath.Join(dir, "left-behind.txt"), []byte("work\n"), 0o600); err != nil {
+		t.Fatalf("write into the worktree: %v", err)
+	}
+	tmux.kill(session.TmuxSession("smith-spec-42"))
+
+	got, err := session.Start(context.Background(), env, req)
+	if err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	want := session.Session{Name: "smith-spec-42", Repo: "smith", Branch: "spec-42", Live: true}
+	if got != want {
+		t.Errorf("Start() = %+v, want %+v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "left-behind.txt")); err != nil {
+		t.Errorf("the existing worktree was not reused: %v", err)
+	}
+	if n := tmux.ran("new-session"); n != 2 {
+		t.Errorf("tmux new-session ran %d times, want the resume to launch one", n)
+	}
+	sessions, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Errorf("List() = %+v, want the one session the resume reused", sessions)
+	}
+}
+
+// TestStartOnALiveSessionCreatesNothing locks in the third path: start is
+// ensure-running, so a session already running is reported and left alone.
+func TestStartOnALiveSessionCreatesNothing(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+	}
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("first Start() err = %v", err)
+	}
+
+	got, err := session.Start(context.Background(), env, req)
+	if err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	want := session.Session{Name: "smith-spec-42", Repo: "smith", Branch: "spec-42", Live: true}
+	if got != want {
+		t.Errorf("Start() = %+v, want %+v", got, want)
+	}
+	if n := tmux.ran("new-session"); n != 1 {
+		t.Errorf("tmux new-session ran %d times, want no second session for a live one", n)
+	}
+	sessions, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Errorf("List() = %+v, want no second worktree for a live session", sessions)
+	}
+}

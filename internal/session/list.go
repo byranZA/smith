@@ -102,6 +102,25 @@ func parseWorktrees(listing string) []worktree {
 	return worktrees
 }
 
+// worktreeOn finds the repo's worktree holding that branch, if it has one.
+//
+// The registry is asked rather than the directory the branch's name sanitizes
+// to being stat'ed: the directory name is lossy, so two branches can sanitize
+// to one directory, and a checkout git does not know about is debris rather
+// than a session to resume into.
+func worktreeOn(ctx context.Context, git Runner, bare, branch string) (worktree, bool, error) {
+	listing, err := run(ctx, git, "git", "-C", bare, "worktree", "list", "--porcelain")
+	if err != nil {
+		return worktree{}, false, fmt.Errorf("list the worktrees of the repo at %s: %w", bare, err)
+	}
+	for _, wt := range parseWorktrees(listing) {
+		if wt.branch == branch {
+			return wt, true, nil
+		}
+	}
+	return worktree{}, false, nil
+}
+
 // listedName is the name a worktree is listed under: the sanitized name the
 // other session verbs take. A detached worktree has no branch to derive one
 // from, so its name comes from the directory that branch's sanitization

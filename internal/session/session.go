@@ -100,10 +100,17 @@ type StartRequest struct {
 	Branch string
 }
 
-// Start stands a session up and returns it: the branch is cut from the repo's
-// default branch, a worktree for it is created one level below the repo's
-// worktrees directory, and a tmux session named smith/<name> is launched with
-// its working directory in that worktree.
+// Start ensures a session is running and returns it. It is not a create verb:
+// one probe pair — does the worktree exist, and is its tmux session live —
+// decides which of three things it does.
+//
+// With no worktree, the branch is cut from the repo's default branch, a
+// worktree for it is created one level below the repo's worktrees directory,
+// and a tmux session named smith/<name> is launched in it. With a worktree
+// whose tmux session is gone, the tmux session is launched in the checkout the
+// operator left: that is how a stopped session resumes, which is why there is
+// no separate resume verb. With both already there, Start creates nothing and
+// reports the session as it found it.
 //
 // It stands the session up and returns without connecting to it, which is what
 // makes it drivable with no human present.
@@ -118,23 +125,49 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	}
 
 	root := filepath.Join(env.Workspace, repo.Name)
+	bare := filepath.Join(root, bareDir)
+	name := DeriveName(repo.Name, branch)
+	stood := Session{Name: name, Repo: repo.Name, Branch: branch, Live: true}
+
+	existing, found, err := worktreeOn(ctx, env.Git, bare, branch)
+	if err != nil {
+		return Session{}, err
+	}
+	if found {
+		if isLive(ctx, env.Tmux, name) {
+			return stood, nil
+		}
+		if err := launch(ctx, env.Tmux, name, existing.path); err != nil {
+			return Session{}, err
+		}
+		return stood, nil
+	}
+
 	base := repo.Base
 	if base == "" {
-		if base, err = defaultBranch(ctx, env.Git, filepath.Join(root, bareDir)); err != nil {
+		if base, err = defaultBranch(ctx, env.Git, bare); err != nil {
 			return Session{}, err
 		}
 	}
 	dir := filepath.Join(root, worktreesDir, worktreeDir(branch))
-	if _, err := run(ctx, env.Git, "git", "-C", filepath.Join(root, bareDir),
+	if _, err := run(ctx, env.Git, "git", "-C", bare,
 		"worktree", "add", "-b", branch, dir, base); err != nil {
 		return Session{}, fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", branch, repo.Name, dir, err)
 	}
-
-	name := DeriveName(repo.Name, branch)
-	if _, err := run(ctx, env.Tmux, "tmux", "new-session", "-d", "-s", TmuxSession(name), "-c", dir); err != nil {
-		return Session{}, fmt.Errorf("launch the tmux session for %q at %s: %w", name, dir, err)
+	if err := launch(ctx, env.Tmux, name, dir); err != nil {
+		return Session{}, err
 	}
-	return Session{Name: name, Repo: repo.Name, Branch: branch, Live: true}, nil
+	return stood, nil
+}
+
+// launch starts the detached tmux session a session runs under, with its
+// working directory in the worktree. It is the one place a tmux session is
+// created, so the create path and the resume path cannot drift apart.
+func launch(ctx context.Context, tmux Runner, name, dir string) error {
+	if _, err := run(ctx, tmux, "tmux", "new-session", "-d", "-s", TmuxSession(name), "-c", dir); err != nil {
+		return fmt.Errorf("launch the tmux session for %q at %s: %w", name, dir, err)
+	}
+	return nil
 }
 
 // repo finds the declared repo of that name. A repo the blueprint does not

@@ -16,13 +16,15 @@ import (
 // remembers the sessions new-session created and answers has-session from
 // that, so a test can drive the live/stopped probe the way the box does.
 type tmuxServer struct {
-	live map[string]bool
+	live  map[string]bool
+	calls [][]string
 }
 
 func (s *tmuxServer) Run(_ context.Context, _ string, args []string, _ io.Reader, _, _ io.Writer) error {
 	if s.live == nil {
 		s.live = map[string]bool{}
 	}
+	s.calls = append(s.calls, args)
 	switch {
 	case len(args) > 0 && args[0] == "new-session":
 		s.live[target(args)] = true
@@ -32,9 +34,27 @@ func (s *tmuxServer) Run(_ context.Context, _ string, args []string, _ io.Reader
 			return nil
 		}
 		return errNoSession
+	case len(args) > 0 && args[0] == "kill-session":
+		if !s.live[target(args)] {
+			return errNoSession
+		}
+		delete(s.live, target(args))
+		return nil
 	default:
 		return nil
 	}
+}
+
+// ran counts the tmux commands of that verb the fake was handed, which is how
+// a test asserts that a path created nothing.
+func (s *tmuxServer) ran(verb string) int {
+	var n int
+	for _, args := range s.calls {
+		if len(args) > 0 && args[0] == verb {
+			n++
+		}
+	}
+	return n
 }
 
 // kill forgets a tmux session the way a tmux server dying outside smith does.
