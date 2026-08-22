@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -358,4 +359,264 @@ func modTime(t *testing.T, path string) time.Time {
 		t.Fatalf("read the modification time of %s: %v", path, err)
 	}
 	return info.ModTime()
+}
+
+// TestPlanRepoToolchain drives the pure derivation of a repo's own toolchain
+// unit: what the repo has to declare to earn one, and where the generated file
+// lands.
+func TestPlanRepoToolchain(t *testing.T) {
+	tests := []struct {
+		name string
+		b    blueprint.Blueprint
+		want []Fragment
+	}{
+		{
+			name: "a repo's tools override is pinned above its worktrees",
+			b: blueprint.Blueprint{Repos: []blueprint.Repo{{
+				Name:  "acme",
+				URL:   "git@example.com:acme.git",
+				Tools: map[string]string{"node": "22"},
+			}}},
+			want: []Fragment{{
+				Path:  "/home/smith/workspace/acme/mise.toml",
+				Dir:   "/home/smith/workspace/acme",
+				Mise:  "/home/smith/.local/bin/mise",
+				Tools: map[string]string{"node": "22"},
+			}},
+		},
+		{
+			name: "a repo declaring only env still earns the file that exports it",
+			b: blueprint.Blueprint{Repos: []blueprint.Repo{{
+				Name: "acme",
+				URL:  "git@example.com:acme.git",
+				Env:  map[string]string{"NODE_ENV": "literal:production"},
+			}}},
+			want: []Fragment{{
+				Path: "/home/smith/workspace/acme/mise.toml",
+				Dir:  "/home/smith/workspace/acme",
+				Mise: "/home/smith/.local/bin/mise",
+				Env:  map[string]string{"NODE_ENV": "literal:production"},
+			}},
+		},
+		{
+			name: "a repo overriding nothing takes the box's toolchain and earns no file",
+			b: blueprint.Blueprint{Repos: []blueprint.Repo{{
+				Name: "acme",
+				URL:  "git@example.com:acme.git",
+			}}},
+			want: nil,
+		},
+		{
+			name: "an unnamed repo's file lands under the name its url gives it",
+			b: blueprint.Blueprint{Repos: []blueprint.Repo{{
+				URL:   "git@example.com:acme.git",
+				Tools: map[string]string{"node": "22"},
+			}}},
+			want: []Fragment{{
+				Path:  "/home/smith/workspace/acme/mise.toml",
+				Dir:   "/home/smith/workspace/acme",
+				Mise:  "/home/smith/.local/bin/mise",
+				Tools: map[string]string{"node": "22"},
+			}},
+		},
+		{
+			name: "the file follows the workspace root the blueprint overrides",
+			b: blueprint.Blueprint{Workspace: "~/code", Repos: []blueprint.Repo{{
+				Name:  "acme",
+				URL:   "git@example.com:acme.git",
+				Tools: map[string]string{"node": "22"},
+			}}},
+			want: []Fragment{{
+				Path:  "/home/smith/code/acme/mise.toml",
+				Dir:   "/home/smith/code/acme",
+				Mise:  "/home/smith/.local/bin/mise",
+				Tools: map[string]string{"node": "22"},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []Fragment
+			for _, unit := range Plan(tt.b, "/home/smith") {
+				if unit.Step == Toolchain && unit.Fragment.Dir != "" {
+					got = append(got, unit.Fragment)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("Plan() planned %d repo toolchain units, want %d: %+v", len(got), len(tt.want), got)
+			}
+			for i, f := range got {
+				if f.Path != tt.want[i].Path || f.Mise != tt.want[i].Mise {
+					t.Errorf("Plan() repo toolchain %d paths = %q, %q, want %q, %q", i, f.Path, f.Mise, tt.want[i].Path, tt.want[i].Mise)
+				}
+				if !maps.Equal(f.Tools, tt.want[i].Tools) {
+					t.Errorf("Plan() repo toolchain %d tools = %v, want %v", i, f.Tools, tt.want[i].Tools)
+				}
+				if !maps.Equal(f.Env, tt.want[i].Env) {
+					t.Errorf("Plan() repo toolchain %d env = %v, want %v", i, f.Env, tt.want[i].Env)
+				}
+			}
+		})
+	}
+}
+
+// repoFragmentPath is where a repo's generated mise config lands under a home.
+func repoFragmentPath(home, repo string) string {
+	return filepath.Join(home, "workspace", repo, "mise.toml")
+}
+
+// TestGenerateRepoFragment pins the bytes of a repo's generated config against
+// the golden file. It is the same pure seam the box-level fragment is rendered
+// through — only the values and the file it lands in differ — so the header an
+// operator opening the repo's file reads is pinned here too.
+func TestGenerateRepoFragment(t *testing.T) {
+	got := Generate(
+		map[string]string{"node": "22"},
+		map[string]string{"NODE_ENV": "production"},
+	)
+
+	want, err := os.ReadFile(filepath.Join("testdata", "repo.toml"))
+	if err != nil {
+		t.Fatalf("read the golden repo config: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("Generate() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestConvergePinsRepoToolsAboveTheWorktrees proves a repo's override reaches
+// the file mise walks up to find, that the version is installed with mise
+// pointed at that directory, and that nothing is written inside a worktree.
+func TestConvergePinsRepoToolsAboveTheWorktrees(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name:  "acme",
+		URL:   "git@example.com:acme.git",
+		Tools: map[string]string{"node": "22"},
+	}}}
+
+	result, _ := convergeOnBox(t, box, home, b)
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
+	}
+	path := repoFragmentPath(home, "acme")
+	if got := held(t, path); !strings.Contains(got, `node = "22"`) {
+		t.Errorf("%s = %q, want it to pin the repo's override", path, got)
+	}
+	dir := filepath.Dir(path)
+	if !box.ran("--cd " + dir + " install") {
+		t.Errorf("the stage ran %v, want the repo's versions installed from %s", box.calls, dir)
+	}
+	if written := writtenUnder(t, filepath.Join(dir, "worktrees")); len(written) > 0 {
+		t.Errorf("the stage wrote %v inside a worktree, want nothing there", written)
+	}
+}
+
+// TestConvergeCarriesTheGeneratedHeaderIntoTheRepoConfig proves the operator
+// who opens the repo's file is told it is smith's and that an edit is lost.
+func TestConvergeCarriesTheGeneratedHeaderIntoTheRepoConfig(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name:  "acme",
+		URL:   "git@example.com:acme.git",
+		Tools: map[string]string{"node": "22"},
+	}}}
+
+	convergeOnBox(t, box, home, b)
+
+	if got := held(t, repoFragmentPath(home, "acme")); !strings.HasPrefix(got, "# Generated by smith") {
+		t.Errorf("the repo's config = %q, want it to open with a generated-file header", got)
+	}
+}
+
+// TestConvergeExportsRepoEnvThroughTheRepoConfig proves a repo's own variable
+// reaches the same file with its value resolved, rather than the reference the
+// operator wrote.
+func TestConvergeExportsRepoEnvThroughTheRepoConfig(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name: "acme",
+		URL:  "git@example.com:acme.git",
+		Env:  map[string]string{"NODE_ENV": "literal:production"},
+	}}}
+
+	result, _ := convergeOnBox(t, box, home, b)
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
+	}
+	if got := held(t, repoFragmentPath(home, "acme")); !strings.Contains(got, `NODE_ENV = "production"`) {
+		t.Errorf("the repo's config = %q, want it to export the resolved value", got)
+	}
+}
+
+// TestConvergeSharesOneInstallStoreAcrossRepos proves two repos on the same
+// version are two selections of one install rather than two installs: both run
+// through the one mise the box holds, and neither is given a store of its own.
+func TestConvergeSharesOneInstallStoreAcrossRepos(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{
+		{Name: "acme", URL: "git@example.com:acme.git", Tools: map[string]string{"node": "22"}},
+		{Name: "api", URL: "git@example.com:api.git", Tools: map[string]string{"node": "22"}},
+	}}
+
+	result, _ := convergeOnBox(t, box, home, b)
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
+	}
+	mise := filepath.Join(home, ".local", "bin", "mise")
+	var installs [][]string
+	for _, argv := range box.calls {
+		if len(argv) > 0 && argv[0] != "sh" && strings.Contains(strings.Join(argv, " "), "install") {
+			installs = append(installs, argv)
+		}
+	}
+	if len(installs) != 2 {
+		t.Fatalf("the stage ran %d installs, want one per repo: %v", len(installs), box.calls)
+	}
+	for _, argv := range installs {
+		if argv[0] != mise {
+			t.Errorf("an install ran %v, want the one mise at %s", argv, mise)
+		}
+		for _, arg := range argv {
+			if strings.Contains(arg, "data-dir") || strings.Contains(arg, "MISE_DATA_DIR") {
+				t.Errorf("an install ran %v, want no store of its own", argv)
+			}
+		}
+	}
+	for _, repo := range []string{"acme", "api"} {
+		if got := held(t, repoFragmentPath(home, repo)); !strings.Contains(got, `node = "22"`) {
+			t.Errorf("%s config = %q, want it to select the shared version", repo, got)
+		}
+	}
+}
+
+// writtenUnder is every file the box holds below root, relative to it, and
+// nothing at all when the box holds no such directory.
+func writtenUnder(t *testing.T, root string) []string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			found = append(found, path)
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read what the box holds under %s: %v", root, err)
+	}
+	return found
 }

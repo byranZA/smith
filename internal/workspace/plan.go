@@ -36,16 +36,52 @@ func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Repos:
 		return planRepos(b, home)
-	case step == Toolchain && needsToolchain(b):
-		return []Unit{{Step: Toolchain, Fragment: Fragment{
+	case step == Toolchain:
+		return planToolchain(b, home)
+	default:
+		return nil
+	}
+}
+
+// planToolchain is the box's own toolchain unit and one more for every repo
+// that overrides it, in that order: the box-wide versions are pinned before a
+// repo narrows them.
+//
+// Both are one mechanism — write a smith-owned generated file, then run `mise
+// install` — differing only in where the file lands and in the directory mise
+// resolves it from. A repo that overrides nothing takes the box's toolchain
+// and earns no file of its own.
+func planToolchain(b blueprint.Blueprint, home string) []Unit {
+	var units []Unit
+	if needsToolchain(b) {
+		units = append(units, Unit{Step: Toolchain, Fragment: Fragment{
 			Path:  filepath.Join(home, fragmentDir, fragmentFile),
 			Mise:  filepath.Join(home, miseDir, miseFile),
 			Tools: maps.Clone(b.Tools),
 			Env:   maps.Clone(b.Env),
-		}}}
-	default:
-		return nil
+		}})
 	}
+	root := workspaceRoot(b, home)
+	for _, r := range b.Repos {
+		if len(r.Tools) == 0 && len(r.Env) == 0 {
+			continue
+		}
+		dir := filepath.Join(root, cmp.Or(r.Name, blueprint.RepoName(r.URL)))
+		units = append(units, Unit{Step: Toolchain, Fragment: Fragment{
+			Path:  filepath.Join(dir, repoFragmentFile),
+			Dir:   dir,
+			Mise:  filepath.Join(home, miseDir, miseFile),
+			Tools: maps.Clone(r.Tools),
+			Env:   maps.Clone(r.Env),
+		}})
+	}
+	return units
+}
+
+// workspaceRoot is the directory every repo occupies a directory under: the
+// blueprint's when it declares one, and ~/workspace otherwise.
+func workspaceRoot(b blueprint.Blueprint, home string) string {
+	return boxPath(cmp.Or(b.Workspace, defaultWorkspace), home)
 }
 
 // planPlacements is one unit per box-scoped placement the blueprint declares,
@@ -76,7 +112,7 @@ func planPlacements(placements []blueprint.Placement, home string) []Unit {
 // is the default a session starts a worktree from, and this stage makes no
 // worktree.
 func planRepos(b blueprint.Blueprint, home string) []Unit {
-	root := boxPath(cmp.Or(b.Workspace, defaultWorkspace), home)
+	root := workspaceRoot(b, home)
 	mise := filepath.Join(home, miseDir, miseFile)
 	units := make([]Unit, 0, len(b.Repos))
 	for _, r := range b.Repos {

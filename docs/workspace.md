@@ -114,6 +114,16 @@ The file is written only when its bytes differ, so a converged re-run moves no
 modification time — and a version the blueprint has changed rewrites it and
 installs the new one.
 
+Per-repo `tools` and `env` land in `<workspace>/<repo>/mise.toml` — the same
+mechanism, one directory above every worktree, so mise's walk-up finds it and
+smith never dirties a checkout. It is also why a generated file holding
+resolved secret values cannot be committed by accident. A repo that overrides
+nothing takes the box's toolchain and gets no file of its own.
+
+There is **no per-repo mise environment**: the config only *selects* a version
+out of the one shared install store, so two repos declaring `node "22"` share a
+single install.
+
 **`conf.d` sits below `~/.config/mise/config.toml` in precedence**, so a
 hand-written global config on the box outranks the blueprint. This is the same
 precedent as a `mise.toml` committed inside a repo beating the one smith
