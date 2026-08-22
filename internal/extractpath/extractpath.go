@@ -1,8 +1,8 @@
-// Package jsonpath reads one value out of a decoded JSON document by path.
+// Package extractpath reads one value out of a decoded JSON document by the
+// extractor path an operator writes in a provider adapter.
 //
-// It exists so the extractor grammar an operator writes in a provider adapter
-// has one implementation and one meaning. The grammar is the part of the
-// adapter most likely to grow, and the part where a silently wrong answer is
+// It exists so that grammar has one implementation and one meaning. It is the
+// part of the adapter most likely to grow, and the part where a silently wrong answer is
 // most damaging: an extractor that quietly yields a private address instead of
 // a public one leaves smith holding a box it cannot reach, for a reason that
 // looks like anything but a path bug. So a path that matches nothing is an
@@ -29,7 +29,7 @@
 // Documents are expected to have been decoded with json.Decoder.UseNumber, so
 // a provider's integer id keeps its exact value instead of round-tripping
 // through float64 and rendering in exponent notation.
-package jsonpath
+package extractpath
 
 import (
 	"encoding/json"

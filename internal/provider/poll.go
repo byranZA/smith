@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/byranZA/smith/internal/jsonpath"
+	"github.com/byranZA/smith/internal/extractpath"
 )
 
 // How long the address poll waits between attempts, and how long it waits in
@@ -101,7 +101,7 @@ func listed(ctx context.Context, runner Runner, adapter Adapter, id string) (Box
 	}
 	records := []any{doc}
 	if adapter.Record.List != "" {
-		records, err = jsonpath.LookupAll(doc, adapter.Record.List)
+		records, err = extractpath.LookupAll(doc, adapter.Record.List)
 		if err != nil {
 			// The account holds no records to walk yet, which is a box still
 			// to appear rather than an adapter to complain about.
@@ -109,7 +109,7 @@ func listed(ctx context.Context, runner Runner, adapter Adapter, id string) (Box
 		}
 	}
 	for _, record := range records {
-		found, err := jsonpath.Lookup(record, adapter.Extract.ID)
+		found, err := extractpath.Lookup(record, adapter.Extract.ID)
 		if err != nil {
 			// An entry without an id cannot be the box smith is waiting for,
 			// and another entry still can be.
@@ -118,7 +118,7 @@ func listed(ctx context.Context, runner Runner, adapter Adapter, id string) (Box
 		if text(found) != id {
 			continue
 		}
-		ip, err := jsonpath.Lookup(record, adapter.Extract.IP)
+		ip, err := extractpath.Lookup(record, adapter.Extract.IP)
 		if err != nil {
 			return Box{}, fmt.Errorf("provider adapter's ip path: %w", err)
 		}

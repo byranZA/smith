@@ -25,7 +25,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/byranZA/smith/internal/jsonpath"
+	"github.com/byranZA/smith/internal/extractpath"
 )
 
 // The placeholders smith substitutes into a template. These four are the whole
@@ -364,7 +364,7 @@ func providerOutput(stderr string) string {
 // says where the box is once rather than repeating the envelope in every field.
 func extract(doc any, record string, paths Extract) (Box, error) {
 	if record != "" {
-		found, err := jsonpath.Lookup(doc, record)
+		found, err := extractpath.Lookup(doc, record)
 		if err != nil {
 			return Box{}, fmt.Errorf("provider adapter's record path: %w", err)
 		}
@@ -377,11 +377,11 @@ func extract(doc any, record string, paths Extract) (Box, error) {
 // record path has already been applied, so the extractor paths are read
 // relative to the record itself.
 func extractRecord(doc any, paths Extract) (Box, error) {
-	id, err := jsonpath.Lookup(doc, paths.ID)
+	id, err := extractpath.Lookup(doc, paths.ID)
 	if err != nil {
 		return Box{}, fmt.Errorf("provider adapter's id path: %w", err)
 	}
-	ip, err := jsonpath.Lookup(doc, paths.IP)
+	ip, err := extractpath.Lookup(doc, paths.IP)
 	if err != nil {
 		return Box{}, fmt.Errorf("provider adapter's ip path: %w", err)
 	}

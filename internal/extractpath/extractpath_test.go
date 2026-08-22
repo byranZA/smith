@@ -1,4 +1,4 @@
-package jsonpath_test
+package extractpath_test
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byranZA/smith/internal/jsonpath"
+	"github.com/byranZA/smith/internal/extractpath"
 )
 
 // decode reads a JSON document the way smith does — numbers preserved exactly,
@@ -36,7 +36,7 @@ func TestLookupReadsAValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := jsonpath.Lookup(decode(t, tt.doc), tt.path)
+			got, err := extractpath.Lookup(decode(t, tt.doc), tt.path)
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
@@ -71,7 +71,7 @@ func TestLookupReportsAPathThatMatchedNothing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := jsonpath.Lookup(decode(t, tt.doc), tt.path)
+			_, err := extractpath.Lookup(decode(t, tt.doc), tt.path)
 			if err == nil {
 				t.Fatalf("Lookup(%q) err = nil, want an error naming the path", tt.path)
 			}
@@ -83,7 +83,7 @@ func TestLookupReportsAPathThatMatchedNothing(t *testing.T) {
 }
 
 func TestLookupTreatsANullAsAValue(t *testing.T) {
-	got, err := jsonpath.Lookup(decode(t, `{"tags": null}`), "tags")
+	got, err := extractpath.Lookup(decode(t, `{"tags": null}`), "tags")
 	if err != nil {
 		t.Fatalf("Lookup(\"tags\") err = %v, want a null to be a value, not a missing field", err)
 	}
@@ -115,7 +115,7 @@ func TestLookupSelectsEveryElementOfAnArray(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := jsonpath.Lookup(decode(t, tt.doc), tt.path)
+			got, err := extractpath.Lookup(decode(t, tt.doc), tt.path)
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
@@ -142,7 +142,7 @@ func TestLookupPredicateSelectsByFieldValueNotByPosition(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := jsonpath.Lookup(fixture(t, "doctl-list"), tt.path)
+			got, err := extractpath.Lookup(fixture(t, "doctl-list"), tt.path)
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
@@ -165,11 +165,11 @@ func TestLookupLocatesTheRecordInWhateverEnvelopeTheProviderUses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			record, err := jsonpath.Lookup(fixture(t, tt.fixture), tt.record)
+			record, err := extractpath.Lookup(fixture(t, tt.fixture), tt.record)
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.record, err)
 			}
-			got, err := jsonpath.Lookup(record, "id")
+			got, err := extractpath.Lookup(record, "id")
 			if err != nil {
 				t.Fatalf("Lookup(\"id\") err = %v", err)
 			}
@@ -185,7 +185,7 @@ func TestLookupLocatesTheRecordInWhateverEnvelopeTheProviderUses(t *testing.T) {
 func TestLookupTreatsANullCollectionAsAbsentRatherThanAMiss(t *testing.T) {
 	for _, path := range []string{"[*].tags", "[*].tags[*]", "[*].tags[type=public]"} {
 		t.Run(path, func(t *testing.T) {
-			got, err := jsonpath.Lookup(fixture(t, "doctl-create"), path)
+			got, err := extractpath.Lookup(fixture(t, "doctl-create"), path)
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v, want a null collection to be absent, not a miss", path, err)
 			}
@@ -209,7 +209,7 @@ func TestLookupReportsAFilterThatMatchedNothing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := jsonpath.Lookup(decode(t, tt.doc), tt.path)
+			_, err := extractpath.Lookup(decode(t, tt.doc), tt.path)
 			if err == nil {
 				t.Fatalf("Lookup(%q) err = nil, want an error naming the path", tt.path)
 			}
@@ -230,7 +230,7 @@ func TestLookupRefusesAFilterItDoesNotUnderstand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := jsonpath.Lookup(fixture(t, "doctl-create"), tt.path)
+			_, err := extractpath.Lookup(fixture(t, "doctl-create"), tt.path)
 			if err == nil {
 				t.Fatalf("Lookup(%q) err = nil, want the filter refused", tt.path)
 			}
@@ -257,7 +257,7 @@ func TestLookupReadsEveryMarkerFormTheAdaptersUse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := jsonpath.Lookup(fixture(t, tt.fixture), tt.path)
+			got, err := extractpath.Lookup(fixture(t, tt.fixture), tt.path)
 			if err != nil {
 				t.Fatalf("Lookup(%q) err = %v", tt.path, err)
 			}
