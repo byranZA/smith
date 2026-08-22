@@ -135,17 +135,9 @@ func (w sessionWiring) verb(cmd *cobra.Command, name, box string, args ...string
 	return relay.Verb{Target: target, Version: w.version, Args: relayed}, nil
 }
 
-// target resolves the box a verb named into the ssh target it relays to. No
-// box named stays no box named, which is the verb running here.
+// target resolves the box a verb named into the ssh target it relays to.
 func (w sessionWiring) target(box string) (string, error) {
-	if box == "" {
-		return "", nil
-	}
-	inv, err := lookupInventory(w.home, box)
-	if err != nil {
-		return "", err
-	}
-	return inventory.Resolve(inv, box), nil
+	return relayTarget(w.home, box)
 }
 
 // localEnv resolves what a verb running on this machine acts against: the

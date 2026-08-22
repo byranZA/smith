@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/status"
@@ -170,6 +172,15 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
 			}
 
+			// The workspace stage: the last of the pipeline, relayed to the
+			// smith the box now carries. It runs after config staging because
+			// it reads the document and the placement bytes that stage wrote,
+			// and before the access layer closes any door smith is still
+			// reached over.
+			if err := convergeWorkspace(ctx, exec, smithTarget(host), resolveVersion(), staged, stdout, stderr); err != nil {
+				return err
+			}
+
 			// The box is provisioned; what is left is writing down the address
 			// smith will reach it by from now on, which the operator would
 			// otherwise have to remember off a line that scrolls away.
@@ -269,6 +280,42 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 	}
 	if _, err := fmt.Fprint(stdout, result.Report()); err != nil {
 		return fmt.Errorf("write staging report: %w", err)
+	}
+	return nil
+}
+
+// convergeWorkspace runs the workspace stage: it relays `smith workspace
+// converge` to the box, which reads the blueprint just staged on it and
+// converges the box to the workspace that blueprint declares, streaming the
+// box's own progress back to the operator's terminal.
+//
+// It relays rather than reimplements, because the stage clones repos and
+// installs runtimes onto the box and so has to run there (docs/adr/0008). The
+// relay travels as the smith user, the login the box is reached by from now
+// on: the bootstrap-in login is dead by this point, since hardening has closed
+// it.
+//
+// A run naming no blueprint converges nothing. There is nothing staged for the
+// box to read, and refusing on its absence would break the flag-only path that
+// never had a blueprint to begin with.
+//
+// A stage the box refused is partial, not a failed setup: every phase
+// completed and the box is provisioned, secured and configured, so the
+// operator is owed the exit that says so and the box has already said what
+// went wrong on their terminal.
+func convergeWorkspace(ctx context.Context, exec connection.Exec, target, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
+	if staged == nil {
+		return nil
+	}
+	verb := relay.Verb{Target: target, Version: version, Args: []string{"workspace", "converge"}}
+	local := func() error {
+		return errors.New("the workspace stage runs on the box, and setup always names one")
+	}
+	if err := relay.Run(ctx, exec, verb, local, stdout, stderr); err != nil {
+		if _, werr := fmt.Fprintf(stderr, "the workspace stage did not converge: %v\n", err); werr != nil {
+			return fmt.Errorf("write workspace failure: %w", werr)
+		}
+		return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
 	}
 	return nil
 }

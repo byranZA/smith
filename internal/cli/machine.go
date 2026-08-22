@@ -312,6 +312,21 @@ func lookupInventory(resolve homeResolver, arg string) (inventory.Inventory, err
 	return inv, nil
 }
 
+// relayTarget resolves the box a relayed verb named into the ssh target it
+// travels to, under the rule every verb shares: a value holding an "@" is a
+// literal target, and a bare one is looked up in the inventory. No box named
+// stays no box named, which is the verb running here.
+func relayTarget(resolve homeResolver, box string) (string, error) {
+	if box == "" {
+		return "", nil
+	}
+	inv, err := lookupInventory(resolve, box)
+	if err != nil {
+		return "", err
+	}
+	return inventory.Resolve(inv, box), nil
+}
+
 // resolveSetupTarget resolves setup's argument under the shared rule and holds
 // it to the shape setup needs. Setup is the one verb that reads the target's
 // host — the tailnet prerequisites and the firewall phase are written in terms
