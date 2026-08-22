@@ -38,6 +38,7 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 		newStatusCmd(resolve, exec),
 		newListCmd(resolve),
 		newAddCmd(resolve, exec),
+		newForgetCmd(resolve),
 	)
 	return cmd
 }
@@ -760,4 +761,66 @@ func hostOrTarget(target string) string {
 		return host
 	}
 	return target
+}
+
+// newForgetCmd builds `smith machine forget <name>`. It removes one entry from
+// the box inventory and does nothing else: no connection is opened and the box
+// is not touched, so a forgotten box keeps running and can be registered again
+// with `machine add` the moment the operator wants it back. That is the whole
+// safety story — forgetting costs a line in a file, never a machine.
+//
+// The argument is a registered name, never a target: a value smith would hand
+// straight to ssh names nothing in the inventory, so there would be nothing to
+// remove. A name no box is registered under is a refusal rather than a silent
+// success, because an operator who mistypes a name is owed the news that the
+// entry they meant is still there.
+func newForgetCmd(resolve homeResolver) *cobra.Command {
+	return &cobra.Command{
+		Use:   "forget <name>",
+		Short: "Remove a box from the inventory, leaving the box itself alone",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := resolve()
+			if err != nil {
+				return err
+			}
+			target, err := forgetBox(home, args[0])
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), forgottenReport(args[0], target)); err != nil {
+				return fmt.Errorf("write removal: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
+// forgetBox reads the inventory, removes name from it, and writes it back. It
+// returns the target the name reached, which is what the operator needs to put
+// the entry back. The config home is never created here: forgetting a name that
+// is not registered writes nothing, and a name cannot be registered in an
+// inventory that does not exist.
+func forgetBox(home config.Home, name string) (string, error) {
+	inv, skew, err := inventory.Read(home.InventoryPath())
+	if err != nil {
+		return "", fmt.Errorf("read the box inventory: %w", err)
+	}
+	next, err := inventory.Forget(inv, name)
+	if err != nil {
+		return "", fmt.Errorf("cannot forget %s: %w", name, err)
+	}
+	if err := inventory.Write(home.InventoryPath(), next, skew); err != nil {
+		return "", fmt.Errorf("forget %s: %w", name, err)
+	}
+	return inv.Boxes[name].Target, nil
+}
+
+// forgottenReport renders what the operator is told by a successful removal:
+// the name that no longer reaches anything, and the command that registers the
+// box again — the entry is gone, and smith is the only thing that knew where
+// the box was.
+func forgottenReport(name, target string) string {
+	return fmt.Sprintf("forgot %q (%s)\n\nRegister it again with:\n  smith machine add %s --name %s\n",
+		name, target, target, name)
 }
