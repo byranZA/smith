@@ -1,0 +1,88 @@
+# ~/.smith/blueprints/acme.yaml — the worked example, in house style.
+
+access:    tailscale
+terminal:  tmux
+workspace: ~/workspace
+
+git:
+  user_name:  Ada Lovelace
+  user_email: ada@acme.example
+
+provider:
+  create:
+    - hcloud
+    - server
+    - create
+    - --name
+    - "{{name}}"
+    - --label
+    - "{{marker_arg}}"
+    - --ssh-key
+    - "{{ssh_key}}"
+    - -o
+    - json
+  list:
+    - hcloud
+    - server
+    - list
+    - -o
+    - json
+  destroy:
+    - hcloud
+    - server
+    - delete
+    - "{{id}}"
+    - -o
+    - json
+  requires:
+    - HCLOUD_TOKEN
+  ssh_key: acme-box
+  marker:
+    arg:  smith={{value}}
+    read: labels.smith
+  extract:
+    id: id
+    ip: public_net.ipv4.ip
+
+packages:
+  - ripgrep
+  - jq
+  - postgresql-client
+
+tools:
+  node: "20"
+  go:   "1.23"
+
+env:
+  GITHUB_TOKEN:      env:GH_TOKEN
+  ANTHROPIC_API_KEY: env:ANTHROPIC_API_KEY
+  LOG_LEVEL:         literal:debug
+
+placements:
+  - from:  file:~/.secrets/acme/id_forge
+    to:    ~/.ssh/id_forge
+    mode:  converge
+    perms: "0600"
+
+repos:
+  - name: acme-api
+    url:  git@github.com:acme/api.git
+    base: develop
+    tools:
+      node: "22"
+    env:
+      ACME_REGION: env:ACME_REGION
+    placements:
+      - from:  file:~/.secrets/acme/api.env
+        to:    packages/api/.env
+        mode:  converge
+        perms: "0600"
+      - from:  file:~/fixtures/acme.sql
+        to:    seed.sql
+        mode:  once
+
+  - url:  git@github.com:acme/web.git
+    placements:
+      - from: file:~/.secrets/acme/web.env
+        to:   .env.local
+        mode: converge

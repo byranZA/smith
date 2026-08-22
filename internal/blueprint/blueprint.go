@@ -1,6 +1,7 @@
 // Package blueprint models the reusable declaration of a kind of dev box —
-// which repos it carries, how it is reached, which terminal it runs — and
-// turns the bytes of a blueprint file into that declaration.
+// which repos it carries, which runtimes and packages it installs, which files
+// land where, how it is reached, which terminal it runs — and turns the bytes
+// of a blueprint file into that declaration.
 //
 // Callers hand Parse the bytes of a blueprint file and get back either a valid
 // document or an error describing what is wrong with it. The document format
@@ -9,7 +10,11 @@
 //
 // Validation is strict. A key the schema does not define is an error, never a
 // warning — a blueprint is desired state, and a desired-state document that
-// quietly ignores what the operator wrote is the worst available failure.
+// quietly ignores what the operator wrote is the worst available failure. On
+// top of the strict structural pass sit the semantic rules that catch a
+// document parsing cleanly while meaning nothing: a repo with no remote, two
+// repos that would collide in the workspace, and a field whose value is
+// outside the set smith recognises.
 package blueprint
 
 import (
@@ -29,8 +34,86 @@ type Blueprint struct {
 	Terminal string `yaml:"terminal"`
 	// Workspace is the directory on the box the repo worktrees live under.
 	Workspace string `yaml:"workspace"`
+	// Git is the identity the box commits as.
+	Git Git `yaml:"git"`
+	// Provider is the adapter smith creates and lists boxes through. It is
+	// absent when the operator declares no provider, which is what lets a
+	// blueprint inherit an operator-wide adapter whole rather than in part.
+	Provider *Provider `yaml:"provider"`
+	// Packages are the system packages installed on the box.
+	Packages []string `yaml:"packages"`
+	// Tools are the box-wide toolchain versions, keyed by tool name.
+	Tools map[string]string `yaml:"tools"`
+	// Env are the box-wide environment variables, keyed by variable name.
+	// Every value is a reference, never a literal secret.
+	Env map[string]string `yaml:"env"`
+	// Placements are the files put on the box outside any worktree.
+	Placements []Placement `yaml:"placements"`
 	// Repos are the repositories the box carries.
 	Repos []Repo `yaml:"repos"`
+}
+
+// Git is the git identity smith writes on the box. Its fields are snake_case
+// in the document, matching the placeholder style of the provider block.
+type Git struct {
+	// UserName is the name commits are authored under.
+	UserName string `yaml:"user_name"`
+	// UserEmail is the address commits are authored under.
+	UserEmail string `yaml:"user_email"`
+}
+
+// Provider is the operator-supplied description of one provider's CLI:
+// command templates plus field extractors, all emitting JSON. It is data, not
+// code — this package decodes it and never executes any part of it.
+type Provider struct {
+	// Create is the argv template that creates a box.
+	Create []string `yaml:"create"`
+	// List is the argv template that lists the account's boxes.
+	List []string `yaml:"list"`
+	// Destroy is the argv template that tears a box down.
+	Destroy []string `yaml:"destroy"`
+	// Requires names the environment variables the templates need present.
+	Requires []string `yaml:"requires"`
+	// SSHKey names a key already registered at the provider, substituted into
+	// Create. An unset key drops the argument rather than passing an empty one.
+	SSHKey string `yaml:"ssh_key"`
+	// Marker is how a smith-created box is stamped and recognised again.
+	Marker ProviderMarker `yaml:"marker"`
+	// Extract is how a box's identity and address are read out of the
+	// provider's JSON.
+	Extract ProviderExtract `yaml:"extract"`
+}
+
+// ProviderMarker is the two halves of a provider marker: what create passes
+// and what the extractor reads back, which differ across providers.
+type ProviderMarker struct {
+	// Arg is the value create stamps the box with.
+	Arg string `yaml:"arg"`
+	// Read is the path the marker is read back from in the provider's JSON.
+	Read string `yaml:"read"`
+}
+
+// ProviderExtract is the paths a box's identity and address are read from in
+// the provider's JSON.
+type ProviderExtract struct {
+	// ID is the path to the provider's own identifier for the box.
+	ID string `yaml:"id"`
+	// IP is the path to the box's public address.
+	IP string `yaml:"ip"`
+}
+
+// Placement puts one file on the box. Its scope comes from where it is
+// declared: a placement under a repo is worktree-relative, one at the top
+// level is box-wide.
+type Placement struct {
+	// From is a reference to the source bytes, resolved operator-side.
+	From string `yaml:"from"`
+	// To is the destination path.
+	To string `yaml:"to"`
+	// Mode is how the file is maintained: "converge" or "once".
+	Mode string `yaml:"mode"`
+	// Perms is the destination's octal file mode, such as "0600".
+	Perms string `yaml:"perms"`
 }
 
 // Repo is one repository a box carries, cloned into the workspace.
@@ -42,10 +125,18 @@ type Repo struct {
 	URL string `yaml:"url"`
 	// Base is the branch worktrees start from.
 	Base string `yaml:"base"`
+	// Tools are the toolchain versions this repo pins over the box-wide ones.
+	Tools map[string]string `yaml:"tools"`
+	// Env are the environment variables scoped to this repo.
+	Env map[string]string `yaml:"env"`
+	// Placements are the files put inside this repo's worktree.
+	Placements []Placement `yaml:"placements"`
 }
 
 // Parse decodes a blueprint document, refusing any key the schema does not
-// define. An empty document is a valid blueprint with every field unset.
+// define and any value smith would not know what to do with. An empty document
+// is a valid blueprint with every field unset. A repo that names no worktree
+// directory is given the last segment of its clone URL.
 //
 // Every problem in the document is reported in one pass: the returned error is
 // a *ValidationError carrying an ordered list of findings, so an operator
@@ -67,13 +158,23 @@ func Parse(data []byte) (Blueprint, error) {
 	dec.KnownFields(true)
 
 	var b Blueprint
-	err := dec.Decode(&b)
-	if err == nil || errors.Is(err, io.EOF) {
-		return b, nil
+	var structural []Finding
+	switch err := dec.Decode(&b); {
+	case err == nil, errors.Is(err, io.EOF):
+	default:
+		var schema *yaml.TypeError
+		if !errors.As(err, &schema) {
+			return Blueprint{}, malformedReport(err)
+		}
+		// The decoder fills every field it did understand, so the semantic
+		// rules still run over the rest of the document and the operator sees
+		// one report rather than a queue of them.
+		structural = schemaFindings(schema, indexPaths(&doc))
 	}
-	var schema *yaml.TypeError
-	if errors.As(err, &schema) {
-		return Blueprint{}, schemaReport(schema, indexPaths(&doc))
+
+	b = withDefaults(b)
+	if report := append(structural, validate(b)...); len(report) > 0 {
+		return Blueprint{}, &ValidationError{Findings: report}
 	}
-	return Blueprint{}, malformedReport(err)
+	return b, nil
 }

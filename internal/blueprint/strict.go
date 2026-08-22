@@ -37,17 +37,17 @@ func malformedReport(err error) *ValidationError {
 	}
 }
 
-// schemaReport turns the decoder's list of schema violations into findings in
-// the operator's vocabulary, ordered by the line they appear on. A violation
-// the decoder words in a shape smith does not recognise still carries its
-// position, never the Go type the decoder named.
-func schemaReport(err *yaml.TypeError, paths pathIndex) *ValidationError {
+// schemaFindings turns the decoder's list of schema violations into findings
+// in the operator's vocabulary, ordered by the line they appear on. A
+// violation the decoder words in a shape smith does not recognise still
+// carries its position, never the Go type the decoder named.
+func schemaFindings(err *yaml.TypeError, paths pathIndex) []Finding {
 	findings := make([]Finding, 0, len(err.Errors))
 	for _, raw := range err.Errors {
 		findings = append(findings, translate(raw, paths))
 	}
 	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Line < findings[j].Line })
-	return &ValidationError{Findings: findings}
+	return findings
 }
 
 // translate rewrites one decoder message as a finding.
