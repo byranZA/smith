@@ -125,32 +125,23 @@ type StartRequest struct {
 }
 
 // Start ensures a session is running and returns it. It is not a create verb:
-// one probe pair — does the worktree exist, and is its tmux session live —
-// decides which of three things it does.
+// it works out what is missing and supplies only that.
 //
-// With no worktree, the repo is fetched and the branch is cut — from the
-// requested base, else from the base the blueprint declares for the repo,
-// else from the repo's default branch — a worktree for it is created one
-// level below the repo's worktrees directory, and a tmux session named
-// smith/<name> is launched in it. A branch that already exists is checked out
-// into the new worktree rather than cut a second time. With a worktree
-// whose tmux session is gone, the tmux session is launched in the checkout the
-// operator left: that is how a stopped session resumes, which is why there is
-// no separate resume verb. With both already there, Start creates nothing and
-// reports the session as it found it.
+// It refuses first, with nothing yet on disk, on the four things it cannot
+// make right afterwards: a repo the blueprint does not declare, a derived name
+// another branch already holds, a base named against a branch that already
+// exists, and a branch checked out somewhere that is not a session smith stood
+// up. Then it ensures the worktree — checking the branch out into a new one,
+// cutting the branch first when the repo does not hold it yet, or taking the
+// checkout the operator left. A session already live in that checkout is
+// returned as it was found, because swapping a file out from under a running
+// process is never wanted, which is what makes stop then start the way to pick
+// up changed config. Everything else converges the blueprint's repo placements
+// into the worktree and launches a tmux session named smith/<name> in it, so
+// start is an ensure-desired-state verb the way `machine setup` is.
 //
-// Before any of that it refuses, with nothing yet on disk, on the four things
-// it cannot make right afterwards: a repo the blueprint does not declare, a
-// derived name another branch already holds, a base named against a branch
-// that already exists, and a branch checked out somewhere that is not a
-// session smith stood up.
-//
-// Both paths that stand a session up — cutting the worktree, and relaunching
-// tmux in the one the operator left — converge the blueprint's repo placements
-// into the worktree first, so start is an ensure-desired-state verb the way
-// `machine setup` is. The third path does not: swapping a file out from under
-// a running process is never wanted, which is what makes stop then start the
-// way to pick up changed config.
+// A new branch is cut from the requested base, else from the base the
+// blueprint declares for the repo, else from the repo's default branch.
 //
 // It stands the session up and returns without connecting to it, which is what
 // makes it drivable with no human present.
@@ -165,60 +156,100 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	}
 
 	root := filepath.Join(env.Workspace, repo.Name)
-	bare := filepath.Join(root, bareDir)
-	name := DeriveName(repo.Name, branch)
-	stood := Session{Name: name, Repo: repo.Name, Branch: branch, Live: true}
+	stand := standUp{
+		repo:   repo,
+		bare:   filepath.Join(root, bareDir),
+		trees:  filepath.Join(root, worktreesDir),
+		name:   DeriveName(repo.Name, branch),
+		branch: branch,
+		base:   strings.TrimSpace(req.Base),
+	}
+	stood := Session{Name: stand.name, Repo: repo.Name, Branch: branch, Live: true}
 
+	worktrees, err := listWorktrees(ctx, env.Git, stand.bare)
+	if err != nil {
+		return Session{}, err
+	}
+	exists, err := branchExists(ctx, env.Git, stand.bare, branch)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := stand.refuse(worktrees, exists); err != nil {
+		return Session{}, err
+	}
+
+	dir, live, err := stand.worktree(ctx, env, worktrees, exists)
+	if err != nil {
+		return Session{}, err
+	}
+	if live {
+		return stood, nil
+	}
+	if err := env.place(repo, dir); err != nil {
+		return Session{}, err
+	}
+	if err := launch(ctx, env.Tmux, stand.name, dir); err != nil {
+		return Session{}, err
+	}
+	return stood, nil
+}
+
+// standUp is one Start's request as it resolved: the repo the blueprint
+// declares, where on the box that repo keeps its bare clone and its worktrees,
+// and the branch and derived name the session is for. It exists so the steps
+// of a stand-up — refuse, ensure the worktree, check the branch out — read as
+// stages of one request rather than as functions threading six arguments
+// between them.
+type standUp struct {
+	// repo is the declared repo the session's worktree is cut from.
+	repo Repo
+	// bare is the repo's bare clone, which every git command runs against.
+	bare string
+	// trees is the repo's worktrees directory, one level below which every
+	// session smith stood up lives.
+	trees string
+	// name is the session's derived name, and the tail of its tmux session.
+	name string
+	// branch is the branch to work on, as the operator named it.
+	branch string
+	// base is the ref the operator asked a new branch be cut from, empty
+	// when they named none.
+	base string
+}
+
+// refuse reports the reasons this session must not be stood up. It runs before
+// anything is on disk, so a refusal leaves the box exactly as it found it.
+func (s standUp) refuse(worktrees []worktree, exists bool) error {
 	// This enumeration is the one reason Start looks before it creates: the
 	// sanitizer is lossy, so two branches can derive one name, and a session
 	// standing up under a name another branch already holds would make every
 	// other verb address the wrong worktree. If a future ticket ever makes
 	// names reversible, the collision gate below becomes dead code rather
 	// than staying quietly correct.
-	worktrees, err := listWorktrees(ctx, env.Git, bare)
-	if err != nil {
-		return Session{}, err
+	if err := notColliding(worktrees, s.repo, s.name, s.branch); err != nil {
+		return err
 	}
-	if err := notColliding(worktrees, repo, name, branch); err != nil {
-		return Session{}, err
+	if s.base != "" && exists {
+		return fmt.Errorf("branch %q of repo %q already exists, so start cannot base it on %q: start cuts a branch from a base, it never rebases or resets one", s.branch, s.repo.Name, s.base)
 	}
+	if held, ok := heldBy(worktrees, s.branch); ok && !oneBelow(held.path, s.trees) {
+		return fmt.Errorf("branch %q of repo %q is already checked out at %s, held by session %q: git allows one worktree per branch, and that checkout is not one smith stood up below %s", s.branch, s.repo.Name, held.path, listedName(s.repo.Name, held), s.trees)
+	}
+	return nil
+}
 
-	exists, err := branchExists(ctx, env.Git, bare, branch)
-	if err != nil {
-		return Session{}, err
+// worktree ensures the branch has a checkout of its own and answers with it,
+// along with whether the session is already live in it — the one case that
+// leaves the worktree untouched, because a running process is in it.
+func (s standUp) worktree(ctx context.Context, env Env, worktrees []worktree, exists bool) (string, bool, error) {
+	if held, ok := heldBy(worktrees, s.branch); ok {
+		return held.path, isLive(ctx, env.Tmux, s.name), nil
 	}
-	base := strings.TrimSpace(req.Base)
-	if base != "" && exists {
-		return Session{}, fmt.Errorf("branch %q of repo %q already exists, so start cannot base it on %q: start cuts a branch from a base, it never rebases or resets one", branch, repo.Name, base)
+	dir := filepath.Join(s.trees, worktreeDir(s.branch))
+	if err := s.checkout(ctx, env, dir, exists); err != nil {
+		return "", false, err
 	}
-
-	if existing, held := heldBy(worktrees, branch); held {
-		if dir := filepath.Join(root, worktreesDir); !oneBelow(existing.path, dir) {
-			return Session{}, fmt.Errorf("branch %q of repo %q is already checked out at %s, held by session %q: git allows one worktree per branch, and that checkout is not one smith stood up below %s", branch, repo.Name, existing.path, listedName(repo.Name, existing), dir)
-		}
-		if isLive(ctx, env.Tmux, name) {
-			return stood, nil
-		}
-		if err := env.place(repo, existing.path); err != nil {
-			return Session{}, err
-		}
-		if err := launch(ctx, env.Tmux, name, existing.path); err != nil {
-			return Session{}, err
-		}
-		return stood, nil
-	}
-
-	dir := filepath.Join(root, worktreesDir, worktreeDir(branch))
-	if err := checkout(ctx, env, repo, bare, dir, branch, base, exists); err != nil {
-		return Session{}, err
-	}
-	if err := env.place(repo, dir); err != nil {
-		return Session{}, err
-	}
-	if err := launch(ctx, env.Tmux, name, dir); err != nil {
-		return Session{}, err
-	}
-	return stood, nil
+	return dir, false, nil
 }
 
 // checkout puts the branch in a worktree of its own at dir. A branch that
@@ -228,25 +259,26 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 // looks like anything but a session bug, and cutting is the one moment smith
 // is already touching the network, so the resume and connect paths pay
 // nothing for it.
-func checkout(ctx context.Context, env Env, repo Repo, bare, dir, branch, base string, exists bool) error {
-	args := []string{"-C", bare, "worktree", "add", dir, branch}
+func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool) error {
+	args := []string{"-C", s.bare, "worktree", "add", dir, s.branch}
 	if !exists {
-		if err := fetch(ctx, env.Git, bare, repo.Name); err != nil {
+		if err := fetch(ctx, env.Git, s.bare, s.repo.Name); err != nil {
 			return err
 		}
+		base := s.base
 		if base == "" {
-			base = repo.Base
+			base = s.repo.Base
 		}
 		if base == "" {
 			var err error
-			if base, err = defaultBranch(ctx, env.Git, bare); err != nil {
+			if base, err = defaultBranch(ctx, env.Git, s.bare); err != nil {
 				return err
 			}
 		}
-		args = []string{"-C", bare, "worktree", "add", "-b", branch, dir, base}
+		args = []string{"-C", s.bare, "worktree", "add", "-b", s.branch, dir, base}
 	}
 	if _, err := run(ctx, env.Git, "git", args...); err != nil {
-		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", branch, repo.Name, dir, err)
+		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", s.branch, s.repo.Name, dir, err)
 	}
 	return nil
 }
@@ -315,7 +347,7 @@ func resolved(path string) string {
 
 // launch starts the detached tmux session a session runs under, with its
 // working directory in the worktree. It is the one place a tmux session is
-// created, so the create path and the resume path cannot drift apart.
+// created.
 func launch(ctx context.Context, tmux Runner, name, dir string) error {
 	if _, err := run(ctx, tmux, "tmux", "new-session", "-d", "-s", TmuxSession(name), "-c", dir); err != nil {
 		return fmt.Errorf("launch the tmux session for %q at %s: %w", name, dir, err)
@@ -337,9 +369,9 @@ func (e Env) repo(name string) (Repo, error) {
 }
 
 // place converges the repo's declared placements into the worktree at dir. It
-// runs on the two paths that stand a session up and on neither the connect
-// path nor any read verb, so a file only ever moves at the moment nothing is
-// running against it.
+// runs where a session stands up and on neither the connect path nor any read
+// verb, so a file only ever moves at the moment nothing is running against
+// it.
 func (e Env) place(repo Repo, dir string) error {
 	if e.Placer == nil {
 		return nil
