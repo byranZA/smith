@@ -23,15 +23,20 @@ import (
 )
 
 // newMachineCmd builds `smith machine` and its subcommands, reading the config
-// home through resolve, running provider CLIs through runner, probing a new
-// box's ssh port through dialer, and timing the create command's polls by
-// clock.
-func newMachineCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
+// home through resolve, launching both the provider CLIs and the ssh binary
+// through exec, probing a new box's ssh port through dialer, and timing the
+// create command's polls by clock.
+func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "machine",
 		Short: "Create, set up and inspect a remote development box",
 	}
-	cmd.AddCommand(newCreateCmd(resolve, runner, dialer, clock), newSetupCmd(resolve), newStatusCmd(), newListCmd(resolve))
+	cmd.AddCommand(
+		newCreateCmd(resolve, exec, dialer, clock),
+		newSetupCmd(resolve, exec),
+		newStatusCmd(resolve, exec),
+		newListCmd(resolve),
+	)
 	return cmd
 }
 
@@ -181,16 +186,20 @@ nothing is provisioned yet. Run:
 // tailnet as a tag:smith node and closes public SSH once a live tailnet probe
 // proves reach. --blueprint names the blueprint the box is built from, read
 // through the config home resolve locates and staged onto the box.
-func newSetupCmd(resolve homeResolver) *cobra.Command {
+func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var accessMode, authKeyRef, blueprintName string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target, err := parseTarget(args[0])
+			inv, err := lookupInventory(resolve, args[0])
 			if err != nil {
-				return err
+				return reportInvalid(cmd, err)
+			}
+			target, err := resolveSetupTarget(inv, args[0])
+			if err != nil {
+				return reportInvalid(cmd, err)
 			}
 			if accessMode != "public" && accessMode != "tailscale" {
 				return fmt.Errorf("invalid --access %q: want public or tailscale", accessMode)
@@ -209,7 +218,7 @@ func newSetupCmd(resolve homeResolver) *cobra.Command {
 			}
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
-			conn := connection.New(target, connection.System())
+			conn := connection.New(target, exec)
 			runner := bootstrap.NewRunner(conn)
 
 			// Tailscale up-front, before anything on the box is mutated: acquire the
@@ -501,25 +510,32 @@ func newListCmd(resolve homeResolver) *cobra.Command {
 	}
 }
 
-// newStatusCmd builds `smith machine status <host>`. It connects as smith@host
-// (the tailnet name in tailscale mode), gathers the box's live facts read-only,
-// reconciles them against the marker, prints the drift report, and maps the
-// verdict to an exit code (0 matches, 1 drifted, 2 not-provisioned, 3
-// unreachable). It never mutates the box — the marker's access_mode, not a flag,
-// sets probe expectations, so there is deliberately no --access flag.
-func newStatusCmd() *cobra.Command {
+// newStatusCmd builds `smith machine status <name-or-target>`. It resolves the
+// argument through the shared rule — the "@" decides — connects over what that
+// yields, gathers the box's live facts read-only, reconciles them against the
+// marker, prints the drift report, and maps the verdict to an exit code (0
+// matches, 1 drifted, 2 not-provisioned, 3 unreachable). It never mutates the
+// box — the marker's access_mode, not a flag, sets probe expectations, so there
+// is deliberately no --access flag.
+//
+// A refusal on a bare argument smith did not recognise carries the two fixes
+// with it: status no longer has a private convention that turns a bare address
+// into the smith user, so an operator who relied on that one is told the
+// address to pass and the command that registers the box under a name.
+func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <host>",
+		Use:   "status <name-or-target>",
 		Short: "Report how a box has drifted from what setup established",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			host, err := parseStatusHost(args[0])
+			inv, err := lookupInventory(resolve, args[0])
 			if err != nil {
-				return err
+				return reportInvalid(cmd, err)
 			}
+			target := inventory.Resolve(inv, args[0])
 			ctx := cmd.Context()
 
-			conn := connection.New("smith@"+host, connection.System())
+			conn := connection.New(target, exec)
 			admin := tailscale.NewAdmin(connection.System())
 			prober := status.NewProber(conn, admin)
 
@@ -528,11 +544,15 @@ func newStatusCmd() *cobra.Command {
 				return fmt.Errorf("probe box: %w", err)
 			}
 
-			report := status.Unreachable(host)
+			report := status.Unreachable(target)
 			if gathered.Reachable {
 				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), report.String()); err != nil {
+			out := report.String()
+			if !gathered.Reachable {
+				out += inventory.ConnectHint(inv, args[0])
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), out); err != nil {
 				return fmt.Errorf("write status report: %w", err)
 			}
 			if code := report.ExitCode(); code != 0 {
@@ -543,17 +563,41 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// parseStatusHost validates the status host argument: a bare host (or tailnet
-// name), never a <login>@<host> — status always connects as the smith user, so a
-// login prefix is a mistake worth catching.
-func parseStatusHost(arg string) (string, error) {
-	if arg == "" {
-		return "", errors.New("invalid host: want a bare <host>")
-	}
+// lookupInventory reads the box inventory a verb resolves its argument
+// against, and reads nothing at all when the argument contains "@": a literal
+// target is never looked up, so an unreadable inventory cannot stand between
+// the operator and a box they addressed directly.
+func lookupInventory(resolve homeResolver, arg string) (inventory.Inventory, error) {
 	if strings.Contains(arg, "@") {
-		return "", fmt.Errorf("invalid host %q: pass a bare <host>, not <login>@<host> — status connects as smith", arg)
+		return inventory.Empty(), nil
 	}
-	return arg, nil
+	home, err := resolve()
+	if err != nil {
+		return inventory.Empty(), err
+	}
+	inv, _, err := inventory.Read(home.InventoryPath())
+	if err != nil {
+		return inventory.Empty(), err
+	}
+	return inv, nil
+}
+
+// resolveSetupTarget resolves setup's argument under the shared rule and holds
+// it to the shape setup needs. Setup is the one verb that reads the target's
+// host — the tailnet prerequisites and the firewall phase are written in terms
+// of it — so an opaque target it cannot take apart is refused here rather than
+// half-applied later. An argument that resolves to nothing keeps the refusal it
+// has always had, which already names the shape to pass.
+func resolveSetupTarget(inv inventory.Inventory, arg string) (string, error) {
+	resolved := inventory.Resolve(inv, arg)
+	target, err := parseTarget(resolved)
+	if err == nil {
+		return target, nil
+	}
+	if resolved != arg {
+		return "", fmt.Errorf("box %q is registered as %q, which setup cannot use: want <login>@<host>", arg, resolved)
+	}
+	return "", err
 }
 
 // parseTarget validates a bootstrap-login target of the form <login>@<host> and

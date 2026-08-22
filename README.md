@@ -161,12 +161,15 @@ When it finishes, the box is reachable as the `smith` user over hardened public
 SSH. Confirm it:
 
 ```sh
-smith machine status 203.0.113.10
+smith machine status smith@203.0.113.10
 ```
 
-`status` connects as `smith` and reports how the box has drifted from what setup
-established (it never changes anything — pass a bare `<host>`, not
-`<login>@<host>`).
+`status` reports how the box has drifted from what setup established, and never
+changes anything. Its argument follows the rule every smith verb shares: **the
+`@` decides**. A value containing `@` is an SSH target used exactly as written;
+a value without one is looked up in the box inventory (`smith machine list`),
+and on a miss is handed to `ssh` as written, so an `ssh_config` alias works too.
+Once a box is registered you address it by name — `smith machine status dev`.
 
 ### Provision over Tailscale
 
@@ -211,7 +214,7 @@ then on:
 
 ```sh
 smith machine setup smith@smith-<host>   # re-run over the tailnet
-smith machine status smith-<host>        # check status over the tailnet
+smith machine status smith@smith-<host>  # check status over the tailnet
 ```
 
 #### Tailscale notes
@@ -223,7 +226,7 @@ smith machine status smith-<host>        # check status over the tailnet
 - **Authorization follows you, not one machine.** The ACL `src` is your tailnet
   user login, which matches every device you own on the tailnet. Any of your
   machines that's on the tailnet can `ssh smith@smith-<host>` or run
-  `smith machine status smith-<host>` — no key, no per-machine setup. To run
+  `smith machine status smith@smith-<host>` — no key, no per-machine setup. To run
   `machine setup` from another machine it also needs the `tailscale` CLI and to
   be a running tailnet member.
 - **The first provision still uses your SSH key.** A brand-new box isn't on the

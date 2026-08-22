@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -72,7 +73,7 @@ func gateRejection(err error) (int, bool) {
 }
 
 func TestSetupTakesTheBlueprintToStage(t *testing.T) {
-	cmd := newSetupCmd(func() (config.Home, error) { return config.NewHome(t.TempDir()), nil })
+	cmd := newSetupCmd(func() (config.Home, error) { return config.NewHome(t.TempDir()), nil }, connection.System())
 	if cmd.Flags().Lookup("blueprint") == nil {
 		t.Error("machine setup has no --blueprint flag, so no box can be told what kind of box it is")
 	}
