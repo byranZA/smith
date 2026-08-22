@@ -360,9 +360,9 @@ func hostOf(target string) string {
 //
 // The argument is the target, used verbatim: add is registering an address, so
 // there is nothing to resolve it against yet. The name is the operator's
-// --name, or the box's host when they pass none — a marker recording a name is
-// the marker-v2 slice's, and until then smith says which fallback it used
-// rather than letting the operator assume the box named itself.
+// --name, else the name the box's marker records, else the box's host — and
+// smith says which fallback it used rather than letting the operator assume
+// the box named itself.
 func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
@@ -412,7 +412,7 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "the name to register the box under; omitted, its host names it")
+	cmd.Flags().StringVar(&name, "name", "", "the name to register the box under; omitted, its marker or its host names it")
 	return cmd
 }
 
