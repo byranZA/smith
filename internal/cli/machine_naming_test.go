@@ -3,18 +3,13 @@ package cli
 import (
 	"strings"
 	"testing"
-
-	"github.com/byranZA/smith/internal/inventory"
 )
 
 func TestSetupInheritsTheNameOnTheBoxsMarker(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
 
-	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public",
-		names:      inventory.Naming{Marker: "dev", Host: "203.0.113.10"},
-	})
+	_, stderr, code := runSetup(t, dir, &setupSSH{marker: markerNamedDev}, "root@203.0.113.10")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -31,13 +26,13 @@ func TestSetupInheritsTheNameOnTheBoxsMarker(t *testing.T) {
 func TestSetupUpdatesTheOneEntryWhenTheBoxsAddressChanged(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
+	// The operator addresses the box by the name it is registered under, so the
+	// run comes in over the address that entry holds — and the box now answers
+	// over the tailnet at a different one.
+	ssh := &setupSSH{marker: markerNamedDev, tailnetIP: "100.92.14.31"}
 
-	// The operator addressed the box by the name it is registered under, so the
-	// run came in over the address that entry holds.
-	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "tailscale", tailnetIP: "100.92.14.31", addressed: "smith@100.92.14.7",
-		names: inventory.Naming{Marker: "dev", Host: "203.0.113.10"},
-	})
+	args := append(tailscaleRun(t), "dev")
+	_, stderr, code := runSetup(t, dir, ssh, args...)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -58,10 +53,8 @@ func TestSetupRenamesTheBoxWhenTheOperatorNamesItSomethingElse(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
 
-	stdout, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public",
-		names:      inventory.Naming{Flag: "staging", Marker: "dev", Host: "203.0.113.10"},
-	})
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{marker: markerNamedDev},
+		"--name", "staging", "root@203.0.113.10")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -80,11 +73,9 @@ func TestSetupRenamesTheBoxWhenTheOperatorNamesItSomethingElse(t *testing.T) {
 
 func TestSetupRegistersUnderTheBlueprintWhenNothingElseNamesTheBox(t *testing.T) {
 	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: public\n")
 
-	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public",
-		names:      inventory.Naming{Blueprint: "acme", Host: "203.0.113.10"},
-	})
+	_, stderr, code := runSetup(t, dir, &setupSSH{}, "--blueprint", "acme", "root@203.0.113.10")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -98,10 +89,7 @@ func TestSetupRefusesANameAnotherBoxAlreadyHolds(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
 
-	stdout, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public",
-		names:      inventory.Naming{Flag: "dev", Host: "198.51.100.7"},
-	})
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--name", "dev", "root@198.51.100.7")
 
 	if code == 0 {
 		t.Fatal("exit code = 0, want a name held by a different box refused")
@@ -122,11 +110,9 @@ func TestSetupRefusesANameAnotherBoxAlreadyHolds(t *testing.T) {
 func TestSetupNeverInventsASuffixedNameForACollidingBlueprintName(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"acme":{"target":"smith@203.0.113.10"}}}`)
+	writeBlueprint(t, dir, "acme", "access: public\n")
 
-	_, _, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public",
-		names:      inventory.Naming{Blueprint: "acme", Host: "198.51.100.7"},
-	})
+	_, _, code := runSetup(t, dir, &setupSSH{}, "--blueprint", "acme", "root@198.51.100.7")
 
 	if code == 0 {
 		t.Fatal("exit code = 0, want two boxes from one blueprint refused rather than renamed")
@@ -138,17 +124,14 @@ func TestSetupNeverInventsASuffixedNameForACollidingBlueprintName(t *testing.T) 
 
 func TestSetupStoresTheOperatorsTargetVerbatimWithoutProbingIt(t *testing.T) {
 	dir := t.TempDir()
-	ssh := &answeringSSH{}
+	ssh := &setupSSH{}
 
-	_, stderr, code := concludeAt(t, dir, ssh, setupConclusion{
-		accessMode: "public", target: "dev.internal",
-		names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
-	})
+	_, stderr, code := runSetup(t, dir, ssh, "--name", "dev", "--target", "dev.internal", "root@203.0.113.10")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if len(ssh.targets) != 0 {
+	if ssh.reached("smith@203.0.113.10") || ssh.reached("dev.internal") {
 		t.Errorf("ssh targets = %v, want a target the operator supplied never probed", ssh.targets)
 	}
 	got := inventoryContent(t, dir)
@@ -163,10 +146,8 @@ func TestSetupStoresTheOperatorsTargetVerbatimWithoutProbingIt(t *testing.T) {
 func TestSetupRegistersATargetTheOperatorSuppliedEvenWhenTheBoxDoesNotAnswer(t *testing.T) {
 	dir := t.TempDir()
 
-	_, stderr, code := concludeAt(t, dir, &refusingSSH{}, setupConclusion{
-		accessMode: "public", target: "dev.internal",
-		names: inventory.Naming{Flag: "dev", Host: "203.0.113.10"},
-	})
+	_, stderr, code := runSetup(t, dir, &setupSSH{deafAt: "smith@203.0.113.10"},
+		"--name", "dev", "--target", "dev.internal", "root@203.0.113.10")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0: an operator's own target is not smith's to verify (stderr: %s)", code, stderr)
@@ -232,10 +213,7 @@ func TestSetupRefusesAgainWhenTheMarkerRecordsANameAnotherBoxHolds(t *testing.T)
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
 
-	stdout, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public", addressed: "root@198.51.100.7",
-		names: inventory.Naming{Marker: "dev", Host: "198.51.100.7"},
-	})
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{marker: markerNamedDev}, "root@198.51.100.7")
 
 	if code == 0 {
 		t.Fatal("exit code = 0, want a stamped marker name held by a different box refused a second time")
@@ -256,10 +234,7 @@ func TestSetupUnderAFreeNameLeavesTheHeldNameOnTheOtherBox(t *testing.T) {
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@203.0.113.10"}}}`)
 
-	_, stderr, code := concludeAt(t, dir, &answeringSSH{}, setupConclusion{
-		accessMode: "public", addressed: "root@198.51.100.7",
-		names: inventory.Naming{Flag: "other", Marker: "dev", Host: "198.51.100.7"},
-	})
+	_, stderr, code := runSetup(t, dir, &setupSSH{marker: markerNamedDev}, "--name", "other", "root@198.51.100.7")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0: the name the operator passed is free (stderr: %s)", code, stderr)

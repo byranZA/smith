@@ -78,7 +78,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			var access *tailscale.Access
 			var acquireKey func() (string, error)
 			if accessMode == "tailscale" {
-				a, acq, err := prepareTailscale(ctx, conn, host, authKeyRef, stdout)
+				a, acq, err := prepareTailscale(ctx, conn, exec, host, authKeyRef, stdout)
 				if err != nil {
 					if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
 						return fmt.Errorf("write refusal: %w", werr)
@@ -280,7 +280,11 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // operator. It returns the Access orchestrator and a key-acquiring closure the
 // enroll step calls only if the box actually needs enrolling — so a re-run of an
 // already-reachable box never resolves (or prompts for) a fresh auth key.
-func prepareTailscale(ctx context.Context, conn *connection.SSH, host, authKeyRef string, stdout io.Writer) (*tailscale.Access, func() (string, error), error) {
+//
+// The admin machine's own tailscale and ssh commands run through the same exec
+// the command surface was handed, rather than one built here: it is the local
+// process boundary the whole command already reaches every binary over.
+func prepareTailscale(ctx context.Context, conn *connection.SSH, exec connection.Exec, host, authKeyRef string, stdout io.Writer) (*tailscale.Access, func() (string, error), error) {
 	// Fail fast before mutating anything when the key could never be obtained:
 	// no reference to resolve and no interactive terminal to prompt. Acquisition
 	// itself is deferred to enroll, so an already-satisfied re-run needs no key.
@@ -289,7 +293,7 @@ func prepareTailscale(ctx context.Context, conn *connection.SSH, host, authKeyRe
 		return nil, nil, fmt.Errorf("resolve tailscale auth key: %w", secret.ErrNoReference)
 	}
 
-	admin := tailscale.NewAdmin(connection.System())
+	admin := tailscale.NewAdmin(exec)
 	if err := tailscale.CheckAdminOnTailnet(ctx, admin); err != nil {
 		return nil, nil, fmt.Errorf("tailnet preflight: %w", err)
 	}
