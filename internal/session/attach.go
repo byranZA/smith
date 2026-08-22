@@ -57,7 +57,7 @@ func Attach(ctx context.Context, env Env, name string, mode Mode) error {
 		// tmux's -r is advisory, not a permission boundary (ADR-0005).
 		// Anyone who can reach this box as the smith user can run
 		// `tmux attach` themselves without it. What it buys is a guard
-		// against typing into an agent's pane by reflex, and that is all it
+		// against typing into an agent's session by reflex, and that is all it
 		// is ever to be relied on for.
 		args = []string{"attach-session", "-r", "-t", TmuxSession(name)}
 	}

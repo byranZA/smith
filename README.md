@@ -376,7 +376,7 @@ batch is all-or-nothing.
 > new credential — it is `tmux attach` reached through the SSH door bootstrap
 > already built, identically under `--access=public` and `--access=tailscale`.
 > Read-only is **advisory**: anyone who can SSH as `smith` can attach writable.
-> It guards against typing into a pane, not against an operator.
+> It guards against typing into an agent's session, not against an operator.
 
 `rm` reclaims a worktree and keeps the branch, so everything it takes away comes
 back on the next `start` **except uncommitted changes** — which is exactly what

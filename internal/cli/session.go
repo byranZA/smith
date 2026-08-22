@@ -366,7 +366,7 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 // newSessionAttachCmd builds `smith session attach <name> [--interact]`. It
 // hands the operator's terminal to the session's tmux session — read-only
 // unless --interact is given, because an operator attaching may be there to
-// watch an agent work rather than to type into its pane.
+// watch an agent work rather than to type into its session.
 //
 // smith execs into tmux, so this command does not return: what the operator
 // sees afterwards is tmux itself, and disconnecting leaves the session

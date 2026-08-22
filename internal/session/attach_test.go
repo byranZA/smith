@@ -44,7 +44,7 @@ func attachEnv(t *testing.T) (session.Env, *fakeExec, string) {
 
 // TestAttachObservesByDefault locks in the access level attach picks when the
 // operator asks for none: read-only, because they may be there to watch an
-// agent work rather than to type into its pane.
+// agent work rather than to type into its session.
 func TestAttachObservesByDefault(t *testing.T) {
 	env, execer, name := attachEnv(t)
 
