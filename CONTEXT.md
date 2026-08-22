@@ -318,6 +318,14 @@ the repo is bare, **the bare repos are the worktree registry** (`git worktree li
 keeps `session list` and `session rm` from disagreeing about what a session is.
 _Avoid_: project dir, code dir.
 
+**Orphan**:
+A repo the box still holds under the workspace root that the blueprint no longer declares.
+`workspace converge` **reports** every orphan and deletes nothing: the directory holds a bare repo,
+its worktrees, and possibly unpushed work, so reclaiming it is a verb the operator runs themselves
+(ADR-0010). This is deliberately the opposite of the staged config tree's prune rule, which
+reclaims bytes smith wrote and can write again.
+_Avoid_: stale repo, dangling repo.
+
 **Placement**:
 The primitive that puts a file on the box: `source-reference → dest-path [converge|once]`.
 `converge` (default) whole-file replaces on every pass; `once` writes only if absent, and the

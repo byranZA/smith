@@ -36,6 +36,11 @@ func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Repos:
 		return planRepos(b, home)
+	case step == Orphans && len(b.Repos) > 0:
+		return []Unit{{Step: Orphans, Workspace: Workspace{
+			Root:     workspaceRoot(b, home),
+			Declared: repoNames(b),
+		}}}
 	case step == Toolchain:
 		return planToolchain(b, home)
 	default:
@@ -125,6 +130,18 @@ func planRepos(b blueprint.Blueprint, home string) []Unit {
 		}})
 	}
 	return units
+}
+
+// repoNames are the names the blueprint's repos occupy directories under the
+// workspace root by, each defaulted from its url where the operator named
+// none. They are what a directory under the root is held against to decide
+// whether it is still declared.
+func repoNames(b blueprint.Blueprint) []string {
+	names := make([]string, 0, len(b.Repos))
+	for _, r := range b.Repos {
+		names = append(names, cmp.Or(r.Name, blueprint.RepoName(r.URL)))
+	}
+	return names
 }
 
 // boxPath expands a destination written the way an operator writes it —

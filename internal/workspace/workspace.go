@@ -46,13 +46,18 @@ const (
 	// Repos clones every declared repo bare into the workspace, under the env
 	// the toolchain step put in scope.
 	Repos Step = "repos"
+	// Orphans names the repos the box holds that the blueprint no longer
+	// declares. It is last because it reads what the clones left behind, and
+	// it only ever reports: the stage deletes nothing under the workspace
+	// root.
+	Orphans Step = "orphans"
 )
 
 // Order is the sequence every plan follows. It is the ordering rule itself, in
 // one place: a step is converged before another because it puts something on
 // the box the later one needs, never for tidiness.
 func Order() []Step {
-	return []Step{Placements, Packages, Toolchain, Repos}
+	return []Step{Placements, Packages, Toolchain, Repos, Orphans}
 }
 
 // Unit is one unit of work the stage converges: which step it belongs to and
@@ -69,6 +74,9 @@ type Unit struct {
 	Fragment Fragment
 	// Repo is the repository a repos unit clones into the workspace.
 	Repo Repo
+	// Workspace is the root an orphans unit scans and the repos the blueprint
+	// still declares under it.
+	Workspace Workspace
 }
 
 // Placement is one box-scoped placement of the plan: a file the blueprint

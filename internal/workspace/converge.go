@@ -52,6 +52,8 @@ func converge(ctx context.Context, env Env, unit Unit, progress io.Writer) Outco
 		summary, err = convergeToolchain(ctx, env, unit.Fragment, progress)
 	case Repos:
 		summary, err = convergeRepo(ctx, env.Command, unit.Repo, progress)
+	case Orphans:
+		summary, err = reportOrphans(unit.Workspace)
 	default:
 		err = fmt.Errorf("the %s step is not built yet", unit.Step)
 	}

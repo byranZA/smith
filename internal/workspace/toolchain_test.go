@@ -1,8 +1,6 @@
 package workspace
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -155,13 +153,7 @@ func TestGenerateQuotesAValueThatWouldBreakTheDocument(t *testing.T) {
 // and a home of the test's own, and returns what it did and what it streamed.
 func convergeOnBox(t *testing.T, box *fakeBox, home string, b blueprint.Blueprint) (Result, string) {
 	t.Helper()
-	var progress bytes.Buffer
-	env := Env{Command: box, StateRoot: t.TempDir(), Secret: fakeSecret}
-	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
-	if err != nil {
-		t.Fatalf("Converge() error = %v, want nil", err)
-	}
-	return result, progress.String()
+	return convergeIn(t, box, t.TempDir(), home, b)
 }
 
 // fakeSecret stands in for the operator's own resolver: it answers a literal

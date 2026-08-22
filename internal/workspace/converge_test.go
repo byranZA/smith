@@ -31,11 +31,14 @@ type fakeBox struct {
 	remotes map[string]string
 	// gitErr fails the git commands the way an unreachable remote does.
 	gitErr error
+	// unreachable fails the git commands of one repo, keyed by its url, the
+	// way a forge that is down for that repo alone does.
+	unreachable map[string]bool
 }
 
 // newBox is a box holding nothing: no packages, no mise, and no clones.
 func newBox() *fakeBox {
-	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}}
+	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}}
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
@@ -66,12 +69,18 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 			return f.gitErr
 		}
 		url, path := argv[len(argv)-2], argv[len(argv)-1]
+		if f.unreachable[url] {
+			return fmt.Errorf("fatal: could not read from remote repository %s", url)
+		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return fmt.Errorf("make the canned clone at %s: %w", path, err)
 		}
 		f.remotes[path] = url
 		return nil
 	case strings.Contains(line, "git --git-dir"):
+		if f.unreachable[f.remotes[gitDir(argv)]] {
+			return fmt.Errorf("fatal: could not read from remote repository %s", f.remotes[gitDir(argv)])
+		}
 		return f.gitErr
 	case strings.Contains(line, "mise.run"):
 		f.hasMise = true
