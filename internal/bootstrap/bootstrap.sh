@@ -30,7 +30,7 @@
 # box-side streamed phase.
 set -Eeuo pipefail
 
-SMITH_BOOTSTRAP_VERSION=1
+SMITH_BOOTSTRAP_VERSION=2
 
 # MARKER is the on-box ledger path. SMITH_MARKER overrides it (used by tests to
 # point at a writable location without root); production always uses the default.
@@ -111,6 +111,10 @@ PUBLIC_SSH="open"
 # Empty when the box is built from no blueprint. It is a name and nothing else —
 # the staged document is ground truth, so no content hash is recorded.
 BLUEPRINT=""
+# BOX_NAME is the box's name: the operator-chosen name the box is registered
+# under, recorded in the marker so the name survives on the box itself and not
+# only in the operator's inventory. Empty when the run names the box nothing.
+BOX_NAME=""
 
 # The tailscale apt keyring and sources list. SMITH_TS_KEYRING and SMITH_TS_LIST
 # override them for tests; production uses the apt defaults. The keyring is the
@@ -195,12 +199,23 @@ write_marker() {
   local ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   as_root mkdir -p "$MARKER_DIR"
+  # The name and the blueprint pointer are recorded only when the run has one:
+  # a box named nothing, or built from no blueprint, carries no such key at all
+  # rather than carrying it empty.
+  local optional=""
+  if [ -n "$BOX_NAME" ]; then
+    optional="${optional}  \"name\": \"${BOX_NAME}\",
+"
+  fi
+  if [ -n "$BLUEPRINT" ]; then
+    optional="${optional}  \"blueprint\": \"${BLUEPRINT}\",
+"
+  fi
   printf '%s\n' "{
   \"schema_version\": ${SMITH_BOOTSTRAP_VERSION},
   \"smith_version\": \"${SMITH_VERSION}\",
   \"access_mode\": \"${ACCESS}\",
-  \"blueprint\": \"${BLUEPRINT}\",
-  \"completed_phases\": [$(json_phases)],
+${optional}  \"completed_phases\": [$(json_phases)],
   \"updated_at\": \"${ts}\"
 }" | as_root tee "$MARKER" >/dev/null
 }
@@ -617,7 +632,8 @@ phase_access() {
 }
 
 # parse_setup_args reads the setup subcommand's flags: the access mode, the
-# smith version, and the blueprint pointer to stamp into the marker.
+# smith version, and the box name and blueprint pointer to stamp into the
+# marker.
 parse_setup_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -631,6 +647,10 @@ parse_setup_args() {
         ;;
       --blueprint)
         BLUEPRINT="${2:-}"
+        shift 2
+        ;;
+      --name)
+        BOX_NAME="${2:-}"
         shift 2
         ;;
       --public-ssh)
@@ -678,19 +698,21 @@ setup() {
   done
 }
 
-# load_marker_state restores the run parameters (access mode, smith version,
-# blueprint pointer) and completed phases from the existing marker, so a
+# load_marker_state restores the run parameters (access mode, smith version, box
+# name, blueprint pointer) and completed phases from the existing marker, so a
 # follow-up subcommand such as close-public-ssh rewrites the marker without
 # clobbering what setup recorded.
 load_marker_state() {
   [ -f "$MARKER" ] || return 0
-  local am sv bp
+  local am sv bp bn
   am="$(grep -o '"access_mode":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   sv="$(grep -o '"smith_version":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   bp="$(grep -o '"blueprint":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+  bn="$(grep -o '"name":[[:space:]]*"[^"]*"' "$MARKER" | sed 's/.*"\([^"]*\)"$/\1/' || true)"
   [ -n "$am" ] && ACCESS="$am"
   [ -n "$sv" ] && SMITH_VERSION="$sv"
   [ -n "$bp" ] && BLUEPRINT="$bp"
+  [ -n "$bn" ] && BOX_NAME="$bn"
 
   COMPLETED_PHASES=()
   local arr item

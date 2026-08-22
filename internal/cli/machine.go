@@ -188,9 +188,11 @@ nothing is provisioned yet. Run:
 // hardened SSH open on the public IP; tailscale joins the box to the operator's
 // tailnet as a tag:smith node and closes public SSH once a live tailnet probe
 // proves reach. --blueprint names the blueprint the box is built from, read
-// through the config home resolve locates and staged onto the box.
+// through the config home resolve locates and staged onto the box. --name names
+// the box, stamped onto its marker so the box records what the operator calls
+// it.
 func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
-	var accessMode, authKeyRef, blueprintName string
+	var accessMode, authKeyRef, blueprintName, boxName string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
@@ -277,6 +279,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			opts := bootstrap.SetupOptions{
 				AccessMode:   accessMode,
 				SmithVersion: resolveVersion(),
+				BoxName:      boxName,
 				Blueprint:    blueprintName,
 				PublicSSH:    publicSSH,
 			}
@@ -314,6 +317,8 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 		"reference to the Tailscale auth key for --access=tailscale (env:VAR or file:/path); prompts if omitted on a terminal")
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
 		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
+	cmd.Flags().StringVar(&boxName, "name", "",
+		"the name the box records for itself; omitted, the box records no name")
 	return cmd
 }
 

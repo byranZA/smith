@@ -143,13 +143,17 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 }
 
 // SetupOptions carries the run parameters bootstrap.sh's setup needs: how the
-// box is reached, which smith version and blueprint pointer to stamp into the
-// marker, and the access-aware public-SSH firewall target.
+// box is reached, which smith version, box name and blueprint pointer to stamp
+// into the marker, and the access-aware public-SSH firewall target.
 type SetupOptions struct {
 	// AccessMode is the access layer to record and drive: "public" or "tailscale".
 	AccessMode string
 	// SmithVersion is the smith build recorded in the marker.
 	SmithVersion string
+	// BoxName is the box's name: the operator-chosen name recorded in the
+	// marker. Empty when the run names the box nothing, which is how a box the
+	// operator has not named records no name.
+	BoxName string
 	// Blueprint is the blueprint pointer: the name of the blueprint the box is
 	// built from, recorded in the marker. Empty when the run names none, which
 	// is how a box built from no blueprint records none.
@@ -194,9 +198,10 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 	if publicSSH == "" {
 		publicSSH = "open"
 	}
-	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s --blueprint %s",
+	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s%s%s",
 		RemoteScriptPath, connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion),
-		connection.ShellArg(publicSSH), connection.ShellArg(opts.Blueprint))
+		connection.ShellArg(publicSSH), optionalFlag("--name", opts.BoxName),
+		optionalFlag("--blueprint", opts.Blueprint))
 	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return SetupResult{Outcome: OutcomeConnectFailed}, nil
@@ -208,6 +213,16 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 		return SetupResult{Outcome: OutcomePartial, Failure: &report}, nil
 	}
 	return SetupResult{Outcome: OutcomePassed}, nil
+}
+
+// optionalFlag renders " <flag> <value>" for a value the run has, and nothing
+// for one it does not — so a box the run names nothing, or builds from no
+// blueprint, is never handed an empty value to record.
+func optionalFlag(flag, value string) string {
+	if value == "" {
+		return ""
+	}
+	return fmt.Sprintf(" %s %s", flag, connection.ShellArg(value))
 }
 
 // SSHConnection reports the box's SSH_CONNECTION for the connection smith is

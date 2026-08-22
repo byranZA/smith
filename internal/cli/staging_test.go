@@ -79,6 +79,20 @@ func TestSetupTakesTheBlueprintToStage(t *testing.T) {
 	}
 }
 
+// TestSetupTakesTheBoxName pins the flag that names the box: without it the
+// operator-chosen name lives only in the operator's inventory, so an entry
+// rebuilt from the box comes back as an address.
+func TestSetupTakesTheBoxName(t *testing.T) {
+	cmd := newSetupCmd(func() (config.Home, error) { return config.NewHome(t.TempDir()), nil }, connection.System())
+	flag := cmd.Flags().Lookup("name")
+	if flag == nil {
+		t.Fatal("machine setup has no --name flag, so no box can record what it is called")
+	}
+	if flag.DefValue != "" {
+		t.Errorf("--name default = %q, want empty: smith never invents a name", flag.DefValue)
+	}
+}
+
 func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
 	dir := t.TempDir()
 	document := "# acme\naccess: tailscale\nterminal: tmux\n"
