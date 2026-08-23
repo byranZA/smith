@@ -181,7 +181,7 @@ _Avoid_: manifest (reserved, avoided for the marker), config file, template, pro
 **Config home vs box state**:
 `~/.smith/` is the **operator's** config home — `blueprints/`, `preferences`, and a gitignored
 `cache/` holding the box inventory. `/etc/smith/` is a **provisioned box's** state — the marker,
-the staged blueprint, and the staged placement bytes. Separate locations and roles, same format;
+the staged blueprint, the staged placement bytes, and the staged env. Separate locations and roles, same format;
 they must never share a directory, because one machine could one day hold both. The config home is
 created by the **first write** into it and never by a read, and its `.gitignore` is appended to
 rather than rewritten: the file is the operator's.
@@ -194,6 +194,18 @@ and no derived format. `machine setup` is its sole writer, and on-box smith read
 fetching configuration of its own. Root-owned and `0644`, because it is a committed, non-secret
 artifact an SSHed-in operator is meant to be able to read.
 _Avoid_: box config, rendered blueprint.
+
+**Staged env**:
+`/etc/smith/env.json` — the value of every variable the blueprint's `env` declares, box-scoped and
+per-repo, **resolved on the operator's machine** at `machine setup` and staged beside the document.
+It exists because `env:GH_TOKEN` names a variable in the *operator's* shell and `file:` a path on
+*their* disk: a box re-reading either would export something else entirely, or nothing
+([ADR-0009](./docs/adr/0009-provisioned-secrets-sit-in-plaintext.md)). The staged blueprint stays
+verbatim — the references are still in it as dead provenance — and on-box smith reads a value by
+name rather than resolving one. A declared variable with no staged value is refused by name, never
+filled in from the box. Smith-owned and `0600`: these are provisioned secrets, unlike the
+world-readable document beside them.
+_Avoid_: on-box resolution, box environment.
 
 **Preferences**:
 `~/.smith/preferences.yaml` — the operator's own half of the config home, answering *if you built
@@ -317,6 +329,14 @@ and sanitizing kills the directory collision between a repo and a branch named a
 the repo is bare, **the bare repos are the worktree registry** (`git worktree list`), which is what
 keeps `session list` and `session rm` from disagreeing about what a session is.
 _Avoid_: project dir, code dir.
+
+**Orphan**:
+A repo the box still holds under the workspace root that the blueprint no longer declares.
+`workspace converge` **reports** every orphan and deletes nothing: the directory holds a bare repo,
+its worktrees, and possibly unpushed work, so reclaiming it is a verb the operator runs themselves
+(ADR-0010). This is deliberately the opposite of the staged config tree's prune rule, which
+reclaims bytes smith wrote and can write again.
+_Avoid_: stale repo, dangling repo.
 
 **Placement**:
 The primitive that puts a file on the box: `source-reference → dest-path [converge|once]`.

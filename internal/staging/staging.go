@@ -9,8 +9,9 @@
 //
 // The package is split into pure seams and an applying one. Plan derives the
 // desired staged tree from a blueprint document and touches nothing; Resolve
-// turns each placement's source reference into the bytes it names, which only
-// the operator's machine can do; Converge applies that tree to a box over a
+// turns each placement's source reference into the bytes it names and each env
+// value's reference into the value it names, which only the operator's machine
+// can do; Converge applies that tree to a box over a
 // narrow connection, comparing digests before it writes so a re-run that
 // changes nothing rewrites nothing. Load is the read half, running on the box:
 // it re-validates the staged document through the same strict parser and
@@ -19,7 +20,10 @@
 //
 // A placement's staged path is a pure function of its scope and destination,
 // exported so the writer and the on-box reader derive it the same way and
-// cannot disagree about where a blob lives.
+// cannot disagree about where a blob lives. The blueprint's env is staged the
+// same way and for the same reason: env:GH_TOKEN names a variable in the
+// operator's shell, so the values travel and the references stay behind as
+// provenance in the verbatim document.
 //
 // /etc/smith/ is a provisioned box's state. The box is deliberately given no
 // ~/.smith/ — that is the operator's config home, and the two must never be the
@@ -27,6 +31,8 @@
 package staging
 
 import (
+	"cmp"
+	"maps"
 	"path/filepath"
 	"strings"
 
@@ -139,6 +145,9 @@ type Tree struct {
 	Document File
 	// Placements are the declared placements and where their bytes are staged.
 	Placements []Placement
+	// Env is the blueprint's env: the references it declares, and the file
+	// their resolved values are staged in.
+	Env EnvFile
 }
 
 // Plan derives the staged tree from the bytes of the operator's blueprint and
@@ -163,6 +172,7 @@ func Plan(document []byte, b blueprint.Blueprint) Tree {
 			Owner: documentOwner,
 		},
 	}
+	tree.Env = plannedEnv(b)
 	if len(b.Placements) > 0 {
 		tree.Dirs = append(tree.Dirs, scopeDir(boxDirIn(Root)))
 	}
@@ -182,6 +192,31 @@ func Plan(document []byte, b blueprint.Blueprint) Tree {
 		}
 	}
 	return tree
+}
+
+// plannedEnv is the blueprint's env as the staged tree carries it: every
+// variable the document declares, by the scope it was declared at, and the
+// file their values are staged in once the operator's machine has resolved
+// them.
+//
+// The file is planned whether or not anything is declared, so an operator who
+// drops their last variable converges the box back to holding none rather than
+// leaving the values of a blueprint it no longer runs.
+func plannedEnv(b blueprint.Blueprint) EnvFile {
+	env := EnvFile{
+		References: Env{Box: maps.Clone(b.Env)},
+		File:       File{Path: EnvPath, Mode: envMode, Owner: envOwner},
+	}
+	for _, r := range b.Repos {
+		if len(r.Env) == 0 {
+			continue
+		}
+		if env.References.Repos == nil {
+			env.References.Repos = make(map[string]map[string]string, len(b.Repos))
+		}
+		env.References.Repos[cmp.Or(r.Name, blueprint.RepoName(r.URL))] = maps.Clone(r.Env)
+	}
+	return env
 }
 
 // planned is one declared placement as the staged tree carries it: its

@@ -104,6 +104,14 @@ func newRootCmd() *cobra.Command {
 		connect: connection.System(),
 		ssh:     connection.System(),
 		version: resolveVersion(),
+	}), newWorkspaceCmd(workspaceWiring{
+		blueprint: stagedBlueprint,
+		home:      userConfigHome,
+		command:   connection.System(),
+		root:      staging.Root,
+		boxHome:   boxHomeDir,
+		ssh:       connection.System(),
+		version:   resolveVersion(),
 	}), newVersionCmd())
 	return root
 }

@@ -154,3 +154,50 @@ func TestParseChecksNoSchemeOnTheProviderSSHKey(t *testing.T) {
 		})
 	}
 }
+
+// TestValueResolvesTheSchemesABlueprintValueMayName drives the resolution of a
+// declared value, which is the wider set a placement source has: a literal is
+// a plain value declared on purpose and resolves to itself.
+func TestValueResolvesTheSchemesABlueprintValueMayName(t *testing.T) {
+	t.Setenv("SMITH_TEST_TOKEN", "ghp_fromtheenvironment")
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "a literal is the value itself", ref: "literal:production", want: "production"},
+		{name: "a literal keeps a colon in its value", ref: "literal:json:pretty", want: "json:pretty"},
+		{name: "an env reference reads the variable", ref: "env:SMITH_TEST_TOKEN", want: "ghp_fromtheenvironment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := blueprint.Value(tt.ref)
+			if err != nil {
+				t.Fatalf("blueprint.Value(%q) error = %v, want nil", tt.ref, err)
+			}
+			if got != tt.want {
+				t.Errorf("blueprint.Value(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestValueRefusesWhatIsNotAReference proves the resolver refuses the same
+// values the schema does, rather than passing a bare string through as though
+// the operator had declared it on purpose.
+func TestValueRefusesWhatIsNotAReference(t *testing.T) {
+	for _, ref := range []string{"ghp_abc", "vault:token"} {
+		if got, err := blueprint.Value(ref); err == nil {
+			t.Errorf("blueprint.Value(%q) = %q, want a refusal", ref, got)
+		}
+	}
+}
+
+// TestValueRefusesAnEmptyLiteral proves a literal with nothing after the colon
+// is a refusal rather than an empty export, which would surface later as a
+// variable set to nothing.
+func TestValueRefusesAnEmptyLiteral(t *testing.T) {
+	if got, err := blueprint.Value("literal:"); err == nil {
+		t.Errorf("blueprint.Value(%q) = %q, want a refusal", "literal:", got)
+	}
+}

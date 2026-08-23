@@ -334,6 +334,23 @@ and [docs/providers.md](docs/providers.md) covers it, alongside worked
 > needs a credential helper for that, and smith will not notice. Clone over SSH
 > and place the key, or place the helper's config yourself.
 
+## The workspace stage
+
+`machine setup`'s last stage converges the box to the workspace its blueprint
+declares — box placements, `packages`, the pinned toolchain, then a bare clone
+of every declared repo. It runs on the box, and it is a verb of its own so you
+can re-converge without re-running the pipeline:
+
+```bash
+smith workspace converge dev      # from your laptop, relayed over SSH
+smith workspace converge          # after SSHing in — the same verb
+```
+
+It never deletes: a step it cannot converge is reported, the run exits
+non-zero, and what the box already holds stays where it is. Only the
+`packages` step is built today; [docs/workspace.md](docs/workspace.md) covers
+the order the rest land in and why it is the order it is.
+
 ## Sessions
 
 A **session** is one `tmux` session plus one git worktree of one repo on one

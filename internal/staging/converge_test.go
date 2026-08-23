@@ -181,9 +181,13 @@ func TestConvergePutsTheDocumentInPlaceRootOwnedAt0644(t *testing.T) {
 
 func TestConvergeLeavesAnUnchangedDocumentAlone(t *testing.T) {
 	document := "access: public\n"
-	box := &fakeBox{files: map[string]string{DocumentPath: document}}
+	tree := resolvedTree(t, blueprint.Blueprint{})
+	box := &fakeBox{files: map[string]string{
+		DocumentPath: document,
+		EnvPath:      string(tree.Env.File.Bytes),
+	}}
 
-	result, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{}))
+	result, err := Converge(context.Background(), box, tree)
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
@@ -198,8 +202,11 @@ func TestConvergeLeavesAnUnchangedDocumentAlone(t *testing.T) {
 func TestConvergeReplacesAnEditedDocumentWholesale(t *testing.T) {
 	staged := "access: public\nrepos:\n  - name: api\n"
 	edited := "access: public\n"
-	tree := Plan([]byte(edited), blueprint.Blueprint{})
-	box := &fakeBox{files: map[string]string{DocumentPath: staged}}
+	tree := resolvedTree(t, blueprint.Blueprint{})
+	box := &fakeBox{files: map[string]string{
+		DocumentPath: staged,
+		EnvPath:      string(tree.Env.File.Bytes),
+	}}
 
 	result, err := Converge(context.Background(), box, tree)
 	if err != nil {
@@ -256,7 +263,7 @@ func TestConvergeStagesABoxPlacementsBytesUnderItsKey(t *testing.T) {
 	const credential = "s3cr3t-token"
 	t.Setenv("NPM_TOKEN", credential)
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc", Perms: "0640"}}}
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -280,7 +287,7 @@ func TestConvergeDeliversPlacementBytesOverStdinNotArgv(t *testing.T) {
 	const credential = "s3cr3t-token"
 	t.Setenv("NPM_TOKEN", credential)
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "/home/smith/.npmrc"}}}
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -319,17 +326,24 @@ func TestConvergeMakesThePlacementsDirectorySmithOwnedAt0700(t *testing.T) {
 	}
 }
 
-func TestConvergeStagesOnlyTheDocumentWhenNoPlacementsAreDeclared(t *testing.T) {
+// TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared proves a blueprint
+// declaring no placement stages none: what reaches the box is the document and
+// the env beside it, which every box is owed, and nothing more.
+func TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared(t *testing.T) {
 	box := &fakeBox{}
-	result, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}))
+	result, err := Converge(context.Background(), box, resolvedTree(t, blueprint.Blueprint{}))
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
-	if len(box.writes) != 1 {
-		t.Errorf("the box was handed %q, want the document alone", box.stdin())
+	if len(box.writes) != 2 {
+		t.Errorf("the box was handed %q, want the document and the env alone", box.stdin())
 	}
-	if len(result.Entries) != 1 || result.Entries[0].Path != DocumentPath {
-		t.Errorf("Result covered %v, want the document alone", result.Entries)
+	var staged []string
+	for _, e := range result.Entries {
+		staged = append(staged, e.Path)
+	}
+	if len(staged) != 2 || staged[0] != DocumentPath || staged[1] != EnvPath {
+		t.Errorf("Result covered %v, want the document and the env alone", result.Entries)
 	}
 }
 
@@ -337,9 +351,8 @@ func TestConvergeStagesOnlyTheDocumentWhenNoPlacementsAreDeclared(t *testing.T) 
 // standing in for sources that resolve only on the operator's machine.
 func resolvedTree(t *testing.T, b blueprint.Blueprint) Tree {
 	t.Helper()
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), func(ref string) (string, error) {
-		return "bytes of " + ref, nil
-	})
+	canned := func(ref string) (string, error) { return "bytes of " + ref, nil }
+	tree, err := Resolve(Plan([]byte("access: public\n"), b), canned, canned)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}

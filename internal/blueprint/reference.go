@@ -31,6 +31,30 @@ var (
 	sourceSchemes = []string{"env", "file"}
 )
 
+// Value resolves what a blueprint value declares into the value itself: the
+// schemes a value may name, which are the ones a placement source may name
+// plus literal:.
+//
+// literal: is resolved here rather than in internal/secret because it is not a
+// secret reference at all — it is a plain value the operator declared on
+// purpose, and the schema is what says which fields may carry one. It is taken
+// verbatim, colons and all, so literal:json:pretty is the value it looks like.
+// Every other scheme resolves through the one resolver, so a scheme that
+// package learns is a scheme a blueprint value can name.
+func Value(ref string) (string, error) {
+	if scheme, arg, ok := secret.Split(ref); ok && scheme == "literal" {
+		if arg == "" {
+			return "", fmt.Errorf("resolve %q: a literal declares a value, and this one declares none", ref)
+		}
+		return arg, nil
+	}
+	value, err := secret.Resolve(ref)
+	if err != nil {
+		return "", fmt.Errorf("read what this blueprint value names: %w", err)
+	}
+	return value, nil
+}
+
 // reference refuses a value that is not a reference to one of the schemes in
 // known. The rule is that a value parses as a *known* scheme, not that it
 // contains a colon, so LOG_FORMAT: "json:pretty" is reported as the unknown
