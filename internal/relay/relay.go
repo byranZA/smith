@@ -12,11 +12,11 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -88,14 +88,74 @@ type Conn interface {
 // a terminal: the outcome comes back typed, and what to do about it — prompt,
 // print, or converge — belongs to the caller.
 //
+// What the box said on stderr reaches the operator as it arrives, minus the
+// lines the two smiths addressed to each other: a refusal's machine-readable
+// field is read here, into the outcome, and never shown to a human. Where the
+// box's own failure and a failure to pass its words on collide, the box's is
+// what the caller is told about, because it is the one they can act on.
+//
 // Anything that grows a second way to run a verb re-opens ADR-0008: a local
 // fast path, or a laptop-side reimplementation "just this once", each recreates
 // the drift between the two sides that this relay exists to prevent. One
 // implementation, on the box, reached through here.
 func Send(ctx context.Context, conn Conn, v Verb, stdout, stderr io.Writer) error {
 	watched := &strings.Builder{}
-	if err := conn.Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(stderr, watched)); err != nil {
+	spoken := &wireStripper{to: stderr}
+	err := conn.Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(spoken, watched))
+	flushed := spoken.flush()
+	if err != nil {
 		return classify(v, watched.String(), err)
+	}
+	return flushed
+}
+
+// wireStripper is the box's stderr on its way to the operator's terminal, with
+// the relay's own wire lines taken back out: what the box said reaches them as
+// it arrives, and what the two smiths said to each other does not.
+//
+// It works a line at a time because a wire line is one, holding back a trailing
+// partial line until the newline that ends it arrives or flush says none will.
+type wireStripper struct {
+	// to is the operator's stream, written everything but the wire.
+	to io.Writer
+	// pending is the tail of a line whose newline has not arrived yet.
+	pending []byte
+}
+
+// Write implements io.Writer, passing on every completed line that is not the
+// relay talking to itself.
+func (w *wireStripper) Write(p []byte) (int, error) {
+	w.pending = append(w.pending, p...)
+	for {
+		end := bytes.IndexByte(w.pending, '\n')
+		if end < 0 {
+			return len(p), nil
+		}
+		line := w.pending[:end+1]
+		w.pending = w.pending[end+1:]
+		if err := w.speak(line); err != nil {
+			return 0, err
+		}
+	}
+}
+
+// flush passes on a last line that never ended in a newline.
+func (w *wireStripper) flush() error {
+	line := w.pending
+	w.pending = nil
+	return w.speak(line)
+}
+
+// speak writes one line to the operator, unless it is the relay's own.
+func (w *wireStripper) speak(line []byte) error {
+	if len(line) == 0 {
+		return nil
+	}
+	if _, isWire := wireField(string(line)); isWire {
+		return nil
+	}
+	if _, err := w.to.Write(line); err != nil {
+		return fmt.Errorf("stream the box's output: %w", err)
 	}
 	return nil
 }
@@ -223,31 +283,64 @@ func classify(v Verb, stderr string, err error) error {
 // smith answers with, so no other outcome can be mistaken for it.
 const RefusalExitCode = 6
 
-// Refusal renders the message on-box smith prints when it refuses a relayed
-// command, naming both versions because the operator reading it cannot
-// otherwise tell which side is which.
+// Refusal renders what on-box smith writes to stderr when it refuses a
+// relayed command: the operator's message, then the one line of it that is
+// wire rather than prose.
 //
-// The wording lives here, with the relay, because both sides depend on it: the
-// box prints it, and the relaying side reads the box's version back out of it
-// to report the mismatch. local is the version of the smith refusing — the one
-// on the box — and relayedFrom the version the relaying smith declared.
+// Both halves live here, with the relay, because both sides depend on them —
+// but on different halves. The message names both versions because the
+// operator reading it cannot otherwise tell which side is which, and it is
+// theirs alone to be rewritten; the field beneath it is what the relaying
+// smith reads the box's version back out of, so wording and protocol move
+// independently. local is the version of the smith refusing — the one on the
+// box — and relayedFrom the version the relaying smith declared.
 func Refusal(local, relayedFrom string) string {
-	return fmt.Sprintf("refusing a command relayed from smith %s: this smith is %s, and only an identical version may relay to it", relayedFrom, local)
+	return fmt.Sprintf("refusing a command relayed from smith %s: this smith is %s, and only an identical version may relay to it\n%s",
+		relayedFrom, local, refusalField(local))
 }
 
-// refusedVersion pulls the refusing smith's own version out of the message
-// Refusal renders, and is the only reader of that wording.
-var refusedVersion = regexp.MustCompile(`this smith is (\S+),`)
+// refusalMarker opens the machine-readable line a refusal carries and is
+// reserved for it: a line bearing it is the relay talking to itself, never
+// something the operator is meant to read, and the relay strips it from the
+// box's output before the operator's terminal ever sees it.
+const refusalMarker = "smith-relay-refused:"
+
+// refusalVersionField names the refusing smith's own version within that line.
+const refusalVersionField = "version="
+
+// refusalField renders the machine-readable line, carrying the version of the
+// smith that refused.
+func refusalField(local string) string {
+	return refusalMarker + " " + refusalVersionField + local
+}
 
 // boxVersion reads the version the box reported in its refusal, empty when
-// what came back on stderr was not a refusal this smith knows how to read — an
-// older box's wording, say, whose exit code still says what happened.
+// what came back on stderr carried no field this smith knows how to read — an
+// older box that answered in prose alone, say, whose exit code still says what
+// happened.
 func boxVersion(stderr string) string {
-	match := refusedVersion.FindStringSubmatch(stderr)
-	if match == nil {
-		return ""
+	for _, line := range strings.Split(stderr, "\n") {
+		field, ok := wireField(line)
+		if !ok {
+			continue
+		}
+		if version, ok := strings.CutPrefix(field, refusalVersionField); ok {
+			return strings.TrimSpace(version)
+		}
 	}
-	return match[1]
+	return ""
+}
+
+// wireField reports whether a line of the box's output is the relay's own wire
+// line, and returns what it carries. The marker is looked for anywhere in the
+// line rather than at its start, because whatever printed it may have prefixed
+// the line with its own name.
+func wireField(line string) (string, bool) {
+	i := strings.Index(line, refusalMarker)
+	if i < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(line[i+len(refusalMarker):]), true
 }
 
 // MismatchError reports that the box refused the relayed command because the

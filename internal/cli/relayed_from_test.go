@@ -2,6 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -134,4 +138,43 @@ func TestRefusalExitsTheCodeTheRelayReads(t *testing.T) {
 	if got := relay.Refusal("0.1.0", "0.2.0"); !strings.Contains(err.Error(), got) {
 		t.Errorf("refusal = %q, want the relay's own wording %q", err, got)
 	}
+}
+
+// TestRefusalCarriesTheVersionTheRelayReads checks the wire contract end to
+// end from the box's side: what on-box smith prints when it refuses is
+// something the relaying smith recovers this binary's version from, without
+// either side reading the other's prose.
+func TestRefusalCarriesTheVersionTheRelayReads(t *testing.T) {
+	refusal := acceptRelayedFrom("0.1.0", "0.2.0")
+	if refusal == nil {
+		t.Fatal("acceptRelayedFrom() = nil, want a refusal")
+	}
+	ssh := &skewRefusingSSH{stderr: "smith: " + refusal.Error() + "\n"}
+
+	err := relay.Run(context.Background(), ssh, relay.Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "list"},
+	}, func() error { return nil }, io.Discard, io.Discard)
+
+	var mismatch *relay.MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("relay.Run() err = %v, want a MismatchError", err)
+	}
+	if mismatch.Box != "0.1.0" {
+		t.Errorf("MismatchError.Box = %q, want the version the box refused with", mismatch.Box)
+	}
+}
+
+// skewRefusingSSH is the box answering a relayed verb with the refusal on-box
+// smith renders and the exit code it exits on.
+type skewRefusingSSH struct {
+	stderr string
+}
+
+func (f *skewRefusingSSH) Run(_ context.Context, _ string, _ []string, _ io.Reader, _, stderr io.Writer) error {
+	if _, err := io.WriteString(stderr, f.stderr); err != nil {
+		return fmt.Errorf("write canned refusal: %w", err)
+	}
+	return relayExit(relay.RefusalExitCode)
 }

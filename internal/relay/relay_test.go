@@ -431,3 +431,106 @@ func TestRunNamesTheBoxTheOperatorTyped(t *testing.T) {
 		})
 	}
 }
+
+// TestRefusalCarriesTheVersionInAWireField checks the half of the refusal that
+// is protocol and not prose: whatever the operator-facing wording says, the
+// refusing smith's own version travels in a field the other side reads exactly,
+// so rewriting the message cannot change what the relay concludes.
+func TestRefusalCarriesTheVersionInAWireField(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stderr string
+		want   string
+	}{
+		{
+			name:   "the refusal this smith renders",
+			stderr: "smith: " + Refusal("0.1.0", "0.2.0") + "\n",
+			want:   "0.1.0",
+		},
+		{
+			name:   "wording nobody here wrote, carrying the field",
+			stderr: "smith: nope, wrong smith entirely\n" + refusalField("0.1.0") + "\n",
+			want:   "0.1.0",
+		},
+		{
+			name:   "an older box that renders prose and no field",
+			stderr: "smith: refusing a command relayed from smith 0.2.0: this smith is 0.1.0, and only an identical version may relay to it\n",
+			want:   "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &fakeSSH{stderr: tc.stderr, err: exitStatus(RefusalExitCode)}
+
+			err := Run(context.Background(), ssh, Verb{
+				Target:  "smith@box",
+				Version: "0.2.0",
+				Args:    []string{"session", "list"},
+			}, func() error { return nil }, io.Discard, io.Discard)
+
+			var mismatch *MismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("Run() err = %v, want a MismatchError", err)
+			}
+			if mismatch.Box != tc.want {
+				t.Errorf("MismatchError.Box = %q, want %q", mismatch.Box, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefusalWireLineNeverReachesTheOperator checks who each half of a refusal
+// is for: the box's own words travel to the operator's terminal as they
+// arrive, and the line the relay put there for itself is taken back out again,
+// however the box's output happened to be split on the way.
+func TestRefusalWireLineNeverReachesTheOperator(t *testing.T) {
+	refusal := "smith: " + Refusal("0.1.0", "0.2.0") + "\n"
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{name: "arriving whole", chunks: []string{refusal}},
+		{name: "split mid-field", chunks: []string{refusal[:len(refusal)-12], refusal[len(refusal)-12:]}},
+		{name: "arriving with no closing newline", chunks: []string{strings.TrimSuffix(refusal, "\n")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &chunkedSSH{chunks: tc.chunks, err: exitStatus(RefusalExitCode)}
+			operator := &strings.Builder{}
+
+			err := Run(context.Background(), ssh, Verb{
+				Target:  "smith@box",
+				Version: "0.2.0",
+				Args:    []string{"session", "list"},
+			}, func() error { return nil }, io.Discard, operator)
+
+			var mismatch *MismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("Run() err = %v, want a MismatchError", err)
+			}
+			if mismatch.Box != "0.1.0" {
+				t.Errorf("MismatchError.Box = %q, want the version the field carried", mismatch.Box)
+			}
+			if seen := operator.String(); strings.Contains(seen, refusalMarker) {
+				t.Errorf("operator saw %q, want the wire line stripped from it", seen)
+			}
+			if seen := operator.String(); !strings.Contains(seen, "only an identical version may relay to it") {
+				t.Errorf("operator saw %q, want the box's own words in it", seen)
+			}
+		})
+	}
+}
+
+// chunkedSSH stands in for the ssh binary streaming a box's stderr back in
+// however many pieces the network handed it.
+type chunkedSSH struct {
+	chunks []string
+	err    error
+}
+
+func (f *chunkedSSH) Run(_ context.Context, _ string, _ []string, _ io.Reader, _, stderr io.Writer) error {
+	for _, chunk := range f.chunks {
+		if _, err := io.WriteString(stderr, chunk); err != nil {
+			return fmt.Errorf("write canned stderr: %w", err)
+		}
+	}
+	return f.err
+}
