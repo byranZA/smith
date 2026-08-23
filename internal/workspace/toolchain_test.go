@@ -689,7 +689,14 @@ func TestConvergeRunsTheMiseTheBoxAlreadyHas(t *testing.T) {
 			t.Errorf("the stage ran %v, want the mise on PATH that answered the probe", argv)
 		}
 	}
-	if !box.ran("mise exec -- git clone") {
+	if box.miseAt != "" {
+		t.Errorf("the stage installed mise at %q, want the one on PATH left to answer for itself", box.miseAt)
+	}
+	if !box.ranExact(miseFile, "install") {
+		t.Errorf("the stage ran %v, want the pinned version installed by the mise on PATH", box.calls)
+	}
+	if !box.ranExact(miseFile, "exec", "--", "git", "clone", "--bare", b.Repos[0].URL,
+		filepath.Join(home, "workspace", "acme", cloneDir)) {
 		t.Errorf("the stage ran %v, want the clone run under the mise the box has", box.calls)
 	}
 }

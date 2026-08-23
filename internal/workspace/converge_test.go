@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -167,6 +168,19 @@ func (f *fakeBox) installs(t *testing.T) string {
 func (f *fakeBox) ran(text string) bool {
 	for _, argv := range f.calls {
 		if strings.Contains(strings.Join(argv, " "), text) {
+			return true
+		}
+	}
+	return false
+}
+
+// ranExact reports whether the run launched exactly this argv, which is how a
+// test asks which of two mise executables a step invoked: the substring a `ran`
+// asks for cannot tell `mise install` from `/home/smith/.local/bin/mise
+// install`.
+func (f *fakeBox) ranExact(argv ...string) bool {
+	for _, call := range f.calls {
+		if slices.Equal(call, argv) {
 			return true
 		}
 	}
