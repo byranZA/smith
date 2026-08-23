@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/byranZA/smith/internal/blueprint"
@@ -63,7 +64,7 @@ func planToolchain(b blueprint.Blueprint, home string) []Unit {
 			Path:  filepath.Join(home, fragmentDir, fragmentFile),
 			Mise:  filepath.Join(home, miseDir, miseFile),
 			Tools: maps.Clone(b.Tools),
-			Env:   maps.Clone(b.Env),
+			Env:   exported(b.Env),
 		}})
 	}
 	root := workspaceRoot(b, home)
@@ -76,11 +77,23 @@ func planToolchain(b blueprint.Blueprint, home string) []Unit {
 			Path:  filepath.Join(dir, repoFragmentFile),
 			Dir:   dir,
 			Mise:  filepath.Join(home, miseDir, miseFile),
+			Repo:  cmp.Or(r.Name, blueprint.RepoName(r.URL)),
 			Tools: maps.Clone(r.Tools),
-			Env:   maps.Clone(r.Env),
+			Env:   exported(r.Env),
 		}})
 	}
 	return units
+}
+
+// exported are the names of the variables a fragment exports, sorted, because
+// a map has lost the order the operator wrote them in. The values stay behind:
+// they were resolved on the operator's machine and staged on the box, and the
+// name is what reads one back.
+func exported(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(env))
 }
 
 // workspaceRoot is the directory every repo occupies a directory under: the

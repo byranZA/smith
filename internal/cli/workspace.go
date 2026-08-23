@@ -54,9 +54,6 @@ type workspaceWiring struct {
 	// root is the box state directory `machine setup` staged the blueprint
 	// and its placement bytes under.
 	root string
-	// secret resolves the references the blueprint's env values carry into
-	// the values the box exports.
-	secret workspace.Resolver
 	// boxHome locates the smith user's home on this box, which the
 	// blueprint's ~/-relative paths resolve against.
 	boxHome pathResolver
@@ -121,7 +118,7 @@ func (w workspaceWiring) converge(cmd *cobra.Command) error {
 		return fmt.Errorf("locate the smith user's home on this box: %w", err)
 	}
 	stdout := cmd.OutOrStdout()
-	env := workspace.Env{Command: w.command, StateRoot: w.root, Secret: w.secret}
+	env := workspace.Env{Command: w.command, StateRoot: w.root}
 	result, err := workspace.Converge(cmd.Context(), env, workspace.Plan(b, home), stdout)
 	if err != nil {
 		return fmt.Errorf("converge this box's workspace: %w", err)

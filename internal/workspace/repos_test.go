@@ -85,7 +85,7 @@ func TestConvergeClonesAfterThePlacementsThatAuthenticateIt(t *testing.T) {
 	b.Placements = []blueprint.Placement{{From: "file:/home/op/gitconfig", To: "~/.gitconfig", Mode: "converge"}}
 
 	var progress bytes.Buffer
-	env := Env{Command: watcher, StateRoot: root, Secret: fakeSecret}
+	env := Env{Command: watcher, StateRoot: root}
 	if _, err := Converge(context.Background(), env, Plan(b, home), &progress); err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}

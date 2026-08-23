@@ -12,6 +12,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -255,21 +256,37 @@ func TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 	}
 }
 
+// stageEnvFor puts the values of a blueprint's env under a box state directory
+// the way `machine setup` does: resolved on the operator's machine, staged on
+// the box, and read back there by name.
+func stageEnvFor(t *testing.T, root string, b blueprint.Blueprint) {
+	t.Helper()
+	tree, err := staging.Resolve(staging.Plan(nil, b), secret.Resolve, blueprint.Value)
+	if err != nil {
+		t.Fatalf("resolve the blueprint's env on the operator's machine: %v", err)
+	}
+	if err := os.WriteFile(staging.EnvPathIn(root), tree.Env.File.Bytes, 0o600); err != nil {
+		t.Fatalf("stage the env: %v", err)
+	}
+}
+
 // TestWorkspaceConvergePinsTheDeclaredToolchain proves the assembled verb gives
 // the box its toolchain end to end: mise installed, the blueprint's tools
-// pinned in the fragment smith owns, and its env exported with the reference
-// resolved.
+// pinned in the fragment smith owns, and its env exported with the value the
+// operator's machine staged.
 func TestWorkspaceConvergePinsTheDeclaredToolchain(t *testing.T) {
-	home := t.TempDir()
+	home, root := t.TempDir(), t.TempDir()
 	box := &fakeBox{}
+	b := blueprint.Blueprint{
+		Tools: map[string]string{"node": "20"},
+		Env:   map[string]string{"NODE_ENV": "literal:production"},
+	}
+	stageEnvFor(t, root, b)
 	w := workspaceWiring{
-		blueprint: staged(blueprint.Blueprint{
-			Tools: map[string]string{"node": "20"},
-			Env:   map[string]string{"NODE_ENV": "literal:production"},
-		}),
-		command: box,
-		boxHome: boxHomeAt(home),
-		secret:  blueprint.Value,
+		blueprint: staged(b),
+		command:   box,
+		root:      root,
+		boxHome:   boxHomeAt(home),
 	}
 	stdout, stderr, code := runWorkspace(t, w, "converge")
 

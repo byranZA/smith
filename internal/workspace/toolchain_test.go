@@ -1,16 +1,20 @@
 package workspace
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // TestPlanToolchain drives the pure derivation of the toolchain unit: what the
@@ -36,7 +40,7 @@ func TestPlanToolchain(t *testing.T) {
 			want: []Fragment{{
 				Path: "/home/smith/.config/mise/conf.d/smith.toml",
 				Mise: "/home/smith/.local/bin/mise",
-				Env:  map[string]string{"GITHUB_TOKEN": "env:GITHUB_TOKEN"},
+				Env:  []string{"GITHUB_TOKEN"},
 			}},
 		},
 		{
@@ -71,7 +75,7 @@ func TestPlanToolchain(t *testing.T) {
 				if !maps.Equal(tc.Tools, tt.want[i].Tools) {
 					t.Errorf("Plan() toolchain %d tools = %v, want %v", i, tc.Tools, tt.want[i].Tools)
 				}
-				if !maps.Equal(tc.Env, tt.want[i].Env) {
+				if !slices.Equal(tc.Env, tt.want[i].Env) {
 					t.Errorf("Plan() toolchain %d env = %v, want %v", i, tc.Env, tt.want[i].Env)
 				}
 			}
@@ -156,17 +160,36 @@ func convergeOnBox(t *testing.T, box *fakeBox, home string, b blueprint.Blueprin
 	return convergeIn(t, box, t.TempDir(), home, b)
 }
 
-// fakeSecret stands in for the operator's own resolver: it answers a literal
-// reference with its value and knows one variable, so a test drives the real
-// resolution seam without reaching the environment the test itself runs in.
-func fakeSecret(ref string) (string, error) {
+// operatorValue stands in for the operator's own resolver, which runs on their
+// machine at `machine setup` and never on the box: it answers the references
+// that machine can read and nothing else.
+func operatorValue(ref string) (string, error) {
 	switch ref {
 	case "env:GITHUB_TOKEN":
-		return "ghp_fromtheboxenv", nil
+		return "ghp_fromtheoperator", nil
 	case "literal:production":
 		return "production", nil
 	default:
 		return "", fmt.Errorf("nothing resolves %q", ref)
+	}
+}
+
+// stageEnv puts the values of a blueprint's env under a box state directory the
+// way `machine setup` does: resolved on the operator's machine, staged on the
+// box, and read back there by name.
+func stageEnv(t *testing.T, root string, b blueprint.Blueprint) {
+	t.Helper()
+	sources := func(ref string) (string, error) { return "bytes of " + ref, nil }
+	tree, err := staging.Resolve(staging.Plan(nil, b), sources, operatorValue)
+	if err != nil {
+		t.Fatalf("resolve the blueprint's env on the operator's machine: %v", err)
+	}
+	path := staging.EnvPathIn(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("make the box state directory: %v", err)
+	}
+	if err := os.WriteFile(path, tree.Env.File.Bytes, 0o600); err != nil {
+		t.Fatalf("stage the env: %v", err)
 	}
 }
 
@@ -235,8 +258,7 @@ func TestConvergePinsToolsInTheGeneratedFragment(t *testing.T) {
 }
 
 // TestConvergeExportsEnvThroughTheFragment proves a declared variable reaches
-// the box with its value resolved, rather than with the reference the operator
-// wrote.
+// the box with its value, rather than with the reference the operator wrote.
 func TestConvergeExportsEnvThroughTheFragment(t *testing.T) {
 	home := t.TempDir()
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
@@ -247,29 +269,61 @@ func TestConvergeExportsEnvThroughTheFragment(t *testing.T) {
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
 	}
-	if got := held(t, fragmentPath(home)); !strings.Contains(got, `GITHUB_TOKEN = "ghp_fromtheboxenv"`) {
-		t.Errorf("fragment = %q, want it to export the resolved value", got)
+	if got := held(t, fragmentPath(home)); !strings.Contains(got, `GITHUB_TOKEN = "ghp_fromtheoperator"`) {
+		t.Errorf("fragment = %q, want it to export the staged value", got)
 	}
 }
 
-// TestConvergeReportsAnUnresolvableValue proves a variable whose reference
-// does not resolve fails the step by name, rather than exporting a reference
-// as though it were a token.
-func TestConvergeReportsAnUnresolvableValue(t *testing.T) {
+// TestConvergeExportsTheStagedValueRatherThanTheBoxsOwn proves the reference is
+// read on the operator's machine and never again: a box holding a variable of
+// the same name exports the value that was staged for it, not its own. The two
+// are different strings on purpose, because a box quietly exporting its own
+// GITHUB_TOKEN would authenticate as something other than the blueprint said.
+func TestConvergeExportsTheStagedValueRatherThanTheBoxsOwn(t *testing.T) {
 	home := t.TempDir()
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
-	b := blueprint.Blueprint{Env: map[string]string{"GITHUB_TOKEN": "env:ABSENT"}}
+	b := blueprint.Blueprint{Env: map[string]string{"GITHUB_TOKEN": "env:GITHUB_TOKEN"}}
+	t.Setenv("GITHUB_TOKEN", "ghp_fromtheboxenv")
 
 	result, _ := convergeOnBox(t, box, home, b)
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
+	}
+	got := held(t, fragmentPath(home))
+	if strings.Contains(got, "ghp_fromtheboxenv") {
+		t.Errorf("fragment = %q, want the reference resolved on the operator's machine, not this box", got)
+	}
+	if !strings.Contains(got, `GITHUB_TOKEN = "ghp_fromtheoperator"`) {
+		t.Errorf("fragment = %q, want it to export the staged value", got)
+	}
+}
+
+// TestConvergeRefusesAVariableWithNoStagedValue proves a variable the staged
+// blueprint declares but has no staged value for fails the step by name,
+// rather than reading the box's own environment or exporting the reference as
+// though it were a token.
+func TestConvergeRefusesAVariableWithNoStagedValue(t *testing.T) {
+	home := t.TempDir()
+	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
+	b := blueprint.Blueprint{Env: map[string]string{"GITHUB_TOKEN": "env:GITHUB_TOKEN"}}
+	t.Setenv("GITHUB_TOKEN", "ghp_fromtheboxenv")
+
+	var progress bytes.Buffer
+	env := Env{Command: box, StateRoot: t.TempDir()}
+	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
 
 	if !result.Failed() {
 		t.Fatalf("Result.Failed() = false, want true: %s", result.Report())
 	}
 	if err := result.Outcomes[0].Err; err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
-		t.Errorf("outcome error = %v, want it to name the variable that did not resolve", err)
+		t.Errorf("outcome error = %v, want it to name the variable with no staged value", err)
 	}
 	if _, err := os.Stat(fragmentPath(home)); !os.IsNotExist(err) {
-		t.Errorf("a fragment was written for a blueprint whose value did not resolve")
+		t.Errorf("a fragment was written for a blueprint whose value was never staged")
 	}
 }
 
@@ -387,7 +441,7 @@ func TestPlanRepoToolchain(t *testing.T) {
 				Path: "/home/smith/workspace/acme/mise.toml",
 				Dir:  "/home/smith/workspace/acme",
 				Mise: "/home/smith/.local/bin/mise",
-				Env:  map[string]string{"NODE_ENV": "literal:production"},
+				Env:  []string{"NODE_ENV"},
 			}},
 		},
 		{
@@ -444,7 +498,7 @@ func TestPlanRepoToolchain(t *testing.T) {
 				if !maps.Equal(f.Tools, tt.want[i].Tools) {
 					t.Errorf("Plan() repo toolchain %d tools = %v, want %v", i, f.Tools, tt.want[i].Tools)
 				}
-				if !maps.Equal(f.Env, tt.want[i].Env) {
+				if !slices.Equal(f.Env, tt.want[i].Env) {
 					t.Errorf("Plan() repo toolchain %d env = %v, want %v", i, f.Env, tt.want[i].Env)
 				}
 			}

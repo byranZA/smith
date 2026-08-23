@@ -100,7 +100,7 @@ func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 	t.Setenv("NPM_TOKEN", "//registry.npmjs.org/:_authToken=s3cr3t")
 	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc"}}})
 
-	resolved, err := Resolve(tree, secret.Resolve)
+	resolved, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -115,7 +115,7 @@ func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 func TestResolveNamesAReferenceItCannotResolve(t *testing.T) {
 	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:/home/op/.missing", To: "/home/smith/.npmrc"}}})
 
-	_, err := Resolve(tree, secret.Resolve)
+	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want the unresolvable reference refused")
 	}
@@ -232,7 +232,7 @@ func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
 		}},
 	})
 
-	_, err := Resolve(tree, secret.Resolve)
+	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want both unresolvable references refused")
 	}
@@ -253,7 +253,7 @@ func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
 func TestResolveNamesAnUnsetEnvironmentVariable(t *testing.T) {
 	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: "~/.npmrc"}}})
 
-	_, err := Resolve(tree, secret.Resolve)
+	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want the unset variable refused")
 	}

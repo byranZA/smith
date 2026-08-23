@@ -207,8 +207,9 @@ func onDisk(t *testing.T, dir string) map[string]time.Time {
 // and what it streamed.
 func convergeIn(t *testing.T, box *fakeBox, root, home string, b blueprint.Blueprint) (Result, string) {
 	t.Helper()
+	stageEnv(t, root, b)
 	var progress bytes.Buffer
-	env := Env{Command: box, StateRoot: root, Secret: fakeSecret}
+	env := Env{Command: box, StateRoot: root}
 	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)

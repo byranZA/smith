@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/staging"
@@ -110,7 +109,6 @@ func newRootCmd() *cobra.Command {
 		home:      userConfigHome,
 		command:   connection.System(),
 		root:      staging.Root,
-		secret:    blueprint.Value,
 		boxHome:   boxHomeDir,
 		ssh:       connection.System(),
 		version:   resolveVersion(),

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
@@ -245,7 +246,7 @@ func resolveStagedConfig(home config.Home, blueprintName string, stderr io.Write
 	if err != nil {
 		return nil, refuseSetup(stderr, fmt.Errorf("read blueprint: %w", err))
 	}
-	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve)
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve, blueprint.Value)
 	if err != nil {
 		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
 	}

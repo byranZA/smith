@@ -3,7 +3,6 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // The fragment's place on the box. Box-level tools and env land in a
@@ -43,9 +43,10 @@ const (
 // file lands, the tools it pins, and the env it exports.
 //
 // smith owns the file whole and writes it by replacement, so nothing here is
-// merged into what the box already holds. The values in Env are references as
-// the blueprint declared them — they are resolved when the fragment is
-// generated, never carried resolved through a plan.
+// merged into what the box already holds. Env names the variables the fragment
+// exports rather than carrying their values: the values were resolved on the
+// operator's machine and staged on the box, and they are read from there when
+// the fragment is generated.
 type Fragment struct {
 	// Path is where the generated file lands, absolute.
 	Path string
@@ -56,11 +57,14 @@ type Fragment struct {
 	Dir string
 	// Mise is where mise is installed if the box does not already have it.
 	Mise string
+	// Repo is the repo whose env the fragment exports, empty for the box's
+	// own. It is the scope the staged values are read by.
+	Repo string
 	// Tools are the toolchain versions the fragment pins, keyed by tool name.
 	Tools map[string]string
-	// Env are the environment variables the fragment exports, keyed by
-	// variable name, each value still the reference the blueprint declared.
-	Env map[string]string
+	// Env are the names of the environment variables the fragment exports, in
+	// sorted order. Their values come from what `machine setup` staged.
+	Env []string
 }
 
 // header opens every generated config, box-level and per-repo alike. An
@@ -129,8 +133,8 @@ const installer = "https://mise.run"
 // fragment holding what the blueprint declares, and the pinned versions
 // installed.
 //
-// The values are resolved before anything is installed, so a blueprint smith
-// cannot resolve fails having changed nothing rather than half way through an
+// The staged values are read before anything is installed, so a variable with
+// no staged value fails having changed nothing rather than half way through an
 // install. The fragment is written whole and never merged — smith owns the
 // file — and it is written only when its bytes differ, so a converged re-run
 // moves no modification time.
@@ -140,7 +144,7 @@ const installer = "https://mise.run"
 // and may hold the operator's settings, and smith writes generated files by
 // whole-file replacement.
 func convergeToolchain(ctx context.Context, env Env, f Fragment, progress io.Writer) (string, error) {
-	values, err := resolve(env.Secret, f.Env)
+	values, err := stagedValues(env.StateRoot, f.Repo, f.Env)
 	if err != nil {
 		return "", err
 	}
@@ -174,23 +178,25 @@ func installArgs(dir string) []string {
 	return []string{"--cd", dir, "install"}
 }
 
-// resolve turns each declared value into the value it references, on the box
-// smith is running on. A reference that does not resolve fails the step by the
-// variable's name: exporting the reference itself would put the string
-// "env:GITHUB_TOKEN" in a token's place and surface later as a clone that
-// cannot authenticate.
-func resolve(resolver Resolver, env map[string]string) (map[string]string, error) {
-	if len(env) == 0 {
+// stagedValues reads the value of every variable the fragment exports out of
+// what `machine setup` staged under root.
+//
+// Nothing is resolved here, for any scheme. env:GITHUB_TOKEN names a variable
+// in the operator's shell and file:~/.secrets/token a path on their disk, so a
+// box reading either would export what it happens to hold rather than what the
+// operator declared — silently the wrong token, or nothing at all. The values
+// were read on the operator's machine at `machine setup` and staged; a variable
+// with no staged value fails the step by name rather than falling back to the
+// box.
+func stagedValues(root, repo string, names []string) (map[string]string, error) {
+	if len(names) == 0 {
 		return nil, nil
 	}
-	if resolver == nil {
-		return nil, errors.New("resolve the blueprint's env: this box has no resolver to read a reference with")
-	}
-	values := make(map[string]string, len(env))
-	for _, name := range slices.Sorted(maps.Keys(env)) {
-		value, err := resolver(env[name])
+	values := make(map[string]string, len(names))
+	for _, name := range names {
+		value, err := staging.ReadValue(root, repo, name)
 		if err != nil {
-			return nil, fmt.Errorf("resolve the value of %s: %w", name, err)
+			return nil, fmt.Errorf("export %s: %w", name, err)
 		}
 		values[name] = value
 	}

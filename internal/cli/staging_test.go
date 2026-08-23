@@ -104,7 +104,7 @@ func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
 	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
-	if len(box.inputs) != 1 || box.inputs[0] != document {
+	if len(box.inputs) == 0 || box.inputs[0] != document {
 		t.Errorf("staged bytes = %q, want the blueprint byte for byte, %q", box.inputs, document)
 	}
 	if !strings.Contains(out.String(), staging.DocumentPath) {

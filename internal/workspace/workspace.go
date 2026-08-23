@@ -15,9 +15,11 @@
 // than banking it all for the end. Result is what the run did, rendered as the
 // final summary.
 //
-// Nothing here parses a blueprint or resolves a placement's source reference:
-// the caller loads what `machine setup` staged, and every `from:` in a staged
-// document is dead laptop provenance.
+// Nothing here parses a blueprint or resolves a reference of any kind: the
+// caller loads what `machine setup` staged, and every `from:` and every
+// env:/file: value in a staged document is dead laptop provenance. A box that
+// re-read one against its own environment or filesystem would export something
+// else entirely, or nothing.
 package workspace
 
 import (
@@ -110,12 +112,6 @@ type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
-// Resolver turns a reference a blueprint value carries — a scheme:arg string
-// such as env:GITHUB_TOKEN or literal:production — into the value it names. It
-// is the seam onto the blueprint's own value resolver, injected so a test
-// drives the real converge without reaching the environment it runs in.
-type Resolver func(ref string) (string, error)
-
 // Env is what a converge run acts through: the commands it drives the box
 // with. It is a struct rather than a bare runner because the steps that follow
 // this slice add the roots and readers they need beside it.
@@ -124,9 +120,7 @@ type Env struct {
 	// mise and git as the later steps land.
 	Command Runner
 	// StateRoot is the box state directory `machine setup` staged the
-	// blueprint and its placement bytes under — /etc/smith on a real box.
+	// blueprint, its placement bytes and its resolved env under — /etc/smith
+	// on a real box.
 	StateRoot string
-	// Secret resolves the references the blueprint's env values carry into the
-	// values the toolchain step exports.
-	Secret Resolver
 }

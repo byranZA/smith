@@ -90,6 +90,11 @@ func (r Result) Report() string {
 // placements still leaves an empty placements directory rather than none, and a
 // directory a human has widened is narrowed back.
 //
+// The blueprint's env is staged beside the document, holding the value of every
+// variable it declares, resolved on the operator's machine. It is written on
+// every run whether or not anything is declared, so an operator dropping their
+// last variable converges the box back to holding none.
+//
 // The tree is then pruned to exactly what the blueprint declares: anything
 // under the placements directory that is not a currently-declared scope and
 // destination is deleted and reported, so a placement an operator drops from
@@ -110,8 +115,8 @@ func Converge(ctx context.Context, conn Conn, tree Tree) (Result, error) {
 			return Result{}, err
 		}
 	}
-	files := make([]File, 0, 1+len(tree.Placements))
-	files = append(files, tree.Document)
+	files := make([]File, 0, 2+len(tree.Placements))
+	files = append(files, tree.Document, tree.Env.File)
 	for _, p := range tree.Placements {
 		files = append(files, p.File)
 	}
