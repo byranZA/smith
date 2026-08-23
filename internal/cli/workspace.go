@@ -118,7 +118,7 @@ func (w workspaceWiring) converge(cmd *cobra.Command) error {
 		return fmt.Errorf("locate the smith user's home on this box: %w", err)
 	}
 	stdout := cmd.OutOrStdout()
-	env := workspace.Env{Command: w.command, StateRoot: w.root}
+	env := workspace.Env{Command: w.command, StateRoot: w.root, Owner: workspace.SmithUser{}}
 	result, err := workspace.Converge(cmd.Context(), env, workspace.Plan(b, home), stdout)
 	if err != nil {
 		return fmt.Errorf("converge this box's workspace: %w", err)

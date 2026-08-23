@@ -44,6 +44,19 @@ func convergeBlueprint(t *testing.T, b blueprint.Blueprint, root, home string) (
 	return result, progress.String()
 }
 
+// convergeAs runs the stage over a blueprint as a given account, and returns
+// what it did.
+func convergeAs(t *testing.T, b blueprint.Blueprint, root, home string, owner Owner) (Result, string) {
+	t.Helper()
+	var progress bytes.Buffer
+	env := Env{Command: box(), StateRoot: root, Owner: owner}
+	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	return result, progress.String()
+}
+
 // declares is a blueprint declaring one box placement.
 func declares(destination, mode string) blueprint.Blueprint {
 	return blueprint.Blueprint{Placements: []blueprint.Placement{
@@ -320,5 +333,108 @@ func TestConvergeRefusesAOncePlacementWithNoStagedBytes(t *testing.T) {
 	}
 	if !strings.Contains(progress, "machine setup") {
 		t.Errorf("progress = %q, want the refusal reported as it happens", progress)
+	}
+}
+
+// TestConvergeCorrectsThePermissionsOfAMatchingDestination proves metadata
+// converges independently of content: a destination already holding the staged
+// bytes under a wider mode than the blueprint declares is narrowed to it,
+// without its bytes being rewritten.
+func TestConvergeCorrectsThePermissionsOfAMatchingDestination(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	stage(t, root, "~/.npmrc", "declared\n")
+	path := filepath.Join(home, ".npmrc")
+	if err := os.WriteFile(path, []byte("declared\n"), 0o644); err != nil {
+		t.Fatalf("write the converged destination: %v", err)
+	}
+	then := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, then, then); err != nil {
+		t.Fatalf("age the destination: %v", err)
+	}
+
+	result, progress := convergeBlueprint(t, declares("~/.npmrc", "converge"), root, home)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("%s carries mode %v, want 0600", path, info.Mode().Perm())
+	}
+	if !info.ModTime().Equal(then) {
+		t.Errorf("modification time moved to %v, want the bytes left unwritten at %v", info.ModTime(), then)
+	}
+	if summary := result.Outcomes[0].Summary; !strings.Contains(summary, "permissions") {
+		t.Errorf("outcome summary = %q, want it to report the permissions corrected", summary)
+	}
+	if !strings.Contains(progress, path) {
+		t.Errorf("progress = %q, want it to name the destination", progress)
+	}
+}
+
+// strangerOwner is an account every destination on the box belongs to someone
+// else under, so a run reconciling ownership has something to correct without
+// the root privileges a real chown of another account's file needs.
+type strangerOwner struct{ claimed []string }
+
+func (o *strangerOwner) Claim(path string) (bool, error) {
+	o.claimed = append(o.claimed, path)
+	return true, nil
+}
+
+// settledOwner is an account every destination already belongs to.
+type settledOwner struct{}
+
+func (settledOwner) Claim(string) (bool, error) { return false, nil }
+
+// TestConvergeClaimsAMatchingDestinationForTheSmithUser proves ownership
+// converges alongside permissions: a destination holding the staged bytes but
+// belonging to another account is claimed for the smith user, whose credential
+// it is, without its bytes being rewritten.
+func TestConvergeClaimsAMatchingDestinationForTheSmithUser(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	stage(t, root, "~/.npmrc", "declared\n")
+	path := filepath.Join(home, ".npmrc")
+	if err := os.WriteFile(path, []byte("declared\n"), 0o600); err != nil {
+		t.Fatalf("write the converged destination: %v", err)
+	}
+	then := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, then, then); err != nil {
+		t.Fatalf("age the destination: %v", err)
+	}
+	owner := &strangerOwner{}
+
+	result, _ := convergeAs(t, declares("~/.npmrc", "converge"), root, home, owner)
+
+	if len(owner.claimed) != 1 || owner.claimed[0] != path {
+		t.Errorf("claimed = %v, want the destination claimed once", owner.claimed)
+	}
+	if summary := result.Outcomes[0].Summary; !strings.Contains(summary, "ownership") {
+		t.Errorf("outcome summary = %q, want it to report the ownership corrected", summary)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if !info.ModTime().Equal(then) {
+		t.Errorf("modification time moved to %v, want the bytes left unwritten at %v", info.ModTime(), then)
+	}
+}
+
+// TestConvergeLeavesAFullyConvergedDestinationAlone proves the no-op case
+// survives metadata reconciliation: content, permissions and ownership all
+// matching is still reported as unchanged.
+func TestConvergeLeavesAFullyConvergedDestinationAlone(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	stage(t, root, "~/.npmrc", "declared\n")
+	path := filepath.Join(home, ".npmrc")
+	if err := os.WriteFile(path, []byte("declared\n"), 0o600); err != nil {
+		t.Fatalf("write the converged destination: %v", err)
+	}
+
+	result, _ := convergeAs(t, declares("~/.npmrc", "converge"), root, home, settledOwner{})
+
+	if summary := result.Outcomes[0].Summary; summary != "unchanged "+path {
+		t.Errorf("outcome summary = %q, want the destination reported unchanged", summary)
 	}
 }

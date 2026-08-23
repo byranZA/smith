@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/byranZA/smith/internal/staging"
 )
@@ -50,7 +51,7 @@ const dirMode = 0o700
 // reference that would resolve to the wrong thing. The file is smith-owned by
 // construction: on-box smith runs as the smith user, so what it writes belongs
 // to that account.
-func materialize(root string, p Placement) (string, error) {
+func materialize(root string, p Placement, owner Owner) (string, error) {
 	current, exists, err := onBox(p.Path)
 	if err != nil {
 		return "", err
@@ -62,12 +63,12 @@ func materialize(root string, p Placement) (string, error) {
 	if exists && p.Mode == onceMode {
 		return "kept " + p.Path + ", which this box owns", nil
 	}
-	if exists && bytes.Equal(current, staged) {
-		return "unchanged " + p.Path, nil
-	}
 	mode, err := fileMode(p.Perms)
 	if err != nil {
 		return "", err
+	}
+	if exists && bytes.Equal(current, staged) {
+		return reconcile(p.Path, mode, owner)
 	}
 	if err := put(p.Path, staged, mode); err != nil {
 		return "", err
@@ -76,6 +77,46 @@ func materialize(root string, p Placement) (string, error) {
 		return "rewrote " + p.Path, nil
 	}
 	return "wrote " + p.Path, nil
+}
+
+// reconcile brings a destination whose content already matches the staged
+// bytes up to the metadata the placement declares, and reports what it had to
+// correct.
+//
+// Content and metadata converge independently, because they drift
+// independently: a file placed by an earlier run under a mode the blueprint
+// has since narrowed, or one an operator loosened by hand, holds the right
+// bytes under the wrong permissions — and a secret left world-readable is the
+// failure the placement's perms exist to prevent. Only the metadata is
+// touched, so the modification time of a matching destination still does not
+// move.
+//
+// Ownership drifts the same way and matters for the same reason: a credential
+// the box holds under another account is one the smith user cannot read, and
+// no amount of matching content fixes that.
+func reconcile(path string, mode os.FileMode, owner Owner) (string, error) {
+	var corrected []string
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("read the permissions the box holds %s under: %w", path, err)
+	}
+	if info.Mode().Perm() != mode.Perm() {
+		if err := os.Chmod(path, mode); err != nil {
+			return "", fmt.Errorf("set the permissions of %s: %w", path, err)
+		}
+		corrected = append(corrected, "permissions")
+	}
+	claimed, err := owner.Claim(path)
+	if err != nil {
+		return "", fmt.Errorf("converge the ownership of %s: %w", path, err)
+	}
+	if claimed {
+		corrected = append(corrected, "ownership")
+	}
+	if len(corrected) == 0 {
+		return "unchanged " + path, nil
+	}
+	return "corrected the " + strings.Join(corrected, " and ") + " of " + path, nil
 }
 
 // onBox reads what the box already holds at path. An absent file is the

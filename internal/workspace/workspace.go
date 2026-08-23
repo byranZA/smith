@@ -119,8 +119,21 @@ type Env struct {
 	// Command launches the commands the stage converges with — apt today,
 	// mise and git as the later steps land.
 	Command Runner
+	// Owner claims the files the stage places for the account smith runs as.
+	// A run that leaves it unset claims them for the smith user, which is the
+	// account on-box smith is running as.
+	Owner Owner
 	// StateRoot is the box state directory `machine setup` staged the
 	// blueprint, its placement bytes and its resolved env under — /etc/smith
 	// on a real box.
 	StateRoot string
+}
+
+// owner is the account a run claims placed files for: the one the caller
+// passed, and the smith user smith itself runs as when it passed none.
+func (e Env) owner() Owner {
+	if e.Owner == nil {
+		return SmithUser{}
+	}
+	return e.Owner
 }
