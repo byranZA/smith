@@ -35,6 +35,7 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 		newStatusCmd(resolve, exec),
 		newListCmd(resolve, exec),
 		newAddCmd(resolve, exec),
+		newUpgradeCmd(resolve, exec),
 		newForgetCmd(resolve),
 	)
 	return cmd

@@ -3,11 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
 	"strings"
 	"testing"
-
-	"github.com/byranZA/smith/internal/bootstrap"
 )
 
 // TestConvergeWorkspaceRelaysTheStageToTheSmithUser proves the last stage of
@@ -40,10 +37,11 @@ func TestConvergeWorkspaceRelaysTheStageToTheBox(t *testing.T) {
 	}
 }
 
-// TestConvergeWorkspaceReportsAFailedStageAsPartial proves a stage the box
-// refused leaves the operator with a provisioned box and the partial exit,
-// rather than a setup that claims to have converged one.
-func TestConvergeWorkspaceReportsAFailedStageAsPartial(t *testing.T) {
+// TestConvergeWorkspaceReportsAStageTheBoxRefused proves a stage the box
+// refused is reported as a failed stage, which the pipeline turns into a
+// provisioned box and the partial exit, rather than a setup that claims to have
+// converged one.
+func TestConvergeWorkspaceReportsAStageTheBoxRefused(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "packages:\n  - ripgrep\n")
 	ssh := &fakeSSHRelay{err: relayExit(1)}
@@ -51,11 +49,10 @@ func TestConvergeWorkspaceReportsAFailedStageAsPartial(t *testing.T) {
 
 	err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "0.2.0", stagedOrFatal(t, dir, "acme"), &out, &errBuf)
 
-	var exit *exitError
-	if !errors.As(err, &exit) || exit.code != bootstrap.OutcomePartial.ExitCode() {
-		t.Fatalf("convergeWorkspace() err = %v, want the partial exit", err)
+	if err == nil {
+		t.Fatal("convergeWorkspace() err = nil, want the box's refusal reported")
 	}
-	if !strings.Contains(errBuf.String(), "workspace") {
-		t.Errorf("stderr = %q, want it to name the stage that failed", errBuf.String())
+	if !strings.Contains(err.Error(), "workspace") {
+		t.Errorf("convergeWorkspace() err = %v, want it to name the stage that failed", err)
 	}
 }

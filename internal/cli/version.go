@@ -2,11 +2,11 @@ package cli
 
 import (
 	"fmt"
-	"regexp"
 	"runtime/debug"
-	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/byranZA/smith/internal/release"
 )
 
 // resolveVersion determines the smith version string across the three build
@@ -16,7 +16,7 @@ import (
 //   - a pipeline build injected buildVersion via -ldflags; use it verbatim
 //     (GoReleaser's {{ .Version }} has already stripped the tag's "v").
 //   - `go install …@v0.1.0` leaves buildVersion at "dev", but ReadBuildInfo
-//     reports Main.Version as "v0.1.0"; strip the "v".
+//     reports Main.Version as "v0.1.0"; release.Installable strips the "v".
 //   - any other build (local `go build`, `go install …@main`) has no released
 //     tag to report, so it falls through to the "dev" literal.
 func resolveVersion() string {
@@ -24,31 +24,11 @@ func resolveVersion() string {
 		return buildVersion
 	}
 	if info, ok := debug.ReadBuildInfo(); ok {
-		if v := moduleVersion(info.Main.Version); v != "" {
+		if v := release.Installable(info.Main.Version); v != "" {
 			return v
 		}
 	}
 	return "dev"
-}
-
-// pseudoVersion matches the timestamp-and-commit core Go embeds in every
-// pseudo-version, e.g. the "20260728155309-f8e683ead820" in
-// "v0.0.0-20260728155309-f8e683ead820": a 14-digit UTC timestamp joined to a
-// 12-char commit prefix. A released tag never contains it.
-var pseudoVersion = regexp.MustCompile(`[0-9]{14}-[0-9a-f]{12}`)
-
-// moduleVersion normalizes a module version reported by ReadBuildInfo into a
-// smith release version, or "" when the module carries no released version.
-// Only a clean tag survives: Go reports "" or "(devel)" for a bare build and a
-// VCS-derived pseudo-version for a build off an untagged commit (a local
-// `go build`, or `go install …@main`) — none of which is a release, so all fall
-// through to the "dev" fallback. A real tag like "v0.1.0" keeps its value with
-// its single leading "v" stripped per the one-prefix rule.
-func moduleVersion(mainVersion string) string {
-	if mainVersion == "" || mainVersion == "(devel)" || pseudoVersion.MatchString(mainVersion) {
-		return ""
-	}
-	return strings.TrimPrefix(mainVersion, "v")
 }
 
 // buildStamp is the optional VCS provenance ReadBuildInfo captures

@@ -99,6 +99,14 @@ make build   # produces ./bin/smith
 A binary built this way reports `smith version` as `dev` — it carries no release
 tag. Use `curl` or `go install` for a version-stamped build.
 
+> **A dev build cannot install smith onto a box.** `machine setup` puts a smith
+> binary on the box by having it fetch the release matching *your* version, and
+> there is no `dev` release — so a from-source build bootstraps a box through
+> every phase and then fails at the `install` stage alone. `--smith-version <tag>`
+> names a released version to install instead, but that released smith will then
+> refuse to relay commands from your dev build, because both sides must match.
+> See [smith on the box](docs/on-box.md#contributing-a-dev-build-cannot-install).
+
 ### Gatekeeper (macOS)
 
 If you downloaded through a browser and macOS refuses to open smith — *"smith
@@ -239,6 +247,65 @@ Reach it by name from now on:
   tailnet yet, so the initial `--access tailscale` run reaches it over public SSH
   as your bootstrap login (key-based) to install and enroll Tailscale, then
   closes public 22. The keyless model applies to everything after that.
+
+## smith on the box
+
+smith is not only a laptop tool: `machine setup` **installs smith onto the box**,
+and the verbs that do work there — the session verbs and `workspace converge` —
+execute there. Your local smith **relays** them over SSH and streams the box's
+output back, so `smith session list dev` from your laptop and `smith session list`
+after SSHing in run the same implementation
+([ADR-0008](docs/adr/0008-smith-runs-on-the-box.md)). The box is where an AFK
+loop has to live: one driven from a laptop dies when the lid closes.
+
+smith lands at `/usr/local/bin/smith`, so SSHing in and typing `smith` gets you
+the real thing — a deliberate property, and the relay invokes that absolute path
+for the same reason. Two edges follow from a box being a box: on-box smith has no
+box inventory, so `machine list`/`add`/`forget` have nothing to work on there,
+and a box has no reason to provision another box.
+
+The install stage never uploads your binary — you are likely `darwin/arm64` and
+the box `linux/amd64`. The box fetches the release asset for its own
+architecture, verifies it against the published `checksums.txt`, and only then
+replaces its binary, so a failed download or a bad checksum leaves the box at
+the version it already had.
+
+### Keeping the two sides in step
+
+The two binaries must agree: local smith constructs a command line and on-box
+smith parses it, and between versions a renamed flag produces wrong behaviour
+under a green exit rather than an error. So every relayed command declares the
+version it was built by, and on-box smith **refuses** any mismatch. A human who
+SSHed in declares nothing and is never checked.
+
+`machine upgrade` converges just the binary — no phase, no staging, no
+placement, no marker write:
+
+```sh
+smith machine upgrade dev
+```
+
+It converges the box to **your** version, so it will move a box *backwards*: the
+post-condition is *no version skew*, not *the box is newest*, and it says so —
+`box dev: smith 0.3.0 → 0.2.0 (matching local smith)`. Both verbs take
+`--smith-version <tag>` to install a version you name instead.
+
+When a relay is refused, smith asks if you are at a terminal — `box dev runs
+0.3.0, you run 0.2.0 — converge box dev to 0.2.0? [y/N]` — and running the
+upgrade then continues the original command. Anything else declines. With no
+terminal, or on a decline, smith prints `smith machine upgrade dev` and exits
+non-zero, which is the path an AFK loop inherits: it never blocks. A box that
+has no smith at all is named as such and pointed at `machine setup`, since it
+predates the stage and likely wants the rest of the pipeline too.
+
+> **Version skew is not schema skew.** Version skew is the smith *binary* on the
+> box against the one on your machine, fixed by `machine upgrade`. Schema skew is
+> the on-box marker's `schema_version` against what the running build
+> understands. They move independently.
+
+[docs/on-box.md](docs/on-box.md) covers the setup pipeline's stages, the install
+and verification steps, the refusal paths, and why the marker records nothing
+about the installed binary.
 
 ## Boxes by name
 

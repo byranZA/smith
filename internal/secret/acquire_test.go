@@ -74,3 +74,31 @@ func TestAcquire(t *testing.T) {
 		}
 	})
 }
+
+// TestStdTerminalAttended drives the four-way rule a question needing an
+// answer is gated on: both the stream the answer is typed on and the stream the
+// question's outcome is read on must be terminals, so a redirected run is never
+// asked anything it could not answer.
+func TestStdTerminalAttended(t *testing.T) {
+	cases := []struct {
+		stdin, stdout bool
+		want          bool
+	}{
+		{stdin: true, stdout: true, want: true},
+		{stdin: true, stdout: false, want: false},
+		{stdin: false, stdout: true, want: false},
+		{stdin: false, stdout: false, want: false},
+	}
+	for _, c := range cases {
+		term := NewStdTerminal()
+		term.isTerminal = func(fd uintptr) bool {
+			if fd == term.in.Fd() {
+				return c.stdin
+			}
+			return c.stdout
+		}
+		if got := term.Attended(); got != c.want {
+			t.Errorf("Attended() with stdin=%v stdout=%v = %v, want %v", c.stdin, c.stdout, got, c.want)
+		}
+	}
+}

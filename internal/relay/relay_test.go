@@ -184,11 +184,11 @@ func TestConnectHandsTheTerminalToTheBox(t *testing.T) {
 	execer := &fakeExecer{}
 	ran := false
 
-	err := Connect(execer, Verb{
+	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{
 		Target:  "smith@box",
 		Version: "0.2.0",
 		Args:    []string{"session", "attach", "smith-main", "--interact"},
-	}, func() error { ran = true; return nil })
+	}, func() error { ran = true; return nil }, io.Discard)
 	if err != nil {
 		t.Fatalf("Connect() err = %v", err)
 	}
@@ -216,7 +216,7 @@ func TestConnectWithNoTargetRunsTheVerbLocally(t *testing.T) {
 	execer := &fakeExecer{}
 	ran := false
 
-	err := Connect(execer, Verb{Version: "0.2.0", Args: []string{"session", "attach", "smith-main"}}, func() error { ran = true; return nil })
+	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{Version: "0.2.0", Args: []string{"session", "attach", "smith-main"}}, func() error { ran = true; return nil }, io.Discard)
 	if err != nil {
 		t.Fatalf("Connect() err = %v", err)
 	}
@@ -237,11 +237,11 @@ func TestConnectWithNoTargetRunsTheVerbLocally(t *testing.T) {
 func TestConnectNamesSetupWhenTheBoxHasNoSmith(t *testing.T) {
 	execer := &fakeExecer{}
 
-	err := Connect(execer, Verb{
+	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{
 		Target:  "smith@box",
 		Version: "0.2.0",
 		Args:    []string{"session", "attach", "smith-main"},
-	}, func() error { return nil })
+	}, func() error { return nil }, io.Discard)
 	if err != nil {
 		t.Fatalf("Connect() err = %v", err)
 	}
@@ -250,10 +250,287 @@ func TestConnectNamesSetupWhenTheBoxHasNoSmith(t *testing.T) {
 		t.Fatalf("exec called %d times, want 1: %v", len(execer.calls), execer.calls)
 	}
 	line := strings.Join(execer.calls[0], " ")
-	absent := &NotInstalledError{Target: "smith@box"}
+	absent := &NotInstalledError{Box: "smith@box"}
 	for _, want := range []string{"exec " + BoxSmith, absent.Error(), "exit 1"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("exec argv = %q, want it to contain %q", line, want)
 		}
 	}
+}
+
+// TestRunClassifiesTheBoxsSkewRefusal checks the outcome the relay owes its
+// caller when the box refused the command for being relayed by another
+// version: a typed mismatch naming both sides, so the caller can act on it
+// rather than reading the box's prose.
+func TestRunClassifiesTheBoxsSkewRefusal(t *testing.T) {
+	ssh := &fakeSSH{
+		stderr: "smith: " + Refusal("0.1.0", "0.2.0") + "\n",
+		err:    exitStatus(RefusalExitCode),
+	}
+
+	err := Run(context.Background(), ssh, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "list"},
+	}, func() error { return nil }, io.Discard, io.Discard)
+
+	var mismatch *MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Run() err = %v, want a MismatchError", err)
+	}
+	if mismatch.Box != "0.1.0" || mismatch.Local != "0.2.0" {
+		t.Errorf("MismatchError = %+v, want the box on 0.1.0 and this smith on 0.2.0", mismatch)
+	}
+	for _, want := range []string{"smith@box", "0.1.0", "0.2.0"} {
+		if !strings.Contains(mismatch.Error(), want) {
+			t.Errorf("MismatchError.Error() = %q, want it to name %q", mismatch, want)
+		}
+	}
+}
+
+// TestSendRelaysOverAnOpenConnection checks the sending half on its own, for
+// the caller that already holds a connection: the box's smith runs at its
+// absolute path, told which smith is calling it.
+func TestSendRelaysOverAnOpenConnection(t *testing.T) {
+	conn := &fakeConn{}
+
+	err := Send(context.Background(), conn, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"version"},
+	}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Send() err = %v", err)
+	}
+
+	if len(conn.commands) != 1 {
+		t.Fatalf("conn ran %d commands, want 1: %v", len(conn.commands), conn.commands)
+	}
+	for _, want := range []string{BoxSmith, "--relayed-from '0.2.0'", "'version'"} {
+		if !strings.Contains(conn.commands[0], want) {
+			t.Errorf("remote command = %q, want it to contain %q", conn.commands[0], want)
+		}
+	}
+}
+
+// fakeConn stands in for an open connection to a box, recording the remote
+// command lines it was asked to run.
+type fakeConn struct {
+	commands []string
+	err      error
+}
+
+func (c *fakeConn) Run(_ context.Context, remoteCmd string, _, _ io.Writer) error {
+	c.commands = append(c.commands, remoteCmd)
+	return c.err
+}
+
+// TestConnectChecksTheBoxBeforeHandingOverTheTerminal checks the ordering a
+// connecting verb depends on: the box says whether it would accept the command
+// before ssh replaces smith, because afterwards there is no smith left to be
+// told anything.
+func TestConnectChecksTheBoxBeforeHandingOverTheTerminal(t *testing.T) {
+	ssh := &fakeSSH{}
+	execer := &fakeExecer{}
+
+	err := Connect(context.Background(), ssh, execer, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "attach", "smith-main"},
+	}, func() error { return nil }, io.Discard)
+	if err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+
+	if len(ssh.calls) != 1 {
+		t.Fatalf("ssh invoked %d times, want the one check that precedes the terminal: %v", len(ssh.calls), ssh.calls)
+	}
+	line := strings.Join(ssh.calls[0], " ")
+	if !strings.Contains(line, "--relayed-from '0.2.0'") {
+		t.Errorf("check argv = %q, want it to declare the relaying version", line)
+	}
+	if strings.Contains(line, " -t ") {
+		t.Errorf("check argv = %q, want no terminal requested for the check", line)
+	}
+	if len(execer.calls) != 1 {
+		t.Errorf("exec called %d times, want the terminal handed over once the check passed: %v", len(execer.calls), execer.calls)
+	}
+}
+
+// TestConnectRefusedByTheBoxNeverConnects checks what that check is for: a box
+// that would refuse the relayed command is never handed the operator's
+// terminal, and the refusal comes back typed for the caller to react to.
+func TestConnectRefusedByTheBoxNeverConnects(t *testing.T) {
+	ssh := &fakeSSH{
+		stderr: "smith: " + Refusal("0.1.0", "0.2.0") + "\n",
+		err:    exitStatus(RefusalExitCode),
+	}
+	execer := &fakeExecer{}
+
+	err := Connect(context.Background(), ssh, execer, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "attach", "smith-main"},
+	}, func() error { return nil }, io.Discard)
+
+	var mismatch *MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Connect() err = %v, want a MismatchError", err)
+	}
+	if mismatch.Box != "0.1.0" || mismatch.Local != "0.2.0" {
+		t.Errorf("MismatchError = %+v, want the box on 0.1.0 and this smith on 0.2.0", mismatch)
+	}
+	if len(execer.calls) != 0 {
+		t.Errorf("exec called %v, want no terminal handed to a box that refused", execer.calls)
+	}
+}
+
+// TestRunNamesTheBoxTheOperatorTyped checks that a box with no smith is
+// reported by the name the operator wrote, not by the address it resolved to:
+// an inventory name is the only spelling `smith machine setup` takes back, and
+// an ssh target the operator never typed is not a command they can run.
+func TestRunNamesTheBoxTheOperatorTyped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		verb Verb
+		want string
+	}{
+		{
+			name: "a registered box name",
+			verb: Verb{Box: "dev", Target: "smith@100.92.14.7"},
+			want: "dev",
+		},
+		{
+			name: "a literal target",
+			verb: Verb{Target: "smith@100.92.14.7"},
+			want: "smith@100.92.14.7",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &fakeSSH{
+				stderr: "bash: line 1: " + BoxSmith + ": No such file or directory\n",
+				err:    exitStatus(127),
+			}
+			tc.verb.Version, tc.verb.Args = "0.2.0", []string{"session", "list"}
+
+			err := Run(context.Background(), ssh, tc.verb, func() error { return nil }, io.Discard, io.Discard)
+
+			var absent *NotInstalledError
+			if !errors.As(err, &absent) {
+				t.Fatalf("Run() err = %v, want a NotInstalledError", err)
+			}
+			if absent.Box != tc.want {
+				t.Errorf("NotInstalledError.Box = %q, want %q", absent.Box, tc.want)
+			}
+			if want := "box " + tc.want + " has no smith installed"; !strings.Contains(absent.Error(), want) {
+				t.Errorf("Run() err = %q, want it to contain %q", absent, want)
+			}
+			if want := "`smith machine setup " + tc.want + "`"; !strings.Contains(absent.Error(), want) {
+				t.Errorf("Run() err = %q, want it to suggest %q", absent, want)
+			}
+		})
+	}
+}
+
+// TestRefusalCarriesTheVersionInAWireField checks the half of the refusal that
+// is protocol and not prose: whatever the operator-facing wording says, the
+// refusing smith's own version travels in a field the other side reads exactly,
+// so rewriting the message cannot change what the relay concludes.
+func TestRefusalCarriesTheVersionInAWireField(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stderr string
+		want   string
+	}{
+		{
+			name:   "the refusal this smith renders",
+			stderr: "smith: " + Refusal("0.1.0", "0.2.0") + "\n",
+			want:   "0.1.0",
+		},
+		{
+			name:   "wording nobody here wrote, carrying the field",
+			stderr: "smith: nope, wrong smith entirely\n" + refusalField("0.1.0") + "\n",
+			want:   "0.1.0",
+		},
+		{
+			name:   "an older box that renders prose and no field",
+			stderr: "smith: refusing a command relayed from smith 0.2.0: this smith is 0.1.0, and only an identical version may relay to it\n",
+			want:   "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &fakeSSH{stderr: tc.stderr, err: exitStatus(RefusalExitCode)}
+
+			err := Run(context.Background(), ssh, Verb{
+				Target:  "smith@box",
+				Version: "0.2.0",
+				Args:    []string{"session", "list"},
+			}, func() error { return nil }, io.Discard, io.Discard)
+
+			var mismatch *MismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("Run() err = %v, want a MismatchError", err)
+			}
+			if mismatch.Box != tc.want {
+				t.Errorf("MismatchError.Box = %q, want %q", mismatch.Box, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefusalWireLineNeverReachesTheOperator checks who each half of a refusal
+// is for: the box's own words travel to the operator's terminal as they
+// arrive, and the line the relay put there for itself is taken back out again,
+// however the box's output happened to be split on the way.
+func TestRefusalWireLineNeverReachesTheOperator(t *testing.T) {
+	refusal := "smith: " + Refusal("0.1.0", "0.2.0") + "\n"
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{name: "arriving whole", chunks: []string{refusal}},
+		{name: "split mid-field", chunks: []string{refusal[:len(refusal)-12], refusal[len(refusal)-12:]}},
+		{name: "arriving with no closing newline", chunks: []string{strings.TrimSuffix(refusal, "\n")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &chunkedSSH{chunks: tc.chunks, err: exitStatus(RefusalExitCode)}
+			operator := &strings.Builder{}
+
+			err := Run(context.Background(), ssh, Verb{
+				Target:  "smith@box",
+				Version: "0.2.0",
+				Args:    []string{"session", "list"},
+			}, func() error { return nil }, io.Discard, operator)
+
+			var mismatch *MismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("Run() err = %v, want a MismatchError", err)
+			}
+			if mismatch.Box != "0.1.0" {
+				t.Errorf("MismatchError.Box = %q, want the version the field carried", mismatch.Box)
+			}
+			if seen := operator.String(); strings.Contains(seen, refusalMarker) {
+				t.Errorf("operator saw %q, want the wire line stripped from it", seen)
+			}
+			if seen := operator.String(); !strings.Contains(seen, "only an identical version may relay to it") {
+				t.Errorf("operator saw %q, want the box's own words in it", seen)
+			}
+		})
+	}
+}
+
+// chunkedSSH stands in for the ssh binary streaming a box's stderr back in
+// however many pieces the network handed it.
+type chunkedSSH struct {
+	chunks []string
+	err    error
+}
+
+func (f *chunkedSSH) Run(_ context.Context, _ string, _ []string, _ io.Reader, _, stderr io.Writer) error {
+	for _, chunk := range f.chunks {
+		if _, err := io.WriteString(stderr, chunk); err != nil {
+			return fmt.Errorf("write canned stderr: %w", err)
+		}
+	}
+	return f.err
 }

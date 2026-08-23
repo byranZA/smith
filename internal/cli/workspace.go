@@ -62,6 +62,9 @@ type workspaceWiring struct {
 	// version is this smith's version, which every relayed invocation carries
 	// so the box can refuse a command line it may not mean the same thing by.
 	version string
+	// skew is what a converge the box refused for version skew is reacted to
+	// through: the operator's terminal, and the convergence it may accept.
+	skew skew
 }
 
 // newWorkspaceCmd builds `smith workspace` and its subcommands.
@@ -97,9 +100,12 @@ func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			verb := relay.Verb{Target: target, Version: w.version, Args: []string{"workspace", "converge"}}
+			verb := relay.Verb{Target: target, Box: box, Version: w.version, Args: []string{"workspace", "converge"}}
 			local := func() error { return w.converge(cmd) }
-			return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr()))
+			run := func() error {
+				return relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
+			return reportRelay(cmd, w.skew.react(cmd, box, run))
 		},
 	}
 }

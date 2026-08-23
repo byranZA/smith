@@ -12,6 +12,7 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -34,6 +35,13 @@ type Verb struct {
 	// resolved through the inventory, or a literal target the operator wrote
 	// out. Empty means the verb runs on this machine.
 	Target string
+	// Box is the box as the operator named it, kept beside the address it
+	// resolved to because a failure the operator is asked to act on has to
+	// come back in their own words: `dev` is what they typed and what the
+	// command they are pointed at takes, where the target it resolved to is a
+	// string they never wrote. Empty means there was no name to keep — a
+	// literal target, which is already the operator's own spelling.
+	Box string
 	// Version is local smith's version, passed to the box as --relayed-from
 	// so the box refuses a command line it may not mean the same thing by.
 	Version string
@@ -59,9 +67,95 @@ func Run(ctx context.Context, exec connection.Exec, v Verb, local Local, stdout,
 	if v.Target == "" {
 		return local()
 	}
+	return Send(ctx, connection.New(v.Target, exec), v, stdout, stderr)
+}
+
+// Conn is the narrow slice of an open connection the relay sends over: run a
+// remote command with its output streamed back. It is accepted rather than
+// dialled so a caller already holding a connection to the box relays over that
+// one — the install stage confirming the binary it just installed does exactly
+// that, on the connection it installed over.
+type Conn interface {
+	// Run runs remoteCmd on the box, streaming its output as it arrives.
+	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+}
+
+// Send relays a verb over an already-open connection and classifies what came
+// back, streaming the box's own output to stdout and stderr as it arrives.
+//
+// It is the sending half by itself, where Run is the verb-level entry that
+// first decides whether there is a box to send to at all. Nothing here talks to
+// a terminal: the outcome comes back typed, and what to do about it — prompt,
+// print, or converge — belongs to the caller.
+//
+// What the box said on stderr reaches the operator as it arrives, minus the
+// lines the two smiths addressed to each other: a refusal's machine-readable
+// field is read here, into the outcome, and never shown to a human. Where the
+// box's own failure and a failure to pass its words on collide, the box's is
+// what the caller is told about, because it is the one they can act on.
+//
+// Anything that grows a second way to run a verb re-opens ADR-0008: a local
+// fast path, or a laptop-side reimplementation "just this once", each recreates
+// the drift between the two sides that this relay exists to prevent. One
+// implementation, on the box, reached through here.
+func Send(ctx context.Context, conn Conn, v Verb, stdout, stderr io.Writer) error {
 	watched := &strings.Builder{}
-	if err := connection.New(v.Target, exec).Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(stderr, watched)); err != nil {
-		return classify(v.Target, watched.String(), err)
+	spoken := &wireStripper{to: stderr}
+	err := conn.Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(spoken, watched))
+	flushed := spoken.flush()
+	if err != nil {
+		return classify(v, watched.String(), err)
+	}
+	return flushed
+}
+
+// wireStripper is the box's stderr on its way to the operator's terminal, with
+// the relay's own wire lines taken back out: what the box said reaches them as
+// it arrives, and what the two smiths said to each other does not.
+//
+// It works a line at a time because a wire line is one, holding back a trailing
+// partial line until the newline that ends it arrives or flush says none will.
+type wireStripper struct {
+	// to is the operator's stream, written everything but the wire.
+	to io.Writer
+	// pending is the tail of a line whose newline has not arrived yet.
+	pending []byte
+}
+
+// Write implements io.Writer, passing on every completed line that is not the
+// relay talking to itself.
+func (w *wireStripper) Write(p []byte) (int, error) {
+	w.pending = append(w.pending, p...)
+	for {
+		end := bytes.IndexByte(w.pending, '\n')
+		if end < 0 {
+			return len(p), nil
+		}
+		line := w.pending[:end+1]
+		w.pending = w.pending[end+1:]
+		if err := w.speak(line); err != nil {
+			return 0, err
+		}
+	}
+}
+
+// flush passes on a last line that never ended in a newline.
+func (w *wireStripper) flush() error {
+	line := w.pending
+	w.pending = nil
+	return w.speak(line)
+}
+
+// speak writes one line to the operator, unless it is the relay's own.
+func (w *wireStripper) speak(line []byte) error {
+	if len(line) == 0 {
+		return nil
+	}
+	if _, isWire := wireField(string(line)); isWire {
+		return nil
+	}
+	if _, err := w.to.Write(line); err != nil {
+		return fmt.Errorf("stream the box's output: %w", err)
 	}
 	return nil
 }
@@ -80,21 +174,48 @@ type Execer interface {
 // terminal talks to the box's tmux with no smith process in the middle; with
 // no box named it runs local, which execs into tmux itself.
 //
-// A box with no smith installed is named as such here too, though nothing
-// local is left to classify the exit: the check travels to the box ahead of
-// the verb, so the operator gets the same setup nudge a listing gives them.
+// The box is asked whether it would accept the command before the terminal is
+// handed over, on an ordinary round trip classified exactly as a streamed
+// verb's outcome is. That check cannot be folded into the connecting
+// invocation: replacing smith with ssh gives up ever seeing the box's exit
+// code, so a refusal reached after the exec has nobody left to react to it,
+// and the version-skew decision the operator is owed would never be made. The
+// box's own words travel to stderr as they arrive, so what it said reaches the
+// operator ahead of whatever the caller does about it.
+//
+// A box with no smith installed is named as such by the check and by the
+// connecting invocation both: the guard on the box covers the binary going
+// missing between the two round trips, and costs nothing when it does not.
 //
 // What that tmux session is called never travels: the box is handed the same
 // session verb the operator typed, and the mapping from a session name to a
 // tmux session stays in internal/session, on the box.
-func Connect(exec Execer, v Verb, local Local) error {
+func Connect(ctx context.Context, exec connection.Exec, replace Execer, v Verb, local Local, stderr io.Writer) error {
 	if v.Target == "" {
 		return local()
 	}
-	if err := exec.Exec("ssh", connection.TerminalArgs(v.Target, v.connectCmd())); err != nil {
+	if err := check(ctx, connection.New(v.Target, exec), v, stderr); err != nil {
+		return err
+	}
+	if err := replace.Exec("ssh", connection.TerminalArgs(v.Target, v.connectCmd())); err != nil {
 		return fmt.Errorf("hand the terminal to box %s: %w", v.Target, err)
 	}
 	return nil
+}
+
+// check asks the box whether it would accept a command relayed by this smith,
+// and answers with the same typed outcomes a relayed verb's own failure comes
+// back as — a version mismatch, a box with no smith, or a box that could not
+// be reached.
+//
+// It relays `version`, which is the one verb every smith has and the one that
+// changes nothing on the box: what is being read is not its answer but whether
+// the box let it run at all, since the declaration the box refuses on is
+// checked before any verb of its own does anything. Its stdout is the box's
+// version banner, which the operator did not ask for and never sees.
+func check(ctx context.Context, conn Conn, v Verb, stderr io.Writer) error {
+	probe := Verb{Target: v.Target, Box: v.Box, Version: v.Version, Args: []string{"version"}}
+	return Send(ctx, conn, probe, io.Discard, stderr)
 }
 
 // NotInstalledError reports that the box answered the relay with no smith to
@@ -102,13 +223,14 @@ func Connect(exec Execer, v Verb, local Local) error {
 // this state was provisioned before smith installed itself, so it likely wants
 // the rest of the pipeline too.
 type NotInstalledError struct {
-	// Target is the ssh destination that was reached.
-	Target string
+	// Box is the box as the operator named it, which is the spelling the
+	// setup command it points at takes back.
+	Box string
 }
 
 // Error implements error.
 func (e *NotInstalledError) Error() string {
-	return fmt.Sprintf("box %s has no smith installed: `smith machine setup %s` installs it, along with the rest of what the box is missing", e.Target, e.Target)
+	return fmt.Sprintf("box %s has no smith installed: `smith machine setup %s` installs it, along with the rest of what the box is missing", e.Box, e.Box)
 }
 
 // ExitError reports that smith on the box ran and exited non-zero — a refused
@@ -133,17 +255,119 @@ func (e *ExitError) Error() string {
 const notInstalled = 127
 
 // classify turns a failed relay into the error its cause deserves: a
-// provisioning gap that names the setup command, a connection that could not
-// be made, or the box's own non-zero exit carried back as a code.
-func classify(target, stderr string, err error) error {
+// provisioning gap that names the setup command, a version mismatch the caller
+// can act on, a connection that could not be made, or the box's own non-zero
+// exit carried back as a code.
+func classify(v Verb, stderr string, err error) error {
 	var coder interface{ ExitCode() int }
 	if !errors.As(err, &coder) {
 		return err
 	}
-	if coder.ExitCode() == notInstalled || strings.Contains(stderr, BoxSmith+": No such file or directory") {
-		return &NotInstalledError{Target: target}
+	switch code := coder.ExitCode(); {
+	case code == notInstalled || strings.Contains(stderr, BoxSmith+": No such file or directory"):
+		return &NotInstalledError{Box: v.named()}
+	case code == RefusalExitCode:
+		return &MismatchError{Target: v.Target, Box: boxVersion(stderr), Local: v.Version}
+	default:
+		return &ExitError{Code: code, Target: v.Target}
 	}
-	return &ExitError{Code: coder.ExitCode(), Target: target}
+}
+
+// RefusalExitCode is the status on-box smith exits with when it refuses a
+// command relayed by a smith of another version. It is a wire contract between
+// the two sides rather than either side's own detail, which is why it lives
+// here: the box exits with it, and the relay reads it back as a version
+// mismatch instead of as the verb's own failure.
+//
+// It sits outside the setup family's codes and outside the 127 a box with no
+// smith answers with, so no other outcome can be mistaken for it.
+const RefusalExitCode = 6
+
+// Refusal renders what on-box smith writes to stderr when it refuses a
+// relayed command: the operator's message, then the one line of it that is
+// wire rather than prose.
+//
+// Both halves live here, with the relay, because both sides depend on them —
+// but on different halves. The message names both versions because the
+// operator reading it cannot otherwise tell which side is which, and it is
+// theirs alone to be rewritten; the field beneath it is what the relaying
+// smith reads the box's version back out of, so wording and protocol move
+// independently. local is the version of the smith refusing — the one on the
+// box — and relayedFrom the version the relaying smith declared.
+func Refusal(local, relayedFrom string) string {
+	return fmt.Sprintf("refusing a command relayed from smith %s: this smith is %s, and only an identical version may relay to it\n%s",
+		relayedFrom, local, refusalField(local))
+}
+
+// refusalMarker opens the machine-readable line a refusal carries and is
+// reserved for it: a line bearing it is the relay talking to itself, never
+// something the operator is meant to read, and the relay strips it from the
+// box's output before the operator's terminal ever sees it.
+const refusalMarker = "smith-relay-refused:"
+
+// refusalVersionField names the refusing smith's own version within that line.
+const refusalVersionField = "version="
+
+// refusalField renders the machine-readable line, carrying the version of the
+// smith that refused.
+func refusalField(local string) string {
+	return refusalMarker + " " + refusalVersionField + local
+}
+
+// boxVersion reads the version the box reported in its refusal, empty when
+// what came back on stderr carried no field this smith knows how to read — an
+// older box that answered in prose alone, say, whose exit code still says what
+// happened.
+func boxVersion(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		field, ok := wireField(line)
+		if !ok {
+			continue
+		}
+		if version, ok := strings.CutPrefix(field, refusalVersionField); ok {
+			return strings.TrimSpace(version)
+		}
+	}
+	return ""
+}
+
+// wireField reports whether a line of the box's output is the relay's own wire
+// line, and returns what it carries. The marker is looked for anywhere in the
+// line rather than at its start, because whatever printed it may have prefixed
+// the line with its own name.
+func wireField(line string) (string, bool) {
+	i := strings.Index(line, refusalMarker)
+	if i < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(line[i+len(refusalMarker):]), true
+}
+
+// MismatchError reports that the box refused the relayed command because the
+// two smiths are different versions. It is the outcome, not the reaction: the
+// box has already printed its own refusal on the operator's terminal, and
+// whether to prompt, print an upgrade command or converge the box is the
+// caller's to decide.
+//
+// This is the smith binary on the box against the smith binary on the
+// operator's machine. It is not the marker's schema_version against the
+// constant a build understands — a different axis entirely, and neither
+// message borrows the other's words.
+type MismatchError struct {
+	// Target is the ssh destination that refused the command.
+	Target string
+	// Box is the version the box runs, empty when its refusal named none.
+	Box string
+	// Local is the version this smith declared when it relayed.
+	Local string
+}
+
+// Error implements error.
+func (e *MismatchError) Error() string {
+	if e.Box == "" {
+		return fmt.Sprintf("box %s refused a command relayed from smith %s: it runs a different version of smith", e.Target, e.Local)
+	}
+	return fmt.Sprintf("box %s runs smith %s and you run %s: only an identical version may relay to it", e.Target, e.Box, e.Local)
 }
 
 // connectCmd renders the command line a connecting verb hands the box: the
@@ -154,9 +378,18 @@ func classify(target, stderr string, err error) error {
 // verbs answer it with. On a box that has smith the shell is exec'd away, so
 // the guard leaves nothing between the operator's terminal and tmux.
 func (v Verb) connectCmd() string {
-	absent := &NotInstalledError{Target: v.Target}
+	absent := &NotInstalledError{Box: v.named()}
 	return fmt.Sprintf("if [ -x %s ]; then exec %s; fi; printf '%%s\\n' %s >&2; exit 1",
 		BoxSmith, v.remoteCmd(), connection.ShellArg(absent.Error()))
+}
+
+// named is the box in the operator's own words: the name they typed when
+// there was one, and otherwise the target, which they wrote out themselves.
+func (v Verb) named() string {
+	if v.Box != "" {
+		return v.Box
+	}
+	return v.Target
 }
 
 // remoteCmd renders the command line the box runs: the absolute path, the
