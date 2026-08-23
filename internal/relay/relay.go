@@ -35,6 +35,13 @@ type Verb struct {
 	// resolved through the inventory, or a literal target the operator wrote
 	// out. Empty means the verb runs on this machine.
 	Target string
+	// Box is the box as the operator named it, kept beside the address it
+	// resolved to because a failure the operator is asked to act on has to
+	// come back in their own words: `dev` is what they typed and what the
+	// command they are pointed at takes, where the target it resolved to is a
+	// string they never wrote. Empty means there was no name to keep — a
+	// literal target, which is already the operator's own spelling.
+	Box string
 	// Version is local smith's version, passed to the box as --relayed-from
 	// so the box refuses a command line it may not mean the same thing by.
 	Version string
@@ -147,7 +154,7 @@ func Connect(ctx context.Context, exec connection.Exec, replace Execer, v Verb, 
 // checked before any verb of its own does anything. Its stdout is the box's
 // version banner, which the operator did not ask for and never sees.
 func check(ctx context.Context, conn Conn, v Verb, stderr io.Writer) error {
-	probe := Verb{Target: v.Target, Version: v.Version, Args: []string{"version"}}
+	probe := Verb{Target: v.Target, Box: v.Box, Version: v.Version, Args: []string{"version"}}
 	return Send(ctx, conn, probe, io.Discard, stderr)
 }
 
@@ -156,13 +163,14 @@ func check(ctx context.Context, conn Conn, v Verb, stderr io.Writer) error {
 // this state was provisioned before smith installed itself, so it likely wants
 // the rest of the pipeline too.
 type NotInstalledError struct {
-	// Target is the ssh destination that was reached.
-	Target string
+	// Box is the box as the operator named it, which is the spelling the
+	// setup command it points at takes back.
+	Box string
 }
 
 // Error implements error.
 func (e *NotInstalledError) Error() string {
-	return fmt.Sprintf("box %s has no smith installed: `smith machine setup %s` installs it, along with the rest of what the box is missing", e.Target, e.Target)
+	return fmt.Sprintf("box %s has no smith installed: `smith machine setup %s` installs it, along with the rest of what the box is missing", e.Box, e.Box)
 }
 
 // ExitError reports that smith on the box ran and exited non-zero — a refused
@@ -197,7 +205,7 @@ func classify(v Verb, stderr string, err error) error {
 	}
 	switch code := coder.ExitCode(); {
 	case code == notInstalled || strings.Contains(stderr, BoxSmith+": No such file or directory"):
-		return &NotInstalledError{Target: v.Target}
+		return &NotInstalledError{Box: v.named()}
 	case code == RefusalExitCode:
 		return &MismatchError{Target: v.Target, Box: boxVersion(stderr), Local: v.Version}
 	default:
@@ -277,9 +285,18 @@ func (e *MismatchError) Error() string {
 // verbs answer it with. On a box that has smith the shell is exec'd away, so
 // the guard leaves nothing between the operator's terminal and tmux.
 func (v Verb) connectCmd() string {
-	absent := &NotInstalledError{Target: v.Target}
+	absent := &NotInstalledError{Box: v.named()}
 	return fmt.Sprintf("if [ -x %s ]; then exec %s; fi; printf '%%s\\n' %s >&2; exit 1",
 		BoxSmith, v.remoteCmd(), connection.ShellArg(absent.Error()))
+}
+
+// named is the box in the operator's own words: the name they typed when
+// there was one, and otherwise the target, which they wrote out themselves.
+func (v Verb) named() string {
+	if v.Box != "" {
+		return v.Box
+	}
+	return v.Target
 }
 
 // remoteCmd renders the command line the box runs: the absolute path, the

@@ -135,7 +135,7 @@ func (w sessionWiring) verb(cmd *cobra.Command, name, box string, args ...string
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		relayed = append(relayed, "--"+f.Name+"="+f.Value.String())
 	})
-	return relay.Verb{Target: target, Version: w.version, Args: relayed}, nil
+	return relay.Verb{Target: target, Box: box, Version: w.version, Args: relayed}, nil
 }
 
 // target resolves the box a verb named into the ssh target it relays to.

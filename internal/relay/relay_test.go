@@ -250,7 +250,7 @@ func TestConnectNamesSetupWhenTheBoxHasNoSmith(t *testing.T) {
 		t.Fatalf("exec called %d times, want 1: %v", len(execer.calls), execer.calls)
 	}
 	line := strings.Join(execer.calls[0], " ")
-	absent := &NotInstalledError{Target: "smith@box"}
+	absent := &NotInstalledError{Box: "smith@box"}
 	for _, want := range []string{"exec " + BoxSmith, absent.Error(), "exit 1"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("exec argv = %q, want it to contain %q", line, want)
@@ -382,5 +382,52 @@ func TestConnectRefusedByTheBoxNeverConnects(t *testing.T) {
 	}
 	if len(execer.calls) != 0 {
 		t.Errorf("exec called %v, want no terminal handed to a box that refused", execer.calls)
+	}
+}
+
+// TestRunNamesTheBoxTheOperatorTyped checks that a box with no smith is
+// reported by the name the operator wrote, not by the address it resolved to:
+// an inventory name is the only spelling `smith machine setup` takes back, and
+// an ssh target the operator never typed is not a command they can run.
+func TestRunNamesTheBoxTheOperatorTyped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		verb Verb
+		want string
+	}{
+		{
+			name: "a registered box name",
+			verb: Verb{Box: "dev", Target: "smith@100.92.14.7"},
+			want: "dev",
+		},
+		{
+			name: "a literal target",
+			verb: Verb{Target: "smith@100.92.14.7"},
+			want: "smith@100.92.14.7",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := &fakeSSH{
+				stderr: "bash: line 1: " + BoxSmith + ": No such file or directory\n",
+				err:    exitStatus(127),
+			}
+			tc.verb.Version, tc.verb.Args = "0.2.0", []string{"session", "list"}
+
+			err := Run(context.Background(), ssh, tc.verb, func() error { return nil }, io.Discard, io.Discard)
+
+			var absent *NotInstalledError
+			if !errors.As(err, &absent) {
+				t.Fatalf("Run() err = %v, want a NotInstalledError", err)
+			}
+			if absent.Box != tc.want {
+				t.Errorf("NotInstalledError.Box = %q, want %q", absent.Box, tc.want)
+			}
+			if want := "box " + tc.want + " has no smith installed"; !strings.Contains(absent.Error(), want) {
+				t.Errorf("Run() err = %q, want it to contain %q", absent, want)
+			}
+			if want := "`smith machine setup " + tc.want + "`"; !strings.Contains(absent.Error(), want) {
+				t.Errorf("Run() err = %q, want it to suggest %q", absent, want)
+			}
+		})
 	}
 }

@@ -100,7 +100,7 @@ func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			verb := relay.Verb{Target: target, Version: w.version, Args: []string{"workspace", "converge"}}
+			verb := relay.Verb{Target: target, Box: box, Version: w.version, Args: []string{"workspace", "converge"}}
 			local := func() error { return w.converge(cmd) }
 			run := func() error {
 				return relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr())

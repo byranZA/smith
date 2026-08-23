@@ -176,22 +176,37 @@ func TestSessionAttachRelaysWithATerminal(t *testing.T) {
 
 // TestSessionVerbOnABoxWithNoSmithPointsAtSetup checks the answer every box
 // provisioned before smith installed itself gives, and that it reads as a
-// provisioning gap rather than as a broken verb.
+// provisioning gap rather than as a broken verb — named by the box the
+// operator typed, since the setup command they are pointed at takes that
+// spelling and not the address it resolved to.
 func TestSessionVerbOnABoxWithNoSmithPointsAtSetup(t *testing.T) {
-	dir := t.TempDir()
-	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
-	ssh := &fakeSSHRelay{
-		stderr: "bash: line 1: /usr/local/bin/smith: No such file or directory\n",
-		err:    relayExit(127),
-	}
+	for _, tc := range []struct {
+		name string
+		box  string
+	}{
+		{name: "a registered box name", box: "dev"},
+		{name: "a literal target", box: "smith@100.92.14.7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
+			ssh := &fakeSSHRelay{
+				stderr: "bash: line 1: /usr/local/bin/smith: No such file or directory\n",
+				err:    relayExit(127),
+			}
 
-	_, stderr, code := runSessionOn(t, laptop(t, dir, ssh, &fakeExec{}, &fakeRunner{}, &fakeRunner{}), "list", "dev")
+			_, stderr, code := runSessionOn(t, laptop(t, dir, ssh, &fakeExec{}, &fakeRunner{}, &fakeRunner{}), "list", tc.box)
 
-	if code == 0 {
-		t.Fatal("exit code = 0, want the verb to fail")
-	}
-	if !strings.Contains(stderr, "smith machine setup") {
-		t.Errorf("stderr = %q, want it to name `smith machine setup`", stderr)
+			if code == 0 {
+				t.Fatal("exit code = 0, want the verb to fail")
+			}
+			if want := "box " + tc.box + " has no smith installed"; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+			}
+			if want := "`smith machine setup " + tc.box + "`"; !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want it to suggest %q", stderr, want)
+			}
+		})
 	}
 }
 
