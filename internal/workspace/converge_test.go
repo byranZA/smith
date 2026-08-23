@@ -21,9 +21,13 @@ type fakeBox struct {
 	installed map[string]bool
 	aptOutput string
 	aptErr    error
-	// hasMise is whether the box already holds mise, which the install turns
-	// on the way a real one does.
+	// hasMise is whether the box already holds mise on PATH, answering as
+	// plain `mise` and at no path of smith's.
 	hasMise bool
+	// miseAt is the path a mise smith installed answers at, which the install
+	// script sets the way a real one does. A box may hold one, the other, or
+	// neither, and the two are different executables.
+	miseAt string
 	// miseErr fails the mise commands the way a box with no network does.
 	miseErr error
 	// remotes is the url each bare clone on the box was cloned from, keyed by
@@ -45,6 +49,9 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 	argv := append([]string{name}, args...)
 	f.calls = append(f.calls, argv)
 	line := strings.Join(argv, " ")
+	if isMise(name) && !f.holdsMise(name) {
+		return fmt.Errorf("%s: command not found", name)
+	}
 	switch {
 	case strings.Contains(line, "dpkg-query"):
 		pkg := argv[len(argv)-1]
@@ -83,11 +90,11 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		}
 		return f.gitErr
 	case strings.Contains(line, "mise.run"):
-		f.hasMise = true
+		f.miseAt = installPath(line)
 		return f.miseErr
-	case strings.HasSuffix(name, "mise"):
-		if !f.hasMise {
-			return fmt.Errorf("mise: command not found")
+	case isMise(name):
+		if !f.holdsMise(name) {
+			return fmt.Errorf("%s: command not found", name)
 		}
 		if _, err := io.WriteString(stdout, "2025.8.0 macos-arm64\n"); err != nil {
 			return fmt.Errorf("write canned mise output: %w", err)
@@ -100,6 +107,33 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return f.aptErr
 	}
 	return fmt.Errorf("unexpected command %q", line)
+}
+
+// isMise reports whether a command is an invocation of mise, by the plain name
+// a box with one on PATH answers to or by a path smith installed one at.
+func isMise(name string) bool {
+	return name == miseFile || strings.HasSuffix(name, "/"+miseFile)
+}
+
+// holdsMise reports whether the box holds the mise the command names. The two
+// are separate: a box with mise on PATH has nothing at smith's install path,
+// and a probe of the one it does not hold answers the way a real box does.
+func (f *fakeBox) holdsMise(name string) bool {
+	if name == miseFile {
+		return f.hasMise
+	}
+	return f.miseAt != "" && name == f.miseAt
+}
+
+// installPath is where the install script was told to put mise, read back out
+// of the shell command the way the box would have honoured it.
+func installPath(line string) string {
+	_, rest, ok := strings.Cut(line, "MISE_INSTALL_PATH='")
+	if !ok {
+		return ""
+	}
+	path, _, _ := strings.Cut(rest, "'")
+	return path
 }
 
 // gitDir is the bare clone a git command names with --git-dir.

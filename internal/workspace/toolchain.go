@@ -143,12 +143,12 @@ const installer = "https://mise.run"
 // use`: that writes into ~/.config/mise/config.toml, which is mise's own file
 // and may hold the operator's settings, and smith writes generated files by
 // whole-file replacement.
-func convergeToolchain(ctx context.Context, env Env, f Fragment, progress io.Writer) (string, error) {
+func convergeToolchain(ctx context.Context, env Env, m *mise, f Fragment, progress io.Writer) (string, error) {
 	values, err := stagedValues(env.StateRoot, f.Repo, f.Env)
 	if err != nil {
 		return "", err
 	}
-	done, err := ensureMise(ctx, env.Command, f.Mise, progress)
+	exe, done, err := m.ensure(ctx, env.Command, f.Mise, progress)
 	if err != nil {
 		return "", err
 	}
@@ -160,7 +160,7 @@ func convergeToolchain(ctx context.Context, env Env, f Fragment, progress io.Wri
 	if len(f.Tools) == 0 {
 		return strings.Join(done, "; "), nil
 	}
-	if err := env.Command.Run(ctx, miseInvocation(f.Mise), installArgs(f.Dir), nil, progress, progress); err != nil {
+	if err := env.Command.Run(ctx, exe, installArgs(f.Dir), nil, progress, progress); err != nil {
 		return "", fmt.Errorf("install the pinned versions with mise: %w", err)
 	}
 	return strings.Join(append(done, "installed "+pinned(f.Tools)), "; "), nil
@@ -203,26 +203,65 @@ func stagedValues(root, repo string, names []string) (map[string]string, error) 
 	return values, nil
 }
 
-// ensureMise leaves the box with an invocable mise and reports what it took.
+// mise is the mise executable one converge run invokes, proven once and shared
+// by every unit that needs one.
+//
+// Which executable that is depends on the box: one that already had mise
+// answers to whatever is on PATH, and one that did not answers only at the
+// path smith installed a binary to. They are different executables, and a unit
+// deciding for itself which to invoke can pick the one that is not there — a
+// toolchain that installs no version and a clone that fails with "command not
+// found" on a box whose mise works. Proving it once removes the choice.
+type mise struct {
+	// exe is the proven executable, empty until the run has needed one.
+	exe string
+}
+
+// ensure returns the executable this run invokes mise by, proving it on the
+// first call and answering from that proof afterwards. install is where the
+// binary is put on a box that has none.
+//
+// The report it returns beside the executable is what proving it took, empty
+// on every call after the first: the run installs mise once and says so once.
+func (m *mise) ensure(ctx context.Context, run Runner, install string, progress io.Writer) (string, []string, error) {
+	if m.exe != "" {
+		return m.exe, nil, nil
+	}
+	exe, done, err := ensureMise(ctx, run, install, progress)
+	if err != nil {
+		return "", nil, err
+	}
+	m.exe = exe
+	return exe, done, nil
+}
+
+// ensureMise leaves the box with an invocable mise and reports which
+// executable that is, and what it took.
 //
 // A box that already has one — on PATH, or installed where smith puts it — is
-// left alone. Otherwise mise's own install script puts the binary at the path
-// the plan named, and the result is probed rather than assumed, so a run that
-// could not reach the installer fails here rather than at the first version it
-// tries to install.
-func ensureMise(ctx context.Context, run Runner, path string, progress io.Writer) ([]string, error) {
-	if invocable(ctx, run, miseFile) || invocable(ctx, run, path) {
-		return []string{"mise already installed"}, nil
+// left alone and answers by the name that proved it. Otherwise mise's own
+// install script puts the binary at the path the plan named, and the result is
+// probed rather than assumed, so a run that could not reach the installer
+// fails here rather than at the first version it tries to install.
+//
+// Every invocation that follows is `mise exec` or `mise install` — never `mise
+// activate`, which does not fire in the non-interactive and daemon-started
+// shells smith and its agents run in.
+func ensureMise(ctx context.Context, run Runner, install string, progress io.Writer) (string, []string, error) {
+	for _, exe := range []string{miseFile, install} {
+		if invocable(ctx, run, exe) {
+			return exe, []string{"mise already installed at " + exe}, nil
+		}
 	}
 	script := fmt.Sprintf("curl -fsSL %s | MISE_INSTALL_PATH=%s sh",
-		connection.ShellArg(installer), connection.ShellArg(path))
+		connection.ShellArg(installer), connection.ShellArg(install))
 	if err := run.Run(ctx, "sh", []string{"-c", script}, nil, progress, progress); err != nil {
-		return nil, fmt.Errorf("install mise from %s: %w", installer, err)
+		return "", nil, fmt.Errorf("install mise from %s: %w", installer, err)
 	}
-	if !invocable(ctx, run, path) {
-		return nil, fmt.Errorf("mise is still not invocable at %s after installing it", path)
+	if !invocable(ctx, run, install) {
+		return "", nil, fmt.Errorf("mise is still not invocable at %s after installing it", install)
 	}
-	return []string{"installed mise at " + path}, nil
+	return install, []string{"installed mise at " + install}, nil
 }
 
 // invocable reports whether mise answers at the given command. A box that has
@@ -230,18 +269,6 @@ func ensureMise(ctx context.Context, run Runner, path string, progress io.Writer
 // than an error to report.
 func invocable(ctx context.Context, run Runner, command string) bool {
 	return run.Run(ctx, command, []string{"--version"}, nil, io.Discard, io.Discard) == nil
-}
-
-// miseInvocation is what mise is invoked by: the binary smith installed, which
-// is also where a box that already had one is probed. Every invocation is
-// `mise exec` or `mise install` — never `mise activate`, which does not fire
-// in the non-interactive and daemon-started shells smith and its agents run
-// in.
-func miseInvocation(path string) string {
-	if path == "" {
-		return miseFile
-	}
-	return path
 }
 
 // writeFragment puts the generated bytes at path and reports what it did to

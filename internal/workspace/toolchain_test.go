@@ -213,8 +213,8 @@ func TestConvergeInstallsMiseWhenTheBoxLacksIt(t *testing.T) {
 	if !box.ran("mise.run") {
 		t.Errorf("the stage ran %v, want it to install mise on a box that has none", box.calls)
 	}
-	if !box.hasMise {
-		t.Errorf("mise is not invocable after the stage installed it")
+	if want := filepath.Join(home, ".local", "bin", "mise"); box.miseAt != want {
+		t.Errorf("mise is invocable at %q after the stage installed it, want %q", box.miseAt, want)
 	}
 	if !strings.Contains(progress, "mise") {
 		t.Errorf("progress = %q, want the toolchain step reported as it completes", progress)
@@ -620,7 +620,6 @@ func TestConvergeSharesOneInstallStoreAcrossRepos(t *testing.T) {
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
 	}
-	mise := filepath.Join(home, ".local", "bin", "mise")
 	var installs [][]string
 	for _, argv := range box.calls {
 		if len(argv) > 0 && argv[0] != "sh" && strings.Contains(strings.Join(argv, " "), "install") {
@@ -631,8 +630,8 @@ func TestConvergeSharesOneInstallStoreAcrossRepos(t *testing.T) {
 		t.Fatalf("the stage ran %d installs, want one per repo: %v", len(installs), box.calls)
 	}
 	for _, argv := range installs {
-		if argv[0] != mise {
-			t.Errorf("an install ran %v, want the one mise at %s", argv, mise)
+		if argv[0] != installs[0][0] {
+			t.Errorf("an install ran %v, want the one mise %s the run proved", argv, installs[0][0])
 		}
 		for _, arg := range argv {
 			if strings.Contains(arg, "data-dir") || strings.Contains(arg, "MISE_DATA_DIR") {
@@ -665,4 +664,83 @@ func writtenUnder(t *testing.T, root string) []string {
 		t.Fatalf("read what the box holds under %s: %v", root, err)
 	}
 	return found
+}
+
+// TestConvergeRunsTheMiseTheBoxAlreadyHas proves the executable every step
+// invokes is the one the probe answered at. A box carrying mise on PATH has
+// nothing where smith would have installed one, so a step rebuilding that path
+// for itself would install no version and clone no repo — on a box whose mise
+// works.
+func TestConvergeRunsTheMiseTheBoxAlreadyHas(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := declaresRepo("acme")
+	b.Tools = map[string]string{"node": "20"}
+
+	result, _ := convergeOnBox(t, box, home, b)
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
+	}
+	installPath := filepath.Join(home, ".local", "bin", "mise")
+	for _, argv := range box.calls {
+		if argv[0] == installPath {
+			t.Errorf("the stage ran %v, want the mise on PATH that answered the probe", argv)
+		}
+	}
+	if !box.ran("mise exec -- git clone") {
+		t.Errorf("the stage ran %v, want the clone run under the mise the box has", box.calls)
+	}
+}
+
+// TestConvergeRunsTheMiseItInstalled proves the opposite provenance: a box that
+// had none is left invoking the binary smith put there, by the path it put it
+// at, rather than a bare `mise` that is on no PATH.
+func TestConvergeRunsTheMiseItInstalled(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	b := declaresRepo("acme")
+	b.Tools = map[string]string{"node": "20"}
+
+	result, _ := convergeOnBox(t, box, home, b)
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
+	}
+	installPath := filepath.Join(home, ".local", "bin", "mise")
+	if box.miseAt != installPath {
+		t.Fatalf("the stage installed mise at %q, want %q", box.miseAt, installPath)
+	}
+	if !box.ran(installPath + " exec -- git clone") {
+		t.Errorf("the stage ran %v, want the clone run under the mise it installed", box.calls)
+	}
+	for _, argv := range box.calls {
+		if argv[0] == miseFile && len(argv) > 1 && argv[1] != "--version" {
+			t.Errorf("the stage ran %v, want the installed mise rather than a bare one", argv)
+		}
+	}
+}
+
+// TestConvergeProvesMiseOnce proves the executable is established once for the
+// whole run and handed on: a plan with a toolchain and a repo probes mise once,
+// so the two steps cannot end up on different answers.
+func TestConvergeProvesMiseOnce(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := declaresRepo("acme")
+	b.Tools = map[string]string{"node": "20"}
+
+	convergeOnBox(t, box, home, b)
+
+	var probes int
+	for _, argv := range box.calls {
+		if len(argv) == 2 && isMise(argv[0]) && argv[1] == "--version" {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Errorf("the stage probed mise %d times, want the one proof the run shares: %v", probes, box.calls)
+	}
 }

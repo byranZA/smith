@@ -39,8 +39,10 @@ type Repo struct {
 	URL string
 	// Path is where the bare clone lands, absolute.
 	Path string
-	// Mise is the mise the clone runs under, so that the blueprint's box-level
-	// env is in scope for a token-authenticated clone.
+	// Mise is where mise is installed if the box does not already have it. The
+	// clone runs under whichever mise the run proves — this one, or the one
+	// the box already answers by — so that the blueprint's box-level env is in
+	// scope for a token-authenticated clone.
 	Mise string
 }
 
@@ -60,15 +62,20 @@ type Repo struct {
 // what authenticates a clone of a private repo. No worktree is made and no
 // repo-scoped placement is written: both belong to the session that stands a
 // worktree up.
-func convergeRepo(ctx context.Context, run Runner, r Repo, progress io.Writer) (string, error) {
+func convergeRepo(ctx context.Context, run Runner, m *mise, r Repo, progress io.Writer) (string, error) {
+	exe, done, err := m.ensure(ctx, run, r.Mise, progress)
+	if err != nil {
+		return "", err
+	}
 	exists, err := clonedAt(r.Path)
 	if err != nil {
 		return "", err
 	}
 	if !exists {
-		return clone(ctx, run, r, progress)
+		cloned, err := clone(ctx, run, exe, r, progress)
+		return summarize(done, cloned, err)
 	}
-	remote, err := remoteURL(ctx, run, r)
+	remote, err := remoteURL(ctx, run, exe, r)
 	if err != nil {
 		return "", err
 	}
@@ -77,21 +84,31 @@ func convergeRepo(ctx context.Context, run Runner, r Repo, progress io.Writer) (
 			"move or remove that directory to clone the declared url", r.Path, remote, r.URL)
 	}
 	what := fmt.Sprintf("fetch %s into %s", r.URL, r.Path)
-	if err := git(ctx, run, r, progress, what, "--git-dir", r.Path, "fetch", "origin"); err != nil {
+	if err := git(ctx, run, exe, progress, what, "--git-dir", r.Path, "fetch", "origin"); err != nil {
 		return "", err
 	}
-	return "fetched " + r.Path, nil
+	return summarize(done, "fetched "+r.Path, nil)
+}
+
+// summarize puts what proving mise took in front of what the repo's own step
+// did. It is empty on every step after the one that proved it, so the operator
+// is told about an install once and reads the clones plainly.
+func summarize(done []string, summary string, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(append(done, summary), "; "), nil
 }
 
 // clone makes the bare clone, having first made the repo's own directory so
 // that it carries the smith user's permissions rather than whatever git would
 // have left there.
-func clone(ctx context.Context, run Runner, r Repo, progress io.Writer) (string, error) {
+func clone(ctx context.Context, run Runner, exe string, r Repo, progress io.Writer) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(r.Path), repoMode); err != nil {
 		return "", fmt.Errorf("make the directory above %s: %w", r.Path, err)
 	}
 	what := fmt.Sprintf("clone %s into %s", r.URL, r.Path)
-	if err := git(ctx, run, r, progress, what, "clone", "--bare", r.URL, r.Path); err != nil {
+	if err := git(ctx, run, exe, progress, what, "clone", "--bare", r.URL, r.Path); err != nil {
 		return "", err
 	}
 	return "cloned " + r.URL + " into " + r.Path, nil
@@ -99,10 +116,10 @@ func clone(ctx context.Context, run Runner, r Repo, progress io.Writer) (string,
 
 // remoteURL is the url the box's existing clone was made from, which is what
 // the blueprint's declaration is held against.
-func remoteURL(ctx context.Context, run Runner, r Repo) (string, error) {
+func remoteURL(ctx context.Context, run Runner, exe string, r Repo) (string, error) {
 	var out bytes.Buffer
 	args := miseArgs("--git-dir", r.Path, "remote", "get-url", "origin")
-	if err := run.Run(ctx, miseInvocation(r.Mise), args, nil, &out, io.Discard); err != nil {
+	if err := run.Run(ctx, exe, args, nil, &out, io.Discard); err != nil {
 		return "", fmt.Errorf("read the remote of the clone at %s: %w", r.Path, err)
 	}
 	return strings.TrimSpace(out.String()), nil
@@ -112,8 +129,8 @@ func remoteURL(ctx context.Context, run Runner, r Repo) (string, error) {
 // long clone reports on itself rather than looking hung. A failure is reported
 // as what the command was for, since the operator reads the outcome and not
 // the argv.
-func git(ctx context.Context, run Runner, r Repo, progress io.Writer, what string, args ...string) error {
-	if err := run.Run(ctx, miseInvocation(r.Mise), miseArgs(args...), nil, progress, progress); err != nil {
+func git(ctx context.Context, run Runner, exe string, progress io.Writer, what string, args ...string) error {
+	if err := run.Run(ctx, exe, miseArgs(args...), nil, progress, progress); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil

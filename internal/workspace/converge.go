@@ -27,8 +27,9 @@ import (
 // report through.
 func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Result, error) {
 	var result Result
+	var m mise
 	for _, unit := range plan {
-		outcome := converge(ctx, env, unit, progress)
+		outcome := converge(ctx, env, &m, unit, progress)
 		result.Outcomes = append(result.Outcomes, outcome)
 		if _, err := io.WriteString(progress, outcome.line()); err != nil {
 			return result, fmt.Errorf("write %s progress: %w", unit.Step, err)
@@ -40,7 +41,7 @@ func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Re
 // converge applies one unit of work and reports what it did. A step that has
 // no converge yet reports itself as such rather than silently passing, so a
 // plan can never claim work the stage did not do.
-func converge(ctx context.Context, env Env, unit Unit, progress io.Writer) Outcome {
+func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writer) Outcome {
 	var summary string
 	var err error
 	switch unit.Step {
@@ -49,9 +50,9 @@ func converge(ctx context.Context, env Env, unit Unit, progress io.Writer) Outco
 	case Packages:
 		summary, err = installPackages(ctx, env.Command, unit.Packages, progress)
 	case Toolchain:
-		summary, err = convergeToolchain(ctx, env, unit.Fragment, progress)
+		summary, err = convergeToolchain(ctx, env, m, unit.Fragment, progress)
 	case Repos:
-		summary, err = convergeRepo(ctx, env.Command, unit.Repo, progress)
+		summary, err = convergeRepo(ctx, env.Command, m, unit.Repo, progress)
 	case Orphans:
 		summary, err = reportOrphans(unit.Workspace)
 	default:
