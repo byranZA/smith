@@ -32,19 +32,19 @@ func TestPlan(t *testing.T) {
 		want []Unit
 	}{
 		{
-			name: "a blueprint declaring nothing plans nothing",
+			name: "a blueprint declaring nothing plans only the orphans scan",
 			b:    blueprint.Blueprint{},
-			want: nil,
+			want: []Unit{{Step: Orphans}},
 		},
 		{
 			name: "declared packages plan one packages unit",
 			b:    blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}},
-			want: []Unit{{Step: Packages, Packages: []string{"ripgrep", "jq"}}},
+			want: []Unit{{Step: Packages, Packages: []string{"ripgrep", "jq"}}, {Step: Orphans}},
 		},
 		{
-			name: "an empty packages list plans nothing",
+			name: "an empty packages list plans no packages unit",
 			b:    blueprint.Blueprint{Packages: []string{}},
-			want: nil,
+			want: []Unit{{Step: Orphans}},
 		},
 	}
 	for _, tt := range tests {

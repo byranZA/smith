@@ -88,11 +88,11 @@ func TestConvergeReportsEveryOrphan(t *testing.T) {
 	}
 }
 
-// TestPlanScansForOrphansOnlyWhereThereIsAWorkspace proves the scan is planned
+// TestPlanScansForOrphansUnderTheWorkspaceRoot proves the scan is planned
 // against the root the repos land under, and that a blueprint declaring no
-// repos plans no scan at all — there is no workspace for it to hold orphans
-// of.
-func TestPlanScansForOrphansOnlyWhereThereIsAWorkspace(t *testing.T) {
+// repos still plans one — the scan reads the box, so dropping every repo
+// leaves every clone the box holds an orphan to report.
+func TestPlanScansForOrphansUnderTheWorkspaceRoot(t *testing.T) {
 	b := blueprint.Blueprint{Workspace: "~/code", Repos: []blueprint.Repo{{URL: forge}}}
 
 	units := unitsFor(Plan(b, "/home/smith"), Orphans)
@@ -106,8 +106,49 @@ func TestPlanScansForOrphansOnlyWhereThereIsAWorkspace(t *testing.T) {
 	if got := strings.Join(units[0].Workspace.Declared, ","); got != "acme" {
 		t.Errorf("orphans unit declares %q, want the repo's defaulted name", got)
 	}
-	if planned := unitsFor(Plan(blueprint.Blueprint{Packages: []string{"jq"}}, "/home/smith"), Orphans); len(planned) != 0 {
-		t.Errorf("a blueprint declaring no repos planned %d orphans units, want 0", len(planned))
+	planned := unitsFor(Plan(blueprint.Blueprint{Packages: []string{"jq"}}, "/home/smith"), Orphans)
+	if len(planned) != 1 {
+		t.Fatalf("a blueprint declaring no repos planned %d orphans units, want 1", len(planned))
+	}
+	if got := planned[0].Workspace.Root; got != "/home/smith/workspace" {
+		t.Errorf("orphans unit root = %q, want the default workspace root", got)
+	}
+	if got := len(planned[0].Workspace.Declared); got != 0 {
+		t.Errorf("orphans unit declares %d repos, want none", got)
+	}
+}
+
+// TestConvergeReportsAnOrphanWhenTheBlueprintDeclaresNoRepo proves that
+// dropping the last repo still reports the clone the box holds. The scan reads
+// what the box has, not what the blueprint declares, so a blueprint that
+// removes every repo is the case that most needs the report rather than the one
+// that turns it off.
+func TestConvergeReportsAnOrphanWhenTheBlueprintDeclaresNoRepo(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	dropped := clonePath(home, "api")
+	alreadyCloned(t, box, dropped, apiURL)
+	notes := filepath.Join(home, "workspace", "notes")
+	if err := os.MkdirAll(notes, 0o700); err != nil {
+		t.Fatalf("put a directory of the operator's own at %s: %v", notes, err)
+	}
+
+	result, progress := convergeOnBox(t, box, home, blueprint.Blueprint{})
+
+	if result.Failed() {
+		t.Fatalf("Result.Failed() = true, want an orphan reported rather than a failure: %s", result.Report())
+	}
+	if !strings.Contains(progress, "orphan") || !strings.Contains(progress, "api") {
+		t.Errorf("progress = %q, want the dropped repo reported as an orphan", progress)
+	}
+	if strings.Contains(progress, "notes") {
+		t.Errorf("progress = %q, want a directory that holds no clone left unreported", progress)
+	}
+	for _, path := range []string{dropped, notes} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s is gone after the stage ran: %v", path, err)
+		}
 	}
 }
 

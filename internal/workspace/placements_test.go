@@ -260,7 +260,7 @@ func TestConvergeWritesEveryPlacementItCan(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".gitconfig")); err != nil {
 		t.Errorf("~/.gitconfig was not written after an earlier placement failed: %v", err)
 	}
-	if !result.Failed() || len(result.Outcomes) != 2 {
+	if !result.Failed() || len(outcomesFor(result, Placements)) != 2 {
 		t.Fatalf("Result = %+v, want both placements reported with one failure", result.Outcomes)
 	}
 }

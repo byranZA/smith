@@ -309,3 +309,15 @@ func TestConvergeNothingToConverge(t *testing.T) {
 		t.Errorf("Report() = %q, want it to report nothing to converge", result.Report())
 	}
 }
+
+// outcomesFor narrows a result to the outcomes of one step, which is how a
+// test asks what a step reported without counting the steps around it.
+func outcomesFor(result Result, step Step) []Outcome {
+	var outcomes []Outcome
+	for _, o := range result.Outcomes {
+		if o.Step == step {
+			outcomes = append(outcomes, o)
+		}
+	}
+	return outcomes
+}

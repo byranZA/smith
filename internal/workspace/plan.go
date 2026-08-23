@@ -16,7 +16,10 @@ import (
 // box, so the whole ordering rule can be read and tested without an apt.
 //
 // A step the blueprint declares nothing for plans nothing, so a blueprint with
-// no packages does not report a packages step that had nothing to do.
+// no packages does not report a packages step that had nothing to do. The
+// orphans scan is the exception, and deliberately: it reads what the box holds
+// rather than what the blueprint declares, so a blueprint that dropped its last
+// repo is exactly the one whose scan must still run.
 func Plan(b blueprint.Blueprint, home string) []Unit {
 	var plan []Unit
 	for _, step := range Order() {
@@ -37,7 +40,7 @@ func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Repos:
 		return planRepos(b, home)
-	case step == Orphans && len(b.Repos) > 0:
+	case step == Orphans:
 		return []Unit{{Step: Orphans, Workspace: Workspace{
 			Root:     workspaceRoot(b, home),
 			Declared: repoNames(b),
