@@ -291,23 +291,3 @@ func onBox(t *testing.T, resolve boxResolver, root string, git, tmux session.Run
 		version: "0.2.0",
 	}
 }
-
-// TestRelayedFromIsAcceptedOnTheBox checks the other end of the door: smith on
-// the box takes the flag the relay always passes, so a relayed verb reaches
-// the verb rather than an unknown-flag refusal. What the box does with the
-// version it was told — refusing a smith it may not mean the same thing as —
-// is the version-skew slice's.
-func TestRelayedFromIsAcceptedOnTheBox(t *testing.T) {
-	root := newRootCmd()
-	root.SetArgs([]string{"--relayed-from", "0.1.0", "version"})
-	var out, errBuf bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&errBuf)
-
-	if err := root.Execute(); err != nil {
-		t.Fatalf("Execute() err = %v (stderr: %s)", err, errBuf.String())
-	}
-	if !strings.Contains(out.String(), "smith ") {
-		t.Errorf("stdout = %q, want the version report", out.String())
-	}
-}

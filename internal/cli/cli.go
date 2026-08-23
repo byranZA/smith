@@ -85,15 +85,20 @@ func newRootCmd() *cobra.Command {
 	// --relayed-from is what the relay always passes and only the relay
 	// passes: hidden, because an operator never types it, and optional,
 	// because the operator who SSHed in and ran a verb by hand is not
-	// relaying and has nothing to declare. Comparing it against this
-	// binary's own version, and refusing a command line this smith may not
-	// mean the same thing by, is the version-skew slice's.
+	// relaying and has nothing to declare. It is compared against this
+	// binary's own version below.
 	var relayedFrom string
 	root.PersistentFlags().StringVar(&relayedFrom, "relayed-from", "", "the version of the smith relaying this command")
 	if err := root.PersistentFlags().MarkHidden("relayed-from"); err != nil {
 		// The flag was registered on the line above, so a failure here is
 		// not a runtime condition but a build that cannot be correct.
 		panic(fmt.Sprintf("hide --relayed-from: %v", err))
+	}
+	// Every verb inherits the check, before any of them run: a command line
+	// this smith may not mean the same thing by is refused rather than
+	// half-understood.
+	root.PersistentPreRunE = func(*cobra.Command, []string) error {
+		return acceptRelayedFrom(resolveVersion(), relayedFrom)
 	}
 	root.AddCommand(newBlueprintCmd(userConfigHome), newMachineCmd(userConfigHome, connection.System(), connection.SystemDialer(), provider.SystemClock()), newSessionCmd(sessionWiring{
 		box:     stagedBoxConfig,
