@@ -23,6 +23,9 @@ type boxConn struct {
 	// installErr is what the install step answers with, so a test can drive a
 	// download or verification failure.
 	installErr error
+	// installDiagnostic is what the box prints to stderr while the install
+	// fails, the way the install script explains an abort.
+	installDiagnostic string
 	// reports is the version the box's binary answers the relayed version
 	// check with. Empty is the box that agrees with the smith that installed
 	// it, which is what a successful install leaves behind.
@@ -37,7 +40,7 @@ func (c *boxConn) Copy(_ context.Context, _, remotePath string) error {
 	return nil
 }
 
-func (c *boxConn) Run(_ context.Context, remoteCmd string, stdout, _ io.Writer) error {
+func (c *boxConn) Run(_ context.Context, remoteCmd string, stdout, stderr io.Writer) error {
 	c.commands = append(c.commands, remoteCmd)
 	if strings.Contains(remoteCmd, " probe") {
 		out := "arch=" + c.machine + "\n"
@@ -49,6 +52,11 @@ func (c *boxConn) Run(_ context.Context, remoteCmd string, stdout, _ io.Writer) 
 	}
 	if strings.Contains(remoteCmd, relayedFromFlag) {
 		return c.confirm(remoteCmd, stdout)
+	}
+	if c.installDiagnostic != "" {
+		if _, err := io.WriteString(stderr, c.installDiagnostic); err != nil {
+			return fmt.Errorf("write the box's diagnostic: %w", err)
+		}
 	}
 	return c.installErr
 }
@@ -233,15 +241,23 @@ func TestConvergeShipsItsOwnScriptRatherThanTheBootstrapScript(t *testing.T) {
 	}
 }
 
+// TestConvergeReportsAFailedInstall checks that the operator is left with what
+// the box said, not just how it exited: the connection's error carries the exit
+// status alone, and the explanation arrives on the box's stderr.
 func TestConvergeReportsAFailedInstall(t *testing.T) {
-	conn := &boxConn{machine: "x86_64", installed: "0.1.0", installErr: errors.New("checksum mismatch")}
+	conn := &boxConn{
+		machine:           "x86_64",
+		installed:         "0.1.0",
+		installErr:        errors.New("exit status 1"),
+		installDiagnostic: "checksum mismatch: nothing was installed\n",
+	}
 
 	_, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
 
 	if err == nil {
 		t.Fatal("Converge() succeeded, want the failure reported")
 	}
-	if !strings.Contains(err.Error(), "checksum mismatch") {
+	if !strings.Contains(err.Error(), "checksum mismatch: nothing was installed") {
 		t.Errorf("error %q does not carry what the box reported", err)
 	}
 }

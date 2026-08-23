@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -324,5 +325,54 @@ func TestScriptInstallLeavesTheMarkerAlone(t *testing.T) {
 	}
 	if _, code := f.run(t, f.installArgs()...); code != 0 {
 		t.Fatalf("install exited %d, want 0", code)
+	}
+}
+
+// scriptConn reaches a box whose install.sh is the embedded script itself, run
+// against the fixture's assets. Every command the installer sends is executed
+// for real and its streams are handed back untouched, so what a test asserts on
+// is what the script emitted rather than what a fake was told to say.
+type scriptConn struct {
+	f *installFixture
+}
+
+// Copy accepts the shipped script: the fixture already wrote it, at the path
+// this connection rewrites remote commands to.
+func (c scriptConn) Copy(context.Context, string, string) error { return nil }
+
+// Run executes a remote command against the fixture box, streaming its output.
+func (c scriptConn) Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error {
+	cmd := exec.CommandContext(ctx, "bash", "-c", strings.ReplaceAll(remoteCmd, RemoteScriptPath, c.f.scriptPath))
+	cmd.Env = c.f.env
+	cmd.Dir = c.f.dir
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("run on the box: %w", err)
+	}
+	return nil
+}
+
+// TestConvergeCarriesTheBoxsOwnChecksumMismatchDiagnostic drives a convergence
+// against the real install script on a box whose archive fails verification.
+// The diagnostic the operator is left with is the one the script printed to
+// stderr — nothing here injects it into the connection's error — and the smith
+// the box already had is still the one installed.
+func TestConvergeCarriesTheBoxsOwnChecksumMismatchDiagnostic(t *testing.T) {
+	f := newInstallFixture(t, "0.2.0", true)
+	if err := os.WriteFile(f.installPath, []byte("#!/usr/bin/env bash\necho \"smith 0.1.0\"\n"), 0o755); err != nil {
+		t.Fatalf("seed the box's existing smith: %v", err)
+	}
+
+	_, err := NewInstaller(scriptConn{f: f}, "dev").Converge(context.Background(), "0.2.0")
+
+	if err == nil {
+		t.Fatal("Converge() succeeded on a checksum mismatch, want the failure reported")
+	}
+	if !strings.Contains(err.Error(), "does not match the published checksums") {
+		t.Errorf("error %q does not carry the diagnostic the box printed", err)
+	}
+	if !f.fileContains(t, f.installPath, "0.1.0") {
+		t.Error("the box's existing smith was replaced, want it untouched")
 	}
 }

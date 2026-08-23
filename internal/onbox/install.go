@@ -142,13 +142,40 @@ func (i *Installer) Converge(ctx context.Context, version string) (Result, error
 	asset := release.For(version, arch)
 	cmd := fmt.Sprintf("bash %s install --url %s --checksums-url %s",
 		RemoteScriptPath, connection.ShellArg(asset.URL), connection.ShellArg(asset.ChecksumsURL))
-	if err := i.conn.Run(ctx, cmd, io.Discard, io.Discard); err != nil {
-		return Result{}, fmt.Errorf("install smith %s on the box: %w", version, err)
+	var diagnostic strings.Builder
+	if err := i.conn.Run(ctx, cmd, io.Discard, &diagnostic); err != nil {
+		return Result{}, fmt.Errorf("install smith %s on the box: %w", version, withBoxDiagnostic(err, diagnostic.String()))
 	}
 	if err := i.confirm(ctx, version); err != nil {
 		return Result{}, err
 	}
 	return Result{Version: version, Previous: state.version, Arch: arch, Changed: true}, nil
+}
+
+// withBoxDiagnostic joins what the box printed while failing onto the error the
+// run came back with.
+//
+// The install script says why it aborted — an archive that did not match the
+// published checksums, a download that could not be fetched — and the
+// connection's error carries only the remote exit status. A run that discarded
+// that stream would leave the operator holding "exit status 1" for a failure
+// the box had already explained.
+//
+// The box's own words are passed through rather than reworded: whichever
+// failure it was, the box is the side that knows, and a message reconstructed
+// here would be this side guessing. Lines are joined so a multi-line
+// explanation stays one error.
+func withBoxDiagnostic(err error, stderr string) error {
+	var lines []string
+	for _, line := range strings.Split(stderr, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, strings.Join(lines, "; "))
 }
 
 // confirm proves what the install just did rather than assuming it: the binary
