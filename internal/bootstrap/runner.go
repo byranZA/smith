@@ -248,7 +248,16 @@ func (r *Runner) ship(ctx context.Context) error {
 // read-only status prober ship the same script this way, then invoke a
 // subcommand on it.
 func ShipScript(ctx context.Context, conn Conn) error {
-	f, err := os.CreateTemp("", "smith-bootstrap-*.sh")
+	return Ship(ctx, conn, Script, RemoteScriptPath)
+}
+
+// Ship writes a shell artifact to a local temp file and copies it to remotePath
+// on the box over conn. It is how every shipped script reaches a box: the base
+// layer's bootstrap.sh through ShipScript, and a stage's own artifact — the
+// smith installer — to its own remote path, so a stage never has to be folded
+// into the script that provisions any box.
+func Ship(ctx context.Context, conn Conn, script, remotePath string) error {
+	f, err := os.CreateTemp("", "smith-script-*.sh")
 	if err != nil {
 		return fmt.Errorf("create temp script: %w", err)
 	}
@@ -257,7 +266,7 @@ func ShipScript(ctx context.Context, conn Conn) error {
 	// deliberately not propagated.
 	defer func() { _ = os.Remove(f.Name()) }()
 
-	if _, err := f.WriteString(Script); err != nil {
+	if _, err := f.WriteString(script); err != nil {
 		writeErr := fmt.Errorf("write temp script: %w", err)
 		// The write already failed; close best-effort and join any close error
 		// so a failed close can't silently mask the underlying write failure.
@@ -269,7 +278,7 @@ func ShipScript(ctx context.Context, conn Conn) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temp script: %w", err)
 	}
-	if err := conn.Copy(ctx, f.Name(), RemoteScriptPath); err != nil {
+	if err := conn.Copy(ctx, f.Name(), remotePath); err != nil {
 		return fmt.Errorf("copy script to box: %w", err)
 	}
 	return nil
