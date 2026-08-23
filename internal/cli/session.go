@@ -84,6 +84,9 @@ type sessionWiring struct {
 	// version is this smith's version, which every relayed invocation carries
 	// so the box can refuse a command line it may not mean the same thing by.
 	version string
+	// skew is what a verb the box refused for version skew is reacted to
+	// through: the operator's terminal, and the convergence it may accept.
+	skew skew
 }
 
 // leading splits a verb's positional arguments into the box it names and the
@@ -231,7 +234,10 @@ func (w sessionWiring) dispatch(cmd *cobra.Command, args []string, v sessionVerb
 	if v.connects {
 		return reportRelay(cmd, relay.Connect(w.connect, verb, local))
 	}
-	return reportRelay(cmd, relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr()))
+	run := func() error {
+		return relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	}
+	return reportRelay(cmd, w.skew.react(cmd, box, run))
 }
 
 // splitBox takes the box off the front of a verb's positional arguments,

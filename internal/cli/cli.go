@@ -13,6 +13,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/relay"
+	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -118,6 +119,7 @@ func newRootCmd() *cobra.Command {
 		connect: connection.System(),
 		ssh:     connection.System(),
 		version: resolveVersion(),
+		skew:    operatorSkew(),
 	}), newWorkspaceCmd(workspaceWiring{
 		blueprint: stagedBlueprint,
 		home:      userConfigHome,
@@ -126,6 +128,16 @@ func newRootCmd() *cobra.Command {
 		boxHome:   boxHomeDir,
 		ssh:       connection.System(),
 		version:   resolveVersion(),
+		skew:      operatorSkew(),
 	}), newVersionCmd())
 	return root
+}
+
+// operatorSkew is the reaction to a refused relay as the operator's own machine
+// makes it: their terminal, and the install stage `machine upgrade` runs.
+func operatorSkew() skew {
+	return skew{
+		term:     secret.NewStdTerminal(),
+		converge: convergeBox(userConfigHome, connection.System()),
+	}
 }
