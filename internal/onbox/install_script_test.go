@@ -32,6 +32,9 @@ type installFixture struct {
 	// installLog records the argv of every install(1) the script ran, which is
 	// what carries the mode and owner the binary lands with.
 	installLog string
+	// renameLog records the argv of every mv(1) the script ran, which is what
+	// carries the staged path the live binary is replaced from.
+	renameLog string
 }
 
 // newInstallFixture writes the embedded script, the fake binaries it drives,
@@ -68,6 +71,7 @@ func newInstallFixture(t *testing.T, version string, corruptChecksums bool) *ins
 		installPath: filepath.Join(dir, "bin-usr-local", "smith"),
 		curlLog:     filepath.Join(dir, "curl.log"),
 		installLog:  filepath.Join(dir, "install.log"),
+		renameLog:   filepath.Join(dir, "rename.log"),
 	}
 	if err := os.MkdirAll(filepath.Dir(f.installPath), 0o755); err != nil {
 		t.Fatalf("mkdir install dir: %v", err)
@@ -85,6 +89,7 @@ func newInstallFixture(t *testing.T, version string, corruptChecksums bool) *ins
 		"CHECKSUMS_FIXTURE="+checksums,
 		"CURL_LOG="+f.curlLog,
 		"INSTALL_LOG="+f.installLog,
+		"RENAME_LOG="+f.renameLog,
 	)
 	return f
 }
@@ -186,6 +191,15 @@ dest="${args[${#args[@]}-1]}"
 src="${args[${#args[@]}-2]}"
 cp "$src" "$dest"
 chmod 0755 "$dest"
+`)
+	// Fake mv records the argv it was handed — the staged path and the live path
+	// the binary is renamed over — and then does the rename for real. MV_FAIL
+	// makes the replacement fail the way an interrupted run does, after the
+	// verified binary has been staged.
+	writeInstallFakeBin(t, binDir, "mv", `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$RENAME_LOG"
+if [ -n "${MV_FAIL:-}" ]; then echo "mv: interrupted" >&2; exit 1; fi
+exec /bin/mv "$@"
 `)
 	// Fake sha256sum: a developer's machine may only have shasum, so this is a
 	// compatibility shim over whichever one exists, implementing the
@@ -374,5 +388,65 @@ func TestConvergeCarriesTheBoxsOwnChecksumMismatchDiagnostic(t *testing.T) {
 	}
 	if !f.fileContains(t, f.installPath, "0.1.0") {
 		t.Error("the box's existing smith was replaced, want it untouched")
+	}
+}
+
+// readLog returns the contents of one of the fixture's command logs.
+func (f *installFixture) readLog(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log %s: %v", filepath.Base(path), err)
+	}
+	return string(b)
+}
+
+func TestScriptInstallStagesTheVerifiedBinaryBesideTheLivePathAndRenamesItOver(t *testing.T) {
+	f := newInstallFixture(t, "0.2.0", false)
+
+	out, code := f.run(t, f.installArgs()...)
+	if code != 0 {
+		t.Fatalf("install exited %d, want 0\n%s", code, out)
+	}
+
+	staged := strings.Fields(strings.TrimSpace(f.readLog(t, f.installLog)))
+	dest := staged[len(staged)-1]
+	if dest == f.installPath {
+		t.Fatalf("install(1) wrote straight to the live path %q, want it staged first", dest)
+	}
+	if filepath.Dir(dest) != filepath.Dir(f.installPath) {
+		t.Errorf("staged at %q, want it beside the live path so the rename is on one filesystem", dest)
+	}
+	renamed := strings.Fields(strings.TrimSpace(f.readLog(t, f.renameLog)))
+	if len(renamed) < 2 || renamed[len(renamed)-2] != dest || renamed[len(renamed)-1] != f.installPath {
+		t.Errorf("rename argv = %q, want the staged binary renamed over the live path", renamed)
+	}
+	if !f.fileContains(t, f.installPath, "0.2.0") {
+		t.Error("the live path does not hold the new smith")
+	}
+}
+
+func TestScriptInstallLeavesTheExistingBinaryAndNoStagedFileWhenTheReplacementFails(t *testing.T) {
+	f := newInstallFixture(t, "0.2.0", false)
+	f.env = append(f.env, "MV_FAIL=1")
+	if err := os.WriteFile(f.installPath, []byte("#!/usr/bin/env bash\necho \"smith 0.1.0\"\n"), 0o755); err != nil {
+		t.Fatalf("seed the box's existing smith: %v", err)
+	}
+
+	out, code := f.run(t, f.installArgs()...)
+	if code == 0 {
+		t.Fatalf("install exited 0 when the replacement failed, want non-zero\n%s", out)
+	}
+	if !f.fileContains(t, f.installPath, "0.1.0") {
+		t.Error("the box's existing smith was replaced, want it untouched")
+	}
+	entries, err := os.ReadDir(filepath.Dir(f.installPath))
+	if err != nil {
+		t.Fatalf("read install dir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(f.installPath) {
+			t.Errorf("the install directory still holds %q, want the staged binary cleaned up", e.Name())
+		}
 	}
 }

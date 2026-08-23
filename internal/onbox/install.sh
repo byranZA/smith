@@ -15,10 +15,12 @@
 #             and only then installs it root-owned and 0755.
 #
 # Verification is not optional: a mismatch is a hard abort with no retry and no
-# install-anyway fallback. Everything before the final install(1) happens under
-# a temp directory, so a failed download or a bad checksum leaves whatever smith
-# the box already had exactly where it was — a working box at its old version is
-# the state worth having when a release cannot be fetched mid-run.
+# install-anyway fallback. Everything before the replacement happens under a
+# temp directory, and the replacement itself is a rename within the install
+# directory, so a failed download, a bad checksum or a run cut short leaves
+# whatever smith the box already had exactly where it was — a working box at its
+# old version is the state worth having when a release cannot be fetched
+# mid-run.
 #
 # It writes nothing but the binary: no marker field records what is installed,
 # because `smith version` on the box is ground truth and a stored copy could
@@ -35,11 +37,20 @@ SMITH_INSTALL_PATH="${SMITH_INSTALL_PATH:-/usr/local/bin/smith}"
 # however the run ends, which is what keeps an unverified download off the box.
 WORKDIR=""
 
-# cleanup removes the download directory, so nothing but a verified binary
-# outlives the run.
+# STAGED is the verified binary's path inside the install directory, held while
+# it waits to be renamed over the live one. Like WORKDIR it is a global so the
+# EXIT trap can remove it however the run ends, and it is cleared once the
+# rename has consumed it.
+STAGED=""
+
+# cleanup removes the download directory and any binary staged but never
+# renamed, so nothing but the live binary outlives the run.
 cleanup() {
   if [ -n "$WORKDIR" ]; then
     rm -rf "$WORKDIR"
+  fi
+  if [ -n "$STAGED" ]; then
+    as_root rm -f "$STAGED"
   fi
 }
 
@@ -107,7 +118,16 @@ install_smith() {
   fi
 
   tar -xzf "$archive" -C "$WORKDIR" smith
-  as_root install -m 0755 -o root -g root "$WORKDIR/smith" "$SMITH_INSTALL_PATH"
+
+  # The replacement is a rename, not a copy over the live path. install(1)
+  # writes the verified binary root-owned and 0755 under a unique name in the
+  # install directory — the same filesystem, so mv is a single atomic step —
+  # and only then does it become smith. A run interrupted at any point before
+  # that leaves the binary the box was running whole and executable.
+  STAGED="$SMITH_INSTALL_PATH.new.$$"
+  as_root install -m 0755 -o root -g root "$WORKDIR/smith" "$STAGED"
+  as_root mv -f "$STAGED" "$SMITH_INSTALL_PATH"
+  STAGED=""
   echo "installed $SMITH_INSTALL_PATH"
 }
 
