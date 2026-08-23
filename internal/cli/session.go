@@ -211,6 +211,10 @@ type sessionVerb struct {
 // verb here, against the blueprint staged on this machine. A verb handing the
 // terminal over replaces smith with ssh, and every other one streams the box's
 // output back and carries its exit out.
+//
+// Either way the verb travels inside the version-skew reaction, so a box that
+// refuses the relay leaves the operator with the same offer whichever verb
+// they typed.
 func (w sessionWiring) dispatch(cmd *cobra.Command, args []string, v sessionVerb) error {
 	box, rest, err := w.splitBox(args, v)
 	if err != nil {
@@ -231,10 +235,13 @@ func (w sessionWiring) dispatch(cmd *cobra.Command, args []string, v sessionVerb
 		}
 		return v.local(rest, env)
 	}
-	if v.connects {
-		return reportRelay(cmd, relay.Connect(w.connect, verb, local))
-	}
 	run := func() error {
+		// A verb that hands the terminal over asks the box whether it would
+		// accept the command before ssh replaces smith, so the version-skew
+		// decision below is made while there is still a smith to make it.
+		if v.connects {
+			return relay.Connect(cmd.Context(), w.ssh, w.connect, verb, local, cmd.ErrOrStderr())
+		}
 		return relay.Run(cmd.Context(), w.ssh, verb, local, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}
 	return reportRelay(cmd, w.skew.react(cmd, box, run))

@@ -101,10 +101,14 @@ func tmuxTarget(args []string) string {
 // process, so the argv smith would have handed the kernel is recorded instead.
 type fakeExec struct {
 	calls [][]string
+	order *[]string
 }
 
 func (f *fakeExec) Exec(name string, args []string) error {
 	f.calls = append(f.calls, append([]string{name}, args...))
+	if f.order != nil {
+		*f.order = append(*f.order, "exec")
+	}
 	return nil
 }
 

@@ -107,21 +107,48 @@ type Execer interface {
 // terminal talks to the box's tmux with no smith process in the middle; with
 // no box named it runs local, which execs into tmux itself.
 //
-// A box with no smith installed is named as such here too, though nothing
-// local is left to classify the exit: the check travels to the box ahead of
-// the verb, so the operator gets the same setup nudge a listing gives them.
+// The box is asked whether it would accept the command before the terminal is
+// handed over, on an ordinary round trip classified exactly as a streamed
+// verb's outcome is. That check cannot be folded into the connecting
+// invocation: replacing smith with ssh gives up ever seeing the box's exit
+// code, so a refusal reached after the exec has nobody left to react to it,
+// and the version-skew decision the operator is owed would never be made. The
+// box's own words travel to stderr as they arrive, so what it said reaches the
+// operator ahead of whatever the caller does about it.
+//
+// A box with no smith installed is named as such by the check and by the
+// connecting invocation both: the guard on the box covers the binary going
+// missing between the two round trips, and costs nothing when it does not.
 //
 // What that tmux session is called never travels: the box is handed the same
 // session verb the operator typed, and the mapping from a session name to a
 // tmux session stays in internal/session, on the box.
-func Connect(exec Execer, v Verb, local Local) error {
+func Connect(ctx context.Context, exec connection.Exec, replace Execer, v Verb, local Local, stderr io.Writer) error {
 	if v.Target == "" {
 		return local()
 	}
-	if err := exec.Exec("ssh", connection.TerminalArgs(v.Target, v.connectCmd())); err != nil {
+	if err := check(ctx, connection.New(v.Target, exec), v, stderr); err != nil {
+		return err
+	}
+	if err := replace.Exec("ssh", connection.TerminalArgs(v.Target, v.connectCmd())); err != nil {
 		return fmt.Errorf("hand the terminal to box %s: %w", v.Target, err)
 	}
 	return nil
+}
+
+// check asks the box whether it would accept a command relayed by this smith,
+// and answers with the same typed outcomes a relayed verb's own failure comes
+// back as — a version mismatch, a box with no smith, or a box that could not
+// be reached.
+//
+// It relays `version`, which is the one verb every smith has and the one that
+// changes nothing on the box: what is being read is not its answer but whether
+// the box let it run at all, since the declaration the box refuses on is
+// checked before any verb of its own does anything. Its stdout is the box's
+// version banner, which the operator did not ask for and never sees.
+func check(ctx context.Context, conn Conn, v Verb, stderr io.Writer) error {
+	probe := Verb{Target: v.Target, Version: v.Version, Args: []string{"version"}}
+	return Send(ctx, conn, probe, io.Discard, stderr)
 }
 
 // NotInstalledError reports that the box answered the relay with no smith to

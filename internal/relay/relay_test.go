@@ -184,11 +184,11 @@ func TestConnectHandsTheTerminalToTheBox(t *testing.T) {
 	execer := &fakeExecer{}
 	ran := false
 
-	err := Connect(execer, Verb{
+	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{
 		Target:  "smith@box",
 		Version: "0.2.0",
 		Args:    []string{"session", "attach", "smith-main", "--interact"},
-	}, func() error { ran = true; return nil })
+	}, func() error { ran = true; return nil }, io.Discard)
 	if err != nil {
 		t.Fatalf("Connect() err = %v", err)
 	}
@@ -216,7 +216,7 @@ func TestConnectWithNoTargetRunsTheVerbLocally(t *testing.T) {
 	execer := &fakeExecer{}
 	ran := false
 
-	err := Connect(execer, Verb{Version: "0.2.0", Args: []string{"session", "attach", "smith-main"}}, func() error { ran = true; return nil })
+	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{Version: "0.2.0", Args: []string{"session", "attach", "smith-main"}}, func() error { ran = true; return nil }, io.Discard)
 	if err != nil {
 		t.Fatalf("Connect() err = %v", err)
 	}
@@ -237,11 +237,11 @@ func TestConnectWithNoTargetRunsTheVerbLocally(t *testing.T) {
 func TestConnectNamesSetupWhenTheBoxHasNoSmith(t *testing.T) {
 	execer := &fakeExecer{}
 
-	err := Connect(execer, Verb{
+	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{
 		Target:  "smith@box",
 		Version: "0.2.0",
 		Args:    []string{"session", "attach", "smith-main"},
-	}, func() error { return nil })
+	}, func() error { return nil }, io.Discard)
 	if err != nil {
 		t.Fatalf("Connect() err = %v", err)
 	}
@@ -323,4 +323,64 @@ type fakeConn struct {
 func (c *fakeConn) Run(_ context.Context, remoteCmd string, _, _ io.Writer) error {
 	c.commands = append(c.commands, remoteCmd)
 	return c.err
+}
+
+// TestConnectChecksTheBoxBeforeHandingOverTheTerminal checks the ordering a
+// connecting verb depends on: the box says whether it would accept the command
+// before ssh replaces smith, because afterwards there is no smith left to be
+// told anything.
+func TestConnectChecksTheBoxBeforeHandingOverTheTerminal(t *testing.T) {
+	ssh := &fakeSSH{}
+	execer := &fakeExecer{}
+
+	err := Connect(context.Background(), ssh, execer, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "attach", "smith-main"},
+	}, func() error { return nil }, io.Discard)
+	if err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+
+	if len(ssh.calls) != 1 {
+		t.Fatalf("ssh invoked %d times, want the one check that precedes the terminal: %v", len(ssh.calls), ssh.calls)
+	}
+	line := strings.Join(ssh.calls[0], " ")
+	if !strings.Contains(line, "--relayed-from '0.2.0'") {
+		t.Errorf("check argv = %q, want it to declare the relaying version", line)
+	}
+	if strings.Contains(line, " -t ") {
+		t.Errorf("check argv = %q, want no terminal requested for the check", line)
+	}
+	if len(execer.calls) != 1 {
+		t.Errorf("exec called %d times, want the terminal handed over once the check passed: %v", len(execer.calls), execer.calls)
+	}
+}
+
+// TestConnectRefusedByTheBoxNeverConnects checks what that check is for: a box
+// that would refuse the relayed command is never handed the operator's
+// terminal, and the refusal comes back typed for the caller to react to.
+func TestConnectRefusedByTheBoxNeverConnects(t *testing.T) {
+	ssh := &fakeSSH{
+		stderr: "smith: " + Refusal("0.1.0", "0.2.0") + "\n",
+		err:    exitStatus(RefusalExitCode),
+	}
+	execer := &fakeExecer{}
+
+	err := Connect(context.Background(), ssh, execer, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "attach", "smith-main"},
+	}, func() error { return nil }, io.Discard)
+
+	var mismatch *MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Connect() err = %v, want a MismatchError", err)
+	}
+	if mismatch.Box != "0.1.0" || mismatch.Local != "0.2.0" {
+		t.Errorf("MismatchError = %+v, want the box on 0.1.0 and this smith on 0.2.0", mismatch)
+	}
+	if len(execer.calls) != 0 {
+		t.Errorf("exec called %v, want no terminal handed to a box that refused", execer.calls)
+	}
 }

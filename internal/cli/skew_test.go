@@ -226,3 +226,96 @@ func TestSkewPromptsInBothDirections(t *testing.T) {
 		t.Errorf("converged %v, want box dev moved back to 0.4.0", conv.calls)
 	}
 }
+
+// connectingLaptop assembles the session command against a box that refuses
+// the relay, with the exec boundary a connecting verb crosses recorded in the
+// same order the terminal and ssh are.
+func connectingLaptop(t *testing.T, ssh *skewSSH, term *scriptedTerminal, conv *convergeRecorder, order *[]string) (sessionWiring, *fakeExec) {
+	t.Helper()
+	w := skewLaptop(t, ssh, term, conv)
+	connect := &fakeExec{order: order}
+	w.connect = connect
+	return w, connect
+}
+
+// TestSkewOnAConnectingVerbConvergesThenHandsOverTheTerminal checks the half
+// of the reaction a verb that execs into ssh would otherwise skip: the skew
+// decision is made first, an accepted convergence moves the box, and only then
+// is the operator's terminal handed over.
+func TestSkewOnAConnectingVerbConvergesThenHandsOverTheTerminal(t *testing.T) {
+	var order []string
+	ssh := &skewSSH{refuse: true, order: &order}
+	conv := &convergeRecorder{ssh: ssh}
+	term := &scriptedTerminal{attended: true, answer: "y", order: &order}
+	w, connect := connectingLaptop(t, ssh, term, conv, &order)
+
+	_, stderr, code := runSessionOn(t, w, "attach", "dev", "smith-main")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if len(conv.calls) != 1 || conv.calls[0] != "dev 0.2.0" {
+		t.Errorf("converged %v, want one convergence of box dev to 0.2.0", conv.calls)
+	}
+	if len(connect.calls) != 1 {
+		t.Fatalf("exec called %d times, want the terminal handed over once: %v", len(connect.calls), connect.calls)
+	}
+	if len(order) < 2 || order[0] != "terminal" || order[len(order)-1] != "exec" {
+		t.Errorf("order = %v, want the terminal consulted first and ssh exec'd last", order)
+	}
+	if line := strings.Join(connect.calls[0], " "); !strings.Contains(line, "'session' 'attach' 'smith-main'") {
+		t.Errorf("exec argv = %q, want the original command handed to the box", line)
+	}
+}
+
+// TestSkewOnAConnectingVerbDeclinedNeverConnects checks that a declined
+// convergence leaves the box untouched and the terminal unhanded, with the
+// exact upgrade command to type.
+func TestSkewOnAConnectingVerbDeclinedNeverConnects(t *testing.T) {
+	var order []string
+	ssh := &skewSSH{refuse: true, order: &order}
+	conv := &convergeRecorder{ssh: ssh}
+	term := &scriptedTerminal{attended: true, answer: "n", order: &order}
+	w, connect := connectingLaptop(t, ssh, term, conv, &order)
+
+	_, stderr, code := runSessionOn(t, w, "attach", "dev", "smith-main")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want a declined convergence to fail")
+	}
+	if !strings.Contains(stderr, "smith machine upgrade dev") {
+		t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
+	}
+	if len(conv.calls) != 0 {
+		t.Errorf("converged %v, want nothing", conv.calls)
+	}
+	if len(connect.calls) != 0 {
+		t.Errorf("exec called %v, want no terminal handed to a box that refused", connect.calls)
+	}
+}
+
+// TestSkewOnAConnectingVerbUnattendedNeverConnects checks the path an AFK loop
+// inherits on the verb that would have replaced smith with ssh: nothing is
+// asked, nothing is connected, and the command to type is printed.
+func TestSkewOnAConnectingVerbUnattendedNeverConnects(t *testing.T) {
+	var order []string
+	ssh := &skewSSH{refuse: true, order: &order}
+	conv := &convergeRecorder{ssh: ssh}
+	term := &scriptedTerminal{attended: false, order: &order}
+	w, connect := connectingLaptop(t, ssh, term, conv, &order)
+
+	_, stderr, code := runSessionOn(t, w, "start", "dev", "--repo", "smith", "--branch", "spec-42")
+
+	if code == 0 {
+		t.Fatal("exit code = 0, want an unattended refused relay to fail")
+	}
+	if term.asked {
+		t.Error("an unattended run waited for input")
+	}
+	if !strings.Contains(stderr, "smith machine upgrade dev") {
+		t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
+	}
+	if len(connect.calls) != 0 {
+		t.Errorf("exec called %v, want no terminal handed over before the skew decision", connect.calls)
+	}
+}

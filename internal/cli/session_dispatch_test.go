@@ -8,7 +8,8 @@ import (
 // TestEverySessionVerbTravelsTheSameWay pins the envelope every session verb
 // shares: a named box sends the verb to the smith on that box, spelled as the
 // operator typed it, and a verb that hands over the terminal travels by
-// replacing smith with ssh rather than by streaming.
+// replacing smith with ssh rather than by streaming — after the one round trip
+// that settles whether the box would accept it at all.
 func TestEverySessionVerbTravelsTheSameWay(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -39,8 +40,8 @@ func TestEverySessionVerbTravelsTheSameWay(t *testing.T) {
 			switch {
 			case tt.connect:
 				got = execer.line(t)
-				if len(ssh.calls) != 0 {
-					t.Errorf("ssh streamed %v, want a connecting verb to exec instead", line)
+				if len(ssh.calls) != 1 || strings.Contains(strings.Join(ssh.calls[0], " "), "'session'") {
+					t.Errorf("ssh streamed %v, want only the check that precedes the terminal", line)
 				}
 				if !strings.Contains(got, " -t ") {
 					t.Errorf("exec argv = %q, want a terminal requested", got)
