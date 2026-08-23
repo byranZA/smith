@@ -33,6 +33,13 @@ const dirMode = 0o700
 // owns it thereafter; identity is path existence, so deleting the destination
 // is how an operator asks for the bytes back.
 //
+// Every declared placement has its staged bytes read before either rule
+// applies, including a once placement whose destination the box already owns.
+// The bytes are what say the staging pass ran whole, and a destination that
+// happens to exist is no evidence that it did — reading second would let an
+// incomplete or corrupt stage pass unreported for exactly the placements an
+// operator is least likely to notice.
+//
 // Either way the pass is check-before-change: a destination already holding
 // the staged bytes is not rewritten, so a converged re-run moves no
 // modification time.
@@ -48,12 +55,12 @@ func materialize(root string, p Placement) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if exists && p.Mode == onceMode {
-		return "kept " + p.Path + ", which this box owns", nil
-	}
 	staged, err := staging.ReadPlacement(root, "", p.Destination)
 	if err != nil {
 		return "", fmt.Errorf("place the file at %s: %w", p.Path, err)
+	}
+	if exists && p.Mode == onceMode {
+		return "kept " + p.Path + ", which this box owns", nil
 	}
 	if exists && bytes.Equal(current, staged) {
 		return "unchanged " + p.Path, nil

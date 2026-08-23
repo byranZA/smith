@@ -293,3 +293,32 @@ func (w *watchingBox) Run(ctx context.Context, name string, args []string, stdin
 	}
 	return w.fakeBox.Run(ctx, name, args, stdin, stdout, stderr)
 }
+
+// TestConvergeRefusesAOncePlacementWithNoStagedBytes proves an existing
+// destination does not excuse smith from checking the staging pass: a once
+// placement is validated on every run, so an incomplete or corrupt staging is
+// reported rather than hidden by the file the box already owns — and the file
+// the box owns is still left alone.
+func TestConvergeRefusesAOncePlacementWithNoStagedBytes(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	path := filepath.Join(home, ".npmrc")
+	if err := os.WriteFile(path, []byte("owned by the box\n"), 0o600); err != nil {
+		t.Fatalf("write what the box owns: %v", err)
+	}
+
+	result, progress := convergeBlueprint(t, declares("~/.npmrc", "once"), root, home)
+
+	if !result.Failed() {
+		t.Fatalf("Result.Failed() = false, want true: %s", result.Report())
+	}
+	err := result.Outcomes[0].Err
+	if err == nil || !strings.Contains(err.Error(), "~/.npmrc") || !strings.Contains(err.Error(), "machine setup") {
+		t.Errorf("refusal = %v, want it to name the destination and machine setup", err)
+	}
+	if got := held(t, path); got != "owned by the box\n" {
+		t.Errorf("~/.npmrc holds %q, want the file the box owns left alone", got)
+	}
+	if !strings.Contains(progress, "machine setup") {
+		t.Errorf("progress = %q, want the refusal reported as it happens", progress)
+	}
+}
