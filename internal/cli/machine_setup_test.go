@@ -66,6 +66,9 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	if target == s.deafAt && remoteCmd == "true" {
 		return refusedExit{}
 	}
+	if answered, err := answerVersionCheck(remoteCmd, stdout); answered {
+		return err
+	}
 	switch {
 	case strings.Contains(remoteCmd, "bootstrap.sh setup"):
 		return s.phaseErr
@@ -275,4 +278,21 @@ func TestMachineSetupRegistersNothingWhenThePhasesNeverRan(t *testing.T) {
 	if _, err := os.Stat(config.NewHome(dir).InventoryPath()); !os.IsNotExist(err) {
 		t.Errorf("Stat(inventory) err = %v, want a failed setup to register nothing", err)
 	}
+}
+
+// answerVersionCheck answers the install stage's relayed confirmation the way a
+// box whose binary agrees with the smith that installed it does: the version
+// the relay declared, printed as `smith version` prints it. It reports whether
+// the command was that confirmation, so a fake can leave everything else to its
+// own cases.
+func answerVersionCheck(remoteCmd string, stdout io.Writer) (bool, error) {
+	_, rest, ok := strings.Cut(remoteCmd, "--relayed-from '")
+	if !ok || !strings.HasSuffix(remoteCmd, "'version'") {
+		return false, nil
+	}
+	version, _, _ := strings.Cut(rest, "'")
+	if _, err := fmt.Fprintf(stdout, "smith %s\n", version); err != nil {
+		return true, fmt.Errorf("write the box's version: %w", err)
+	}
+	return true, nil
 }

@@ -37,6 +37,9 @@ func (s *upgradeSSH) Run(_ context.Context, name string, args []string, _ io.Rea
 	target, remoteCmd := args[len(args)-2], args[len(args)-1]
 	s.targets = append(s.targets, target)
 	s.commands = append(s.commands, remoteCmd)
+	if answered, err := answerVersionCheck(remoteCmd, stdout); answered {
+		return err
+	}
 	if strings.Contains(remoteCmd, " probe") {
 		out := "arch=" + s.machine + "\n"
 		if s.installed != "" {
@@ -239,10 +242,15 @@ func TestUpgradeConvergesNothingButTheBinary(t *testing.T) {
 	}
 
 	for _, cmd := range ssh.commands {
-		for _, forbidden := range []string{"bootstrap.sh", "/etc/smith", "--relayed-from"} {
+		for _, forbidden := range []string{"bootstrap.sh", "/etc/smith"} {
 			if strings.Contains(cmd, forbidden) {
 				t.Errorf("upgrade ran %q, which reaches %q: it converges the binary and nothing else", cmd, forbidden)
 			}
+		}
+		// The one verb an upgrade relays is the install's own confirmation:
+		// the binary it just wrote, asked what version it is.
+		if strings.Contains(cmd, "--relayed-from") && !strings.HasSuffix(cmd, "'version'") {
+			t.Errorf("upgrade relayed %q, want nothing relayed but the version check that confirms the install", cmd)
 		}
 	}
 }

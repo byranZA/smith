@@ -257,3 +257,70 @@ func TestConnectNamesSetupWhenTheBoxHasNoSmith(t *testing.T) {
 		}
 	}
 }
+
+// TestRunClassifiesTheBoxsSkewRefusal checks the outcome the relay owes its
+// caller when the box refused the command for being relayed by another
+// version: a typed mismatch naming both sides, so the caller can act on it
+// rather than reading the box's prose.
+func TestRunClassifiesTheBoxsSkewRefusal(t *testing.T) {
+	ssh := &fakeSSH{
+		stderr: "smith: " + Refusal("0.1.0", "0.2.0") + "\n",
+		err:    exitStatus(RefusalExitCode),
+	}
+
+	err := Run(context.Background(), ssh, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"session", "list"},
+	}, func() error { return nil }, io.Discard, io.Discard)
+
+	var mismatch *MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Run() err = %v, want a MismatchError", err)
+	}
+	if mismatch.Box != "0.1.0" || mismatch.Local != "0.2.0" {
+		t.Errorf("MismatchError = %+v, want the box on 0.1.0 and this smith on 0.2.0", mismatch)
+	}
+	for _, want := range []string{"smith@box", "0.1.0", "0.2.0"} {
+		if !strings.Contains(mismatch.Error(), want) {
+			t.Errorf("MismatchError.Error() = %q, want it to name %q", mismatch, want)
+		}
+	}
+}
+
+// TestSendRelaysOverAnOpenConnection checks the sending half on its own, for
+// the caller that already holds a connection: the box's smith runs at its
+// absolute path, told which smith is calling it.
+func TestSendRelaysOverAnOpenConnection(t *testing.T) {
+	conn := &fakeConn{}
+
+	err := Send(context.Background(), conn, Verb{
+		Target:  "smith@box",
+		Version: "0.2.0",
+		Args:    []string{"version"},
+	}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Send() err = %v", err)
+	}
+
+	if len(conn.commands) != 1 {
+		t.Fatalf("conn ran %d commands, want 1: %v", len(conn.commands), conn.commands)
+	}
+	for _, want := range []string{BoxSmith, "--relayed-from '0.2.0'", "'version'"} {
+		if !strings.Contains(conn.commands[0], want) {
+			t.Errorf("remote command = %q, want it to contain %q", conn.commands[0], want)
+		}
+	}
+}
+
+// fakeConn stands in for an open connection to a box, recording the remote
+// command lines it was asked to run.
+type fakeConn struct {
+	commands []string
+	err      error
+}
+
+func (c *fakeConn) Run(_ context.Context, remoteCmd string, _, _ io.Writer) error {
+	c.commands = append(c.commands, remoteCmd)
+	return c.err
+}

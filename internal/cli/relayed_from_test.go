@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/relay"
 )
 
 func TestAcceptRelayedFrom(t *testing.T) {
@@ -116,5 +118,20 @@ func TestRelayedFromIsHiddenFromHelp(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "relayed-from") {
 		t.Errorf("help = %q, want no mention of the relaying flag", out.String())
+	}
+}
+
+// TestRefusalExitsTheCodeTheRelayReads checks the wire contract from the box's
+// side: a refused relay exits the status the relaying smith classifies as a
+// version mismatch, so the other side never has to read the prose to know what
+// happened.
+func TestRefusalExitsTheCodeTheRelayReads(t *testing.T) {
+	err := acceptRelayedFrom("0.1.0", "0.2.0")
+
+	if got := codeFromError(err); got != relay.RefusalExitCode {
+		t.Errorf("codeFromError() = %d, want the relay's refusal code %d", got, relay.RefusalExitCode)
+	}
+	if got := relay.Refusal("0.1.0", "0.2.0"); !strings.Contains(err.Error(), got) {
+		t.Errorf("refusal = %q, want the relay's own wording %q", err, got)
 	}
 }

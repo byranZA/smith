@@ -1,6 +1,8 @@
 package cli
 
-import "fmt"
+import (
+	"github.com/byranZA/smith/internal/relay"
+)
 
 // relayRefusedError is on-box smith's answer to a command relayed by a smith of
 // a different version: the two binaries may not mean the same thing by the same
@@ -18,9 +20,10 @@ type relayRefusedError struct {
 	relayedFrom string
 }
 
-// Error implements error.
+// Error implements error. The wording is the relay's own, because the relaying
+// smith reads this binary's version back out of it.
 func (e *relayRefusedError) Error() string {
-	return fmt.Sprintf("refusing a command relayed from smith %s: this smith is %s, and only an identical version may relay to it", e.relayedFrom, e.local)
+	return relay.Refusal(e.local, e.relayedFrom)
 }
 
 // acceptRelayedFrom decides whether on-box smith may run a command a relaying

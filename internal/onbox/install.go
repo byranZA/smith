@@ -33,6 +33,7 @@ import (
 
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/release"
 )
 
@@ -50,7 +51,11 @@ const RemoteScriptPath = "/tmp/smith-install.sh"
 // InstallPath is where smith lives on a box: an absolute path on the default
 // PATH, so the relay can invoke it without depending on a login shell's
 // environment and an operator who SSHes in can just type `smith`.
-const InstallPath = "/usr/local/bin/smith"
+//
+// It is the path the relay invokes, spelled once: what the installer writes and
+// what the relay runs are the same file by construction rather than by two
+// constants agreeing.
+const InstallPath = relay.BoxSmith
 
 // Conn is the narrow slice of a connection the installer needs: ship a file and
 // run a remote command with streamed output. It mirrors bootstrap.Conn — a box
@@ -94,11 +99,14 @@ func (r Result) Report() string {
 // Installer converges the smith binary on one box over a connection.
 type Installer struct {
 	conn Conn
+	box  string
 }
 
-// NewInstaller returns an Installer that reaches the box over conn.
-func NewInstaller(conn Conn) *Installer {
-	return &Installer{conn: conn}
+// NewInstaller returns an Installer that reaches the box over conn. The box is
+// the name or address the operator typed, named back in what the run reports so
+// a failure is theirs to act on rather than an ssh destination to decode.
+func NewInstaller(conn Conn, box string) *Installer {
+	return &Installer{conn: conn, box: box}
 }
 
 // Converge brings the box's smith binary to version, and reports what it did.
@@ -137,7 +145,44 @@ func (i *Installer) Converge(ctx context.Context, version string) (Result, error
 	if err := i.conn.Run(ctx, cmd, io.Discard, io.Discard); err != nil {
 		return Result{}, fmt.Errorf("install smith %s on the box: %w", version, err)
 	}
+	if err := i.confirm(ctx, version); err != nil {
+		return Result{}, err
+	}
 	return Result{Version: version, Previous: state.version, Arch: arch, Changed: true}, nil
+}
+
+// confirm proves what the install just did rather than assuming it: the binary
+// now on the box is asked its version through the relay, declaring the version
+// that installed it. It is the one step of the run that goes through the same
+// channel every on-box verb will, so a box that came out of this stage is a box
+// the relay is known to work against.
+//
+// It travels with --relayed-from deliberately, and the probe above deliberately
+// does not: a box whose smith disagrees refuses a declared command, which is
+// exactly the answer wanted here — but a probe that declared a version would be
+// refused by the very skew it exists to detect, and the stage could then never
+// converge anything. Only the confirmation declares.
+func (i *Installer) confirm(ctx context.Context, version string) error {
+	var out bytes.Buffer
+	verb := relay.Verb{Target: i.box, Version: version, Args: []string{"version"}}
+	if err := relay.Send(ctx, i.conn, verb, &out, io.Discard); err != nil {
+		return fmt.Errorf("confirm the smith %s installed on the box: %w", version, err)
+	}
+	if reported := parseVersionReport(out.String()); reported != version {
+		return fmt.Errorf("the smith installed on box %s reports version %q, not the %s that was installed", i.box, reported, version)
+	}
+	return nil
+}
+
+// parseVersionReport reads the version out of what `smith version` prints,
+// whose first line is the version and whose later lines are build provenance.
+func parseVersionReport(output string) string {
+	first, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
+	_, version, ok := strings.Cut(strings.TrimSpace(first), " ")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(version)
 }
 
 // boxState is what the box reports about itself before anything is downloaded:
@@ -151,6 +196,9 @@ type boxState struct {
 // probe reads the box's machine hardware name and installed smith version. It
 // mutates nothing: it is the check half of check-before-change, and a box that
 // already matches never gets past it.
+//
+// It declares no relaying version — see confirm, which explains why the two
+// halves of this stage differ on that.
 func (i *Installer) probe(ctx context.Context) (boxState, error) {
 	var out bytes.Buffer
 	cmd := fmt.Sprintf("bash %s probe", RemoteScriptPath)

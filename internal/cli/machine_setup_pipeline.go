@@ -121,7 +121,7 @@ func installSmith(ctx context.Context, conn onbox.Conn, version, box string, std
 	if installable == "" {
 		return devBuildRefusal(version, "smith machine setup "+box)
 	}
-	result, err := onbox.NewInstaller(conn).Converge(ctx, installable)
+	result, err := onbox.NewInstaller(conn, box).Converge(ctx, installable)
 	if err != nil {
 		return fmt.Errorf("converge the box's smith binary: %w", err)
 	}

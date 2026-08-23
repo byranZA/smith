@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -59,9 +60,35 @@ func Run(ctx context.Context, exec connection.Exec, v Verb, local Local, stdout,
 	if v.Target == "" {
 		return local()
 	}
+	return Send(ctx, connection.New(v.Target, exec), v, stdout, stderr)
+}
+
+// Conn is the narrow slice of an open connection the relay sends over: run a
+// remote command with its output streamed back. It is accepted rather than
+// dialled so a caller already holding a connection to the box relays over that
+// one — the install stage confirming the binary it just installed does exactly
+// that, on the connection it installed over.
+type Conn interface {
+	// Run runs remoteCmd on the box, streaming its output as it arrives.
+	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+}
+
+// Send relays a verb over an already-open connection and classifies what came
+// back, streaming the box's own output to stdout and stderr as it arrives.
+//
+// It is the sending half by itself, where Run is the verb-level entry that
+// first decides whether there is a box to send to at all. Nothing here talks to
+// a terminal: the outcome comes back typed, and what to do about it — prompt,
+// print, or converge — belongs to the caller.
+//
+// Anything that grows a second way to run a verb re-opens ADR-0008: a local
+// fast path, or a laptop-side reimplementation "just this once", each recreates
+// the drift between the two sides that this relay exists to prevent. One
+// implementation, on the box, reached through here.
+func Send(ctx context.Context, conn Conn, v Verb, stdout, stderr io.Writer) error {
 	watched := &strings.Builder{}
-	if err := connection.New(v.Target, exec).Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(stderr, watched)); err != nil {
-		return classify(v.Target, watched.String(), err)
+	if err := conn.Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(stderr, watched)); err != nil {
+		return classify(v, watched.String(), err)
 	}
 	return nil
 }
@@ -133,17 +160,86 @@ func (e *ExitError) Error() string {
 const notInstalled = 127
 
 // classify turns a failed relay into the error its cause deserves: a
-// provisioning gap that names the setup command, a connection that could not
-// be made, or the box's own non-zero exit carried back as a code.
-func classify(target, stderr string, err error) error {
+// provisioning gap that names the setup command, a version mismatch the caller
+// can act on, a connection that could not be made, or the box's own non-zero
+// exit carried back as a code.
+func classify(v Verb, stderr string, err error) error {
 	var coder interface{ ExitCode() int }
 	if !errors.As(err, &coder) {
 		return err
 	}
-	if coder.ExitCode() == notInstalled || strings.Contains(stderr, BoxSmith+": No such file or directory") {
-		return &NotInstalledError{Target: target}
+	switch code := coder.ExitCode(); {
+	case code == notInstalled || strings.Contains(stderr, BoxSmith+": No such file or directory"):
+		return &NotInstalledError{Target: v.Target}
+	case code == RefusalExitCode:
+		return &MismatchError{Target: v.Target, Box: boxVersion(stderr), Local: v.Version}
+	default:
+		return &ExitError{Code: code, Target: v.Target}
 	}
-	return &ExitError{Code: coder.ExitCode(), Target: target}
+}
+
+// RefusalExitCode is the status on-box smith exits with when it refuses a
+// command relayed by a smith of another version. It is a wire contract between
+// the two sides rather than either side's own detail, which is why it lives
+// here: the box exits with it, and the relay reads it back as a version
+// mismatch instead of as the verb's own failure.
+//
+// It sits outside the setup family's codes and outside the 127 a box with no
+// smith answers with, so no other outcome can be mistaken for it.
+const RefusalExitCode = 6
+
+// Refusal renders the message on-box smith prints when it refuses a relayed
+// command, naming both versions because the operator reading it cannot
+// otherwise tell which side is which.
+//
+// The wording lives here, with the relay, because both sides depend on it: the
+// box prints it, and the relaying side reads the box's version back out of it
+// to report the mismatch. local is the version of the smith refusing — the one
+// on the box — and relayedFrom the version the relaying smith declared.
+func Refusal(local, relayedFrom string) string {
+	return fmt.Sprintf("refusing a command relayed from smith %s: this smith is %s, and only an identical version may relay to it", relayedFrom, local)
+}
+
+// refusedVersion pulls the refusing smith's own version out of the message
+// Refusal renders, and is the only reader of that wording.
+var refusedVersion = regexp.MustCompile(`this smith is (\S+),`)
+
+// boxVersion reads the version the box reported in its refusal, empty when
+// what came back on stderr was not a refusal this smith knows how to read — an
+// older box's wording, say, whose exit code still says what happened.
+func boxVersion(stderr string) string {
+	match := refusedVersion.FindStringSubmatch(stderr)
+	if match == nil {
+		return ""
+	}
+	return match[1]
+}
+
+// MismatchError reports that the box refused the relayed command because the
+// two smiths are different versions. It is the outcome, not the reaction: the
+// box has already printed its own refusal on the operator's terminal, and
+// whether to prompt, print an upgrade command or converge the box is the
+// caller's to decide.
+//
+// This is the smith binary on the box against the smith binary on the
+// operator's machine. It is not the marker's schema_version against the
+// constant a build understands — a different axis entirely, and neither
+// message borrows the other's words.
+type MismatchError struct {
+	// Target is the ssh destination that refused the command.
+	Target string
+	// Box is the version the box runs, empty when its refusal named none.
+	Box string
+	// Local is the version this smith declared when it relayed.
+	Local string
+}
+
+// Error implements error.
+func (e *MismatchError) Error() string {
+	if e.Box == "" {
+		return fmt.Sprintf("box %s refused a command relayed from smith %s: it runs a different version of smith", e.Target, e.Local)
+	}
+	return fmt.Sprintf("box %s runs smith %s and you run %s: only an identical version may relay to it", e.Target, e.Box, e.Local)
 }
 
 // connectCmd renders the command line a connecting verb hands the box: the

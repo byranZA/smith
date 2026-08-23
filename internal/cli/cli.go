@@ -12,6 +12,7 @@ import (
 
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
+	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -39,16 +40,19 @@ func Execute() int {
 
 // The exit codes on-box smith answers a staged-config refusal with. They sit
 // outside the setup family's 0 pass, 1 partial, 2 gate rejection and 3 connect
-// failure, and outside the 127 a box with no smith installed answers with, so a
-// caller can tell a provisioning gap from a document it cannot trust without
-// reading the message. The session verbs inherit them.
+// failure, outside the 127 a box with no smith installed answers with, and
+// outside relay.RefusalExitCode, so a caller can tell a provisioning gap from a
+// document it cannot trust without reading the message. The session verbs
+// inherit them.
 const (
 	exitStagedBlueprintAbsent    = 4
 	exitStagedBlueprintMalformed = 5
 )
 
 // codeFromError maps a command error to a process exit code. A nil error is 0,
-// an exitError carries its own already-reported code, a staged-config refusal
+// an exitError carries its own already-reported code, a refused relay carries
+// the code the relaying smith classifies as a version mismatch, a staged-config
+// refusal
 // carries the code its kind is owed however deeply it is wrapped, and any other
 // error is a general failure (1).
 func codeFromError(err error) int {
@@ -60,6 +64,11 @@ func codeFromError(err error) int {
 		return ee.code
 	}
 	fmt.Fprintln(os.Stderr, "smith:", err)
+
+	var refused *relayRefusedError
+	if errors.As(err, &refused) {
+		return relay.RefusalExitCode
+	}
 
 	var absent *staging.AbsentError
 	if errors.As(err, &absent) {

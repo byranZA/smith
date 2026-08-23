@@ -3,6 +3,7 @@ package onbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -22,6 +23,10 @@ type boxConn struct {
 	// installErr is what the install step answers with, so a test can drive a
 	// download or verification failure.
 	installErr error
+	// reports is the version the box's binary answers the relayed version
+	// check with. Empty is the box that agrees with the smith that installed
+	// it, which is what a successful install leaves behind.
+	reports string
 
 	commands []string
 	shipped  []string
@@ -42,7 +47,61 @@ func (c *boxConn) Run(_ context.Context, remoteCmd string, stdout, _ io.Writer) 
 		_, err := io.WriteString(stdout, out)
 		return err
 	}
+	if strings.Contains(remoteCmd, relayedFromFlag) {
+		return c.confirm(remoteCmd, stdout)
+	}
 	return c.installErr
+}
+
+// confirm answers a relayed version check the way a box whose binary agrees
+// with the smith that installed it does, unless a test named a version for it
+// to disagree with.
+func (c *boxConn) confirm(remoteCmd string, stdout io.Writer) error {
+	version := c.reports
+	if version == "" {
+		version = declaredVersion(remoteCmd)
+	}
+	if _, err := fmt.Fprintf(stdout, "smith %s\n", version); err != nil {
+		return fmt.Errorf("write the box's version: %w", err)
+	}
+	return nil
+}
+
+// declaredVersion reads the version a relayed command declared, as the box's
+// own smith would.
+func declaredVersion(remoteCmd string) string {
+	_, rest, ok := strings.Cut(remoteCmd, relayedFromFlag+" '")
+	if !ok {
+		return ""
+	}
+	version, _, _ := strings.Cut(rest, "'")
+	return version
+}
+
+// relayedFromFlag is the flag a relayed command carries, spelled here as the
+// box's shell sees it.
+const relayedFromFlag = "--relayed-from"
+
+// relayedCommand returns the relayed command the box was asked to run, empty
+// when nothing was relayed to it.
+func (c *boxConn) relayedCommand() string {
+	for _, cmd := range c.commands {
+		if strings.Contains(cmd, relayedFromFlag) {
+			return cmd
+		}
+	}
+	return ""
+}
+
+// probeCommand returns the command that read the box's state, empty when it was
+// never probed.
+func (c *boxConn) probeCommand() string {
+	for _, cmd := range c.commands {
+		if strings.Contains(cmd, " probe") {
+			return cmd
+		}
+	}
+	return ""
 }
 
 // installCommand returns the install command the box was asked to run, empty
@@ -59,7 +118,7 @@ func (c *boxConn) installCommand() string {
 func TestConvergeInstallsTheAssetForTheBoxsArchitecture(t *testing.T) {
 	conn := &boxConn{machine: "x86_64"}
 
-	got, err := NewInstaller(conn).Converge(context.Background(), "0.2.0")
+	got, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
 	if err != nil {
 		t.Fatalf("Converge() errored: %v", err)
 	}
@@ -83,7 +142,7 @@ func TestConvergeInstallsTheAssetForTheBoxsArchitecture(t *testing.T) {
 func TestConvergeReadsTheArchitectureFromTheBox(t *testing.T) {
 	conn := &boxConn{machine: "aarch64"}
 
-	if _, err := NewInstaller(conn).Converge(context.Background(), "0.2.0"); err != nil {
+	if _, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0"); err != nil {
 		t.Fatalf("Converge() errored: %v", err)
 	}
 
@@ -96,7 +155,7 @@ func TestConvergeReadsTheArchitectureFromTheBox(t *testing.T) {
 func TestConvergeRefusesAnUnsupportedArchitectureByName(t *testing.T) {
 	conn := &boxConn{machine: "riscv64"}
 
-	_, err := NewInstaller(conn).Converge(context.Background(), "0.2.0")
+	_, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
 
 	var unsupported *release.UnsupportedArchError
 	if !errors.As(err, &unsupported) {
@@ -113,7 +172,7 @@ func TestConvergeRefusesAnUnsupportedArchitectureByName(t *testing.T) {
 func TestConvergeLeavesABoxAlreadyAtTheVersionAlone(t *testing.T) {
 	conn := &boxConn{machine: "x86_64", installed: "0.2.0"}
 
-	got, err := NewInstaller(conn).Converge(context.Background(), "0.2.0")
+	got, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
 	if err != nil {
 		t.Fatalf("Converge() errored: %v", err)
 	}
@@ -141,7 +200,7 @@ func TestConvergeMovesABoxToLocalsVersionInEitherDirection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			conn := &boxConn{machine: "x86_64", installed: tt.installed}
 
-			got, err := NewInstaller(conn).Converge(context.Background(), "0.2.0")
+			got, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
 			if err != nil {
 				t.Fatalf("Converge() errored: %v", err)
 			}
@@ -165,7 +224,7 @@ func TestConvergeMovesABoxToLocalsVersionInEitherDirection(t *testing.T) {
 func TestConvergeShipsItsOwnScriptRatherThanTheBootstrapScript(t *testing.T) {
 	conn := &boxConn{machine: "x86_64"}
 
-	if _, err := NewInstaller(conn).Converge(context.Background(), "0.2.0"); err != nil {
+	if _, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0"); err != nil {
 		t.Fatalf("Converge() errored: %v", err)
 	}
 
@@ -177,12 +236,83 @@ func TestConvergeShipsItsOwnScriptRatherThanTheBootstrapScript(t *testing.T) {
 func TestConvergeReportsAFailedInstall(t *testing.T) {
 	conn := &boxConn{machine: "x86_64", installed: "0.1.0", installErr: errors.New("checksum mismatch")}
 
-	_, err := NewInstaller(conn).Converge(context.Background(), "0.2.0")
+	_, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
 
 	if err == nil {
 		t.Fatal("Converge() succeeded, want the failure reported")
 	}
 	if !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Errorf("error %q does not carry what the box reported", err)
+	}
+}
+
+// TestConvergeConfirmsTheInstallByRelayingAVersionCheck checks the install
+// stage proving what it just did rather than assuming it: the binary it
+// installed is asked its version through the relay, declaring the version that
+// installed it, so the two sides are shown to agree end to end.
+func TestConvergeConfirmsTheInstallByRelayingAVersionCheck(t *testing.T) {
+	conn := &boxConn{machine: "x86_64"}
+
+	if _, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0"); err != nil {
+		t.Fatalf("Converge() errored: %v", err)
+	}
+
+	cmd := conn.relayedCommand()
+	if cmd == "" {
+		t.Fatalf("commands = %v, want the install confirmed by a relayed version check", conn.commands)
+	}
+	for _, want := range []string{InstallPath, "--relayed-from '0.2.0'", "'version'"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("confirmation %q does not contain %q", cmd, want)
+		}
+	}
+}
+
+// TestProbeDeclaresNoRelayedVersion guards the asymmetry that keeps the stage
+// able to converge anything: a skewed box would refuse the very probe that
+// detects the skew.
+func TestProbeDeclaresNoRelayedVersion(t *testing.T) {
+	conn := &boxConn{machine: "x86_64", installed: "0.1.0"}
+
+	if _, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0"); err != nil {
+		t.Fatalf("Converge() errored: %v", err)
+	}
+
+	if cmd := conn.probeCommand(); strings.Contains(cmd, relayedFromFlag) {
+		t.Errorf("probe %q declares a relayed version, want it undeclared", cmd)
+	}
+}
+
+// TestConvergeFailsWhenTheConfirmationDisagrees checks that a binary reporting
+// a version other than the one installed fails the stage rather than being
+// reported as installed.
+func TestConvergeFailsWhenTheConfirmationDisagrees(t *testing.T) {
+	conn := &boxConn{machine: "x86_64", reports: "0.1.0"}
+
+	_, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
+
+	if err == nil {
+		t.Fatal("Converge() succeeded, want the disagreeing binary to fail the stage")
+	}
+	for _, want := range []string{"0.1.0", "0.2.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}
+
+// TestConvergeInstallsOntoABoxThatNeverHadSmith checks the state every box
+// provisioned before this stage is in: nothing installed, and an upgrade that
+// installs rather than refusing.
+func TestConvergeInstallsOntoABoxThatNeverHadSmith(t *testing.T) {
+	conn := &boxConn{machine: "x86_64"}
+
+	got, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
+	if err != nil {
+		t.Fatalf("Converge() errored: %v", err)
+	}
+
+	if !got.Changed || got.Version != "0.2.0" || got.Previous != "" {
+		t.Errorf("Converge() = %+v, want smith 0.2.0 installed onto a box that had none", got)
 	}
 }

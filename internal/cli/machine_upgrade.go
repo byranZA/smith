@@ -55,7 +55,7 @@ func newUpgradeCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			}
 			target := inventory.Resolve(inv, args[0])
 
-			result, err := onbox.NewInstaller(connection.New(target, exec)).Converge(cmd.Context(), version)
+			result, err := onbox.NewInstaller(connection.New(target, exec), args[0]).Converge(cmd.Context(), version)
 			if err != nil {
 				return refuseUpgrade(stderr, err)
 			}
