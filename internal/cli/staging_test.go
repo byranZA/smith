@@ -33,6 +33,9 @@ type fakeStagingBox struct {
 
 	commands []string
 	inputs   []string
+	// writes are the commands that carried bytes, so a test can ask what the
+	// box was handed for one file without counting past the reads.
+	writes []string
 }
 
 func (f *fakeStagingBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
@@ -47,8 +50,21 @@ func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Re
 		return err
 	}
 	f.commands = append(f.commands, cmd)
+	f.writes = append(f.writes, cmd)
 	f.inputs = append(f.inputs, string(data))
 	return f.writeErr
+}
+
+// staged is the bytes the box was handed for the file at path, and whether it
+// was handed any at all. Every write names the path it lands at, so a test
+// asks about one file rather than about everything the stage wrote.
+func (f *fakeStagingBox) staged(path string) (string, bool) {
+	for i, cmd := range f.writes {
+		if strings.Contains(cmd, path) {
+			return f.inputs[i], true
+		}
+	}
+	return "", false
 }
 
 // stagedOrFatal resolves the named blueprint from a config home rooted at dir,
@@ -207,5 +223,36 @@ func TestSetupReportsABlueprintPointerRefusalAsAGateRejection(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "acme") {
 		t.Errorf("refuseSetup() reported %q, want it to name the blueprint the box was built from", errOut.String())
+	}
+}
+
+// TestStageConfigStagesTheResolvedEnvBeforeTheWorkspaceStageRelays proves the
+// wiring resolves both scopes of the blueprint's env on the operator's machine
+// and stages the values onto the box, in the same pass that stages the
+// document — which is the pass that runs before `machine setup` relays
+// `workspace converge`. A box handed the references instead would export
+// something else entirely, or nothing.
+func TestStageConfigStagesTheResolvedEnvBeforeTheWorkspaceStageRelays(t *testing.T) {
+	t.Setenv("GH_TOKEN", "ghp_fromtheoperator")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "env:\n  GITHUB_TOKEN: env:GH_TOKEN\n"+
+		"repos:\n  - url: https://forge.test/acme.git\n    env:\n      LOG_LEVEL: literal:debug\n")
+	box := &fakeStagingBox{}
+
+	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), io.Discard); err != nil {
+		t.Fatalf("stageConfig() err = %v, want nil", err)
+	}
+
+	staged, ok := box.staged(staging.EnvPath)
+	if !ok {
+		t.Fatalf("stageConfig() ran %q, want the resolved env staged at %s", box.commands, staging.EnvPath)
+	}
+	for _, want := range []string{"ghp_fromtheoperator", "debug"} {
+		if !strings.Contains(staged, want) {
+			t.Errorf("staged env = %q, want the resolved value %q", staged, want)
+		}
+	}
+	if strings.Contains(staged, "env:GH_TOKEN") {
+		t.Errorf("staged env = %q, want the value rather than the reference the document keeps", staged)
 	}
 }

@@ -128,11 +128,13 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			}
 			resolvedName, _ := inventory.Name(names)
 
-			// Every placement source is resolved on the operator's machine before
-			// the first mutating phase, because staging is
-			// resolve-all-then-write: a reference that will not resolve refuses
-			// the run with the box untouched, rather than landing a base layer
-			// the operator then has to discover is missing its credentials.
+			// Every reference the blueprint declares — each placement's source
+			// and the value of every variable its env exports, box-scoped and
+			// per-repo alike — is resolved on the operator's machine before the
+			// first mutating phase, because staging is resolve-all-then-write: a
+			// reference that will not resolve refuses the run with the box
+			// untouched, rather than landing a base layer the operator then has
+			// to discover is missing its credentials.
 			staged, err := resolveStagedConfig(home, blueprintName, stderr)
 			if err != nil {
 				return err
@@ -214,7 +216,8 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 }
 
 // stagedConfig is the operator's blueprint resolved and ready to go onto the
-// box: the tree the staging stage converges, and the document it was read from,
+// box: the tree the staging stage converges — document, placement bytes and
+// resolved env — and the document it was read from,
 // named when a write fails so the operator knows which blueprint the box choked
 // on.
 type stagedConfig struct {
@@ -223,12 +226,20 @@ type stagedConfig struct {
 }
 
 // resolveStagedConfig reads the named blueprint from the operator's config home
-// and resolves every placement source on the operator's machine. It takes no
-// connection and reaches no box, so a refusal here cannot have created or
-// modified a byte of /etc/smith.
+// and resolves every reference it declares on the operator's machine: each
+// placement's source, and the value of every variable its env exports, at the
+// box scope and inside each repo. It takes no connection and reaches no box, so
+// a refusal here cannot have created or modified a byte of /etc/smith.
+//
+// Both grammars resolve here and neither resolves on the box. env:GH_TOKEN
+// names a variable in the operator's shell and file:/home/op/.secrets a path on
+// their disk, so what travels is the value and the staged document keeps the
+// reference as dead provenance. It runs before the workspace stage is relayed,
+// because that stage exports these values through the mise config it generates
+// and reads them by name rather than resolving one.
 //
 // It runs before the first mutating phase because staging is
-// resolve-all-then-write: a from: reference naming a path or a variable this
+// resolve-all-then-write: a reference naming a path or a variable this
 // machine does not have is a blueprint the operator has to fix, and finding
 // that out after the base layer landed would leave a provisioned box configured
 // for a session that cannot run. Every unresolvable reference is enumerated in
@@ -262,13 +273,13 @@ func refuseSetup(stderr io.Writer, err error) error {
 	return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
 }
 
-// stageConfig runs the config-staging stage: it writes the resolved blueprint
-// and its placement bytes onto the box at /etc/smith/, reporting what it staged
-// and what it left alone.
+// stageConfig runs the config-staging stage: it writes the staged blueprint,
+// its placement bytes and the resolved values of its env onto the box at
+// /etc/smith/, reporting what it staged and what it left alone.
 //
-// It converges rather than resolves: the document was parsed and every source
-// resolved before the box was touched, so the only failures left here are the
-// box's own. It runs after the base layer because the staged placements are
+// It converges rather than resolves: the document was parsed and every
+// reference resolved before the box was touched, so the only failures left here
+// are the box's own. It runs after the base layer because the staged placements are
 // owned by the smith user, who does not exist until then. Nothing to stage --
 // a run naming no blueprint -- leaves the box exactly as it was.
 func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, stdout io.Writer) error {
@@ -288,7 +299,10 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // convergeWorkspace runs the workspace stage: it relays `smith workspace
 // converge` to the box, which reads the blueprint just staged on it and
 // converges the box to the workspace that blueprint declares, streaming the
-// box's own progress back to the operator's terminal.
+// box's own progress back to the operator's terminal. It reads the values of
+// that blueprint's env by name out of what was staged beside the document, and
+// resolves no reference of its own: a variable with no staged value refuses the
+// step by name rather than falling back to what the box happens to hold.
 //
 // It relays rather than reimplements, because the stage clones repos and
 // installs runtimes onto the box and so has to run there (docs/adr/0008). The
