@@ -140,27 +140,17 @@ The project-wide "extract → test → wire" maps directly: pure logic in a doma
 
 ## Commands
 
-Run from the module root. The `Makefile` wraps the common tasks; `make check` is the full quality gate.
+Run from the module root. Machine setup, the tool pins, and the gate are owned
+by [CONTRIBUTING.md](../../../CONTRIBUTING.md) — read it once on a fresh
+checkout; the list is not repeated here so the two cannot drift.
 
-On a fresh machine, install the dev tools first — `make check` runs a weaker gate without them (see below):
+The short version: `make tools-install` then `make check` before you hand work
+back, `make race` for anything concurrent. **`make lint` and `make vuln` skip
+with a note when their tool is absent and still exit zero**, so `make check` on
+a machine without them reports green having linted nothing — CONTRIBUTING.md
+explains the failure that follows.
 
-```bash
-make tools-install             # golangci-lint, govulncheck, goimports at the pinned versions
-export PATH="$PATH:$(go env GOPATH)/bin"   # where they land; add to your shell profile
-```
-
-```bash
-make check                     # fmt-check + vet + lint + test — the gate (CI runs this)
-make build                     # compile the smith binary into ./bin
-make test                      # full test suite
-make race                      # tests with the race detector (required for concurrent code)
-make cover                     # tests with coverage summary
-make fmt                       # format (gofmt + goimports)
-make lint                      # golangci-lint run
-make tidy                      # go mod tidy + verify
-```
-
-Underlying `go` commands, for targeted runs:
+Targeted `go` invocations, for narrowing a run while you work:
 
 ```bash
 go test ./internal/config/     # single package
@@ -169,6 +159,6 @@ gofmt -l .                     # list files needing formatting (must be empty)
 go vet ./...                   # report suspicious constructs
 ```
 
-Linting uses `golangci-lint` v2, configured in `.golangci.yml`: `revive` enforces doc comments and naming, `wrapcheck`/`errorlint` enforce the error-handling rules above. `make tools-install` installs it at the version CI uses, and CI reads that same pin back out of the Makefile, so the linter that gates a PR is the one you ran.
-
-**`make lint` and `make vuln` skip with a note when their tool is absent, and skipping does not fail the target.** A machine without them runs `make check`, prints two skips, and reports green having linted nothing — CI then fails on lint errors the local gate never looked for. If you cannot install the tools, run `gofmt -l .`, `go vet ./...`, and `go test ./...` at minimum, and expect CI to be stricter than you were.
+Linting uses `golangci-lint` v2, configured in `.golangci.yml`: `revive`
+enforces doc comments and naming, `wrapcheck`/`errorlint` enforce the
+error-handling rules above.
