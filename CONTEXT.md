@@ -72,10 +72,13 @@ _Avoid_: step, task.
 
 **Stage**:
 One step of `machine setup`'s admin-side pipeline, driven from local smith over SSH rather than by
-`bootstrap.sh` — the tailscale access layer, the smith-install stage, the config-staging stage, the
-workspace stage. Unlike a phase, a stage is not in the marker's `completed_phases` and does not
-touch the base layer. The install and staging stages must precede the workspace stage, because
-on-box smith is what runs it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)).
+`bootstrap.sh` — `access` (the tailscale access layer), `install` (the smith binary), `config`
+(staging the blueprint), `workspace`, in that order. The names are what each stage reports itself
+as. Unlike a phase, a stage is not in the marker's `completed_phases` and does not touch the base
+layer; a failed stage names itself, skips every stage after it, and exits partial, because the box
+is provisioned and what stopped sits on top of it. `install` and `config` must precede `workspace`,
+because on-box smith is what runs it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)), and
+`install` is also reachable alone as `smith machine upgrade`.
 _Avoid_: phase (reserved for the base-layer sequence), step.
 
 **Marker**:
@@ -110,8 +113,13 @@ _Avoid_: version skew (a different axis).
 The smith *binary* on the box against the smith *binary* on the operator's machine — whether the
 command line local smith constructs is one on-box smith can parse and mean the same thing by. The
 relay passes a hidden `--relayed-from <version>` and on-box smith **exits non-zero on any
-mismatch**; it is refused, never warned. Independent of schema skew
-([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)).
+mismatch**; it is refused, never warned, and an absent declaration is the human who SSHed in, who
+is not checked. Local smith reacts to the refusal: it offers to converge the box when both its own
+streams are a terminal and runs the original command once it has, and otherwise prints
+`smith machine upgrade <box>` and exits non-zero. A box answering with exit 127 is a box with no
+smith installed, classified as such and pointed at `machine setup`. Converging is always to
+*local's* version, so the post-condition is no skew rather than a newest box. Independent of schema
+skew ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)).
 _Avoid_: drift, schema skew.
 
 ### Secrets
