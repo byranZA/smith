@@ -21,7 +21,7 @@ const aptLockTimeoutRef = "${APT_LOCK_TIMEOUT}"
 // aptLockArgs is the base layer's lock-wait, parsed once from the embedded
 // script so a change to the budget or the option carrying it moves both the
 // box-side phase and the Go-side stage together.
-var aptLockArgs = mustParseAptLockArgs(Script)
+var aptLockArgs = mustAptLockArgsFor(Script)
 
 // AptLockArgs are the apt-get options that wait out a busy apt lock, as
 // bootstrap.sh's own apt-get calls carry them. On a freshly booted cloud image
@@ -37,24 +37,27 @@ func AptLockArgs() []string {
 	return append([]string(nil), aptLockArgs...)
 }
 
-// mustParseAptLockArgs parses the lock-wait out of the embedded script and
-// panics on failure. The script is compiled into the binary, so a failure here
-// is a build that cannot be correct rather than a runtime condition, and a
-// panic surfaces it at package initialization.
-func mustParseAptLockArgs(script string) []string {
-	args, err := parseAptLockArgs(script)
+// mustAptLockArgsFor reads the lock-wait out of the embedded script and panics
+// on failure. The script is compiled into the binary, so a failure here is a
+// build that cannot be correct rather than a runtime condition, and a panic
+// surfaces it at package initialization.
+func mustAptLockArgsFor(script string) []string {
+	args, err := AptLockArgsFor(script)
 	if err != nil {
 		panic(fmt.Sprintf("bootstrap: parse the apt lock wait from the embedded script: %v", err))
 	}
 	return args
 }
 
-// parseAptLockArgs extracts the apt-get lock-wait options from a bootstrap.sh
-// source, with the budget the script declares separately substituted in and
-// the shell's quoting removed. It errors if either declaration is absent or
-// the options array is empty, rather than returning a wait that waits for
-// nothing.
-func parseAptLockArgs(script string) ([]string, error) {
+// AptLockArgsFor is the lock-wait a bootstrap.sh source declares, as apt-get
+// options: the script's APT_LOCK_OPTS array with the budget it declares
+// separately substituted in and the shell's quoting removed. AptLockArgs is
+// this applied to the embedded Script; taking the source as an argument is
+// what lets a caller check a script it is about to ship.
+//
+// It errors if either declaration is absent or the options array is empty,
+// rather than returning a wait that waits for nothing.
+func AptLockArgsFor(script string) ([]string, error) {
 	opts := aptLockOptsLine.FindStringSubmatch(script)
 	if opts == nil {
 		return nil, fmt.Errorf("no APT_LOCK_OPTS=(...) array found")

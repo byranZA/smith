@@ -26,20 +26,36 @@ func TestAptLockArgsIsACopy(t *testing.T) {
 	}
 }
 
-// TestParseAptLockArgsRejectsMalformedScripts proves parseAptLockArgs fails
-// loudly rather than silently handing apt-get an empty or unexpanded wait: a
-// missing options array, a missing budget, and an array holding nothing.
-func TestParseAptLockArgsRejectsMalformedScripts(t *testing.T) {
+// TestAptLockArgsForRejectsMalformedScripts proves the lock-wait a script
+// declares is refused rather than silently handed to apt-get as an empty or
+// unexpanded wait: a missing options array, a missing budget, and an array
+// holding nothing.
+func TestAptLockArgsForRejectsMalformedScripts(t *testing.T) {
 	cases := map[string]string{
 		"missing options": "APT_LOCK_TIMEOUT=180\n",
 		"missing timeout": "APT_LOCK_OPTS=(-o \"DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}\")\n",
 		"empty options":   "APT_LOCK_TIMEOUT=180\nAPT_LOCK_OPTS=()\n",
+		"empty script":    "",
 	}
 	for name, script := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := parseAptLockArgs(script); err == nil {
-				t.Errorf("parseAptLockArgs(%q) succeeded, want error", script)
+			if _, err := AptLockArgsFor(script); err == nil {
+				t.Errorf("AptLockArgsFor(%q) succeeded, want error", script)
 			}
 		})
+	}
+}
+
+// TestAptLockArgsForExpandsTheDeclaredBudget proves a script's own budget is
+// what a caller waits with, expanded and stripped of the shell's quoting.
+func TestAptLockArgsForExpandsTheDeclaredBudget(t *testing.T) {
+	script := "APT_LOCK_TIMEOUT=42\nAPT_LOCK_OPTS=(-o \"DPkg::Lock::Timeout=${APT_LOCK_TIMEOUT}\")\n"
+	want := "-o DPkg::Lock::Timeout=42"
+	args, err := AptLockArgsFor(script)
+	if err != nil {
+		t.Fatalf("AptLockArgsFor(%q) = %v, want no error", script, err)
+	}
+	if got := strings.Join(args, " "); got != want {
+		t.Errorf("AptLockArgsFor(%q) = %q, want %q", script, got, want)
 	}
 }
