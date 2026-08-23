@@ -131,7 +131,7 @@ func TestSetupStoresTheOperatorsTargetVerbatimWithoutProbingIt(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if ssh.reached("smith@203.0.113.10") || ssh.reached("dev.internal") {
+	if ssh.reached("dev.internal") || ssh.reached("smith@dev.internal") {
 		t.Errorf("ssh targets = %v, want a target the operator supplied never probed", ssh.targets)
 	}
 	got := inventoryContent(t, dir)

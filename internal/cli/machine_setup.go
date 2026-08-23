@@ -37,11 +37,17 @@ const smithLogin = "smith"
 // the box, stamped onto its marker so the box records what the operator calls
 // it and registered in the inventory so they can type it instead of an address.
 //
+// Once every phase has completed, the run drives the ordered pipeline of named
+// stages that sit on top of a provisioned box: the access layer, the smith
+// binary, the staged configuration and the workspace. --smith-version names the
+// released smith the install stage puts on the box, for a build with no release
+// of its own and for an operator pinning a box to an older smith.
+//
 // A run that gets all the way through ends by proving the target the box is
 // reachable by from now on and registering it — the address setup used to print
 // once and throw away.
 func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
-	var accessMode, authKeyRef, blueprintName, boxName, boxTarget string
+	var accessMode, authKeyRef, blueprintName, boxName, boxTarget, smithVersion string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
@@ -165,23 +171,22 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return &exitError{code: setupRes.Outcome.ExitCode()}
 			}
 
-			// The config-staging stage: the base layer is in place, so the box can
-			// be told what kind of box it is. It runs before the access layer
-			// closes any door smith is still reached over.
-			if err := stageConfig(ctx, conn, staged, stdout); err != nil {
-				if _, werr := fmt.Fprintf(stderr, "config staging failed: %v\n", err); werr != nil {
-					return fmt.Errorf("write staging failure: %w", werr)
-				}
-				return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
+			// Every phase completed, so what is left is the pipeline: the
+			// ordered, named stages that run from the operator's machine on top
+			// of a box that is already provisioned and secured.
+			run := &pipelineRun{
+				accessMode:   accessMode,
+				host:         host,
+				exec:         exec,
+				access:       access,
+				acquireKey:   acquireKey,
+				box:          args[0],
+				smithVersion: chosenVersion(smithVersion, resolveVersion()),
+				localVersion: resolveVersion(),
+				staged:       staged,
 			}
-
-			// The workspace stage: the last of the pipeline, relayed to the
-			// smith the box now carries. It runs after config staging because
-			// it reads the document and the placement bytes that stage wrote,
-			// and before the access layer closes any door smith is still
-			// reached over.
-			if err := convergeWorkspace(ctx, exec, smithTarget(host), resolveVersion(), staged, stdout, stderr); err != nil {
-				return err
+			if err := bootstrap.RunStages(ctx, run.stages(stdout, stderr), stdout); err != nil {
+				return reportStageFailure(stderr, err)
 			}
 
 			// The box is provisioned; what is left is writing down the address
@@ -189,16 +194,10 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			// otherwise have to remember off a line that scrolls away.
 			conclusion := setupConclusion{
 				accessMode: accessMode,
+				tailnetIP:  run.tailnetIP,
 				target:     boxTarget,
 				addressed:  target,
 				names:      names,
-			}
-			if accessMode == "tailscale" {
-				result, err := establishTailscale(ctx, access, host, acquireKey, stdout, stderr)
-				if err != nil {
-					return err
-				}
-				conclusion.tailnetIP = result.TailnetIP
 			}
 			return concludeSetup(ctx, exec, home, conclusion, stdout, stderr)
 		},
@@ -210,6 +209,8 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	cmd.Flags().StringVar(&boxName, "name", "",
 		"the name the box is registered and recorded under; omitted, its marker, its blueprint or its host names it")
+	cmd.Flags().StringVar(&smithVersion, "smith-version", "",
+		"the released smith version the install stage puts on the box; omitted, the box is converged to the version local smith runs")
 	cmd.Flags().StringVar(&boxTarget, "target", "",
 		"the address to register the box under, stored verbatim and never probed; omitted, smith registers the address it proved")
 	return cmd
@@ -314,10 +315,10 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // box to read, and refusing on its absence would break the flag-only path that
 // never had a blueprint to begin with.
 //
-// A stage the box refused is partial, not a failed setup: every phase
-// completed and the box is provisioned, secured and configured, so the
-// operator is owed the exit that says so and the box has already said what
-// went wrong on their terminal.
+// A stage the box refused is a failed stage, not a failed setup: every phase
+// completed and the box is provisioned, secured and configured, so what the
+// operator is owed is the pipeline's own partial report — and the box has
+// already said what went wrong on their terminal.
 func convergeWorkspace(ctx context.Context, exec connection.Exec, target, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
 	if staged == nil {
 		return nil
@@ -327,10 +328,7 @@ func convergeWorkspace(ctx context.Context, exec connection.Exec, target, versio
 		return errors.New("the workspace stage runs on the box, and setup always names one")
 	}
 	if err := relay.Run(ctx, exec, verb, local, stdout, stderr); err != nil {
-		if _, werr := fmt.Fprintf(stderr, "the workspace stage did not converge: %v\n", err); werr != nil {
-			return fmt.Errorf("write workspace failure: %w", werr)
-		}
-		return &exitError{code: bootstrap.OutcomePartial.ExitCode()}
+		return fmt.Errorf("the workspace did not converge: %w", err)
 	}
 	return nil
 }
@@ -400,13 +398,10 @@ func publicSSHTarget(ctx context.Context, runner *bootstrap.Runner, accessMode s
 // It returns the establish result rather than telling the operator how to get
 // back in: the address it proved is the one the box is registered under, so the
 // line worth printing names the box, and only the registration knows its name.
-func establishTailscale(ctx context.Context, access *tailscale.Access, host string, acquireKey func() (string, error), stdout, stderr io.Writer) (tailscale.Result, error) {
+func establishTailscale(ctx context.Context, access *tailscale.Access, host string, acquireKey func() (string, error), stdout io.Writer) (tailscale.Result, error) {
 	result, err := access.Establish(ctx, tailscale.EstablishOptions{Host: host, AcquireKey: acquireKey})
 	if err != nil {
-		if _, werr := fmt.Fprintf(stderr, "tailscale access not established: %v\n", err); werr != nil {
-			return tailscale.Result{}, fmt.Errorf("write tailscale failure: %w", werr)
-		}
-		return tailscale.Result{}, &exitError{code: bootstrap.OutcomePartial.ExitCode()}
+		return tailscale.Result{}, fmt.Errorf("tailscale access not established: %w", err)
 	}
 	headline := "tailscale reach established over %s; public SSH closed.\n"
 	if result.AlreadySatisfied {

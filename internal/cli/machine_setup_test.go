@@ -28,11 +28,22 @@ type setupSSH struct {
 	// tailnetIP is the address the box is already enrolled and Running at, so a
 	// tailscale run establishes reach over it without burning an auth key.
 	tailnetIP string
-	// deafAt is an ssh destination the box does not answer at — the shape of a
-	// box that will not let smith back in as the smith user.
+	// deafAt is an ssh destination whose reachability probe the box does not
+	// answer — the shape of a box smith cannot prove it can reach by the
+	// address it is about to write down.
 	deafAt string
+	// machine is the machine hardware name `uname -m` prints on the box, which
+	// the install stage reads to pick the release asset to fetch.
+	machine string
+	// installed is the smith version already on the box, empty when it carries
+	// none — which is what a box the install stage has never reached answers.
+	installed string
+	// phaseErr is what the box answers the mutating phases with, standing in
+	// for a run that failed partway through the base layer.
+	phaseErr error
 
-	targets []string
+	targets  []string
+	commands []string
 }
 
 // Run answers whichever local binary the run launched, recording every ssh
@@ -45,12 +56,26 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	if name != "ssh" || len(args) < 2 {
 		return nil
 	}
+	machine := s.machine
+	if machine == "" {
+		machine = "x86_64"
+	}
 	target, remoteCmd := args[len(args)-2], args[len(args)-1]
 	s.targets = append(s.targets, target)
-	if target == s.deafAt {
+	s.commands = append(s.commands, remoteCmd)
+	if target == s.deafAt && remoteCmd == "true" {
 		return refusedExit{}
 	}
 	switch {
+	case strings.Contains(remoteCmd, "bootstrap.sh setup"):
+		return s.phaseErr
+	case strings.HasSuffix(remoteCmd, " probe"):
+		out := "arch=" + machine + "\n"
+		if s.installed != "" {
+			out += "smith-version=" + s.installed + "\n"
+		}
+		_, err := io.WriteString(stdout, out)
+		return err
 	case strings.HasSuffix(remoteCmd, "preflight"):
 		_, err := io.WriteString(stdout, supportedRelease)
 		return err
@@ -87,10 +112,25 @@ const adminOnTailnet = `{"BackendState":"Running","Self":{"UserID":1},"User":{"1
 // markerNamedDev is the marker a box smith already set up as "dev" carries.
 const markerNamedDev = `{"schema_version":2,"access_mode":"public","name":"dev"}`
 
-// runSetup runs `machine setup` against a config home rooted at dir, with every
-// local binary the run launches answered by the given fake, and returns what
-// landed on each stream plus the exit code.
+// runSetup runs `machine setup` as an operator holding a released smith: the
+// version the install stage puts on the box is named unless the test names one
+// itself, because a test binary reports no released tag and every run would
+// otherwise stop at that stage. A test about the install stage itself drives
+// runSetupAsBuilt instead.
 func runSetup(t *testing.T, dir string, ssh *setupSSH, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	if !slices.Contains(args, "--smith-version") {
+		args = append([]string{"--smith-version", "0.2.0"}, args...)
+	}
+	return runSetupAsBuilt(t, dir, ssh, args...)
+}
+
+// runSetupAsBuilt runs `machine setup` against a config home rooted at dir,
+// with every local binary the run launches answered by the given fake, and
+// returns what landed on each stream plus the exit code. It passes the flags it
+// is given and nothing else, so a test can drive the build it is actually
+// running.
+func runSetupAsBuilt(t *testing.T, dir string, ssh *setupSSH, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	cmd := newMachineCmd(
 		func() (config.Home, error) { return config.NewHome(dir), nil },

@@ -46,7 +46,7 @@ func newUpgradeCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			// with nothing to install refuses with the box untouched.
 			version := release.Installable(chosenVersion(smithVersion, resolveVersion()))
 			if version == "" {
-				return refuseUpgrade(stderr, devBuildRefusal(resolveVersion(), args[0]))
+				return refuseUpgrade(stderr, devBuildRefusal(resolveVersion(), "smith machine upgrade "+args[0]))
 			}
 
 			inv, err := lookupInventory(resolve, args[0])
@@ -91,7 +91,9 @@ func refuseUpgrade(stderr io.Writer, cause error) error {
 	return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
 }
 
-// devBuildRefusal renders the refusal a build with no published release is owed.
+// devBuildRefusal renders the refusal a build with no published release is owed,
+// naming the command the operator ran so the escape it offers is theirs to
+// re-run rather than a verb they were not using.
 //
 // It states the whole situation rather than just the flag. An error naming only
 // --smith-version walks a contributor straight into the second problem: the
@@ -99,15 +101,15 @@ func refuseUpgrade(stderr io.Writer, cause error) error {
 // build that installed it, because the box enforces the version match and a dev
 // build declares a version no release has. So the refusal names the flag, the
 // consequence of using it, and the two-sided fix — a released local smith.
-func devBuildRefusal(version, box string) error {
+func devBuildRefusal(version, command string) error {
 	return fmt.Errorf(`this smith is a dev build (%s), so there is no release asset to install.
 
 Name a released version to install one onto the box:
-  smith machine upgrade %s --smith-version <tag>
+  %s --smith-version <tag>
 
 That released smith will then refuse to relay a command from this dev build:
 the box enforces that both sides run the same version, and a dev build has no
 released version to match. The fix on both sides is a released local smith —
 install one from https://github.com/byranZA/smith/releases and upgrade from
-it`, version, box)
+it`, version, command)
 }
