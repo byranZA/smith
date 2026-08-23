@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/relay"
 )
 
@@ -69,15 +70,18 @@ type convergeRecorder struct {
 	err   error
 }
 
-func (c *convergeRecorder) converge(_ context.Context, box, version string) (string, error) {
+func (c *convergeRecorder) converge(_ context.Context, box, version string) (convergence, error) {
 	c.calls = append(c.calls, box+" "+version)
 	if c.err != nil {
-		return "", c.err
+		return convergence{}, c.err
 	}
 	if c.ssh != nil {
 		c.ssh.refuse = false
 	}
-	return fmt.Sprintf("box %s: smith 0.3.0 → %s (matching local smith)\n", box, version), nil
+	return convergence{
+		Box:    box,
+		Result: onbox.Result{Version: version, Previous: "0.3.0", Arch: "amd64", Changed: true},
+	}, nil
 }
 
 // skewLaptop assembles the session command as it runs on the operator's own

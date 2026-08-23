@@ -8,9 +8,6 @@ import (
 
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/connection"
-	"github.com/byranZA/smith/internal/inventory"
-	"github.com/byranZA/smith/internal/onbox"
-	"github.com/byranZA/smith/internal/release"
 )
 
 // newUpgradeCmd builds `smith machine upgrade <name-or-target>`. It converges
@@ -34,32 +31,18 @@ import (
 // escape a build with no published release needs, and it overrides a release
 // build just as readily, for the operator pinning a box to an older smith.
 func newUpgradeCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
+	converge := convergeNamedBox(resolve, exec)
 	var smithVersion string
 	cmd := &cobra.Command{
 		Use:   "upgrade <name-or-target>",
 		Short: "Converge the smith binary on a box to the version local smith runs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
-
-			// The version is settled before a connection is opened, so a build
-			// with nothing to install refuses with the box untouched.
-			version := release.Installable(chosenVersion(smithVersion, resolveVersion()))
-			if version == "" {
-				return refuseUpgrade(stderr, devBuildRefusal(resolveVersion(), "smith machine upgrade "+args[0]))
-			}
-
-			inv, err := lookupInventory(resolve, args[0])
+			result, err := converge(cmd.Context(), args[0], chosenVersion(smithVersion, resolveVersion()))
 			if err != nil {
-				return reportInvalid(cmd, err)
+				return refuseUpgrade(cmd.ErrOrStderr(), err)
 			}
-			target := inventory.Resolve(inv, args[0])
-
-			result, err := onbox.NewInstaller(connection.New(target, exec), args[0]).Converge(cmd.Context(), version)
-			if err != nil {
-				return refuseUpgrade(stderr, err)
-			}
-			if _, err := fmt.Fprintf(stdout, "box %s: %s", args[0], result.Report()); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), result.Report()); err != nil {
 				return fmt.Errorf("write upgrade report: %w", err)
 			}
 			return nil

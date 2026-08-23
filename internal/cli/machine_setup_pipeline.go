@@ -9,7 +9,6 @@ import (
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/onbox"
-	"github.com/byranZA/smith/internal/release"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
@@ -106,26 +105,30 @@ func (r *pipelineRun) establishAccess(ctx context.Context, stdout io.Writer) err
 }
 
 // installSmith runs the install stage: it converges the box's smith binary to
-// the version the run named, through the same code path `machine upgrade`
-// drives, and reports what it did to the binary.
+// the version the run named, through the one convergence `machine upgrade`
+// runs too, and reports what it did to the binary.
 //
-// It refuses a build with no published release before it reaches the box, so a
-// dev build sets a box up all the way through the phases and fails here alone —
-// which is what keeps a from-source build useful for the whole setup domain.
+// It hands that convergence the connection the pipeline already reaches the box
+// over rather than resolving the box a second time — this stage is inside a run
+// that reached the box several stages ago, and the address it answers on is the
+// access stage's to say.
+//
+// The refusal names `machine setup`, because that is the command the operator
+// ran: a build with no published release is refused before the box is reached,
+// so a dev build sets a box up all the way through the phases and fails here
+// alone — which is what keeps a from-source build useful for the whole setup
+// domain.
 //
 // Nothing about the installed binary is written down: `smith version` on the
 // box is ground truth, and the marker's smith_version keeps its own meaning,
 // the smith that provisioned the box.
 func installSmith(ctx context.Context, conn onbox.Conn, version, box string, stdout io.Writer) error {
-	installable := release.Installable(version)
-	if installable == "" {
-		return devBuildRefusal(version, "smith machine setup "+box)
-	}
-	result, err := onbox.NewInstaller(conn, box).Converge(ctx, installable)
+	run := binaryConvergence{box: box, version: version, command: "smith machine setup"}
+	converged, err := run.converge(ctx, func() (onbox.Conn, error) { return conn, nil })
 	if err != nil {
-		return fmt.Errorf("converge the box's smith binary: %w", err)
+		return err
 	}
-	if _, err := fmt.Fprint(stdout, result.Report()); err != nil {
+	if _, err := fmt.Fprint(stdout, converged.Result.Report()); err != nil {
 		return fmt.Errorf("write install report: %w", err)
 	}
 	return nil

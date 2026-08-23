@@ -1,18 +1,13 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/byranZA/smith/internal/connection"
-	"github.com/byranZA/smith/internal/inventory"
-	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/relay"
-	"github.com/byranZA/smith/internal/release"
 )
 
 // terminal is the operator's own terminal, as the version-skew prompt needs
@@ -28,12 +23,6 @@ type terminal interface {
 	ReadLine(prompt string) (string, error)
 }
 
-// boxConverger converges the smith binary installed on a box to a version and
-// reports what it did. It is the same install stage `smith machine upgrade`
-// runs, passed in rather than reached for so the accepted prompt is driven in a
-// test with no box to converge.
-type boxConverger func(ctx context.Context, box, version string) (string, error)
-
 // skew is what local smith does about a box that refused a relayed command
 // because the two smiths are different versions: ask the human at the terminal
 // whether to converge the box and then carry on with what they typed, and tell
@@ -47,8 +36,10 @@ type skew struct {
 	// term is the terminal the question is asked on. A zero skew has none,
 	// which is an unattended run: it prints rather than prompts.
 	term terminal
-	// converge is the install stage an accepted question reaches.
-	converge boxConverger
+	// converge is the convergence an accepted question reaches: the same
+	// operation `smith machine upgrade` runs, over the same ssh boundary the
+	// refused relay travelled on.
+	converge namedBoxConverger
 }
 
 // react runs a relayed verb and reacts to the one failure the operator can be
@@ -83,11 +74,11 @@ func (s skew) react(cmd *cobra.Command, box string, run func() error) error {
 	if !accepted {
 		return refuseSkew(cmd, box)
 	}
-	report, err := s.converge(cmd.Context(), box, mismatch.Local)
+	converged, err := s.converge(cmd.Context(), box, mismatch.Local)
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
-	if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), converged.Report()); err != nil {
 		return fmt.Errorf("write upgrade report: %w", err)
 	}
 	return run()
@@ -140,31 +131,4 @@ func refuseSkew(cmd *cobra.Command, box string) error {
 		return fmt.Errorf("write the upgrade command: %w", err)
 	}
 	return &exitError{code: relay.RefusalExitCode}
-}
-
-// convergeBox is the boxConverger the command surface runs: the install stage
-// `smith machine upgrade` reaches, over the same ssh boundary the refused relay
-// travelled on, and to the version local smith runs so the two sides match by
-// construction.
-//
-// A local smith with no published release has nothing to install, so it refuses
-// with the whole situation rather than the flag: the convergence it offered
-// cannot happen from this build.
-func convergeBox(resolve homeResolver, exec connection.Exec) boxConverger {
-	return func(ctx context.Context, box, version string) (string, error) {
-		installable := release.Installable(version)
-		if installable == "" {
-			return "", devBuildRefusal(version, "smith machine upgrade "+box)
-		}
-		inv, err := lookupInventory(resolve, box)
-		if err != nil {
-			return "", err
-		}
-		conn := connection.New(inventory.Resolve(inv, box), exec)
-		result, err := onbox.NewInstaller(conn, box).Converge(ctx, installable)
-		if err != nil {
-			return "", fmt.Errorf("converge box %s to smith %s: %w", box, installable, err)
-		}
-		return fmt.Sprintf("box %s: %s", box, result.Report()), nil
-	}
 }

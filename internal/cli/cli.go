@@ -134,10 +134,10 @@ func newRootCmd() *cobra.Command {
 }
 
 // operatorSkew is the reaction to a refused relay as the operator's own machine
-// makes it: their terminal, and the install stage `machine upgrade` runs.
+// makes it: their terminal, and the convergence `machine upgrade` runs.
 func operatorSkew() skew {
 	return skew{
 		term:     secret.NewStdTerminal(),
-		converge: convergeBox(userConfigHome, connection.System()),
+		converge: convergeNamedBox(userConfigHome, connection.System()),
 	}
 }
