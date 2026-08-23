@@ -1,399 +1,127 @@
 # smith
 
+Smith turns a fresh VPS into a ready-to-use remote development machine and
+manages coding agents across the repositories on it. You bring the box; smith
+provisions it, sets up the repos and toolchain you declared, and runs the
+sessions your agents work in.
+
 **Project status: early development.** Smith is currently being built for
 personal use and experimentation. Interfaces, configuration and internal
-architecture may change without notice.
+architecture may change without notice, and there is no `v0.x` compatibility
+promise — pin to an exact tag.
 
-Smith turns a fresh VPS into a ready-to-use remote development machine and
-manages coding agents across the repositories on it.
+## How it works
 
-## Install
+Smith is one static binary that lives in two places. On your machine it is a
+control surface. `machine setup` **installs the same binary onto the box**, and
+the verbs that do work there — the session verbs and `workspace converge` — run
+there; your local smith relays them over SSH and streams the box's output back.
+That is what lets an agent keep working after you close your laptop.
 
-`smith` ships as a single static binary. Grab the [latest
-release](https://github.com/byranZA/smith/releases/latest) with the one-liner
-for your platform — it fetches the `v0.1.0` archive, unpacks it in the current
-directory, and leaves the `smith` binary alongside its `LICENSE` and `README`.
-Move it onto your `PATH` afterwards (e.g. `sudo mv smith /usr/local/bin/`).
+Three things make a box a smith box:
 
-> **Fetch with `curl`, not your browser.** smith is unsigned. A browser stamps
-> every download with a quarantine flag, so macOS Gatekeeper then refuses to run
-> it; `curl` and `wget` don't set that flag, so a curled binary runs untouched.
-> The commands below are the supported path for exactly this reason. If you did
-> download through a browser, see [Gatekeeper](#gatekeeper-macos) below.
+- A **blueprint** — one YAML file declaring what kind of box this is: its repos,
+  runtimes, placed files, and access mode.
+- The **box inventory** — a local name → address book, so you type `dev` instead
+  of an address that changed when the box was hardened.
+- **Sessions** — one `tmux` session plus one git worktree of one repo on one
+  branch, the unit of parallel work on a box.
 
-**macOS** (Apple silicon):
+## Quick start
+
+Install (macOS Apple silicon shown — [other platforms and checksum
+verification](docs/install.md)):
 
 ```sh
 curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_arm64.tar.gz | tar xz
+sudo mv smith /usr/local/bin/
+smith version
 ```
 
-**macOS** (Intel):
+> Fetch with `curl`, not your browser: smith is unsigned, and a browser's
+> quarantine flag makes macOS refuse to run it. See
+> [Gatekeeper](docs/install.md#gatekeeper-macos).
 
-```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_amd64.tar.gz | tar xz
-```
-
-**Linux** (x86-64):
-
-```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_linux_amd64.tar.gz | tar xz
-```
-
-**Linux** (ARM64):
-
-```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_linux_arm64.tar.gz | tar xz
-```
-
-**Windows** (x86-64) — download the zip, then extract it (modern `tar` on
-Windows 10+ handles zips):
-
-```sh
-curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_windows_amd64.zip
-tar -xf smith_0.1.0_windows_amd64.zip
-```
-
-Confirm it: `smith version` should print `0.1.0`.
-
-### Verify the checksum
-
-The `curl | tar` one-liners are the fast path. To verify first, download the
-archive to disk instead of piping it, check it against `checksums.txt`, then
-unpack — shown here for macOS Apple silicon (substitute your archive name):
-
-```sh
-curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_arm64.tar.gz
-curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.0/checksums.txt
-
-shasum -a 256 -c checksums.txt --ignore-missing   # macOS
-sha256sum   -c checksums.txt --ignore-missing      # Linux
-
-tar xzf smith_0.1.0_darwin_arm64.tar.gz
-```
-
-`--ignore-missing` verifies just the archive you downloaded and skips the rest.
-Expect a single `... : OK` line.
-
-### Install with `go install`
-
-If you have the Go toolchain (1.26+, matching smith's `go.mod`), build and
-install from the module tag directly:
-
-```sh
-go install github.com/byranZA/smith/cmd/smith@v0.1.0
-```
-
-This resolves the tag, builds from source, and stamps the version from the
-module path — `smith version` still reports `0.1.0`, with no ldflags involved.
-The binary lands in `$(go env GOBIN)` (or `$(go env GOPATH)/bin`); make sure
-that's on your `PATH`.
-
-### Build from source
-
-To build from a checkout instead:
-
-```sh
-make build   # produces ./bin/smith
-```
-
-A binary built this way reports `smith version` as `dev` — it carries no release
-tag. Use `curl` or `go install` for a version-stamped build.
-
-> **A dev build cannot install smith onto a box.** `machine setup` puts a smith
-> binary on the box by having it fetch the release matching *your* version, and
-> there is no `dev` release — so a from-source build bootstraps a box through
-> every phase and then fails at the `install` stage alone. `--smith-version <tag>`
-> names a released version to install instead, but that released smith will then
-> refuse to relay commands from your dev build, because both sides must match.
-> See [smith on the box](docs/on-box.md#contributing-a-dev-build-cannot-install).
-
-### Gatekeeper (macOS)
-
-If you downloaded through a browser and macOS refuses to open smith — *"smith
-cannot be opened because the developer cannot be verified"* — clear the
-quarantine flag the browser set, then run it:
-
-```sh
-xattr -d com.apple.quarantine ./smith
-```
-
-Or just re-fetch with the `curl` one-liner above, which never sets the flag in
-the first place.
-
-### Windows / SmartScreen
-
-The Windows story is weaker than the macOS one. SmartScreen keys off
-*reputation* as well as Mark-of-the-Web, so a freshly published unsigned binary
-can be flagged even when fetched with `curl`, and reputation only builds with
-downloads over time. If SmartScreen blocks it, choose **More info → Run anyway**.
-
-### Compatibility
-
-smith is **`v0.x` — there is no compatibility promise.** Flags, config, and
-behavior may change between releases without notice. Pin to an exact tag rather
-than tracking `latest`.
-
-## Provisioning a VPS
-
-`smith machine setup` takes a fresh box and makes it a secure, reachable
-development machine: it creates a `smith` user with your SSH key, enables a
-default-deny firewall, hardens SSH (no root login, no passwords), and turns on
-fail2ban and automatic security updates. Re-running is safe — every step checks
-before it changes anything.
-
-### Prerequisites
-
-You'll need the `smith` binary on your `PATH` — see [Install](#install) above.
-
-The box you're provisioning must be:
-
-- A fresh **Ubuntu 24.04 LTS or newer**.
-- Reachable over SSH as **root**, or as a user with **passwordless sudo**. Smith
-  connects non-interactively, so `ssh <login>@<host>` must log you in with **no
-  prompt at all** — including no key passphrase (load a passphrase-protected key
-  into `ssh-agent` first). This is the same access you used to reach the box;
-  smith reuses it, copying that login's `authorized_keys` onto the new `smith`
-  user.
-
-### Provision (public)
-
-Point smith at the box as `<login>@<host>`:
+Provision a fresh Ubuntu 24.04 box you can already reach over SSH as root or a
+passwordless-sudo user:
 
 ```sh
 smith machine setup root@203.0.113.10 --name dev
-# or a sudo-capable user:
-smith machine setup ubuntu@203.0.113.10 --name dev
 ```
 
-When it finishes, the box is reachable as the `smith` user over hardened public
-SSH, and smith has written down the address it just proved — so you address the
-box by the name you gave it from now on:
+Smith creates a `smith` user with your SSH key, enables a default-deny firewall,
+hardens SSH, turns on fail2ban and unattended upgrades, installs smith on the
+box, and writes down the address it just proved. From then on you use the name:
 
 ```sh
-smith machine status dev
+smith machine status dev                                # drift report; changes nothing
+smith session start dev --repo smith --branch spec-42   # cut, place, launch, connect
 ```
 
-`status` reports how the box has drifted from what setup established, and never
-changes anything. Its argument follows the rule every smith verb shares: **the
-`@` decides**. A value containing `@` is an SSH target used exactly as written;
-a value without one is looked up in the box inventory (`smith machine list`),
-and on a miss is handed to `ssh` as written, so an `ssh_config` alias works too.
-See [Boxes by name](#boxes-by-name) below.
+To reach the box over a tailnet instead of the public internet, add
+`--access tailscale` — that path needs two entries in your tailnet ACL policy
+first. [Provisioning a box](docs/provisioning.md) covers both modes end to end.
 
-### Provision over Tailscale
+## What smith does
 
-To reach the box over a tailnet instead of the public internet, use
-`--access tailscale`. This requires the machine you're running smith from to
-already be a member of the tailnet (the `tailscale` CLI installed and running),
-plus a Tailscale auth key passed as a reference — `env:VAR` or `file:/path`,
-never a bare literal.
+**Provisioning.** `machine setup` hardens a fresh box and is safe to re-run —
+every step checks before it changes anything. It works over public SSH or over
+Tailscale, and only closes public SSH once it has proved the tailnet route
+works, so a half-ready ACL never locks you out.
+→ [docs/provisioning.md](docs/provisioning.md)
 
-**First, add two entries to your tailnet ACL policy.** An auth key can join a
-node but can't edit policy, so smith can't add these for you:
+**Blueprints.** A blueprint (`~/.smith/blueprints/`) declares what kind of box
+smith builds; preferences (`~/.smith/preferences.yaml`) hold what belongs to you
+across every box. Both are optional — every field also has a flag and a default,
+resolved **flag → blueprint → preference → default**. `smith blueprint check`
+validates them offline and prints the resolved configuration with the source of
+each value.
+→ [docs/blueprints.md](docs/blueprints.md), a worked
+[blueprint](docs/examples/blueprints/acme.yaml) and
+[preferences](docs/examples/preferences.yaml)
 
-```json
-// declares tag:smith so the enrolled node's key never expires
-"tagOwners": { "tag:smith": ["autogroup:admin"] },
+**Making the box too.** Describe your provider's own CLI as data in a `provider`
+block and `smith machine create dev --blueprint acme` creates the box before
+provisioning it. Optional — without it you bring the box yourself.
+→ [docs/providers.md](docs/providers.md)
 
-// grants your identity SSH access to tag:smith (replace <your-identity>)
-"ssh": [
-  { "action": "accept", "src": ["<your-identity>"], "dst": ["tag:smith"], "users": ["smith"] }
-]
-```
+**Boxes by name.** A successful setup registers the address it proved in
+`~/.smith/cache/boxes.json`; `machine list`, `add` and `forget` manage it. In
+every verb, **the `@` decides**: a value containing `@` is an SSH target used as
+written, a value without one is looked up in the inventory and, on a miss,
+handed to `ssh` — so an `ssh_config` alias or a MagicDNS name works with no
+smith configuration at all.
+→ [docs/inventory.md](docs/inventory.md)
 
-Without the first, the box enrolls but never reaches `Running`; without the
-second, it enrolls but the SSH probe is denied. (Prefer to run first? smith
-prints these personalized to your identity and stops so you can add them.)
+**The workspace.** Setup's last stage converges the box to the workspace its
+blueprint declares — placements, packages, the pinned toolchain, then a bare
+clone of every declared repo. It is a verb of its own, so you can re-converge
+without re-running the pipeline, and it never deletes: a step it cannot converge
+is reported and what the box already holds stays put.
+→ [docs/workspace.md](docs/workspace.md)
 
-Then provision:
-
-```sh
-smith machine setup ubuntu@203.0.113.10 \
-  --access tailscale \
-  --tailscale-auth-key env:TS_AUTHKEY
-```
-
-Omit `--tailscale-auth-key` on an interactive terminal and smith prompts for it
-without echoing. Smith only closes public SSH once it has verified the box is
-reachable over the tailnet, so a policy that isn't ready yet never locks you
-out.
-
-A successful tailscale setup registers the **tailnet** address — the one the
-lock-out-safety probe came in over — and tells you the name to use from then
-on:
+**Sessions.** Five verbs — `start`, `attach`, `list`, `stop`, `rm` — over
+sessions named `<repo>-<branch>`. `start` is ensure-running, `attach` is
+read-only unless you ask for `--interact`, and `list` is the work-state readout
+you check before destroying a box by hand:
 
 ```
-tailscale reach established over 100.92.14.7; public SSH closed.
-registered smith@100.92.14.7 as "dev"
+NAME             STATE    DIRTY  UNPUSHED
+smith-main       live     -      0
+smith-spec-42    stopped  dirty  3
 
-Reach it by name from now on:
-  smith machine status dev
-  smith machine setup dev
+2 sessions · 1 dirty · 1 with unpushed commits
 ```
 
-#### Tailscale notes
+Attaching adds no listener, no port, no tunnel and no new credential — it is
+`tmux attach` through the SSH door setup already built.
+→ [docs/sessions.md](docs/sessions.md)
 
-- **Access is keyless after enrollment.** Once the box is on the tailnet you no
-  longer manage an SSH key to reach it — Tailscale authenticates you by identity
-  and the ACL rule decides access. The box's public SSH (port 22) is closed, so
-  the tailnet is the only way in.
-- **Authorization follows you, not one machine.** The ACL `src` is your tailnet
-  user login, which matches every device you own on the tailnet. Any of your
-  machines that's on the tailnet can `ssh smith@smith-<host>` or run
-  `smith machine status smith@smith-<host>` — no key, no per-machine setup. To run
-  `machine setup` from another machine it also needs the `tailscale` CLI and to
-  be a running tailnet member.
-- **The first provision still uses your SSH key.** A brand-new box isn't on the
-  tailnet yet, so the initial `--access tailscale` run reaches it over public SSH
-  as your bootstrap login (key-based) to install and enroll Tailscale, then
-  closes public 22. The keyless model applies to everything after that.
-
-## smith on the box
-
-smith is not only a laptop tool: `machine setup` **installs smith onto the box**,
-and the verbs that do work there — the session verbs and `workspace converge` —
-execute there. Your local smith **relays** them over SSH and streams the box's
-output back, so `smith session list dev` from your laptop and `smith session list`
-after SSHing in run the same implementation
-([ADR-0008](docs/adr/0008-smith-runs-on-the-box.md)). The box is where an AFK
-loop has to live: one driven from a laptop dies when the lid closes.
-
-smith lands at `/usr/local/bin/smith`, so SSHing in and typing `smith` gets you
-the real thing — a deliberate property, and the relay invokes that absolute path
-for the same reason. Two edges follow from a box being a box: on-box smith has no
-box inventory, so `machine list`/`add`/`forget` have nothing to work on there,
-and a box has no reason to provision another box.
-
-The install stage never uploads your binary — you are likely `darwin/arm64` and
-the box `linux/amd64`. The box fetches the release asset for its own
-architecture, verifies it against the published `checksums.txt`, and only then
-replaces its binary, so a failed download or a bad checksum leaves the box at
-the version it already had.
-
-### Keeping the two sides in step
-
-The two binaries must agree: local smith constructs a command line and on-box
-smith parses it, and between versions a renamed flag produces wrong behaviour
-under a green exit rather than an error. So every relayed command declares the
-version it was built by, and on-box smith **refuses** any mismatch. A human who
-SSHed in declares nothing and is never checked.
-
-`machine upgrade` converges just the binary — no phase, no staging, no
-placement, no marker write:
-
-```sh
-smith machine upgrade dev
-```
-
-It converges the box to **your** version, so it will move a box *backwards*: the
-post-condition is *no version skew*, not *the box is newest*, and it says so —
-`box dev: smith 0.3.0 → 0.2.0 (matching local smith)`. Both verbs take
-`--smith-version <tag>` to install a version you name instead.
-
-When a relay is refused, smith asks if you are at a terminal — `box dev runs
-0.3.0, you run 0.2.0 — converge box dev to 0.2.0? [y/N]` — and running the
-upgrade then continues the original command. Anything else declines. With no
-terminal, or on a decline, smith prints `smith machine upgrade dev` and exits
-non-zero, which is the path an AFK loop inherits: it never blocks. A box that
-has no smith at all is named as such and pointed at `machine setup`, since it
-predates the stage and likely wants the rest of the pipeline too.
-
-> **Version skew is not schema skew.** Version skew is the smith *binary* on the
-> box against the one on your machine, fixed by `machine upgrade`. Schema skew is
-> the on-box marker's `schema_version` against what the running build
-> understands. They move independently.
-
-[docs/on-box.md](docs/on-box.md) covers the setup pipeline's stages, the install
-and verification steps, the refusal paths, and why the marker records nothing
-about the installed binary.
-
-## Boxes by name
-
-Smith keeps a **box inventory** at `~/.smith/cache/boxes.json` — a name → address
-book, and nothing else. A successful `machine setup` writes the address it just
-proved into it; every verb reads it, so you type `dev` instead of an IP that
-changed when the box was hardened.
-
-```sh
-smith machine list                            # instant, offline: names and targets
-smith machine list --probe                    # ... and whether each one answers
-smith machine add smith@100.92.14.7           # register a box smith already provisioned
-smith machine add smith@100.92.14.7 --name api
-smith machine forget dev                      # drop the entry; the box keeps running
-```
-
-`setup` takes `--name` to choose the name (its marker's name, the blueprint's
-name, then the host are the fallbacks) and `--target` to register an address of
-your own instead of the one smith proved.
-
-**The `@` decides**, in every verb: a value containing `@` is an SSH target used
-exactly as written and never looked up; a value without one is looked up in the
-inventory and, on a miss, handed to `ssh` as written. That last part is free
-interoperability — an `ssh_config` alias or a MagicDNS name works as a smith
-argument with no smith configuration at all.
-
-**Rebuildable, not self-rebuilding.** Nothing in `boxes.json` exists only there
-— every fact about a box is on the box's marker — but smith cannot fetch it back
-for you. Rebuilding an entry means SSHing to a box, which means already knowing
-its address, and provider-side discovery is not in v1. A deleted `boxes.json` is
-rebuilt **by hand, one `smith machine add` per box**, from your provider
-dashboard or shell history; each box returns under the name its marker records.
-
-[docs/inventory.md](docs/inventory.md) covers the four verbs, the naming rules,
-collisions and renames, and the file's schema versioning in full.
-
-## Blueprints
-
-A **blueprint** declares what kind of box smith builds — its repos, runtimes,
-placed files, access mode — as one YAML file in `~/.smith/blueprints/`.
-**Preferences** (`~/.smith/preferences.yaml`) hold what belongs to you across
-every box. Both are optional, and every field they carry can also come from a
-flag or a built-in default: **flag → blueprint → preference → default**.
-
-Validate one before you build anything — `check` writes nothing, touches no box,
-and needs no network:
-
-```sh
-smith blueprint check              # validate your preferences
-smith blueprint check acme         # validate preferences + the blueprint `acme`
-smith blueprint check ./team.yaml  # validate a blueprint kept outside ~/.smith
-```
-
-It prints what smith would actually use, and where each value came from:
-
-```
-blueprint "acme" is valid (/home/ada/.smith/blueprints/acme.yaml)
-
-resolved configuration:
-access:     tailscale (blueprint)
-terminal:   tmux (blueprint)
-workspace:  ~/workspace (blueprint)
-provider:   doctl (blueprint, replacing the preference)
-git:
-  user_name:  Ada Lovelace (blueprint)
-  user_email: ada@acme.example (blueprint)
-repos:
-  acme-api (git@github.com:acme/api.git)
-    base: develop
-```
-
-Then the rest of what the blueprint declared — each repo's tools, env and
-placements, followed by the box-wide `packages`, `tools`, `env` and
-`placements`. Repos appear under the name they resolve to, so a name defaulted
-from a clone URL is visible before any box exists.
-
-Start from the worked examples — a full
-[blueprint](docs/examples/blueprints/acme.yaml) and matching
-[preferences](docs/examples/preferences.yaml) — and read
-[docs/blueprints.md](docs/blueprints.md) for the config home, the split between
-the two files, precedence, and what smith does and does not do about
-credentials.
-
-If you want smith to create the box too, describe your provider's own CLI as
-data in a `provider` block and run `smith machine create dev --blueprint acme`.
-It is optional — without it you bring the box as before —
-and [docs/providers.md](docs/providers.md) covers it, alongside worked
-[adapters](docs/examples/adapters/) for DigitalOcean.
+**smith on the box.** Local and on-box smith must be the same version: every
+relayed command declares the version it was built by, and on-box smith refuses a
+mismatch rather than silently misparsing a renamed flag. `smith machine upgrade
+dev` converges the box to *your* version — including backwards.
+→ [docs/on-box.md](docs/on-box.md)
 
 > **smith knows no service by name.** It places files and exports environment
 > variables; it knows nothing about GitHub or npm. A blueprint declaring
@@ -401,71 +129,20 @@ and [docs/providers.md](docs/providers.md) covers it, alongside worked
 > needs a credential helper for that, and smith will not notice. Clone over SSH
 > and place the key, or place the helper's config yourself.
 
-## The workspace stage
+## Documentation
 
-`machine setup`'s last stage converges the box to the workspace its blueprint
-declares — box placements, `packages`, the pinned toolchain, then a bare clone
-of every declared repo. It runs on the box, and it is a verb of its own so you
-can re-converge without re-running the pipeline:
+[docs/](docs/README.md) is the full index. The decision records behind the
+behaviour above are in [docs/adr/](docs/adr/).
 
-```bash
-smith workspace converge dev      # from your laptop, relayed over SSH
-smith workspace converge          # after SSHing in — the same verb
-```
+## Contributing
 
-It never deletes: a step it cannot converge is reported, the run exits
-non-zero, and what the box already holds stays where it is. Only the
-`packages` step is built today; [docs/workspace.md](docs/workspace.md) covers
-the order the rest land in and why it is the order it is.
+Smith is **not accepting outside pull requests yet** — it is early enough that
+the design still moves faster than a review could keep up with. Bug reports and
+questions are welcome as [issues](https://github.com/byranZA/smith/issues).
 
-## Sessions
+[CONTRIBUTING.md](CONTRIBUTING.md) has the detail, plus fresh-machine setup and
+the quality gate for anyone working in the repository.
 
-A **session** is one `tmux` session plus one git worktree of one repo on one
-branch — the unit of parallel work on a box. Five verbs manage them, and they
-run on the box: name a box and smith relays the verb over SSH, name none and it
-runs where you are.
+## License
 
-```sh
-smith session start dev --repo smith --branch spec-42     # cut, place, launch, connect
-smith session start dev --repo smith --branch spec-42 --detach
-smith session attach dev smith-spec-42                    # read-only
-smith session attach dev smith-spec-42 --interact         # writable
-smith session list dev                                    # the work-state readout
-smith session stop dev smith-spec-42                      # keeps the worktree and branch
-smith session rm dev smith-spec-42                        # keeps the branch
-```
-
-Names are derived, never chosen: `<repo>-<branch>`, sanitized to one path
-segment. `start` is **ensure-running** — run it twice and the second run
-connects you to the session the first stood up — so `stop` then `start` is how
-a changed blueprint's placements land.
-
-`list` answers the one question worth asking before you destroy a box by hand
-at your provider, in one line:
-
-```
-NAME             STATE    DIRTY  UNPUSHED
-smith-main       live     -      0
-smith-spec-42    stopped  dirty  3
-web-hotfix       stopped  -      0
-
-3 sessions · 1 dirty · 1 with unpushed commits
-```
-
-`--names` prints the identity column alone, which is what a sweep is composed
-from: `smith session rm dev $(smith session list dev --stopped --names)`. The
-batch is all-or-nothing.
-
-> **Nothing is exposed.** Attaching adds no listener, no port, no tunnel and no
-> new credential — it is `tmux attach` reached through the SSH door bootstrap
-> already built, identically under `--access=public` and `--access=tailscale`.
-> Read-only is **advisory**: anyone who can SSH as `smith` can attach writable.
-> It guards against typing into an agent's session, not against an operator.
-
-`rm` reclaims a worktree and keeps the branch, so everything it takes away comes
-back on the next `start` **except uncommitted changes** — which is exactly what
-it refuses on, alongside a session that is still running.
-
-[docs/sessions.md](docs/sessions.md) covers the five verbs and their flags, the
-three paths through `start`, the two access levels, what `rm` does and does not
-destroy, and the pre-teardown read in full.
+[Apache 2.0](LICENSE).
