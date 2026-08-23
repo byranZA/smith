@@ -238,33 +238,70 @@ func connectingLaptop(t *testing.T, ssh *skewSSH, term *scriptedTerminal, conv *
 	return w, connect
 }
 
+// connectingVerb is one of the two verbs that hand the operator's terminal to
+// the box's tmux, as a skew case drives it: the command line the operator
+// types, and the fragment of the box's own invocation that proves the command
+// they typed is what travelled.
+//
+// Both are driven through every reaction, because which verb was typed must
+// not change what a refused relay does — and a start that connects reaches the
+// exec by a different flag path than an attach does.
+type connectingVerb struct {
+	// name is what the case is reported as.
+	name string
+	// args is the operator's command line, box included.
+	args []string
+	// relayed is the fragment of the box invocation the exec must carry.
+	relayed string
+}
+
+// connectingVerbs are the two ways an operator ends up with a terminal on the
+// box: attaching to a session, and a start that does not detach.
+var connectingVerbs = []connectingVerb{
+	{
+		name:    "attach",
+		args:    []string{"attach", "dev", "smith-main"},
+		relayed: "'session' 'attach' 'smith-main'",
+	},
+	{
+		name:    "start",
+		args:    []string{"start", "dev", "--repo", "smith", "--branch", "spec-42"},
+		relayed: "'session' 'start' '--branch=spec-42' '--repo=smith'",
+	},
+}
+
 // TestSkewOnAConnectingVerbConvergesThenHandsOverTheTerminal checks the half
 // of the reaction a verb that execs into ssh would otherwise skip: the skew
 // decision is made first, an accepted convergence moves the box, and only then
-// is the operator's terminal handed over.
+// is the operator's terminal handed over — carrying the command the operator
+// originally typed.
 func TestSkewOnAConnectingVerbConvergesThenHandsOverTheTerminal(t *testing.T) {
-	var order []string
-	ssh := &skewSSH{refuse: true, order: &order}
-	conv := &convergeRecorder{ssh: ssh}
-	term := &scriptedTerminal{attended: true, answer: "y", order: &order}
-	w, connect := connectingLaptop(t, ssh, term, conv, &order)
+	for _, verb := range connectingVerbs {
+		t.Run(verb.name, func(t *testing.T) {
+			var order []string
+			ssh := &skewSSH{refuse: true, order: &order}
+			conv := &convergeRecorder{ssh: ssh}
+			term := &scriptedTerminal{attended: true, answer: "y", order: &order}
+			w, connect := connectingLaptop(t, ssh, term, conv, &order)
 
-	_, stderr, code := runSessionOn(t, w, "attach", "dev", "smith-main")
+			_, stderr, code := runSessionOn(t, w, verb.args...)
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
-	}
-	if len(conv.calls) != 1 || conv.calls[0] != "dev 0.2.0" {
-		t.Errorf("converged %v, want one convergence of box dev to 0.2.0", conv.calls)
-	}
-	if len(connect.calls) != 1 {
-		t.Fatalf("exec called %d times, want the terminal handed over once: %v", len(connect.calls), connect.calls)
-	}
-	if len(order) < 2 || order[0] != "terminal" || order[len(order)-1] != "exec" {
-		t.Errorf("order = %v, want the terminal consulted first and ssh exec'd last", order)
-	}
-	if line := strings.Join(connect.calls[0], " "); !strings.Contains(line, "'session' 'attach' 'smith-main'") {
-		t.Errorf("exec argv = %q, want the original command handed to the box", line)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+			}
+			if len(conv.calls) != 1 || conv.calls[0] != "dev 0.2.0" {
+				t.Errorf("converged %v, want one convergence of box dev to 0.2.0", conv.calls)
+			}
+			if len(connect.calls) != 1 {
+				t.Fatalf("exec called %d times, want the terminal handed over once: %v", len(connect.calls), connect.calls)
+			}
+			if len(order) < 2 || order[0] != "terminal" || order[len(order)-1] != "exec" {
+				t.Errorf("order = %v, want the terminal consulted first and ssh exec'd last", order)
+			}
+			if line := strings.Join(connect.calls[0], " "); !strings.Contains(line, verb.relayed) {
+				t.Errorf("exec argv = %q, want the original command handed to the box", line)
+			}
+		})
 	}
 }
 
@@ -272,50 +309,61 @@ func TestSkewOnAConnectingVerbConvergesThenHandsOverTheTerminal(t *testing.T) {
 // convergence leaves the box untouched and the terminal unhanded, with the
 // exact upgrade command to type.
 func TestSkewOnAConnectingVerbDeclinedNeverConnects(t *testing.T) {
-	var order []string
-	ssh := &skewSSH{refuse: true, order: &order}
-	conv := &convergeRecorder{ssh: ssh}
-	term := &scriptedTerminal{attended: true, answer: "n", order: &order}
-	w, connect := connectingLaptop(t, ssh, term, conv, &order)
+	for _, verb := range connectingVerbs {
+		t.Run(verb.name, func(t *testing.T) {
+			var order []string
+			ssh := &skewSSH{refuse: true, order: &order}
+			conv := &convergeRecorder{ssh: ssh}
+			term := &scriptedTerminal{attended: true, answer: "n", order: &order}
+			w, connect := connectingLaptop(t, ssh, term, conv, &order)
 
-	_, stderr, code := runSessionOn(t, w, "attach", "dev", "smith-main")
+			_, stderr, code := runSessionOn(t, w, verb.args...)
 
-	if code == 0 {
-		t.Fatal("exit code = 0, want a declined convergence to fail")
-	}
-	if !strings.Contains(stderr, "smith machine upgrade dev") {
-		t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
-	}
-	if len(conv.calls) != 0 {
-		t.Errorf("converged %v, want nothing", conv.calls)
-	}
-	if len(connect.calls) != 0 {
-		t.Errorf("exec called %v, want no terminal handed to a box that refused", connect.calls)
+			if code == 0 {
+				t.Fatal("exit code = 0, want a declined convergence to fail")
+			}
+			if !strings.Contains(stderr, "smith machine upgrade dev") {
+				t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
+			}
+			if len(conv.calls) != 0 {
+				t.Errorf("converged %v, want nothing", conv.calls)
+			}
+			if len(connect.calls) != 0 {
+				t.Errorf("exec called %v, want no terminal handed to a box that refused", connect.calls)
+			}
+		})
 	}
 }
 
 // TestSkewOnAConnectingVerbUnattendedNeverConnects checks the path an AFK loop
-// inherits on the verb that would have replaced smith with ssh: nothing is
+// inherits on the verbs that would have replaced smith with ssh: nothing is
 // asked, nothing is connected, and the command to type is printed.
 func TestSkewOnAConnectingVerbUnattendedNeverConnects(t *testing.T) {
-	var order []string
-	ssh := &skewSSH{refuse: true, order: &order}
-	conv := &convergeRecorder{ssh: ssh}
-	term := &scriptedTerminal{attended: false, order: &order}
-	w, connect := connectingLaptop(t, ssh, term, conv, &order)
+	for _, verb := range connectingVerbs {
+		t.Run(verb.name, func(t *testing.T) {
+			var order []string
+			ssh := &skewSSH{refuse: true, order: &order}
+			conv := &convergeRecorder{ssh: ssh}
+			term := &scriptedTerminal{attended: false, order: &order}
+			w, connect := connectingLaptop(t, ssh, term, conv, &order)
 
-	_, stderr, code := runSessionOn(t, w, "start", "dev", "--repo", "smith", "--branch", "spec-42")
+			_, stderr, code := runSessionOn(t, w, verb.args...)
 
-	if code == 0 {
-		t.Fatal("exit code = 0, want an unattended refused relay to fail")
-	}
-	if term.asked {
-		t.Error("an unattended run waited for input")
-	}
-	if !strings.Contains(stderr, "smith machine upgrade dev") {
-		t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
-	}
-	if len(connect.calls) != 0 {
-		t.Errorf("exec called %v, want no terminal handed over before the skew decision", connect.calls)
+			if code == 0 {
+				t.Fatal("exit code = 0, want an unattended refused relay to fail")
+			}
+			if term.asked {
+				t.Error("an unattended run waited for input")
+			}
+			if !strings.Contains(stderr, "smith machine upgrade dev") {
+				t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
+			}
+			if len(conv.calls) != 0 {
+				t.Errorf("converged %v, want nothing", conv.calls)
+			}
+			if len(connect.calls) != 0 {
+				t.Errorf("exec called %v, want no terminal handed over before the skew decision", connect.calls)
+			}
+		})
 	}
 }
