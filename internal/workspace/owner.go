@@ -3,7 +3,6 @@ package workspace
 import (
 	"fmt"
 	"os"
-	"syscall"
 )
 
 // Owner is the account the files smith places on a box belong to. It is the
@@ -35,12 +34,12 @@ func (SmithUser) Claim(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read the ownership of %s: %w", path, err)
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
+	owning, ok := ownerUID(info)
 	if !ok {
 		return false, fmt.Errorf("read the ownership of %s: the filesystem reports none", path)
 	}
 	uid := os.Getuid()
-	if int(stat.Uid) == uid {
+	if owning == uid {
 		return false, nil
 	}
 	if err := os.Chown(path, uid, -1); err != nil {
