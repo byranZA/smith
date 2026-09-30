@@ -1,0 +1,25 @@
+# Your smith preferences: what belongs to you rather than to a kind of box.
+# Every line is commented out, so smith uses its built-in defaults until you
+# uncomment something. Check your changes with:
+#
+#     smith blueprint check
+#
+# The test for whether a value belongs here: if you built a completely
+# different box tomorrow, should this value follow? Only the fixed-key fields
+# live here; repos, placements, packages, tools and env belong in a blueprint.
+#
+# A filled-in example is in the smith docs at docs/examples/preferences.yaml.
+
+# How boxes are reached: public (the default) or tailscale.
+# access: tailscale
+
+# The terminal substrate sessions run under. tmux is the only value.
+# terminal: tmux
+
+# Where repo worktrees live on a box.
+# workspace: ~/workspace
+
+# The identity your boxes commit as.
+# git:
+#   user_name: Your Name
+#   user_email: you@example.com

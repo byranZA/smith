@@ -129,7 +129,7 @@ func newRootCmd() *cobra.Command {
 		ssh:       connection.System(),
 		version:   resolveVersion(),
 		skew:      operatorSkew(),
-	}), newVersionCmd())
+	}), newInitCmd(userConfigHome), newVersionCmd())
 	return root
 }
 

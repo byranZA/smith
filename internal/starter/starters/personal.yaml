@@ -1,0 +1,21 @@
+# Your personal blueprint: the kind of box you develop on. Every line is
+# commented out, so it resolves to smith's built-in defaults until you
+# uncomment something. Check it, then build a box from it:
+#
+#     smith blueprint check personal
+#     smith machine setup <login>@<host> --blueprint personal
+#
+# Your preferences.yaml holds what follows you from box to box. The keys here
+# are the ones only a blueprint declares. A fixed key such as access or git may
+# also be declared here, and then overrides your preferences for this box.
+#
+# A filled-in example is in the smith docs at docs/examples/blueprints/acme.yaml.
+
+# System packages, installed unversioned from apt.
+# packages:
+#   - ripgrep
+
+# The repositories this box carries, each cloned into the workspace.
+# repos:
+#   - url: git@github.com:you/project.git
+#     base: main

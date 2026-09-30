@@ -172,10 +172,10 @@ type Preferences struct {
 	Found bool
 }
 
-// preferencesPath is where the operator's preferences live inside the config
-// home. Nothing is read or created; the path is derived, not discovered.
-func preferencesPath(home Home) string {
-	return filepath.Join(home.path, preferencesFile)
+// PreferencesPath returns where the operator's preferences live inside the
+// config home. Nothing is read or created; the path is derived, not discovered.
+func (h Home) PreferencesPath() string {
+	return filepath.Join(h.path, preferencesFile)
 }
 
 // LoadPreferences reads and parses the operator's preferences, returning them
@@ -186,7 +186,7 @@ func preferencesPath(home Home) string {
 // would use on every run and silently ignoring them would leave a box
 // configured by something the operator never wrote. Nothing is created.
 func LoadPreferences(home Home) (Preferences, error) {
-	path := preferencesPath(home)
+	path := home.PreferencesPath()
 	data, err := os.ReadFile(path) // #nosec G304 -- the preferences live at a path smith derives itself.
 	if err != nil {
 		if os.IsNotExist(err) {
