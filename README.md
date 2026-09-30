@@ -42,11 +42,19 @@ smith version
 > quarantine flag makes macOS refuse to run it. See
 > [Gatekeeper](docs/install.md#gatekeeper-macos).
 
+Scaffold the config home — `~/.smith/`, with a starter `preferences.yaml` and
+a starter blueprint `personal` to fill in — and check it:
+
+```sh
+smith init
+smith blueprint check personal
+```
+
 Provision a fresh Ubuntu 24.04 box you can already reach over SSH as root or a
 passwordless-sudo user:
 
 ```sh
-smith machine setup root@203.0.113.10 --name dev
+smith machine setup root@203.0.113.10 --name dev --blueprint personal
 ```
 
 Smith creates a `smith` user with your SSH key, enables a default-deny firewall,
@@ -76,6 +84,7 @@ across every box. Both are optional — every field also has a flag and a defaul
 resolved **flag → blueprint → preference → default**. `smith blueprint check`
 validates them offline and prints the resolved configuration with the source of
 each value.
+`smith init` writes commented starters for both.
 → [docs/blueprints.md](docs/blueprints.md), a worked
 [blueprint](docs/examples/blueprints/acme.yaml) and
 [preferences](docs/examples/preferences.yaml)

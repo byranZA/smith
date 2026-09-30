@@ -19,8 +19,11 @@ cannot drift out of the schema:
 - [`docs/examples/adapters/`](./examples/adapters/) — provider adapters on
   their own, explained field by field in [Provider adapters](./providers.md)
 
-They are the fastest way in: copy them, change what is yours, run
-`smith blueprint check`.
+They are the filled-in reference. The fastest way in is `smith init`, which
+writes commented **starters** into the config home — `preferences.yaml` and a
+blueprint named `personal` — valid as written and never overwriting a file
+already there. Fill them in, borrowing from the examples, and run
+`smith blueprint check personal`.
 
 ## The config home
 
@@ -42,8 +45,8 @@ values](#references-not-values) below). `cache/` is machine-local and stays out
 of the commit; it holds the [box inventory](./inventory.md), the name → address
 book smith writes when a setup succeeds.
 
-smith creates `~/.smith/` on its **first write** into it — registering a box —
-and never on a read: `blueprint check` validates without creating anything. The
+smith creates `~/.smith/` on its **first write** into it — `smith init`, or
+registering a box — and never on a read: `blueprint check` validates without creating anything. The
 creation also puts `cache/` into the config home's `.gitignore`, **appending**
 to a `.gitignore` you already keep rather than rewriting it.
 
