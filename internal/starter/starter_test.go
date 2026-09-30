@@ -315,3 +315,54 @@ func TestTheStarterProviderBlockIsTheVerifiedAdapter(t *testing.T) {
 		t.Errorf("starter provider = %+v, want the verified adapter %+v", *preferences.Declared.Provider, *verified.Provider)
 	}
 }
+
+func TestScaffoldDeclaresTheGitIdentityItIsGiven(t *testing.T) {
+	for name, identity := range map[string]blueprint.Git{
+		"both":       {UserName: "Ada Lovelace", UserEmail: "ada@example.com"},
+		"name only":  {UserName: "Ada Lovelace"},
+		"email only": {UserEmail: "ada@example.com"},
+		"neither":    {},
+		// A value YAML would misread unquoted still comes back as written.
+		"awkward": {UserName: `O'Brien: "#1"`, UserEmail: "- ada@example.com"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := starter.Scaffold(config.NewHome(dir), identity); err != nil {
+				t.Fatalf("Scaffold() err = %v, want nil", err)
+			}
+
+			got, err := config.LoadPreferences(config.NewHome(dir))
+			if err != nil {
+				t.Fatalf("LoadPreferences(starter) err = %v, want nil", err)
+			}
+			if got.Declared.Git != identity {
+				t.Errorf("starter git = %+v, want %+v", got.Declared.Git, identity)
+			}
+		})
+	}
+}
+
+func TestScaffoldReportsTheIdentityOnlyWhereItDeclaredOne(t *testing.T) {
+	identity := blueprint.Git{UserName: "Ada Lovelace"}
+
+	fresh, err := starter.Scaffold(config.NewHome(t.TempDir()), identity)
+	if err != nil {
+		t.Fatalf("Scaffold() err = %v, want nil", err)
+	}
+	if !fresh[0].Identity || fresh[1].Identity {
+		t.Errorf("Scaffold() = %+v, want only the preferences to carry the identity", fresh)
+	}
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "preferences.yaml"), "access: public\n")
+	existing, err := starter.Scaffold(config.NewHome(dir), identity)
+	if err != nil {
+		t.Fatalf("Scaffold() err = %v, want nil", err)
+	}
+	if existing[0].Identity {
+		t.Errorf("Scaffold() = %+v, want no identity reported for a file left alone", existing)
+	}
+	if got := readFile(t, filepath.Join(dir, "preferences.yaml")); got != "access: public\n" {
+		t.Errorf("existing preferences = %q, want them unchanged", got)
+	}
+}

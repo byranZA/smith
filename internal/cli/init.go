@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/gitidentity"
 	"github.com/byranZA/smith/internal/starter"
 )
 
@@ -16,7 +16,11 @@ import (
 // and asks no questions, is never relayed to a box, and reports every file as
 // created or left alone before pointing at the next two commands. Exit 0
 // unless a write fails, which is reported naming the path.
-func newInitCmd(resolve homeResolver) *cobra.Command {
+//
+// The git identity in the starter preferences comes from the global git config,
+// read through git; a machine without git, or without an identity set, gets
+// the placeholder left commented.
+func newInitCmd(resolve homeResolver, git gitidentity.Runner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold the config home with starter preferences and a starter blueprint",
@@ -26,7 +30,7 @@ func newInitCmd(resolve homeResolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			outcomes, scaffoldErr := starter.Scaffold(home, blueprint.Git{})
+			outcomes, scaffoldErr := starter.Scaffold(home, gitidentity.Global(cmd.Context(), git))
 			// What was settled before a failure is still reported, so the
 			// operator knows which files are theirs to look at.
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), outcomeLines(outcomes)); err != nil {
@@ -48,7 +52,7 @@ func newInitCmd(resolve homeResolver) *cobra.Command {
 var nextSteps = fmt.Sprintf("\nnext:\n  smith blueprint check %s\n  smith machine setup <login>@<host> --blueprint %s\n", starter.Blueprint, starter.Blueprint)
 
 // outcomeLines renders one line per starter, saying whether it was created or
-// an existing file was left alone.
+// an existing file was left alone, and where a declared git identity came from.
 func outcomeLines(outcomes []starter.Outcome) string {
 	var b strings.Builder
 	for _, o := range outcomes {
@@ -57,6 +61,9 @@ func outcomeLines(outcomes []starter.Outcome) string {
 			verb = "created"
 		}
 		fmt.Fprintf(&b, "%s %s\n", verb, o.Path)
+		if o.Identity {
+			b.WriteString("  git identity taken from the global git config\n")
+		}
 	}
 	return b.String()
 }
