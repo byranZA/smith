@@ -38,9 +38,10 @@ the *why* behind behaviour the pages above describe.
 
 ## Contributing
 
-Outside pull requests are not being accepted yet; issues are welcome.
-[CONTRIBUTING.md](../CONTRIBUTING.md) covers that, plus fresh-machine setup, the
-quality gate, and how work is tracked.
+Outside pull requests are not being accepted yet; issues are welcome — see
+[CONTRIBUTING.md](../CONTRIBUTING.md). For work inside the repository,
+[Working on smith](./development.md) covers fresh-machine setup, the quality
+gate, and how changes land.
 
 ## Notes for agents
 

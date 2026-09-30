@@ -128,7 +128,7 @@ tag. Use `curl` or `go install` for a version-stamped build.
 > See [smith on the box](./on-box.md#contributing-a-dev-build-cannot-install).
 
 Working on smith itself, rather than just building it? See
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+[Working on smith](./development.md).
 
 ## Gatekeeper (macOS)
 
