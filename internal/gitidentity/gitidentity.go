@@ -38,10 +38,12 @@ func Global(ctx context.Context, git Runner) blueprint.Git {
 }
 
 // globalValue returns key from the global git config, or empty when git does
-// not answer with one.
+// not answer with one. Files the global config includes are followed, since
+// git itself commits with an identity declared there; scoping to --global
+// alone would skip them.
 func globalValue(ctx context.Context, git Runner, key string) string {
 	var stdout bytes.Buffer
-	if err := git.Run(ctx, "git", []string{"config", "--global", "--get", key}, nil, &stdout, io.Discard); err != nil {
+	if err := git.Run(ctx, "git", []string{"config", "--global", "--includes", "--get", key}, nil, &stdout, io.Discard); err != nil {
 		return ""
 	}
 	return strings.TrimSpace(stdout.String())

@@ -147,6 +147,32 @@ func TestInitDeclaresTheGlobalGitIdentity(t *testing.T) {
 	}
 }
 
+func TestInitDeclaresTheGlobalGitIdentityFromAnIncludedFile(t *testing.T) {
+	identity := filepath.Join(t.TempDir(), "identity")
+	writeFile(t, identity, "[user]\n\tname = Ada Lovelace\n\temail = ada@example.com\n")
+	globalGitConfig(t, "[include]\n\tpath = "+identity+"\n")
+	dir := t.TempDir()
+
+	stdout, stderr, code := runInit(t, dir)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	got, err := config.LoadPreferences(config.NewHome(dir))
+	if err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil", err)
+	}
+	if want := (blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}); got.Declared.Git != want {
+		t.Errorf("preferences git = %+v, want the included %+v", got.Declared.Git, want)
+	}
+	if !strings.Contains(stdout, "git identity taken from the global git config") {
+		t.Errorf("stdout = %q, want it to say the identity came from the global git config", stdout)
+	}
+	if _, stderr, code := runCheck(t, dir, "check"); code != 0 {
+		t.Errorf("blueprint check exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+}
+
 func TestInitDeclaresNoIdentityWithoutGit(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	dir := t.TempDir()

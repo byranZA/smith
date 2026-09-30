@@ -13,7 +13,7 @@ import (
 	"github.com/byranZA/smith/internal/gitidentity"
 )
 
-// fakeGit answers `git config --global --get <key>` from a map of global
+// fakeGit answers `git config --global --includes --get <key>` from a map of global
 // values, exiting 1 for a key that is unset the way git does. A non-nil
 // launch error stands in for git not being there to run at all.
 type fakeGit struct {
@@ -25,10 +25,10 @@ func (f fakeGit) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if f.launch != nil {
 		return f.launch
 	}
-	if name != "git" || len(args) != 4 || !slices.Equal(args[:3], []string{"config", "--global", "--get"}) {
+	if name != "git" || len(args) != 5 || !slices.Equal(args[:4], []string{"config", "--global", "--includes", "--get"}) {
 		return fmt.Errorf("unexpected command %s %v", name, args)
 	}
-	value, ok := f.global[args[3]]
+	value, ok := f.global[args[4]]
 	if !ok {
 		return errors.New("exit status 1")
 	}
