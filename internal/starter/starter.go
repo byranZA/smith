@@ -67,8 +67,9 @@ type Outcome struct {
 // value set is written uncommented, and one left empty stays a commented
 // placeholder. An existing preferences file is never updated with it.
 //
-// A write that fails stops scaffolding with an error naming the path, since a
-// half-scaffolded home is still one the operator can run init against again.
+// A write that fails stops scaffolding with an error naming the path and
+// removes the incomplete starter, so the home is still one the operator can
+// run init against again to complete it.
 func Scaffold(home config.Home, identity blueprint.Git) ([]Outcome, error) {
 	if err := config.EnsureHome(home); err != nil {
 		return nil, fmt.Errorf("scaffold config home: %w", err)
@@ -149,10 +150,26 @@ func writeAbsent(path string, content []byte) (bool, error) {
 		return false, fmt.Errorf("create %s: %w", path, err)
 	}
 	if _, err := f.Write(content); err != nil {
-		return false, errors.Join(fmt.Errorf("write %s: %w", path, err), f.Close())
+		return false, discard(path, fmt.Errorf("write %s: %w", path, err), f.Close())
 	}
 	if err := f.Close(); err != nil {
-		return false, fmt.Errorf("close %s: %w", path, err)
+		return false, discard(path, fmt.Errorf("close %s: %w", path, err), nil)
 	}
 	return true, nil
+}
+
+// discard removes the starter at path after writing it failed, and returns
+// that failure joined with any that came of closing or removing it. The
+// exclusive create made the file this attempt's own, so removing it touches
+// nothing of the operator's — and leaving it would have the next run take the
+// incomplete file for theirs and leave it alone.
+func discard(path string, failure, closeErr error) error {
+	errs := []error{failure}
+	if closeErr != nil {
+		errs = append(errs, fmt.Errorf("close %s: %w", path, closeErr))
+	}
+	if err := os.Remove(path); err != nil {
+		errs = append(errs, fmt.Errorf("remove incomplete %s: %w", path, err))
+	}
+	return errors.Join(errs...)
 }
