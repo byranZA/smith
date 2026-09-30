@@ -287,7 +287,8 @@ not in the repo you commit your config home to.
 ## The file itself
 
 `~/.smith/cache/boxes.json`, created by the first registration, along with
-`~/.smith/` and `~/.smith/cache/` at `0700` and a `.gitignore` listing
+`~/.smith/` and `~/.smith/cache/` at `0700` (unless `smith init` made those
+already) and a `.gitignore` listing
 `cache/`. An existing `.gitignore` is **appended to**, never rewritten: the
 config home is yours. Reading never creates anything.
 

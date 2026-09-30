@@ -1,5 +1,7 @@
 # A worked example preferences file: what belongs to you rather than to a kind
-# of box. Copy it to ~/.smith/preferences.yaml and check it with:
+# of box. It is the filled-in reference to read, not a file to copy: run
+# `smith init` for a commented starter at ~/.smith/preferences.yaml, borrow
+# what fits from here, and check it with:
 #
 #     smith blueprint check
 #

@@ -1,6 +1,9 @@
 # A worked example blueprint: the kind of box the Acme team develops on.
 #
-# Copy it to ~/.smith/blueprints/acme.yaml, change what is yours, and check it
+# It is the filled-in reference to read. For a blank to fill, run `smith init`,
+# which writes a commented starter blueprint to
+# ~/.smith/blueprints/personal.yaml; borrow what fits from here, or copy this
+# file to ~/.smith/blueprints/acme.yaml, change what is yours, and check it
 # before you build anything:
 #
 #     smith blueprint check acme

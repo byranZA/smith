@@ -17,6 +17,14 @@ creates and lists it — **v1 never destroys a box**
 It *is* the sandbox, not a container smith runs.
 _Avoid_: server, host (except in `<login>@<host>`), instance, VM.
 
+**Operator's machine**:
+The machine the operator configures smith from and drives boxes from — where the config home
+lives, blueprints are written and secret references are resolved. The other side of every split
+between local and box: config home against box state, local smith against on-box smith. `smith
+init` scaffolds it; nothing on a box does.
+_Avoid_: admin machine, local machine, workstation, control surface (the local smith binary's role,
+not the machine).
+
 **Bootstrap-in path**:
 The one-time public-SSH entry smith uses to reach a brand-new box — `smith machine setup
 <login>@<host>` over system `ssh`/`scp`, authenticating with the key the provider already
@@ -71,7 +79,7 @@ so a mid-sequence failure is never a lock-out. Distinct from a *stage*.
 _Avoid_: step, task.
 
 **Stage**:
-One step of `machine setup`'s admin-side pipeline, driven from local smith over SSH rather than by
+One step of `machine setup`'s pipeline on the operator's machine, driven from local smith over SSH rather than by
 `bootstrap.sh` — `access` (the tailscale access layer), `install` (the smith binary), `config`
 (staging the blueprint), `workspace`, in that order. The names are what each stage reports itself
 as. Unlike a phase, a stage is not in the marker's `completed_phases` and does not touch the base
@@ -87,7 +95,7 @@ version + access mode + completed phases + timestamp, plus the box's self-record
 it was built from, the operator-chosen box name, and the provider destroy reference to tear it
 down by hand). Records **nothing** about the installed smith binary or the create-time SSH key —
 both are probed, not stored. Lets `smith machine status`
-read state back, any admin machine re-run idempotently, and smith recognise a box from just its IP. A **ledger, not a gate**: every `setup` run
+read state back, any operator's machine re-run idempotently, and smith recognise a box from just its IP. A **ledger, not a gate**: every `setup` run
 executes all phases and check-before-change makes done ones no-ops — `completed_phases` records
 progress (for failure reports and `status`), it never *skips* execution.
 _Avoid_: state file, lockfile, manifest.
@@ -137,7 +145,7 @@ _Avoid_: transient secret, ephemeral credential.
 **Provisioned secret**:
 A secret *installed onto* the box for later use — a forge token, a coding-agent API key, a
 credential file. Distinct lifecycle and surface from operational secrets: it arrives by the one
-placement/`env` path, resolved operator-side at `machine setup`, and **sits on the box in
+placement/`env` path, resolved on the operator's machine at `machine setup`, and **sits on the box in
 plaintext**. At-rest protection is a stated non-goal; `perms` is an accidental-exposure guard, and
 blast radius plus box disposability are the control
 ([ADR-0009](./docs/adr/0009-provisioned-secrets-sit-in-plaintext.md)).
@@ -223,6 +231,14 @@ only** (`access`, `terminal`, `workspace`, `provider`, `git`); the open-ended co
 pointer is enough to reproduce a box. Optional, like the blueprint itself
 ([ADR-0006](./docs/adr/0006-the-blueprint-config-surface.md)).
 _Avoid_: settings, defaults, user config, global config.
+
+**Starter**:
+A commented config file `smith init` writes into an empty config home — a starter preferences
+file and a starter blueprint — valid as written and resolving to built-in defaults until the
+operator uncomments something. Distinct from the **worked examples** in the docs, which are filled
+in end to end to show the whole surface; a starter is the blank to fill, an example is the filled
+one to read. Written only where no file exists, never over one.
+_Avoid_: template (reserved for an adapter's command lines), skeleton, default config.
 
 **Resolved configuration**:
 What smith would actually use for one box, every field carrying the **origin** it came from —

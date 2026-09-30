@@ -1,0 +1,82 @@
+# Your smith preferences: what belongs to you rather than to a kind of box.
+# Every line is commented out, so smith uses its built-in defaults until you
+# uncomment something. Check your changes with:
+#
+#     smith blueprint check
+#
+# The test for whether a value belongs here: if you built a completely
+# different box tomorrow, should this value follow? Only the fixed-key fields
+# live here; repos, placements, packages, tools and env belong in a blueprint.
+#
+# A filled-in example is in the smith docs at docs/examples/preferences.yaml.
+
+# How boxes are reached: public (the default) or tailscale.
+# access: tailscale
+
+# The terminal substrate sessions run under. tmux is the only value.
+# terminal: tmux
+
+# Where repo worktrees live on a box.
+# workspace: ~/workspace
+
+# The identity your boxes commit as.
+# git:
+#   user_name: Your Name
+#   user_email: you@example.com
+
+# How smith creates and lists boxes: your provider's CLI, described as data.
+# This is the DigitalOcean adapter through doctl, verified against a real
+# account. Uncomment the whole block, set ssh_key to a key registered at
+# DigitalOcean, and export DIGITALOCEAN_ACCESS_TOKEN. Image, size and region
+# are doctl's own values; change them freely.
+#
+# Every field is explained in docs/examples/adapters/doctl.yaml, and other
+# providers are covered in docs/providers.md. A blueprint that declares a
+# provider replaces this one whole rather than merging with it.
+# provider:
+#   create:
+#     - doctl
+#     - compute
+#     - droplet
+#     - create
+#     - "{{name}}"
+#     - --image
+#     - ubuntu-24-04-x64
+#     - --size
+#     - s-1vcpu-512mb-10gb
+#     - --region
+#     - fra1
+#     - --ssh-keys
+#     - "{{ssh_key}}"
+#     - --tag-name
+#     - "{{marker_arg}}"
+#     - --wait
+#     - -o
+#     - json
+#   list:
+#     - doctl
+#     - compute
+#     - droplet
+#     - list
+#     - -o
+#     - json
+#   destroy:
+#     - doctl
+#     - compute
+#     - droplet
+#     - delete
+#     - "{{id}}"
+#     - --force
+#   requires:
+#     - DIGITALOCEAN_ACCESS_TOKEN
+#   ssh_key: my-laptop
+#   marker:
+#     arg: "smith:{{value}}"
+#     read: "tags[*]"
+#     expect: "smith:{{value}}"
+#   record:
+#     create: "[*]"
+#     list: "[*]"
+#   extract:
+#     id: id
+#     ip: networks.v4[type=public].ip_address

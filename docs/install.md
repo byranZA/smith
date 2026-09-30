@@ -56,6 +56,25 @@ Newer releases are listed on the [releases
 page](https://github.com/byranZA/smith/releases/latest); substitute the tag and
 archive name in the commands above.
 
+## First step: `smith init`
+
+With smith on your `PATH`, scaffold its config home on your machine:
+
+```sh
+smith init
+smith blueprint check personal
+```
+
+`smith init` creates `~/.smith/` and writes two **starters** — a commented
+`preferences.yaml` and a blueprint `blueprints/personal.yaml` — filling in your
+git identity from your global git config when one is set. Both are valid as
+written and resolve to built-in defaults until you uncomment something; `smith
+blueprint check personal` shows what they resolve to. It never overwrites a file
+that already exists, so it is safe to re-run. When you are ready,
+`smith machine setup <login>@<host> --blueprint personal` provisions a box from
+it — see [Blueprints and preferences](./blueprints.md) for what goes in each
+file and [Provisioning a box](./provisioning.md) for setup itself.
+
 ## Verify the checksum
 
 The `curl | tar` one-liners are the fast path. To verify first, download the

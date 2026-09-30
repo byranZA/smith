@@ -5,8 +5,10 @@
 # to the id, destroy — in about forty seconds. The responses it answered with
 # are the fixtures smith's own test suite drives this file against.
 #
-# An adapter is a description of one provider's CLI, as data. Paste this block
-# into ~/.smith/preferences.yaml or into a blueprint, change what is yours, and
+# An adapter is a description of one provider's CLI, as data. The starter
+# preferences `smith init` writes already carry this block, commented out; this
+# file is the filled-in reference that explains it. Uncomment it there, or paste
+# it into ~/.smith/preferences.yaml or a blueprint, change what is yours, and
 # check it:
 #
 #     smith blueprint check ./doctl.yaml
