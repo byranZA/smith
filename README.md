@@ -33,7 +33,7 @@ Install (macOS Apple silicon shown — [other platforms and checksum
 verification](docs/install.md)):
 
 ```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.0/smith_0.1.0_darwin_arm64.tar.gz | tar xz
+curl -L https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_darwin_arm64.tar.gz | tar xz
 sudo mv smith /usr/local/bin/
 smith version
 ```
@@ -137,8 +137,7 @@ behaviour above are in [docs/adr/](docs/adr/).
 ## Contributing
 
 Smith is **not accepting outside pull requests yet** — it is early enough that
-the design still moves faster than a review could keep up with. Bug reports and
-questions are welcome as [issues](https://github.com/byranZA/smith/issues).
+the design still moves faster than a review could keep up with.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the detail, plus fresh-machine setup and
 the quality gate for anyone working in the repository.
