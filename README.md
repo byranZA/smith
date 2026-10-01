@@ -148,8 +148,9 @@ behaviour above are in [docs/adr/](docs/adr/).
 Smith is **not accepting outside pull requests yet** — it is early enough that
 the design still moves faster than a review could keep up with.
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the detail, plus fresh-machine setup and
-the quality gate for anyone working in the repository.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the detail. Fresh-machine setup and the
+quality gate for anyone working in the repository are in
+[docs/development.md](docs/development.md).
 
 ## License
 

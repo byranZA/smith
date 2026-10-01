@@ -141,13 +141,13 @@ The project-wide "extract → test → wire" maps directly: pure logic in a doma
 ## Commands
 
 Run from the module root. Machine setup, the tool pins, and the gate are owned
-by [CONTRIBUTING.md](../../../CONTRIBUTING.md) — read it once on a fresh
+by [docs/development.md](../../../docs/development.md) — read it once on a fresh
 checkout; the list is not repeated here so the two cannot drift.
 
 The short version: `make tools-install` then `make check` before you hand work
 back, `make race` for anything concurrent. **`make lint` and `make vuln` skip
 with a note when their tool is absent and still exit zero**, so `make check` on
-a machine without them reports green having linted nothing — CONTRIBUTING.md
+a machine without them reports green having linted nothing — docs/development.md
 explains the failure that follows.
 
 Targeted `go` invocations, for narrowing a run while you work:
