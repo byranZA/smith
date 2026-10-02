@@ -89,6 +89,15 @@ because on-box smith is what runs it ([ADR-0008](./docs/adr/0008-smith-runs-on-t
 `install` is also reachable alone as `smith machine upgrade`.
 _Avoid_: phase (reserved for the base-layer sequence), step.
 
+**Shipped script**:
+A script smith copies onto the box to drive one command — `bootstrap.sh` for setup and status,
+`install.sh` for the install stage — and removes when that command ends. Unlike the staged
+blueprint, the staged env or a placement, it is **not box state**: it belongs to the login that
+shipped it, never outlives the command, and no two commands or logins share one. A cleanup that
+fails never fails the command
+([issue #217](https://github.com/byranZA/smith/issues/217)).
+_Avoid_: staged script (staged is reserved for what persists in `/etc/smith/`), payload.
+
 **Marker**:
 The versioned on-box record of what bootstrap did — `/etc/smith/bootstrap.json` (schema + smith
 version + access mode + completed phases + timestamp, plus the box's self-record: which blueprint

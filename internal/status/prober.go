@@ -45,11 +45,12 @@ func NewProber(conn bootstrap.Conn, admin tailscale.Admin) *Prober {
 	return &Prober{conn: conn, admin: admin}
 }
 
-// Gather probes the box: it checks reachability, ships and runs the read-only
-// probe, decodes the marker, and — in tailscale mode with a tailnet IP — probes
-// tailnet reach from the admin side. A connect failure is reported as an
-// unreachable Gathered rather than a Go error; a Go error is returned only for
-// unexpected infrastructure failures or a malformed marker.
+// Gather probes the box: it checks reachability, ships bootstrap.sh into a
+// private directory, runs the read-only probe against it (removing it again
+// however Gather returns), decodes the marker, and — in tailscale mode with a
+// tailnet IP — probes tailnet reach from the admin side. A connect failure is
+// reported as an unreachable Gathered rather than a Go error; a Go error is
+// returned only for unexpected infrastructure failures or a malformed marker.
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 	reachable, err := connection.Reachable(ctx, p.conn)
 	if err != nil {
@@ -59,15 +60,17 @@ func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 		return Gathered{Reachable: false}, nil
 	}
 
-	if err := bootstrap.ShipScript(ctx, p.conn); err != nil {
+	shipped, err := bootstrap.Ship(ctx, p.conn, bootstrap.Script)
+	if err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Gathered{Reachable: false}, nil
 		}
 		return Gathered{}, fmt.Errorf("ship bootstrap script: %w", err)
 	}
+	defer shipped.Remove(ctx)
 
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s probe", bootstrap.RemoteScriptPath)
+	cmd := fmt.Sprintf("bash %s probe", connection.ShellArg(shipped.Path()))
 	if err := p.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Gathered{Reachable: false}, nil

@@ -37,16 +37,12 @@ import (
 	"github.com/byranZA/smith/internal/release"
 )
 
-// Script is the embedded install.sh, scp'd to the box and run there. It is a
+// Script is the embedded install.sh, shipped to the box and run there. It is a
 // separate artifact from bootstrap.sh deliberately: the base layer provisions
 // any box, and how smith distributes itself does not belong in it.
 //
 //go:embed install.sh
 var Script string
-
-// RemoteScriptPath is where install.sh is placed on the box before it runs,
-// beside — not inside — the bootstrap script's own path.
-const RemoteScriptPath = "/tmp/smith-install.sh"
 
 // InstallPath is where smith lives on a box: an absolute path on the default
 // PATH, so the relay can invoke it without depending on a login shell's
@@ -122,12 +118,18 @@ func NewInstaller(conn Conn, box string) *Installer {
 // The version is the caller's: it is local smith's own, so the two sides match
 // by construction rather than by policy. Whether that version has a release to
 // fetch at all is settled before a connection is opened, by release.Installable.
+//
+// install.sh is shipped once per run, into a directory private to this run and
+// this login, and every step runs that copy. It is removed however the run
+// ends, so nothing of this run's is left on the box to block a later one.
 func (i *Installer) Converge(ctx context.Context, version string) (Result, error) {
-	if err := bootstrap.Ship(ctx, i.conn, Script, RemoteScriptPath); err != nil {
+	shipped, err := bootstrap.Ship(ctx, i.conn, Script)
+	if err != nil {
 		return Result{}, fmt.Errorf("ship the install script: %w", err)
 	}
+	defer shipped.Remove(ctx)
 
-	state, err := i.probe(ctx)
+	state, err := i.probe(ctx, shipped.Path())
 	if err != nil {
 		return Result{}, err
 	}
@@ -141,7 +143,7 @@ func (i *Installer) Converge(ctx context.Context, version string) (Result, error
 
 	asset := release.For(version, arch)
 	cmd := fmt.Sprintf("bash %s install --url %s --checksums-url %s",
-		RemoteScriptPath, connection.ShellArg(asset.URL), connection.ShellArg(asset.ChecksumsURL))
+		connection.ShellArg(shipped.Path()), connection.ShellArg(asset.URL), connection.ShellArg(asset.ChecksumsURL))
 	var diagnostic strings.Builder
 	if err := i.conn.Run(ctx, cmd, io.Discard, &diagnostic); err != nil {
 		return Result{}, fmt.Errorf("install smith %s on the box: %w", version, withBoxDiagnostic(err, diagnostic.String()))
@@ -220,15 +222,16 @@ type boxState struct {
 	version string
 }
 
-// probe reads the box's machine hardware name and installed smith version. It
-// mutates nothing: it is the check half of check-before-change, and a box that
-// already matches never gets past it.
+// probe reads the box's machine hardware name and installed smith version by
+// running the shipped install script at script. It mutates nothing: it is the
+// check half of check-before-change, and a box that already matches never gets
+// past it.
 //
 // It declares no relaying version — see confirm, which explains why the two
 // halves of this stage differ on that.
-func (i *Installer) probe(ctx context.Context) (boxState, error) {
+func (i *Installer) probe(ctx context.Context, script string) (boxState, error) {
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s probe", RemoteScriptPath)
+	cmd := fmt.Sprintf("bash %s probe", connection.ShellArg(script))
 	if err := i.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
 		return boxState{}, fmt.Errorf("probe the box's smith: %w", err)
 	}

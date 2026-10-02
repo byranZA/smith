@@ -33,10 +33,11 @@ type exitError struct {
 // Error implements error.
 func (e *exitError) Error() string { return fmt.Sprintf("exit code %d", e.code) }
 
-// Execute runs the smith root command and returns the process exit code.
+// Execute runs the smith root command and returns the process exit code. An
+// operator interrupt cancels the command rather than killing smith outright, so
+// the command still cleans up after itself on the box.
 func Execute() int {
-	root := newRootCmd()
-	return codeFromError(root.Execute())
+	return execute(newRootCmd(), interruptGrace)
 }
 
 // The exit codes on-box smith answers a staged-config refusal with. They sit

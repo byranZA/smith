@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"path"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/release"
 )
 
@@ -31,17 +35,113 @@ type boxConn struct {
 	// it, which is what a successful install leaves behind.
 	reports string
 
+	// copyErr is what the box answers a copy with, so a test can drive a
+	// refused ship.
+	copyErr error
+	// user is the login the connection reaches the box as; empty is "smith".
+	user string
+	// owner records which login owns each file and directory on the box. As a
+	// sticky /tmp would, a copy over a file another login owns, or into a
+	// directory this login does not own, is refused.
+	owner map[string]string
+	// dirs counts the private directories mktemp has handed out.
+	dirs int
+
 	commands []string
 	shipped  []string
+	removed  []string
+}
+
+func (c *boxConn) login() string {
+	if c.user == "" {
+		return "smith"
+	}
+	return c.user
 }
 
 func (c *boxConn) Copy(_ context.Context, _, remotePath string) error {
+	if c.copyErr != nil {
+		return c.copyErr
+	}
+	if c.owner == nil {
+		c.owner = map[string]string{}
+	}
+	if owner, ok := c.owner[remotePath]; ok && owner != c.login() {
+		return fmt.Errorf("scp %s: %s owned by %s: exit status 1", c.login(), remotePath, owner)
+	}
+	if dir := path.Dir(remotePath); dir != "/tmp" && c.owner[dir] != c.login() {
+		return fmt.Errorf("scp %s: %s not writable: exit status 1", c.login(), dir)
+	}
+	c.owner[remotePath] = c.login()
 	c.shipped = append(c.shipped, remotePath)
 	return nil
 }
 
+// named resolves a shell argument to the path on the box it names, reading it
+// as a remote shell would: only a quoted argument names a path holding
+// whitespace or shell metacharacters.
+func (c *boxConn) named(arg string) (string, bool) {
+	for p := range c.owner {
+		if arg == connection.ShellArg(p) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// scriptOf returns which of paths a `bash <script> <subcommand>` command runs,
+// reading the script argument as a remote shell would.
+func scriptOf(cmd string, paths []string) (string, bool) {
+	rest, ok := strings.CutPrefix(cmd, "bash ")
+	if !ok {
+		return "", false
+	}
+	for _, p := range paths {
+		if strings.HasPrefix(rest, connection.ShellArg(p)+" ") {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// leftovers lists the paths still on the box under dir.
+func (c *boxConn) leftovers(dir string) []string {
+	var paths []string
+	for p := range c.owner {
+		if p == dir || strings.HasPrefix(p, dir+"/") {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
 func (c *boxConn) Run(_ context.Context, remoteCmd string, stdout, stderr io.Writer) error {
 	c.commands = append(c.commands, remoteCmd)
+	if c.owner == nil {
+		c.owner = map[string]string{}
+	}
+	switch {
+	case strings.HasPrefix(remoteCmd, "mktemp -d"):
+		c.dirs++
+		dir := fmt.Sprintf("/tmp/smith's dir; $HOME.%08d", c.dirs)
+		c.owner[dir] = c.login()
+		_, err := fmt.Fprintln(stdout, dir)
+		return err
+	case strings.HasPrefix(remoteCmd, "rm -rf -- "):
+		dir, ok := c.named(strings.TrimPrefix(remoteCmd, "rm -rf -- "))
+		if !ok {
+			return nil // rm -rf of a path that is not there succeeds
+		}
+		for _, p := range c.leftovers(dir) {
+			delete(c.owner, p)
+		}
+		c.removed = append(c.removed, dir)
+		return nil
+	case strings.HasPrefix(remoteCmd, "bash "):
+		if _, ok := scriptOf(remoteCmd, slices.Collect(maps.Keys(c.owner))); !ok {
+			return fmt.Errorf("bash: %s: no such file", remoteCmd)
+		}
+	}
 	if strings.Contains(remoteCmd, " probe") {
 		out := "arch=" + c.machine + "\n"
 		if c.installed != "" {
@@ -229,15 +329,96 @@ func TestConvergeMovesABoxToLocalsVersionInEitherDirection(t *testing.T) {
 	}
 }
 
-func TestConvergeShipsItsOwnScriptRatherThanTheBootstrapScript(t *testing.T) {
+// scriptRuns returns the script paths every `bash <script> <subcommand>` the
+// box was asked to run went against.
+func (c *boxConn) scriptRuns() []string {
+	var scripts []string
+	for _, cmd := range c.commands {
+		if script, ok := scriptOf(cmd, c.shipped); ok {
+			scripts = append(scripts, script)
+		}
+	}
+	return scripts
+}
+
+func TestConvergeShipsTheInstallScriptOnceForProbeAndInstall(t *testing.T) {
 	conn := &boxConn{machine: "x86_64"}
 
 	if _, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0"); err != nil {
 		t.Fatalf("Converge() errored: %v", err)
 	}
 
-	if len(conn.shipped) != 1 || conn.shipped[0] != RemoteScriptPath {
-		t.Errorf("shipped %v, want the install script at %q alone", conn.shipped, RemoteScriptPath)
+	if len(conn.shipped) != 1 {
+		t.Fatalf("shipped %v, want the install script shipped once", conn.shipped)
+	}
+	shipped := conn.shipped[0]
+	if path.Dir(shipped) == "/tmp" {
+		t.Errorf("shipped to %q, a fixed name under /tmp, want a private directory", shipped)
+	}
+	runs := conn.scriptRuns()
+	if len(runs) != 2 {
+		t.Fatalf("ran %v, want probe and install", conn.commands)
+	}
+	for _, script := range runs {
+		if script != shipped {
+			t.Errorf("ran a subcommand against %q, want the shipped %q", script, shipped)
+		}
+	}
+}
+
+func TestConvergeRemovesTheShippedScript(t *testing.T) {
+	tests := []struct {
+		name string
+		conn *boxConn
+	}{
+		{"success", &boxConn{machine: "x86_64"}},
+		{"a checksum mismatch", &boxConn{
+			machine:           "x86_64",
+			installErr:        errors.New("exit status 1"),
+			installDiagnostic: "checksum mismatch: nothing was installed\n",
+		}},
+		{"a box already at the version", &boxConn{machine: "x86_64", installed: "0.2.0"}},
+		{"a refused architecture", &boxConn{machine: "riscv64"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The outcome varies by case; only what is left on the box matters here.
+			got, err := NewInstaller(tt.conn, "dev").Converge(context.Background(), "0.2.0")
+			if len(tt.conn.shipped) != 1 {
+				t.Fatalf("shipped %v (Converge = %+v, %v), want one ship", tt.conn.shipped, got, err)
+			}
+			if left := tt.conn.leftovers(path.Dir(tt.conn.shipped[0])); len(left) != 0 {
+				t.Errorf("left %q on the box, want the shipped directory removed", left)
+			}
+		})
+	}
+}
+
+// TestConvergeWorksAsSmithAfterARootSetup is the ownership regression: a root
+// setup on v0.2.0-rc.1 left install.sh root-owned at a fixed /tmp path, which
+// the smith login can neither replace nor delete under a sticky /tmp.
+func TestConvergeWorksAsSmithAfterARootSetup(t *testing.T) {
+	const stale = "/tmp/smith-install.sh"
+	conn := &boxConn{machine: "x86_64", installed: "0.1.0", user: "smith", owner: map[string]string{stale: "root"}}
+
+	if _, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0"); err != nil {
+		t.Fatalf("Converge() as smith errored: %v", err)
+	}
+	if owner := conn.owner[stale]; owner != "root" {
+		t.Errorf("stale %s owned by %q, want it left untouched as root's", stale, owner)
+	}
+}
+
+func TestConvergeFailsWhenTheShipIsRefused(t *testing.T) {
+	conn := &boxConn{machine: "x86_64", copyErr: errors.New("scp: exit status 1")}
+
+	_, err := NewInstaller(conn, "dev").Converge(context.Background(), "0.2.0")
+
+	if err == nil {
+		t.Fatal("Converge() succeeded, want the refused copy reported")
+	}
+	if runs := conn.scriptRuns(); len(runs) != 0 {
+		t.Errorf("ran %v, want nothing run without a shipped script", runs)
 	}
 }
 

@@ -42,7 +42,7 @@ const enrolledIPPrefix = "tailscale-ip="
 // enrolls; a connect failure is surfaced so a re-run is not mistaken for a fresh
 // box. It reads state only — it never mutates the box.
 func (d *BoxDriver) CurrentIP(ctx context.Context) (string, error) {
-	cmd := fmt.Sprintf("bash %s tailscale-status", d.scriptPath)
+	cmd := fmt.Sprintf("bash %s tailscale-status", connection.ShellArg(d.scriptPath))
 	var out bytes.Buffer
 	if err := d.remote.Run(ctx, cmd, &out, io.Discard); err != nil {
 		return "", fmt.Errorf("run tailscale-status: %w", err)
@@ -55,7 +55,7 @@ func (d *BoxDriver) CurrentIP(ctx context.Context) (string, error) {
 // reached Running, reported as ErrEnrollNotRunning so the caller can attribute
 // the missing tagOwners prerequisite.
 func (d *BoxDriver) Enroll(ctx context.Context, opts EnrollOptions) (string, error) {
-	cmd := fmt.Sprintf("bash %s enroll --hostname %s", d.scriptPath, connection.ShellArg(nodeName(opts.Host)))
+	cmd := fmt.Sprintf("bash %s enroll --hostname %s", connection.ShellArg(d.scriptPath), connection.ShellArg(nodeName(opts.Host)))
 	var out bytes.Buffer
 	err := d.remote.RunWithInput(ctx, cmd, strings.NewReader(opts.AuthKey), &out, io.Discard)
 	if err != nil {
@@ -74,7 +74,7 @@ func (d *BoxDriver) Enroll(ctx context.Context, opts EnrollOptions) (string, err
 // ClosePublicSSH runs bootstrap.sh's close-public-ssh subcommand, which closes
 // public port 22 and records the access phase as complete in the marker.
 func (d *BoxDriver) ClosePublicSSH(ctx context.Context) error {
-	cmd := fmt.Sprintf("bash %s close-public-ssh", d.scriptPath)
+	cmd := fmt.Sprintf("bash %s close-public-ssh", connection.ShellArg(d.scriptPath))
 	if err := d.remote.Run(ctx, cmd, io.Discard, io.Discard); err != nil {
 		return fmt.Errorf("run close-public-ssh: %w", err)
 	}

@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"path"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/release"
 )
@@ -28,9 +32,17 @@ type upgradeSSH struct {
 
 	commands []string
 	targets  []string
+	// dirs counts the private directories mktemp has made on the box.
+	dirs int
+	// copies is every scp destination, as "<target>:<remote path>".
+	copies []string
 }
 
 func (s *upgradeSSH) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	if name == "scp" && len(args) > 0 {
+		s.copies = append(s.copies, args[len(args)-1])
+		return nil
+	}
 	if name != "ssh" || len(args) < 2 {
 		return nil
 	}
@@ -38,6 +50,11 @@ func (s *upgradeSSH) Run(_ context.Context, name string, args []string, _ io.Rea
 	s.targets = append(s.targets, target)
 	s.commands = append(s.commands, remoteCmd)
 	if answered, err := answerVersionCheck(remoteCmd, stdout); answered {
+		return err
+	}
+	if strings.HasPrefix(remoteCmd, "mktemp -d") {
+		s.dirs++
+		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", s.dirs)
 		return err
 	}
 	if strings.Contains(remoteCmd, " probe") {
@@ -252,5 +269,45 @@ func TestUpgradeConvergesNothingButTheBinary(t *testing.T) {
 		if strings.Contains(cmd, "--relayed-from") && !strings.HasSuffix(cmd, "'version'") {
 			t.Errorf("upgrade relayed %q, want nothing relayed but the version check that confirms the install", cmd)
 		}
+	}
+}
+
+// TestUpgradeShipsInstallScriptOnceAndRemovesIt checks the upgrade's shipped
+// script from the box's side: one copy, over the registered login, into a
+// private directory; probe and install run against it; and the directory is
+// removed whether the install succeeded or the archive failed its checksum.
+func TestUpgradeShipsInstallScriptOnceAndRemovesIt(t *testing.T) {
+	tests := []struct {
+		name string
+		ssh  *upgradeSSH
+	}{
+		{"success", &upgradeSSH{machine: "x86_64", installed: "0.1.0"}},
+		{"a checksum mismatch", &upgradeSSH{machine: "x86_64", installed: "0.1.0", installErr: refusedExit{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asReleaseBuild(t, "0.2.0")
+			// The outcome varies by case; only what reached the box matters here.
+			runUpgrade(t, registeredBox(t), tt.ssh, "dev")
+
+			if len(tt.ssh.copies) != 1 {
+				t.Fatalf("shipped install.sh to %q, want exactly once", tt.ssh.copies)
+			}
+			target, script, _ := strings.Cut(tt.ssh.copies[0], ":")
+			if target != "smith@100.92.14.7" {
+				t.Errorf("shipped over %q, want the registered login", target)
+			}
+			if path.Dir(script) == "/tmp" {
+				t.Errorf("shipped to %q, a fixed name under /tmp, want a private directory", script)
+			}
+			for _, sub := range []string{"probe", "install --url "} {
+				if commandIndex(tt.ssh.commands, "bash "+connection.ShellArg(script)+" "+sub) < 0 {
+					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
+				}
+			}
+			if rm := "rm -rf -- '" + path.Dir(script) + "'"; !slices.Contains(tt.ssh.commands, rm) {
+				t.Errorf("shipped directory not removed; ran %q", tt.ssh.commands)
+			}
+		})
 	}
 }

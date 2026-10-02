@@ -3,16 +3,20 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/provider"
 )
 
@@ -28,6 +32,9 @@ type setupSSH struct {
 	// tailnetIP is the address the box is already enrolled and Running at, so a
 	// tailscale run establishes reach over it without burning an auth key.
 	tailnetIP string
+	// enrollIP is the address an enroll brings the box up at, for a box not
+	// yet on the tailnet.
+	enrollIP string
 	// deafAt is an ssh destination whose reachability probe the box does not
 	// answer — the shape of a box smith cannot prove it can reach by the
 	// address it is about to write down.
@@ -44,6 +51,12 @@ type setupSSH struct {
 
 	targets  []string
 	commands []string
+	// dirs counts the private directories mktemp has made on the box.
+	dirs int
+	// copies is every scp of bootstrap.sh, as "<target>:<remote path>".
+	copies []string
+	// installCopies is every scp of the install stage's install.sh, likewise.
+	installCopies []string
 }
 
 // Run answers whichever local binary the run launched, recording every ssh
@@ -52,6 +65,9 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	if name == "tailscale" {
 		_, err := io.WriteString(stdout, adminOnTailnet)
 		return err
+	}
+	if name == "scp" && len(args) > 1 {
+		return s.copy(args[len(args)-2], args[len(args)-1])
 	}
 	if name != "ssh" || len(args) < 2 {
 		return nil
@@ -70,8 +86,18 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		return err
 	}
 	switch {
-	case strings.Contains(remoteCmd, "bootstrap.sh setup"):
+	case strings.HasPrefix(remoteCmd, "mktemp -d"):
+		s.dirs++
+		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", s.dirs)
+		return err
+	case strings.HasPrefix(remoteCmd, "bash ") && strings.Contains(remoteCmd, " setup --access "):
 		return s.phaseErr
+	case strings.Contains(remoteCmd, " enroll --hostname "):
+		if s.enrollIP == "" {
+			return nil
+		}
+		_, err := fmt.Fprintf(stdout, "tailscale-ip=%s\n", s.enrollIP)
+		return err
 	case strings.HasSuffix(remoteCmd, " probe"):
 		out := "arch=" + machine + "\n"
 		if s.installed != "" {
@@ -93,6 +119,55 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		return err
 	}
 	return nil
+}
+
+// copy records an scp of the local file to dest, telling the install stage's
+// install.sh from bootstrap.sh by what was copied: both land in private
+// directories that look alike.
+func (s *setupSSH) copy(local, dest string) error {
+	data, err := os.ReadFile(local)
+	if err != nil {
+		return fmt.Errorf("read the copied file: %w", err)
+	}
+	if string(data) == onbox.Script {
+		s.installCopies = append(s.installCopies, dest)
+		return nil
+	}
+	s.copies = append(s.copies, dest)
+	return nil
+}
+
+// shippedBootstrap is every scp of bootstrap.sh into a private directory, as
+// "<target>:<remote path>". The install stage's install.sh is not among them.
+func (s *setupSSH) shippedBootstrap() []string {
+	var shipped []string
+	for _, c := range s.copies {
+		if strings.Contains(c, ":/tmp/smith.") {
+			shipped = append(shipped, c)
+		}
+	}
+	return shipped
+}
+
+// ranAs reports whether remoteCmd ran over ssh as target.
+func (s *setupSSH) ranAs(target, remoteCmd string) bool {
+	for i, cmd := range s.commands {
+		if s.targets[i] == target && cmd == remoteCmd {
+			return true
+		}
+	}
+	return false
+}
+
+// ranAgainstAs reports whether subcommand of the script at scriptPath ran over
+// ssh as target.
+func (s *setupSSH) ranAgainstAs(target, scriptPath, subcommand string) bool {
+	for i, cmd := range s.commands {
+		if s.targets[i] == target && strings.HasPrefix(cmd, "bash "+connection.ShellArg(scriptPath)+" "+subcommand) {
+			return true
+		}
+	}
+	return false
 }
 
 // reached reports whether any ssh launch was pointed at the given destination.
@@ -263,6 +338,60 @@ func TestSetupCreatesTheConfigHomeWhenItRegisters(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "cache/") {
 		t.Errorf("gitignore = %q, want the cache kept out of version control", data)
+	}
+}
+
+func TestSetupShipsBootstrapOnceAndRemovesIt(t *testing.T) {
+	tests := []struct {
+		name string
+		ssh  *setupSSH
+	}{
+		{name: "setup succeeds", ssh: &setupSSH{}},
+		{name: "a phase fails", ssh: &setupSSH{phaseErr: errors.New("phase packages failed")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runSetup(t, t.TempDir(), tt.ssh, "root@203.0.113.10")
+
+			shipped := tt.ssh.shippedBootstrap()
+			if len(shipped) != 1 {
+				t.Fatalf("shipped bootstrap.sh to %q, want exactly once", shipped)
+			}
+			target, script, _ := strings.Cut(shipped[0], ":")
+			if target != "root@203.0.113.10" {
+				t.Errorf("shipped over %q, want the bootstrap login", target)
+			}
+			for _, sub := range []string{"preflight", "setup"} {
+				if !tt.ssh.ranAgainstAs(target, script, sub) {
+					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
+				}
+			}
+			rm := "rm -rf -- '" + path.Dir(script) + "'"
+			if !tt.ssh.ranAs(target, rm) {
+				t.Errorf("shipped directory not removed; ran %q", tt.ssh.commands)
+			}
+		})
+	}
+}
+
+func TestSetupDrivesTailscaleAgainstTheScriptItShipped(t *testing.T) {
+	ssh := &setupSSH{enrollIP: "100.92.14.7"}
+
+	args := append(tailscaleRun(t), "--name", "dev", "root@203.0.113.10")
+	_, stderr, code := runSetup(t, t.TempDir(), ssh, args...)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	shipped := ssh.shippedBootstrap()
+	if len(shipped) != 1 {
+		t.Fatalf("shipped bootstrap.sh to %q, want exactly once", shipped)
+	}
+	target, script, _ := strings.Cut(shipped[0], ":")
+	for _, sub := range []string{"tailscale-status", "enroll", "close-public-ssh"} {
+		if !ssh.ranAgainstAs(target, script, sub) {
+			t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, ssh.commands)
+		}
 	}
 }
 
