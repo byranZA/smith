@@ -123,7 +123,7 @@ func NewInstaller(conn Conn, box string) *Installer {
 // by construction rather than by policy. Whether that version has a release to
 // fetch at all is settled before a connection is opened, by release.Installable.
 func (i *Installer) Converge(ctx context.Context, version string) (Result, error) {
-	if err := bootstrap.Ship(ctx, i.conn, Script, RemoteScriptPath); err != nil {
+	if err := bootstrap.ShipTo(ctx, i.conn, Script, RemoteScriptPath); err != nil {
 		return Result{}, fmt.Errorf("ship the install script: %w", err)
 	}
 
