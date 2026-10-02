@@ -174,12 +174,13 @@ type SetupResult struct {
 }
 
 // Setup runs the ordered mutating phases on the box: it ships bootstrap.sh
-// unless Preflight already did, invokes its setup subcommand, and streams each phase's live progress to
-// stdout and stderr as it happens. A connect failure and a phase failure are
-// reported in the SetupResult rather than as Go errors, so the caller can map
-// them to an exit code; a phase failure also carries a FailureReport built from
-// the captured stream. A Go error is returned only for unexpected infrastructure
-// failures. Setup assumes the preflight gate has already passed.
+// unless Preflight already did, invokes its setup subcommand, and streams each
+// phase's live progress to stdout and stderr as it happens. A connect failure
+// and a phase failure are reported in the SetupResult rather than as Go errors,
+// so the caller can map them to an exit code; a phase failure also carries a
+// FailureReport built from the captured stream. A Go error is returned only for
+// unexpected infrastructure failures. Setup assumes the preflight gate has
+// already passed.
 func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io.Writer) (SetupResult, error) {
 	script, err := r.ship(ctx)
 	if err != nil {

@@ -76,8 +76,10 @@ func Ship(ctx context.Context, conn Conn, script string) (Shipped, error) {
 }
 
 // ShipTo writes a shell artifact to a local temp file and copies it to
-// remotePath on the box over conn. Ship builds on it; the callers that still
-// drive a script at a fixed remote path use it directly.
+// remotePath on the box over conn. It does no more than copy: production code
+// ships through Ship, which gives every script a private path. ShipTo stays
+// exported so tests can place a file at a chosen path, such as a stale script
+// an earlier release left behind.
 func ShipTo(ctx context.Context, conn Conn, script, remotePath string) error {
 	f, err := os.CreateTemp("", "smith-script-*.sh")
 	if err != nil {

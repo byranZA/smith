@@ -47,10 +47,10 @@ func NewProber(conn bootstrap.Conn, admin tailscale.Admin) *Prober {
 
 // Gather probes the box: it checks reachability, ships bootstrap.sh into a
 // private directory, runs the read-only probe against it (removing it again
-// however Gather returns), decodes the marker, and — in tailscale mode with a tailnet IP — probes
-// tailnet reach from the admin side. A connect failure is reported as an
-// unreachable Gathered rather than a Go error; a Go error is returned only for
-// unexpected infrastructure failures or a malformed marker.
+// however Gather returns), decodes the marker, and — in tailscale mode with a
+// tailnet IP — probes tailnet reach from the admin side. A connect failure is
+// reported as an unreachable Gathered rather than a Go error; a Go error is
+// returned only for unexpected infrastructure failures or a malformed marker.
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 	reachable, err := connection.Reachable(ctx, p.conn)
 	if err != nil {
