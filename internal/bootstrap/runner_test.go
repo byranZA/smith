@@ -45,7 +45,7 @@ func (f *fakeConn) Run(_ context.Context, cmd string, stdout, stderr io.Writer) 
 	switch {
 	case strings.HasPrefix(cmd, "mktemp"):
 		f.dirs++
-		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", f.dirs)
+		_, err := fmt.Fprintln(stdout, shippedDir(f.dirs))
 		return err
 	case strings.HasPrefix(cmd, "rm "):
 		return nil
@@ -66,6 +66,13 @@ func (f *fakeConn) Run(_ context.Context, cmd string, stdout, stderr io.Writer) 
 	default:
 		return f.probeErr // the reachability probe
 	}
+}
+
+// shippedDir is the nth private directory the fake box's mktemp hands out. It
+// holds whitespace, an apostrophe and shell metacharacters, as a box's TMPDIR
+// may, so a script argument only names the shipped file when it is quoted.
+func shippedDir(n int) string {
+	return fmt.Sprintf("/tmp/smith's dir; $HOME.%08d", n)
 }
 
 func preflightOutput(privilege, id, version, versionID string) string {
@@ -336,7 +343,7 @@ func TestSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint(t *testing.T) {
 // ran on the box.
 func (f *fakeConn) ranAgainst(scriptPath, subcommand string) bool {
 	for _, cmd := range f.runs {
-		if strings.HasPrefix(cmd, fmt.Sprintf("bash %s %s", scriptPath, subcommand)) {
+		if strings.HasPrefix(cmd, fmt.Sprintf("bash %s %s", connection.ShellArg(scriptPath), subcommand)) {
 			return true
 		}
 	}
@@ -452,6 +459,18 @@ type ownedBox struct {
 	dirs  int
 }
 
+// runnable reports whether cmd runs `bash <script> ...` against a script on the
+// box, reading the script argument as a remote shell would, and returns what
+// follows it.
+func (b *ownedBox) runnable(cmd string) (string, bool) {
+	for p := range b.owner {
+		if rest, ok := strings.CutPrefix(cmd, "bash "+connection.ShellArg(p)+" "); ok {
+			return rest, true
+		}
+	}
+	return "", false
+}
+
 // login returns a connection to the box as user.
 func (b *ownedBox) login(user string) *ownedConn { return &ownedConn{box: b, user: user} }
 
@@ -475,16 +494,16 @@ func (c *ownedConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) erro
 	switch {
 	case strings.HasPrefix(cmd, "mktemp"):
 		c.box.dirs++
-		dir := fmt.Sprintf("/tmp/smith.%08d", c.box.dirs)
+		dir := shippedDir(c.box.dirs)
 		c.box.owner[dir] = c.user
 		_, err := fmt.Fprintln(stdout, dir)
 		return err
 	case strings.HasPrefix(cmd, "bash "):
-		script := strings.Fields(cmd)[1]
-		if _, ok := c.box.owner[script]; !ok {
-			return fmt.Errorf("bash: %s: no such file: %w", script, errRemote)
+		subcommand, ok := c.box.runnable(cmd)
+		if !ok {
+			return fmt.Errorf("bash: %s: no such file: %w", cmd, errRemote)
 		}
-		if strings.Fields(cmd)[2] == "preflight" {
+		if strings.HasPrefix(subcommand, "preflight") {
 			_, err := io.WriteString(stdout, preflightOutput("root", "ubuntu", "24.04.1 LTS (Noble)", "24.04"))
 			return err
 		}

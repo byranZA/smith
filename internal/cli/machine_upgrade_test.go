@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/provider"
 	"github.com/byranZA/smith/internal/release"
 )
@@ -300,7 +301,7 @@ func TestUpgradeShipsInstallScriptOnceAndRemovesIt(t *testing.T) {
 				t.Errorf("shipped to %q, a fixed name under /tmp, want a private directory", script)
 			}
 			for _, sub := range []string{"probe", "install --url "} {
-				if commandIndex(tt.ssh.commands, "bash "+script+" "+sub) < 0 {
+				if commandIndex(tt.ssh.commands, "bash "+connection.ShellArg(script)+" "+sub) < 0 {
 					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
 				}
 			}

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/release"
 )
 
@@ -74,6 +77,33 @@ func (c *boxConn) Copy(_ context.Context, _, remotePath string) error {
 	return nil
 }
 
+// named resolves a shell argument to the path on the box it names, reading it
+// as a remote shell would: only a quoted argument names a path holding
+// whitespace or shell metacharacters.
+func (c *boxConn) named(arg string) (string, bool) {
+	for p := range c.owner {
+		if arg == connection.ShellArg(p) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// scriptOf returns which of paths a `bash <script> <subcommand>` command runs,
+// reading the script argument as a remote shell would.
+func scriptOf(cmd string, paths []string) (string, bool) {
+	rest, ok := strings.CutPrefix(cmd, "bash ")
+	if !ok {
+		return "", false
+	}
+	for _, p := range paths {
+		if strings.HasPrefix(rest, connection.ShellArg(p)+" ") {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // leftovers lists the paths still on the box under dir.
 func (c *boxConn) leftovers(dir string) []string {
 	var paths []string
@@ -93,21 +123,23 @@ func (c *boxConn) Run(_ context.Context, remoteCmd string, stdout, stderr io.Wri
 	switch {
 	case strings.HasPrefix(remoteCmd, "mktemp -d"):
 		c.dirs++
-		dir := fmt.Sprintf("/tmp/smith.%08d", c.dirs)
+		dir := fmt.Sprintf("/tmp/smith's dir; $HOME.%08d", c.dirs)
 		c.owner[dir] = c.login()
 		_, err := fmt.Fprintln(stdout, dir)
 		return err
 	case strings.HasPrefix(remoteCmd, "rm -rf -- "):
-		dir := strings.Trim(strings.TrimPrefix(remoteCmd, "rm -rf -- "), "'")
+		dir, ok := c.named(strings.TrimPrefix(remoteCmd, "rm -rf -- "))
+		if !ok {
+			return nil // rm -rf of a path that is not there succeeds
+		}
 		for _, p := range c.leftovers(dir) {
 			delete(c.owner, p)
 		}
 		c.removed = append(c.removed, dir)
 		return nil
 	case strings.HasPrefix(remoteCmd, "bash "):
-		script, _, _ := strings.Cut(strings.TrimPrefix(remoteCmd, "bash "), " ")
-		if _, ok := c.owner[script]; !ok {
-			return fmt.Errorf("bash: %s: no such file", script)
+		if _, ok := scriptOf(remoteCmd, slices.Collect(maps.Keys(c.owner))); !ok {
+			return fmt.Errorf("bash: %s: no such file", remoteCmd)
 		}
 	}
 	if strings.Contains(remoteCmd, " probe") {
@@ -302,8 +334,7 @@ func TestConvergeMovesABoxToLocalsVersionInEitherDirection(t *testing.T) {
 func (c *boxConn) scriptRuns() []string {
 	var scripts []string
 	for _, cmd := range c.commands {
-		if rest, ok := strings.CutPrefix(cmd, "bash "); ok {
-			script, _, _ := strings.Cut(rest, " ")
+		if script, ok := scriptOf(cmd, c.shipped); ok {
 			scripts = append(scripts, script)
 		}
 	}

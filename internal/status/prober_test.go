@@ -125,6 +125,18 @@ func newFakeBox(probeOut string) *fakeBox {
 	return &fakeBox{probeOut: probeOut, owner: map[string]string{}}
 }
 
+// named resolves a shell argument to the path on the box it names, reading it
+// as a remote shell would: only a quoted argument names a path holding
+// whitespace or shell metacharacters.
+func (b *fakeBox) named(arg string) (string, bool) {
+	for p := range b.owner {
+		if arg == connection.ShellArg(p) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // login returns a connection to the box as user.
 func (b *fakeBox) login(user string) *boxConn { return &boxConn{box: b, user: user} }
 
@@ -172,12 +184,15 @@ func (c *boxConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error 
 		return nil
 	case strings.HasPrefix(cmd, "mktemp -d"):
 		b.dirs++
-		dir := fmt.Sprintf("/tmp/smith.%08d", b.dirs)
+		dir := fmt.Sprintf("/tmp/smith's dir; $HOME.%08d", b.dirs)
 		b.owner[dir] = c.user
 		_, err := fmt.Fprintln(stdout, dir)
 		return err
 	case strings.HasPrefix(cmd, "rm -rf -- "):
-		dir := strings.Trim(strings.TrimPrefix(cmd, "rm -rf -- "), "'")
+		dir, ok := b.named(strings.TrimPrefix(cmd, "rm -rf -- "))
+		if !ok {
+			return nil // rm -rf of a path that is not there succeeds
+		}
 		if b.rmErr != nil {
 			return b.rmErr
 		}
@@ -187,9 +202,9 @@ func (c *boxConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error 
 		b.removed = append(b.removed, dir)
 		return nil
 	case strings.HasPrefix(cmd, "bash ") && strings.HasSuffix(cmd, " probe"):
-		script := strings.TrimSuffix(strings.TrimPrefix(cmd, "bash "), " probe")
-		if _, ok := b.owner[script]; !ok {
-			return fmt.Errorf("bash: %s: no such file", script)
+		script, ok := b.named(strings.TrimSuffix(strings.TrimPrefix(cmd, "bash "), " probe"))
+		if !ok {
+			return fmt.Errorf("bash: %s: no such file", cmd)
 		}
 		b.probed = append(b.probed, script)
 		if _, err := io.WriteString(stdout, b.probeOut); err != nil {

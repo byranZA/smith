@@ -50,7 +50,7 @@ func (c *shipConn) Run(ctx context.Context, cmd string, stdout, _ io.Writer) err
 			return c.mktempErr
 		}
 		c.dirs++
-		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", c.dirs)
+		_, err := fmt.Fprintln(stdout, shippedDir(c.dirs))
 		return err
 	case strings.HasPrefix(cmd, "rm "):
 		c.rmCtxErr = append(c.rmCtxErr, ctx.Err())
@@ -95,8 +95,8 @@ func TestShipCopiesTheScriptIntoTheDirectoryMktempMade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ship() error = %v", err)
 	}
-	if got := path.Dir(s.Path()); got != "/tmp/smith.00000001" {
-		t.Errorf("shipped into %q, want the mktemp directory /tmp/smith.00000001", got)
+	if got := path.Dir(s.Path()); got != shippedDir(1) {
+		t.Errorf("shipped into %q, want the mktemp directory %q", got, shippedDir(1))
 	}
 	if got := conn.copies[s.Path()]; got != "echo hi" {
 		t.Errorf("copied %q to %q, want the script", got, s.Path())
@@ -156,7 +156,7 @@ func TestShipFailedCopyRemovesTheDirectoryItMade(t *testing.T) {
 	if _, err := Ship(context.Background(), conn, "echo hi"); err == nil {
 		t.Fatal("Ship() error = nil, want the copy failure")
 	}
-	if !conn.removed("/tmp/smith.00000001") {
+	if !conn.removed(shippedDir(1)) {
 		t.Errorf("runs = %q, want the directory mktemp made removed", conn.runs)
 	}
 }

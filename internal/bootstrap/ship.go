@@ -30,7 +30,10 @@ type Shipped struct {
 	dir  string
 }
 
-// Path is the remote path of the shipped script, for `bash <path> <subcommand>`.
+// Path is the raw remote path of the shipped script. mktemp honours the box's
+// TMPDIR, so the path may hold whitespace or shell metacharacters: a caller
+// interpolating it into a remote command quotes it with connection.ShellArg,
+// as in `bash <quoted path> <subcommand>`.
 func (s Shipped) Path() string {
 	return s.dir + "/" + shippedName
 }

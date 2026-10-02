@@ -143,7 +143,7 @@ func (i *Installer) Converge(ctx context.Context, version string) (Result, error
 
 	asset := release.For(version, arch)
 	cmd := fmt.Sprintf("bash %s install --url %s --checksums-url %s",
-		shipped.Path(), connection.ShellArg(asset.URL), connection.ShellArg(asset.ChecksumsURL))
+		connection.ShellArg(shipped.Path()), connection.ShellArg(asset.URL), connection.ShellArg(asset.ChecksumsURL))
 	var diagnostic strings.Builder
 	if err := i.conn.Run(ctx, cmd, io.Discard, &diagnostic); err != nil {
 		return Result{}, fmt.Errorf("install smith %s on the box: %w", version, withBoxDiagnostic(err, diagnostic.String()))
@@ -231,7 +231,7 @@ type boxState struct {
 // halves of this stage differ on that.
 func (i *Installer) probe(ctx context.Context, script string) (boxState, error) {
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s probe", script)
+	cmd := fmt.Sprintf("bash %s probe", connection.ShellArg(script))
 	if err := i.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
 		return boxState{}, fmt.Errorf("probe the box's smith: %w", err)
 	}

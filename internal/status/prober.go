@@ -70,7 +70,7 @@ func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 	defer shipped.Remove(ctx)
 
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s probe", shipped.Path())
+	cmd := fmt.Sprintf("bash %s probe", connection.ShellArg(shipped.Path()))
 	if err := p.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Gathered{Reachable: false}, nil

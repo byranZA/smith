@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/provider"
@@ -162,7 +163,7 @@ func (s *setupSSH) ranAs(target, remoteCmd string) bool {
 // ssh as target.
 func (s *setupSSH) ranAgainstAs(target, scriptPath, subcommand string) bool {
 	for i, cmd := range s.commands {
-		if s.targets[i] == target && strings.HasPrefix(cmd, "bash "+scriptPath+" "+subcommand) {
+		if s.targets[i] == target && strings.HasPrefix(cmd, "bash "+connection.ShellArg(scriptPath)+" "+subcommand) {
 			return true
 		}
 	}

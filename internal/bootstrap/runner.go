@@ -127,7 +127,7 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 	}
 
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s preflight", script)
+	cmd := fmt.Sprintf("bash %s preflight", connection.ShellArg(script))
 	if err := r.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Result{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
@@ -200,7 +200,7 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 		publicSSH = "open"
 	}
 	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s%s%s",
-		script, connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion),
+		connection.ShellArg(script), connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion),
 		connection.ShellArg(publicSSH), optionalFlag("--name", opts.BoxName),
 		optionalFlag("--blueprint", opts.Blueprint))
 	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
