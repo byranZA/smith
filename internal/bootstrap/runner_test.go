@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"testing"
 
@@ -13,7 +14,9 @@ import (
 )
 
 // fakeConn stands in for a real ssh/scp connection. It answers the preflight
-// and setup commands with canned output and lets each step's error be injected.
+// and setup commands with canned output, hands out a fresh directory per
+// mktemp, records where each copy landed and which commands ran, and lets each
+// step's error be injected.
 type fakeConn struct {
 	preflightOut string
 	preflightErr error
@@ -25,16 +28,27 @@ type fakeConn struct {
 	setupErr    error
 
 	copied      bool
+	copiedTo    []string
 	setupRunCmd string
+	dirs        int
+	runs        []string
 }
 
-func (f *fakeConn) Copy(_ context.Context, _, _ string) error {
+func (f *fakeConn) Copy(_ context.Context, _, remotePath string) error {
 	f.copied = true
+	f.copiedTo = append(f.copiedTo, remotePath)
 	return f.copyErr
 }
 
 func (f *fakeConn) Run(_ context.Context, cmd string, stdout, stderr io.Writer) error {
+	f.runs = append(f.runs, cmd)
 	switch {
+	case strings.HasPrefix(cmd, "mktemp"):
+		f.dirs++
+		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", f.dirs)
+		return err
+	case strings.HasPrefix(cmd, "rm "):
+		return nil
 	case strings.Contains(cmd, "preflight"):
 		if _, err := io.WriteString(stdout, f.preflightOut); err != nil {
 			return err
@@ -315,5 +329,191 @@ func TestSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint(t *testing.T) {
 		if strings.Contains(conn.setupRunCmd, flag) {
 			t.Errorf("setup command = %q, want no %s for a value the run does not have", conn.setupRunCmd, flag)
 		}
+	}
+}
+
+// ranAgainst reports whether a command running subcommand against scriptPath
+// ran on the box.
+func (f *fakeConn) ranAgainst(scriptPath, subcommand string) bool {
+	for _, cmd := range f.runs {
+		if strings.HasPrefix(cmd, fmt.Sprintf("bash %s %s", scriptPath, subcommand)) {
+			return true
+		}
+	}
+	return false
+}
+
+// removed reports whether an rm of dir ran against the box.
+func (f *fakeConn) removed(dir string) bool {
+	for _, cmd := range f.runs {
+		if cmd == "rm -rf -- "+connection.ShellArg(dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunnerShipsOnceForPreflightAndSetup(t *testing.T) {
+	conn := &fakeConn{preflightOut: preflightOutput("root", "ubuntu", "24.04.1 LTS (Noble)", "24.04")}
+	runner := NewRunner(conn)
+	if _, err := runner.Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	if _, err := runner.Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if len(conn.copiedTo) != 1 {
+		t.Fatalf("copied to %q, want bootstrap.sh shipped exactly once", conn.copiedTo)
+	}
+	shipped := conn.copiedTo[0]
+	for _, sub := range []string{"preflight", "setup"} {
+		if !conn.ranAgainst(shipped, sub) {
+			t.Errorf("%s did not run against the shipped path %q; ran %q", sub, shipped, conn.runs)
+		}
+	}
+	if got := runner.ScriptPath(); got != shipped {
+		t.Errorf("ScriptPath() = %q, want the shipped path %q", got, shipped)
+	}
+	if path.Dir(shipped) == "/tmp" {
+		t.Errorf("shipped to %q, a fixed name under /tmp, want a private directory", shipped)
+	}
+}
+
+func TestRunnerCloseRemovesTheShippedScript(t *testing.T) {
+	passing := preflightOutput("root", "ubuntu", "24.04.1 LTS (Noble)", "24.04")
+	tests := []struct {
+		name string
+		conn *fakeConn
+		run  func(*Runner) error
+	}{
+		{
+			name: "setup succeeds",
+			conn: &fakeConn{preflightOut: passing},
+			run:  preflightThenSetup,
+		},
+		{
+			name: "a phase fails",
+			conn: &fakeConn{preflightOut: passing, setupErr: fmt.Errorf("phase packages: %w", errRemote)},
+			run:  preflightThenSetup,
+		},
+		{
+			name: "preflight is refused",
+			conn: &fakeConn{preflightOut: preflightOutput("none", "ubuntu", "24.04.1 LTS (Noble)", "24.04")},
+			run: func(r *Runner) error {
+				_, err := r.Preflight(context.Background())
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := NewRunner(tt.conn)
+			if err := tt.run(runner); err != nil {
+				t.Fatalf("run error = %v", err)
+			}
+			runner.Close(context.Background())
+			if len(tt.conn.copiedTo) != 1 {
+				t.Fatalf("copied to %q, want one shipped script", tt.conn.copiedTo)
+			}
+			if dir := path.Dir(tt.conn.copiedTo[0]); !tt.conn.removed(dir) {
+				t.Errorf("shipped directory %q not removed; ran %q", dir, tt.conn.runs)
+			}
+		})
+	}
+}
+
+func TestRunnerCloseBeforeShippingRemovesNothing(t *testing.T) {
+	conn := &fakeConn{probeErr: fmt.Errorf("dial: %w", connection.ErrConnect)}
+	runner := NewRunner(conn)
+	if _, err := runner.Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	runner.Close(context.Background())
+	for _, cmd := range conn.runs {
+		if strings.HasPrefix(cmd, "rm ") {
+			t.Errorf("ran %q, want nothing removed when nothing was shipped", cmd)
+		}
+	}
+}
+
+func preflightThenSetup(r *Runner) error {
+	if _, err := r.Preflight(context.Background()); err != nil {
+		return err
+	}
+	_, err := r.Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	return err
+}
+
+// ownedBox fakes a box whose /tmp is sticky: it records which login owns each
+// file and refuses a copy over a file another login owns, which is how a
+// root-owned script left behind blocks the smith user.
+type ownedBox struct {
+	owner map[string]string
+	dirs  int
+}
+
+// login returns a connection to the box as user.
+func (b *ownedBox) login(user string) *ownedConn { return &ownedConn{box: b, user: user} }
+
+type ownedConn struct {
+	box  *ownedBox
+	user string
+}
+
+func (c *ownedConn) Copy(_ context.Context, _, remotePath string) error {
+	if owner, ok := c.box.owner[remotePath]; ok && owner != c.user {
+		return fmt.Errorf("scp %s: %s owned by %s: %w", c.user, remotePath, owner, errRemote)
+	}
+	if dir := path.Dir(remotePath); dir != "/tmp" && c.box.owner[dir] != c.user {
+		return fmt.Errorf("scp %s: %s not writable: %w", c.user, dir, errRemote)
+	}
+	c.box.owner[remotePath] = c.user
+	return nil
+}
+
+func (c *ownedConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
+	switch {
+	case strings.HasPrefix(cmd, "mktemp"):
+		c.box.dirs++
+		dir := fmt.Sprintf("/tmp/smith.%08d", c.box.dirs)
+		c.box.owner[dir] = c.user
+		_, err := fmt.Fprintln(stdout, dir)
+		return err
+	case strings.HasPrefix(cmd, "bash "):
+		script := strings.Fields(cmd)[1]
+		if _, ok := c.box.owner[script]; !ok {
+			return fmt.Errorf("bash: %s: no such file: %w", script, errRemote)
+		}
+		if strings.Fields(cmd)[2] == "preflight" {
+			_, err := io.WriteString(stdout, preflightOutput("root", "ubuntu", "24.04.1 LTS (Noble)", "24.04"))
+			return err
+		}
+	}
+	return nil
+}
+
+// TestSetupReRunAsSmithAfterARootSetup proves a re-run of setup as the smith
+// user ships and runs after a root setup whose script was never cleaned up,
+// rather than failing its copy on the file root left behind.
+func TestSetupReRunAsSmithAfterARootSetup(t *testing.T) {
+	box := &ownedBox{owner: map[string]string{}}
+	if err := preflightThenSetup(NewRunner(box.login("root"))); err != nil {
+		t.Fatalf("setup as root: %v", err)
+	}
+
+	runner := NewRunner(box.login("smith"))
+	res, err := runner.Preflight(context.Background())
+	if err != nil {
+		t.Fatalf("Preflight() as smith error = %v", err)
+	}
+	if res.Outcome != OutcomePassed {
+		t.Fatalf("Preflight() as smith outcome = %v (%s), want Passed", res.Outcome, res.Reason)
+	}
+	setupRes, err := runner.Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Setup() as smith error = %v", err)
+	}
+	if setupRes.Outcome != OutcomePassed {
+		t.Errorf("Setup() as smith outcome = %v, want Passed", setupRes.Outcome)
 	}
 }

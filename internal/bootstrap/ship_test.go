@@ -83,7 +83,7 @@ func TestShipGivesEachShipItsOwnPath(t *testing.T) {
 		t.Errorf("two ships both returned %q, want different paths", first.Path())
 	}
 	for _, p := range []string{first.Path(), second.Path()} {
-		if p == RemoteScriptPath || path.Dir(p) == "/tmp" {
+		if path.Dir(p) == "/tmp" {
 			t.Errorf("shipped path %q is a fixed name under /tmp, want one inside a private directory", p)
 		}
 	}

@@ -278,11 +278,15 @@ smith-user-exists=yes
 passwordless-sudo=yes
 `
 
+// staleScriptPath is the fixed path v0.2.0-rc.1 shipped bootstrap.sh to, which a
+// root setup left behind root-owned.
+const staleScriptPath = "/tmp/smith-bootstrap.sh"
+
 func TestGatherWorksOnABoxSetUpAsRoot(t *testing.T) {
 	box := newFakeBox(publicProbe)
 	// Setup ran as root and left its script behind at the old fixed path, as a
 	// v0.2.0-rc.1 box does.
-	if err := bootstrap.ShipScript(context.Background(), box.login("root")); err != nil {
+	if err := bootstrap.ShipTo(context.Background(), box.login("root"), bootstrap.Script, staleScriptPath); err != nil {
 		t.Fatalf("ship as root: %v", err)
 	}
 
@@ -293,8 +297,8 @@ func TestGatherWorksOnABoxSetUpAsRoot(t *testing.T) {
 	if !g.Reachable || !g.MarkerPresent {
 		t.Errorf("Reachable/MarkerPresent = %v/%v, want true/true", g.Reachable, g.MarkerPresent)
 	}
-	if owner := box.owner[bootstrap.RemoteScriptPath]; owner != "root" {
-		t.Errorf("stale %s owned by %q, want it left untouched as root's", bootstrap.RemoteScriptPath, owner)
+	if owner := box.owner[staleScriptPath]; owner != "root" {
+		t.Errorf("stale %s owned by %q, want it left untouched as root's", staleScriptPath, owner)
 	}
 }
 

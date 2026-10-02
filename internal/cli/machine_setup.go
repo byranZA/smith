@@ -78,23 +78,27 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 			conn := connection.New(target, exec)
+			// The runner ships bootstrap.sh once for every subcommand this run
+			// drives over the bootstrap login, and the box keeps no copy of it
+			// once setup ends, however it ends.
 			runner := bootstrap.NewRunner(conn)
+			defer runner.Close(ctx)
 
 			// Tailscale up-front, before anything on the box is mutated: acquire the
 			// auth key, refuse if this admin machine is not itself on the tailnet
 			// (smith could not then verify reach), and print the one-time tailnet
 			// prerequisites personalized to the operator.
-			var access *tailscale.Access
+			var admin *tailscale.AdminDriver
 			var acquireKey func() (string, error)
 			if accessMode == "tailscale" {
-				a, acq, err := prepareTailscale(ctx, conn, exec, host, authKeyRef, stdout)
+				a, acq, err := prepareTailscale(ctx, exec, host, authKeyRef, stdout)
 				if err != nil {
 					if _, werr := fmt.Fprintf(stderr, "setup refused: %v\n", err); werr != nil {
 						return fmt.Errorf("write refusal: %w", werr)
 					}
 					return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
 				}
-				access, acquireKey = a, acq
+				admin, acquireKey = a, acq
 			}
 
 			res, err := runner.Preflight(ctx)
@@ -169,6 +173,13 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			}
 			if setupRes.Outcome != bootstrap.OutcomePassed {
 				return &exitError{code: setupRes.Outcome.ExitCode()}
+			}
+
+			// The access layer drives the same bootstrap.sh the phases ran,
+			// so it is only built once setup has shipped it.
+			var access *tailscale.Access
+			if admin != nil {
+				access = tailscale.NewAccess(tailscale.NewBox(conn, runner.ScriptPath()), admin)
 			}
 
 			// Every phase completed, so what is left is the pipeline: the
@@ -337,14 +348,16 @@ func convergeWorkspace(ctx context.Context, exec connection.Exec, target, versio
 // refuses when the admin machine is not on the tailnet, fails fast when a key
 // would be needed but there is nothing to prompt and no reference to resolve,
 // and prints the two one-time-per-tailnet prerequisites personalized to the
-// operator. It returns the Access orchestrator and a key-acquiring closure the
+// operator. It returns the admin-side driver and a key-acquiring closure the
 // enroll step calls only if the box actually needs enrolling — so a re-run of an
-// already-reachable box never resolves (or prompts for) a fresh auth key.
+// already-reachable box never resolves (or prompts for) a fresh auth key. The
+// Access orchestrator itself is built once setup has shipped the bootstrap.sh
+// it drives.
 //
 // The admin machine's own tailscale and ssh commands run through the same exec
 // the command surface was handed, rather than one built here: it is the local
 // process boundary the whole command already reaches every binary over.
-func prepareTailscale(ctx context.Context, conn *connection.SSH, exec connection.Exec, host, authKeyRef string, stdout io.Writer) (*tailscale.Access, func() (string, error), error) {
+func prepareTailscale(ctx context.Context, exec connection.Exec, host, authKeyRef string, stdout io.Writer) (*tailscale.AdminDriver, func() (string, error), error) {
 	// Fail fast before mutating anything when the key could never be obtained:
 	// no reference to resolve and no interactive terminal to prompt. Acquisition
 	// itself is deferred to enroll, so an already-satisfied re-run needs no key.
@@ -366,11 +379,10 @@ func prepareTailscale(ctx context.Context, conn *connection.SSH, exec connection
 		return nil, nil, fmt.Errorf("write prerequisites: %w", err)
 	}
 
-	box := tailscale.NewBox(conn, bootstrap.RemoteScriptPath)
 	acquireKey := func() (string, error) {
 		return secret.Acquire(authKeyRef, "Tailscale auth key: ", term)
 	}
-	return tailscale.NewAccess(box, admin), acquireKey, nil
+	return admin, acquireKey, nil
 }
 
 // publicSSHTarget derives the access-aware firewall target for public port 22:
