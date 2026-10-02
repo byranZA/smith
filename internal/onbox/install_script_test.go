@@ -35,6 +35,8 @@ type installFixture struct {
 	// renameLog records the argv of every mv(1) the script ran, which is what
 	// carries the staged path the live binary is replaced from.
 	renameLog string
+	// boxTmp is the box's temp directory, where a shipped script lands.
+	boxTmp string
 }
 
 // newInstallFixture writes the embedded script, the fake binaries it drives,
@@ -82,7 +84,14 @@ func newInstallFixture(t *testing.T, version string, corruptChecksums bool) *ins
 		t.Fatalf("mkdir bin: %v", err)
 	}
 	writeInstallFakeBins(t, binDir)
+	// The box's temp directory lives inside the fixture, so what is shipped
+	// there, and whether it is removed, stays observable.
+	f.boxTmp = filepath.Join(dir, "tmp")
+	if err := os.Mkdir(f.boxTmp, 0o755); err != nil {
+		t.Fatalf("mkdir tmp: %v", err)
+	}
 	f.env = append(os.Environ()[:0:0],
+		"TMPDIR="+f.boxTmp,
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"SMITH_INSTALL_PATH="+f.installPath,
 		"ARCHIVE_FIXTURE="+archive,
@@ -343,20 +352,29 @@ func TestScriptInstallLeavesTheMarkerAlone(t *testing.T) {
 }
 
 // scriptConn reaches a box whose install.sh is the embedded script itself, run
-// against the fixture's assets. Every command the installer sends is executed
-// for real and its streams are handed back untouched, so what a test asserts on
-// is what the script emitted rather than what a fake was told to say.
+// against the fixture's assets. The fixture directory stands in for the box's
+// file system: a shipped script is copied there for real, and every command the
+// installer sends is executed for real, its streams handed back untouched, so what a test asserts on is what
+// the script emitted rather than what a fake was told to say.
 type scriptConn struct {
 	f *installFixture
 }
 
-// Copy accepts the shipped script: the fixture already wrote it, at the path
-// this connection rewrites remote commands to.
-func (c scriptConn) Copy(context.Context, string, string) error { return nil }
+// Copy ships a file onto the fixture box.
+func (c scriptConn) Copy(_ context.Context, localPath, remotePath string) error {
+	b, err := os.ReadFile(localPath)
+	if err != nil {
+		return fmt.Errorf("read the shipped file: %w", err)
+	}
+	if err := os.WriteFile(remotePath, b, 0o600); err != nil {
+		return fmt.Errorf("write the shipped file onto the box: %w", err)
+	}
+	return nil
+}
 
 // Run executes a remote command against the fixture box, streaming its output.
 func (c scriptConn) Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, "bash", "-c", strings.ReplaceAll(remoteCmd, RemoteScriptPath, c.f.scriptPath))
+	cmd := exec.CommandContext(ctx, "bash", "-c", remoteCmd)
 	cmd.Env = c.f.env
 	cmd.Dir = c.f.dir
 	cmd.Stdout = stdout
@@ -448,5 +466,24 @@ func TestScriptInstallLeavesTheExistingBinaryAndNoStagedFileWhenTheReplacementFa
 		if e.Name() != filepath.Base(f.installPath) {
 			t.Errorf("the install directory still holds %q, want the staged binary cleaned up", e.Name())
 		}
+	}
+}
+
+// TestConvergeLeavesNothingInTheBoxsTempDirectory drives a convergence against
+// the real install script on a box whose archive fails verification, and checks
+// that the run's shipped script is gone from the box's temp directory even so.
+func TestConvergeLeavesNothingInTheBoxsTempDirectory(t *testing.T) {
+	f := newInstallFixture(t, "0.2.0", true)
+
+	if _, err := NewInstaller(scriptConn{f: f}, "dev").Converge(context.Background(), "0.2.0"); err == nil {
+		t.Fatal("Converge() succeeded on a checksum mismatch, want the failure reported")
+	}
+
+	left, err := os.ReadDir(f.boxTmp)
+	if err != nil {
+		t.Fatalf("read the box's temp directory: %v", err)
+	}
+	if len(left) != 0 {
+		t.Errorf("left %v in the box's temp directory, want it empty", left)
 	}
 }

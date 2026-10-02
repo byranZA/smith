@@ -15,6 +15,7 @@ import (
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/provider"
 )
 
@@ -51,8 +52,10 @@ type setupSSH struct {
 	commands []string
 	// dirs counts the private directories mktemp has made on the box.
 	dirs int
-	// copies is every scp destination, as "<target>:<remote path>".
+	// copies is every scp of bootstrap.sh, as "<target>:<remote path>".
 	copies []string
+	// installCopies is every scp of the install stage's install.sh, likewise.
+	installCopies []string
 }
 
 // Run answers whichever local binary the run launched, recording every ssh
@@ -62,9 +65,8 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		_, err := io.WriteString(stdout, adminOnTailnet)
 		return err
 	}
-	if name == "scp" && len(args) > 0 {
-		s.copies = append(s.copies, args[len(args)-1])
-		return nil
+	if name == "scp" && len(args) > 1 {
+		return s.copy(args[len(args)-2], args[len(args)-1])
 	}
 	if name != "ssh" || len(args) < 2 {
 		return nil
@@ -115,6 +117,22 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		_, err := fmt.Fprintf(stdout, "tailscale-ip=%s\n", s.tailnetIP)
 		return err
 	}
+	return nil
+}
+
+// copy records an scp of the local file to dest, telling the install stage's
+// install.sh from bootstrap.sh by what was copied: both land in private
+// directories that look alike.
+func (s *setupSSH) copy(local, dest string) error {
+	data, err := os.ReadFile(local)
+	if err != nil {
+		return fmt.Errorf("read the copied file: %w", err)
+	}
+	if string(data) == onbox.Script {
+		s.installCopies = append(s.installCopies, dest)
+		return nil
+	}
+	s.copies = append(s.copies, dest)
 	return nil
 }
 
