@@ -175,13 +175,6 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return &exitError{code: setupRes.Outcome.ExitCode()}
 			}
 
-			// The access layer drives the same bootstrap.sh the phases ran,
-			// so it is only built once setup has shipped it.
-			var access *tailscale.Access
-			if admin != nil {
-				access = tailscale.NewAccess(tailscale.NewBox(conn, runner.ScriptPath()), admin)
-			}
-
 			// Every phase completed, so what is left is the pipeline: the
 			// ordered, named stages that run from the operator's machine on top
 			// of a box that is already provisioned and secured.
@@ -189,7 +182,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				accessMode:   accessMode,
 				host:         host,
 				exec:         exec,
-				access:       access,
+				admin:        admin,
 				acquireKey:   acquireKey,
 				box:          args[0],
 				smithVersion: chosenVersion(smithVersion, resolveVersion()),
@@ -351,8 +344,8 @@ func convergeWorkspace(ctx context.Context, exec connection.Exec, target, versio
 // operator. It returns the admin-side driver and a key-acquiring closure the
 // enroll step calls only if the box actually needs enrolling — so a re-run of an
 // already-reachable box never resolves (or prompts for) a fresh auth key. The
-// Access orchestrator itself is built once setup has shipped the bootstrap.sh
-// it drives.
+// Access orchestrator itself is built by the access stage, which reaches the
+// box as the smith user rather than over the bootstrap login.
 //
 // The admin machine's own tailscale and ssh commands run through the same exec
 // the command surface was handed, rather than one built here: it is the local

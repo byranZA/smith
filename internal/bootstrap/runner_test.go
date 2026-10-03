@@ -400,9 +400,6 @@ func TestRunnerShipsOnceForPreflightAndSetup(t *testing.T) {
 			t.Errorf("%s did not run against the shipped path %q; ran %q", sub, shipped, conn.runs)
 		}
 	}
-	if got := runner.ScriptPath(); got != shipped {
-		t.Errorf("ScriptPath() = %q, want the shipped path %q", got, shipped)
-	}
 	if path.Dir(shipped) == "/tmp" {
 		t.Errorf("shipped to %q, a fixed name under /tmp, want a private directory", shipped)
 	}

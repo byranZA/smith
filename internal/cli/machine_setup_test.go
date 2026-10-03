@@ -48,6 +48,21 @@ type setupSSH struct {
 	// phaseErr is what the box answers the mutating phases with, standing in
 	// for a run that failed partway through the base layer.
 	phaseErr error
+	// probeDenied has the tailnet deny the live ssh probe, the shape of a
+	// tailnet missing its ssh ACL rule for tag:smith.
+	probeDenied bool
+
+	// public is the host the run first reached the box at: its public host.
+	public string
+	// hardened is set once the setup subcommand has run, after which sshd
+	// refuses root logins as ssh-hardening leaves it.
+	hardened bool
+	// closed is set once close-public-ssh has run, after which the firewall
+	// drops every connection to the public host.
+	closed bool
+	// refused is every launch the box turned away, as "<target> <command>".
+	// None of them are in targets or commands, which hold what actually ran.
+	refused []string
 
 	targets  []string
 	commands []string
@@ -67,7 +82,13 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		return err
 	}
 	if name == "scp" && len(args) > 1 {
-		return s.copy(args[len(args)-2], args[len(args)-1])
+		dest := args[len(args)-1]
+		target, _, _ := strings.Cut(dest, ":")
+		if s.refuses(target) {
+			s.refused = append(s.refused, "scp "+dest)
+			return refusedExit{}
+		}
+		return s.copy(args[len(args)-2], dest)
 	}
 	if name != "ssh" || len(args) < 2 {
 		return nil
@@ -77,6 +98,10 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		machine = "x86_64"
 	}
 	target, remoteCmd := args[len(args)-2], args[len(args)-1]
+	if s.refuses(target) {
+		s.refused = append(s.refused, target+" "+remoteCmd)
+		return refusedExit{}
+	}
 	s.targets = append(s.targets, target)
 	s.commands = append(s.commands, remoteCmd)
 	if target == s.deafAt && remoteCmd == "true" {
@@ -91,7 +116,13 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", s.dirs)
 		return err
 	case strings.HasPrefix(remoteCmd, "bash ") && strings.Contains(remoteCmd, " setup --access "):
+		s.hardened = true
 		return s.phaseErr
+	case strings.HasSuffix(remoteCmd, " close-public-ssh"):
+		s.closed = true
+		return nil
+	case remoteCmd == "true" && s.probeDenied && hostOf(target) != s.public:
+		return errors.New("tailscale: ssh access denied")
 	case strings.Contains(remoteCmd, " enroll --hostname "):
 		if s.enrollIP == "" {
 			return nil
@@ -119,6 +150,19 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		return err
 	}
 	return nil
+}
+
+// refuses reports whether the box turns away a launch at target: a root login
+// once hardening has run, and anything at the public host once public SSH is
+// closed. The first target the run reaches is taken as the public host.
+func (s *setupSSH) refuses(target string) bool {
+	if s.public == "" {
+		s.public = hostOf(target)
+	}
+	if s.hardened && strings.HasPrefix(target, "root@") {
+		return true
+	}
+	return s.closed && hostOf(target) == s.public
 }
 
 // copy records an scp of the local file to dest, telling the install stage's
@@ -269,9 +313,6 @@ func TestSetupRegistersTheTailnetAddressAndNotThePublicOne(t *testing.T) {
 	if strings.Contains(got, "203.0.113.10") {
 		t.Errorf("inventory = %q, want the public address never stored in tailscale mode", got)
 	}
-	if ssh.reached("smith@203.0.113.10") {
-		t.Errorf("ssh targets = %v, want the public address never opened as the smith user", ssh.targets)
-	}
 }
 
 func TestSetupNamesTheBoxInTheTailscaleReRunLine(t *testing.T) {
@@ -366,32 +407,156 @@ func TestSetupShipsBootstrapOnceAndRemovesIt(t *testing.T) {
 					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
 				}
 			}
-			rm := "rm -rf -- '" + path.Dir(script) + "'"
-			if !tt.ssh.ranAs(target, rm) {
-				t.Errorf("shipped directory not removed; ran %q", tt.ssh.commands)
+			// Hardening has closed the root login by the time setup returns, so
+			// the script removes its own directory as it exits.
+			removeDir := "--remove-dir '" + path.Dir(script) + "'"
+			if i := commandIndex(tt.ssh.commands, removeDir); i < 0 {
+				t.Errorf("setup was not told to remove its shipped directory; ran %q", tt.ssh.commands)
 			}
 		})
 	}
 }
 
-func TestSetupDrivesTailscaleAgainstTheScriptItShipped(t *testing.T) {
+// accessCopy is the bootstrap.sh the access stage shipped for itself, as the
+// target it was shipped over and its remote path; ok is false when the stage
+// shipped none.
+func (s *setupSSH) accessCopy() (target, script string, ok bool) {
+	for _, c := range s.shippedBootstrap() {
+		if strings.HasPrefix(c, smithLogin+"@") {
+			target, script, _ = strings.Cut(c, ":")
+			return target, script, true
+		}
+	}
+	return "", "", false
+}
+
+// refusedAs is every launch the box turned away whose target was login's.
+func (s *setupSSH) refusedAs(login string) []string {
+	var refused []string
+	for _, r := range s.refused {
+		if strings.HasPrefix(r, login+"@") || strings.HasPrefix(r, "scp "+login+"@") {
+			refused = append(refused, r)
+		}
+	}
+	return refused
+}
+
+// rootTailscaleRun drives a tailscale setup of a fresh box over a root
+// bootstrap login, the run hardening used to cut off halfway through.
+func rootTailscaleRun(t *testing.T, ssh *setupSSH) (stdout, stderr string, code int) {
+	t.Helper()
+	args := append(tailscaleRun(t), "--name", "dev", "root@203.0.113.10")
+	return runSetup(t, t.TempDir(), ssh, args...)
+}
+
+func TestTailscaleSetupOverARootLoginCompletesAfterHardening(t *testing.T) {
+	dir := t.TempDir()
 	ssh := &setupSSH{enrollIP: "100.92.14.7"}
 
 	args := append(tailscaleRun(t), "--name", "dev", "root@203.0.113.10")
-	_, stderr, code := runSetup(t, t.TempDir(), ssh, args...)
+	stdout, stderr, code := runSetup(t, dir, ssh, args...)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	shipped := ssh.shippedBootstrap()
-	if len(shipped) != 1 {
-		t.Fatalf("shipped bootstrap.sh to %q, want exactly once", shipped)
+	if !strings.Contains(stdout, "public SSH closed") {
+		t.Errorf("stdout = %q, want public SSH reported closed", stdout)
 	}
-	target, script, _ := strings.Cut(shipped[0], ":")
-	for _, sub := range []string{"tailscale-status", "enroll", "close-public-ssh"} {
-		if !ssh.ranAgainstAs(target, script, sub) {
-			t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, ssh.commands)
+	if got := inventoryContent(t, dir); !strings.Contains(got, `"smith@100.92.14.7"`) {
+		t.Errorf("inventory = %q, want dev registered under its tailnet address", got)
+	}
+}
+
+func TestTailscaleAccessStageReachesTheBoxAsTheSmithUser(t *testing.T) {
+	ssh := &setupSSH{enrollIP: "100.92.14.7"}
+
+	rootTailscaleRun(t, ssh)
+
+	target, script, ok := ssh.accessCopy()
+	if !ok {
+		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
+	}
+	if target != "smith@203.0.113.10" {
+		t.Errorf("access stage shipped over %q, want the smith user over the public host", target)
+	}
+	for _, sub := range []string{"tailscale-status", "enroll"} {
+		if !ssh.ranAgainstAs("smith@203.0.113.10", script, sub) {
+			t.Errorf("%s did not run as smith@203.0.113.10 against %q; ran %q", sub, script, ssh.commands)
 		}
+	}
+	// Hardening closes the root login, so a stage that tried it was turned
+	// away. Only the runner's own best-effort removal may try, and its script
+	// has already removed that directory itself.
+	for _, r := range ssh.refusedAs("root") {
+		if !strings.Contains(r, " rm -rf -- ") {
+			t.Errorf("the box turned away %q, want no stage to reach it as root", r)
+		}
+	}
+}
+
+func TestTailscaleSetupClosesPublicSSHFromTheTailnet(t *testing.T) {
+	ssh := &setupSSH{enrollIP: "100.92.14.7"}
+
+	rootTailscaleRun(t, ssh)
+
+	_, script, ok := ssh.accessCopy()
+	if !ok {
+		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
+	}
+	if !ssh.ranAgainstAs("smith@100.92.14.7", script, "close-public-ssh") {
+		t.Errorf("close-public-ssh did not run as smith@100.92.14.7; ran %q", ssh.commands)
+	}
+	if refused := ssh.refusedAs(smithLogin); len(refused) > 0 {
+		t.Errorf("the box turned away %q, want nothing to reach the public host after public SSH closed", refused)
+	}
+}
+
+func TestTailscaleAccessStageRemovesItsScriptOverTheTailnet(t *testing.T) {
+	ssh := &setupSSH{enrollIP: "100.92.14.7"}
+
+	rootTailscaleRun(t, ssh)
+
+	_, script, ok := ssh.accessCopy()
+	if !ok {
+		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
+	}
+	rm := "rm -rf -- '" + path.Dir(script) + "'"
+	if !ssh.ranAs("smith@100.92.14.7", rm) {
+		t.Errorf("the access stage's copy was not removed over the tailnet; ran %q", ssh.commands)
+	}
+}
+
+func TestTailscaleAccessStageThatStopsBeforeTheProbePassesCleansUpOverThePublicHost(t *testing.T) {
+	tests := []struct {
+		name  string
+		ssh   *setupSSH
+		names string
+	}{
+		{name: "a denied probe", ssh: &setupSSH{enrollIP: "100.92.14.7", probeDenied: true}, names: "ssh ACL rule"},
+		{name: "an enroll that never reaches Running", ssh: &setupSSH{}, names: "tagOwners"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, stderr, code := rootTailscaleRun(t, tt.ssh)
+
+			if code != 1 {
+				t.Errorf("exit code = %d, want 1 for a partial setup", code)
+			}
+			if !strings.Contains(stderr, tt.names) {
+				t.Errorf("stderr = %q, want it to name the missing %s", stderr, tt.names)
+			}
+			if tt.ssh.closed {
+				t.Error("public SSH closed, want it left open")
+			}
+			_, script, ok := tt.ssh.accessCopy()
+			if !ok {
+				t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", tt.ssh.shippedBootstrap())
+			}
+			rm := "rm -rf -- '" + path.Dir(script) + "'"
+			if !tt.ssh.ranAs("smith@203.0.113.10", rm) {
+				t.Errorf("the access stage's copy was not removed over the public host; ran %q", tt.ssh.commands)
+			}
+		})
 	}
 }
 

@@ -76,7 +76,9 @@ type EnrollOptions struct {
 
 // Box is the box-side surface the tailscale layer drives over smith's ssh
 // connection: read the node's current tailnet state, enroll it, and — as the
-// final mutating step — close public SSH.
+// final mutating step — close public SSH. It reaches the box at the public host
+// until it is moved onto the tailnet, and cleans up after itself at whichever
+// address it reaches by then.
 type Box interface {
 	// CurrentIP reports the box's tailnet IP when the node is already enrolled
 	// and Running, or "" when it is not yet enrolled. It reads state without
@@ -90,6 +92,12 @@ type Box interface {
 	// ClosePublicSSH closes public port 22 on the box — the access layer's last
 	// mutating step, gated on a proven tailnet probe.
 	ClosePublicSSH(ctx context.Context) error
+	// MoveToTailnet sends every later call to the box's tailnet address, once
+	// a live probe has proven that address reaches it.
+	MoveToTailnet(tailnetIP string)
+	// Close removes whatever the box side left on the box, best effort, over
+	// the address it reaches the box at now. It never fails.
+	Close(ctx context.Context)
 }
 
 // AdminStatus is what the admin machine's tailscale status reports: whether this
@@ -179,12 +187,21 @@ func CheckAdminOnTailnet(ctx context.Context, admin Admin) error {
 // reachable over the tailnet is an already-satisfied no-op — no re-enrollment,
 // no fresh single-use key, and no firewall change. Only a box that is not yet
 // enrolled or not yet reachable acquires a key and runs tailscale up.
+//
+// Every call goes to the public host until a probe passes, and to the proven
+// tailnet address after it: public SSH is closed from the door that was just
+// shown to work, and nothing reaches the public host once it is shut. The box
+// side is cleaned up however Establish ends — over the tailnet after a passing
+// probe, and over the still-open public host before one.
 func (a *Access) Establish(ctx context.Context, opts EstablishOptions) (Result, error) {
+	defer a.box.Close(ctx)
+
 	currentIP, err := a.box.CurrentIP(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("read box tailscale status: %w", err)
 	}
 	if currentIP != "" && a.admin.Probe(ctx, currentIP) == nil {
+		a.box.MoveToTailnet(currentIP)
 		return Result{TailnetIP: currentIP, AlreadySatisfied: true, ReRunHost: nodeName(opts.Host)}, nil
 	}
 
@@ -207,6 +224,7 @@ func (a *Access) Establish(ctx context.Context, opts EstablishOptions) (Result, 
 		}
 		return Result{}, fmt.Errorf("probe %s over the tailnet: %w", ip, err)
 	}
+	a.box.MoveToTailnet(ip)
 
 	if err := a.box.ClosePublicSSH(ctx); err != nil {
 		return Result{}, fmt.Errorf("close public ssh: %w", err)

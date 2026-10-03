@@ -8,8 +8,8 @@
 // copy of the script the Runner shipped: setup removes it as it exits, and
 // Close removes it for a run that stopped before setup. In tailscale
 // mode the caller derives the access-aware public-SSH firewall target from
-// SSHConnection and drives the admin-side access layer (see the tailscale
-// package) around Setup.
+// SSHConnection before Setup; the access layer that runs after it (see the
+// tailscale package) ships and drives its own copy as the smith user.
 package bootstrap
 
 import (
@@ -243,16 +243,6 @@ func (r *Runner) SSHConnection(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("probe SSH_CONNECTION: %w", err)
 	}
 	return strings.TrimSpace(out.String()), nil
-}
-
-// ScriptPath is the remote path of the bootstrap.sh this runner shipped, so the
-// tailscale access layer drives its enroll and close-public-ssh subcommands
-// against the same copy. It is empty until Preflight or Setup has shipped it.
-func (r *Runner) ScriptPath() string {
-	if r.shipped.dir == "" {
-		return ""
-	}
-	return r.shipped.Path()
 }
 
 // Close removes the shipped bootstrap.sh from the box, best effort, and does

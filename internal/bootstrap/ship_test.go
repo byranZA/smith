@@ -289,3 +289,24 @@ func TestShipFailedMktempRemovesNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedReachedOverAnotherConnectionIsRemovedThere(t *testing.T) {
+	public, tailnet := &shipConn{}, &shipConn{}
+	s, err := Ship(context.Background(), public, "echo hi")
+	if err != nil {
+		t.Fatalf("Ship() error = %v", err)
+	}
+
+	moved := s.Over(tailnet)
+	moved.Remove(context.Background())
+
+	if moved.Path() != s.Path() {
+		t.Errorf("Over() path = %q, want the same shipped script %q", moved.Path(), s.Path())
+	}
+	if !tailnet.removed(shippedDir(1)) {
+		t.Errorf("tailnet ran %q, want the shipped directory removed over it", tailnet.runs)
+	}
+	if public.removed(shippedDir(1)) {
+		t.Error("the shipped directory was removed over the connection it was shipped over, want only the one it was moved to")
+	}
+}
