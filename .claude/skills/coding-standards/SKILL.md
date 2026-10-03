@@ -21,9 +21,11 @@ Tests verify **behavior through public interfaces**, not implementation details.
 - Describe _what_ the system does, not _how_
 - Survive internal refactors
 - One logical assertion per test
+- Can go _red_: the expected value is a literal worked out by hand from the spec, so a wrong implementation fails the test
 
 ### Bad tests (red flags)
 
+- **Tautological** tests — they pass by construction: recomputing the expected value with the code under test's own logic, asserting a fake returns what it was told to, asserting a constant equals its literal, asserting a constructor stored its arguments
 - Mocking internal collaborators (your own classes/modules)
 - Testing private methods or asserting on call counts/order
 - Verifying through external means (e.g. querying a DB) instead of the interface
@@ -60,7 +62,7 @@ The framework layer should be thin — call the tested function, return/render r
 Do NOT consider work complete until every item passes:
 
 - [ ] **Formatting** — `gofmt -l .` reports nothing on changed files (use `goimports`)
-- [ ] **Doc comments** — every exported identifier and every package has a doc comment beginning with its name
+- [ ] **Comments** — every package and non-test function has a one-or-two-sentence doc comment; function bodies carry no comments (see [GO.md](GO.md#doc-comments))
 - [ ] **Errors handled** — no discarded errors (`_`); failures wrapped with `%w` and context
 - [ ] **Tests** — every logic function has corresponding tests and they pass (`go test ./...`); `-race` for concurrent code
 - [ ] **Vet** — `go vet ./...` is clean on changed packages
