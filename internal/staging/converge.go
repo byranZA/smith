@@ -15,7 +15,7 @@ import (
 
 // Conn is the narrow slice of a connection Converge needs: run a remote
 // command, and run one with a value delivered over stdin. It mirrors
-// bootstrap.Conn — a box is reached the same way here as everywhere else in the
+// shipped.Conn — a box is reached the same way here as everywhere else in the
 // setup domain, and the two methods are all staging can do to one.
 type Conn interface {
 	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error

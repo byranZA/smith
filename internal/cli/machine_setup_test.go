@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
-	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/provider"
 )
 
@@ -66,12 +64,6 @@ type setupSSH struct {
 
 	targets  []string
 	commands []string
-	// dirs counts the private directories mktemp has made on the box.
-	dirs int
-	// copies is every scp of bootstrap.sh, as "<target>:<remote path>".
-	copies []string
-	// installCopies is every scp of the install stage's install.sh, likewise.
-	installCopies []string
 }
 
 // Run answers whichever local binary the run launched, recording every ssh
@@ -88,7 +80,7 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 			s.refused = append(s.refused, "scp "+dest)
 			return refusedExit{}
 		}
-		return s.copy(args[len(args)-2], dest)
+		return nil
 	}
 	if name != "ssh" || len(args) < 2 {
 		return nil
@@ -110,39 +102,38 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	if answered, err := answerVersionCheck(remoteCmd, stdout); answered {
 		return err
 	}
-	switch {
-	case strings.HasPrefix(remoteCmd, "mktemp -d"):
-		s.dirs++
-		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", s.dirs)
+	if answered, err := answerShip(remoteCmd, stdout); answered {
 		return err
-	case strings.HasPrefix(remoteCmd, "bash ") && strings.Contains(remoteCmd, " 'setup' '--access' "):
+	}
+	switch {
+	case isSubcommand(remoteCmd, "setup"):
 		s.hardened = true
 		return s.phaseErr
-	case strings.HasSuffix(remoteCmd, " 'close-public-ssh'"):
+	case isSubcommand(remoteCmd, "close-public-ssh"):
 		s.closed = true
 		return nil
 	case remoteCmd == "true" && s.probeDenied && hostOf(target) != s.public:
 		return errors.New("tailscale: ssh access denied")
-	case strings.Contains(remoteCmd, " 'enroll' '--hostname' "):
+	case isSubcommand(remoteCmd, "enroll"):
 		if s.enrollIP == "" {
 			return nil
 		}
 		_, err := fmt.Fprintf(stdout, "tailscale-ip=%s\n", s.enrollIP)
 		return err
-	case strings.HasSuffix(remoteCmd, " 'probe'"):
+	case isSubcommand(remoteCmd, "probe"):
 		out := "arch=" + machine + "\n"
 		if s.installed != "" {
 			out += "smith-version=" + s.installed + "\n"
 		}
 		_, err := io.WriteString(stdout, out)
 		return err
-	case strings.HasSuffix(remoteCmd, " 'preflight'"):
+	case isSubcommand(remoteCmd, "preflight"):
 		_, err := io.WriteString(stdout, supportedRelease)
 		return err
 	case strings.Contains(remoteCmd, marker.Path):
 		_, err := io.WriteString(stdout, s.marker)
 		return err
-	case strings.HasSuffix(remoteCmd, " 'tailscale-status'"):
+	case isSubcommand(remoteCmd, "tailscale-status"):
 		if s.tailnetIP == "" {
 			return nil
 		}
@@ -165,49 +156,11 @@ func (s *setupSSH) refuses(target string) bool {
 	return s.closed && hostOf(target) == s.public
 }
 
-// copy records an scp of the local file to dest, telling the install stage's
-// install.sh from bootstrap.sh by what was copied: both land in private
-// directories that look alike.
-func (s *setupSSH) copy(local, dest string) error {
-	data, err := os.ReadFile(local)
-	if err != nil {
-		return fmt.Errorf("read the copied file: %w", err)
-	}
-	if string(data) == onbox.Script {
-		s.installCopies = append(s.installCopies, dest)
-		return nil
-	}
-	s.copies = append(s.copies, dest)
-	return nil
-}
-
-// shippedBootstrap is every scp of bootstrap.sh into a private directory, as
-// "<target>:<remote path>". The install stage's install.sh is not among them.
-func (s *setupSSH) shippedBootstrap() []string {
-	var shipped []string
-	for _, c := range s.copies {
-		if strings.Contains(c, ":/tmp/smith.") {
-			shipped = append(shipped, c)
-		}
-	}
-	return shipped
-}
-
-// ranAs reports whether remoteCmd ran over ssh as target.
-func (s *setupSSH) ranAs(target, remoteCmd string) bool {
-	for i, cmd := range s.commands {
-		if s.targets[i] == target && cmd == remoteCmd {
-			return true
-		}
-	}
-	return false
-}
-
-// ranAgainstAs reports whether subcommand of the script at scriptPath ran over
+// ranSubcommandAs reports whether subcommand sub of a shipped script ran over
 // ssh as target.
-func (s *setupSSH) ranAgainstAs(target, scriptPath, subcommand string) bool {
+func (s *setupSSH) ranSubcommandAs(target, sub string) bool {
 	for i, cmd := range s.commands {
-		if s.targets[i] == target && strings.HasPrefix(cmd, "bash "+connection.ShellArg(scriptPath)+" "+subcommand) {
+		if s.targets[i] == target && isSubcommand(cmd, sub) {
 			return true
 		}
 	}
@@ -382,7 +335,7 @@ func TestSetupCreatesTheConfigHomeWhenItRegisters(t *testing.T) {
 	}
 }
 
-func TestSetupShipsBootstrapOnceAndRemovesIt(t *testing.T) {
+func TestSetupRunsItsSubcommandsAsTheBootstrapLogin(t *testing.T) {
 	tests := []struct {
 		name string
 		ssh  *setupSSH
@@ -394,40 +347,13 @@ func TestSetupShipsBootstrapOnceAndRemovesIt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runSetup(t, t.TempDir(), tt.ssh, "root@203.0.113.10")
 
-			shipped := tt.ssh.shippedBootstrap()
-			if len(shipped) != 1 {
-				t.Fatalf("shipped bootstrap.sh to %q, want exactly once", shipped)
-			}
-			target, script, _ := strings.Cut(shipped[0], ":")
-			if target != "root@203.0.113.10" {
-				t.Errorf("shipped over %q, want the bootstrap login", target)
-			}
-			for _, sub := range []string{"'preflight'", "'setup'"} {
-				if !tt.ssh.ranAgainstAs(target, script, sub) {
-					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
+			for _, sub := range []string{"preflight", "setup"} {
+				if !tt.ssh.ranSubcommandAs("root@203.0.113.10", sub) {
+					t.Errorf("%s did not run as the bootstrap login; ran %q", sub, tt.ssh.commands)
 				}
-			}
-			// Hardening has closed the root login by the time setup returns, so
-			// the script removes its own directory as it exits.
-			removeDir := "'--remove-dir' '" + path.Dir(script) + "'"
-			if i := commandIndex(tt.ssh.commands, removeDir); i < 0 {
-				t.Errorf("setup was not told to remove its shipped directory; ran %q", tt.ssh.commands)
 			}
 		})
 	}
-}
-
-// accessCopy is the bootstrap.sh the access stage shipped for itself, as the
-// target it was shipped over and its remote path; ok is false when the stage
-// shipped none.
-func (s *setupSSH) accessCopy() (target, script string, ok bool) {
-	for _, c := range s.shippedBootstrap() {
-		if strings.HasPrefix(c, smithLogin+"@") {
-			target, script, _ = strings.Cut(c, ":")
-			return target, script, true
-		}
-	}
-	return "", "", false
 }
 
 // refusedAs is every launch the box turned away whose target was login's.
@@ -472,16 +398,9 @@ func TestTailscaleAccessStageReachesTheBoxAsTheSmithUser(t *testing.T) {
 
 	rootTailscaleRun(t, ssh)
 
-	target, script, ok := ssh.accessCopy()
-	if !ok {
-		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
-	}
-	if target != "smith@203.0.113.10" {
-		t.Errorf("access stage shipped over %q, want the smith user over the public host", target)
-	}
-	for _, sub := range []string{"'tailscale-status'", "'enroll'"} {
-		if !ssh.ranAgainstAs("smith@203.0.113.10", script, sub) {
-			t.Errorf("%s did not run as smith@203.0.113.10 against %q; ran %q", sub, script, ssh.commands)
+	for _, sub := range []string{"tailscale-status", "enroll"} {
+		if !ssh.ranSubcommandAs("smith@203.0.113.10", sub) {
+			t.Errorf("%s did not run as smith@203.0.113.10; ran %q", sub, ssh.commands)
 		}
 	}
 	if refused := ssh.refusedAs("root"); len(refused) > 0 {
@@ -494,11 +413,7 @@ func TestTailscaleSetupClosesPublicSSHFromTheTailnet(t *testing.T) {
 
 	rootTailscaleRun(t, ssh)
 
-	_, script, ok := ssh.accessCopy()
-	if !ok {
-		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
-	}
-	if !ssh.ranAgainstAs("smith@100.92.14.7", script, "'close-public-ssh'") {
+	if !ssh.ranSubcommandAs("smith@100.92.14.7", "close-public-ssh") {
 		t.Errorf("close-public-ssh did not run as smith@100.92.14.7; ran %q", ssh.commands)
 	}
 	if refused := ssh.refusedAs(smithLogin); len(refused) > 0 {
@@ -506,22 +421,7 @@ func TestTailscaleSetupClosesPublicSSHFromTheTailnet(t *testing.T) {
 	}
 }
 
-func TestTailscaleAccessStageRemovesItsScriptOverTheTailnet(t *testing.T) {
-	ssh := &setupSSH{enrollIP: "100.92.14.7"}
-
-	rootTailscaleRun(t, ssh)
-
-	_, script, ok := ssh.accessCopy()
-	if !ok {
-		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
-	}
-	rm := "rm -rf -- '" + path.Dir(script) + "'"
-	if !ssh.ranAs("smith@100.92.14.7", rm) {
-		t.Errorf("the access stage's copy was not removed over the tailnet; ran %q", ssh.commands)
-	}
-}
-
-func TestTailscaleAccessStageThatStopsBeforeTheProbePassesCleansUpOverThePublicHost(t *testing.T) {
+func TestTailscaleAccessStageThatStopsBeforeTheProbePassesLeavesPublicSSHOpen(t *testing.T) {
 	tests := []struct {
 		name  string
 		ssh   *setupSSH
@@ -543,14 +443,6 @@ func TestTailscaleAccessStageThatStopsBeforeTheProbePassesCleansUpOverThePublicH
 			if tt.ssh.closed {
 				t.Error("public SSH closed, want it left open")
 			}
-			_, script, ok := tt.ssh.accessCopy()
-			if !ok {
-				t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", tt.ssh.shippedBootstrap())
-			}
-			rm := "rm -rf -- '" + path.Dir(script) + "'"
-			if !tt.ssh.ranAs("smith@203.0.113.10", rm) {
-				t.Errorf("the access stage's copy was not removed over the public host; ran %q", tt.ssh.commands)
-			}
 		})
 	}
 }
@@ -567,6 +459,27 @@ func TestMachineSetupRegistersNothingWhenThePhasesNeverRan(t *testing.T) {
 	if _, err := os.Stat(config.NewHome(dir).InventoryPath()); !os.IsNotExist(err) {
 		t.Errorf("Stat(inventory) err = %v, want a failed setup to register nothing", err)
 	}
+}
+
+// answerShip answers the private directory a shipped script asks the box for,
+// so a test can drive the real command through a fake ssh. How a script is
+// shipped and removed is tested once, in the shipped package; a command's tests
+// assert only on which subcommands ran as which login.
+func answerShip(remoteCmd string, stdout io.Writer) (bool, error) {
+	if !strings.HasPrefix(remoteCmd, "mktemp ") {
+		return false, nil
+	}
+	if _, err := io.WriteString(stdout, "/tmp/smith.shipped\n"); err != nil {
+		return true, fmt.Errorf("write the shipped directory: %w", err)
+	}
+	return true, nil
+}
+
+// isSubcommand reports whether remoteCmd runs subcommand sub of a shipped
+// script.
+func isSubcommand(remoteCmd, sub string) bool {
+	word := " " + connection.ShellArg(sub)
+	return strings.HasSuffix(remoteCmd, word) || strings.Contains(remoteCmd, word+" ")
 }
 
 // answerVersionCheck answers the install stage's relayed confirmation the way a

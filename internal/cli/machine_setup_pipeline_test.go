@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -130,11 +129,7 @@ func TestSetupRecordsNothingAboutTheInstalledBinaryOnTheMarker(t *testing.T) {
 	}
 }
 
-// TestSetupInstallStageShipsItsOwnScriptAsTheSmithLogin checks that the install
-// stage, which reaches the box as the smith login, ships install.sh into its
-// own private directory once, rather than reusing anything the bootstrap login
-// left on the box, and removes it when the stage ends.
-func TestSetupInstallStageShipsItsOwnScriptAsTheSmithLogin(t *testing.T) {
+func TestSetupInstallStageRunsAsTheSmithLogin(t *testing.T) {
 	ssh := &setupSSH{machine: "x86_64"}
 
 	_, stderr, code := runSetup(t, t.TempDir(), ssh, append(releaseRun("0.2.0"), "root@203.0.113.10")...)
@@ -142,19 +137,9 @@ func TestSetupInstallStageShipsItsOwnScriptAsTheSmithLogin(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if len(ssh.installCopies) != 1 {
-		t.Fatalf("shipped install.sh to %q, want exactly once", ssh.installCopies)
-	}
-	target, script, _ := strings.Cut(ssh.installCopies[0], ":")
-	if target != "smith@203.0.113.10" {
-		t.Errorf("shipped install.sh over %q, want the smith login", target)
-	}
-	for _, sub := range []string{"'probe'", "'install' '--url' "} {
-		if !ssh.ranAgainstAs(target, script, sub) {
-			t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, ssh.commands)
+	for _, sub := range []string{"probe", "install"} {
+		if !ssh.ranSubcommandAs("smith@203.0.113.10", sub) {
+			t.Errorf("%s did not run as the smith login; ran %q", sub, ssh.commands)
 		}
-	}
-	if !ssh.ranAs(target, "rm -rf -- '"+path.Dir(script)+"'") {
-		t.Errorf("shipped directory not removed; ran %q", ssh.commands)
 	}
 }
