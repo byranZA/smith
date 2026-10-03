@@ -8,6 +8,7 @@ import (
 	"github.com/byranZA/smith/internal/inventory"
 	"github.com/byranZA/smith/internal/onbox"
 	"github.com/byranZA/smith/internal/release"
+	"github.com/byranZA/smith/internal/shipped"
 )
 
 // upgradeCommand is the command a refused convergence leaves the operator with,
@@ -77,7 +78,7 @@ func (c binaryConvergence) converge(ctx context.Context, open func() (onbox.Conn
 	if err != nil {
 		return convergence{}, err
 	}
-	result, err := onbox.NewInstaller(conn, c.box).Converge(ctx, installable)
+	result, err := onbox.NewInstaller(conn, shipped.New(conn, "install.sh", onbox.Script), c.box).Converge(ctx, installable)
 	if err != nil {
 		return convergence{}, fmt.Errorf("converge box %s to smith %s: %w", c.box, installable, err)
 	}

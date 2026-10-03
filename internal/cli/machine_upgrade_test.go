@@ -57,7 +57,7 @@ func (s *upgradeSSH) Run(_ context.Context, name string, args []string, _ io.Rea
 		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", s.dirs)
 		return err
 	}
-	if strings.Contains(remoteCmd, " probe") {
+	if strings.Contains(remoteCmd, " 'probe'") {
 		out := "arch=" + s.machine + "\n"
 		if s.installed != "" {
 			out += "smith-version=" + s.installed + "\n"
@@ -65,7 +65,7 @@ func (s *upgradeSSH) Run(_ context.Context, name string, args []string, _ io.Rea
 		_, err := io.WriteString(stdout, out)
 		return err
 	}
-	if strings.Contains(remoteCmd, " install ") {
+	if strings.Contains(remoteCmd, " 'install' ") {
 		return s.installErr
 	}
 	return nil
@@ -75,7 +75,7 @@ func (s *upgradeSSH) Run(_ context.Context, name string, args []string, _ io.Rea
 // when nothing was downloaded.
 func (s *upgradeSSH) installCommand() string {
 	for _, cmd := range s.commands {
-		if strings.Contains(cmd, " install ") {
+		if strings.Contains(cmd, " 'install' ") {
 			return cmd
 		}
 	}
@@ -300,7 +300,7 @@ func TestUpgradeShipsInstallScriptOnceAndRemovesIt(t *testing.T) {
 			if path.Dir(script) == "/tmp" {
 				t.Errorf("shipped to %q, a fixed name under /tmp, want a private directory", script)
 			}
-			for _, sub := range []string{"probe", "install --url "} {
+			for _, sub := range []string{"'probe'", "'install' '--url' "} {
 				if commandIndex(tt.ssh.commands, "bash "+connection.ShellArg(script)+" "+sub) < 0 {
 					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
 				}

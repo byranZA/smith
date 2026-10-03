@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/shipped"
 )
 
 // installFixture is a box the embedded install.sh runs against: a temp
@@ -396,7 +398,7 @@ func TestConvergeCarriesTheBoxsOwnChecksumMismatchDiagnostic(t *testing.T) {
 		t.Fatalf("seed the box's existing smith: %v", err)
 	}
 
-	_, err := NewInstaller(scriptConn{f: f}, "dev").Converge(context.Background(), "0.2.0")
+	_, err := NewInstaller(scriptConn{f: f}, shipped.New(scriptConn{f: f}, "install.sh", Script), "dev").Converge(context.Background(), "0.2.0")
 
 	if err == nil {
 		t.Fatal("Converge() succeeded on a checksum mismatch, want the failure reported")
@@ -475,7 +477,7 @@ func TestScriptInstallLeavesTheExistingBinaryAndNoStagedFileWhenTheReplacementFa
 func TestConvergeLeavesNothingInTheBoxsTempDirectory(t *testing.T) {
 	f := newInstallFixture(t, "0.2.0", true)
 
-	if _, err := NewInstaller(scriptConn{f: f}, "dev").Converge(context.Background(), "0.2.0"); err == nil {
+	if _, err := NewInstaller(scriptConn{f: f}, shipped.New(scriptConn{f: f}, "install.sh", Script), "dev").Converge(context.Background(), "0.2.0"); err == nil {
 		t.Fatal("Converge() succeeded on a checksum mismatch, want the failure reported")
 	}
 

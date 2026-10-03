@@ -31,8 +31,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/byranZA/smith/internal/bootstrap"
-	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/release"
 )
@@ -53,12 +51,19 @@ var Script string
 // constants agreeing.
 const InstallPath = relay.BoxSmith
 
-// Conn is the narrow slice of a connection the installer needs: ship a file and
-// run a remote command with streamed output. It mirrors bootstrap.Conn — a box
-// is reached the same way here as everywhere else in the setup domain.
+// Conn is the narrow slice of a connection the install stage needs: ship a file
+// and run a remote command with streamed output. It mirrors shipped.Conn — a
+// box is reached the same way here as everywhere else in the setup domain.
 type Conn interface {
 	Copy(ctx context.Context, localPath, remotePath string) error
 	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+}
+
+// ShippedScript is the shipped install.sh an Installer drives by subcommand: it
+// ships on its first run and is removed again on Close.
+type ShippedScript interface {
+	Run(ctx context.Context, stdout, stderr io.Writer, sub string, args ...string) error
+	Close(ctx context.Context)
 }
 
 // Result is what converging the binary did: the version the box runs
@@ -94,15 +99,17 @@ func (r Result) Report() string {
 
 // Installer converges the smith binary on one box over a connection.
 type Installer struct {
-	conn Conn
-	box  string
+	conn   relay.Conn
+	script ShippedScript
+	box    string
 }
 
-// NewInstaller returns an Installer that reaches the box over conn. The box is
-// the name or address the operator typed, named back in what the run reports so
-// a failure is theirs to act on rather than an ssh destination to decode.
-func NewInstaller(conn Conn, box string) *Installer {
-	return &Installer{conn: conn, box: box}
+// NewInstaller returns an Installer that probes and installs through script and
+// confirms the result by relaying over conn. The box is the name or address the
+// operator typed, named back in what the run reports so a failure is theirs to
+// act on rather than an ssh destination to decode.
+func NewInstaller(conn relay.Conn, script ShippedScript, box string) *Installer {
+	return &Installer{conn: conn, script: script, box: box}
 }
 
 // Converge brings the box's smith binary to version, and reports what it did.
@@ -119,17 +126,12 @@ func NewInstaller(conn Conn, box string) *Installer {
 // by construction rather than by policy. Whether that version has a release to
 // fetch at all is settled before a connection is opened, by release.Installable.
 //
-// install.sh is shipped once per run, into a directory private to this run and
-// this login, and every step runs that copy. It is removed however the run
+// Every step runs the one shipped install.sh, which is closed however the run
 // ends, so nothing of this run's is left on the box to block a later one.
 func (i *Installer) Converge(ctx context.Context, version string) (Result, error) {
-	shipped, err := bootstrap.Ship(ctx, i.conn, Script)
-	if err != nil {
-		return Result{}, fmt.Errorf("ship the install script: %w", err)
-	}
-	defer shipped.Remove(ctx)
+	defer i.script.Close(ctx)
 
-	state, err := i.probe(ctx, shipped.Path())
+	state, err := i.probe(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -142,10 +144,8 @@ func (i *Installer) Converge(ctx context.Context, version string) (Result, error
 	}
 
 	asset := release.For(version, arch)
-	cmd := fmt.Sprintf("bash %s install --url %s --checksums-url %s",
-		connection.ShellArg(shipped.Path()), connection.ShellArg(asset.URL), connection.ShellArg(asset.ChecksumsURL))
 	var diagnostic strings.Builder
-	if err := i.conn.Run(ctx, cmd, io.Discard, &diagnostic); err != nil {
+	if err := i.script.Run(ctx, io.Discard, &diagnostic, "install", "--url", asset.URL, "--checksums-url", asset.ChecksumsURL); err != nil {
 		return Result{}, fmt.Errorf("install smith %s on the box: %w", version, withBoxDiagnostic(err, diagnostic.String()))
 	}
 	if err := i.confirm(ctx, version); err != nil {
@@ -223,16 +223,15 @@ type boxState struct {
 }
 
 // probe reads the box's machine hardware name and installed smith version by
-// running the shipped install script at script. It mutates nothing: it is the
+// running the shipped install script's probe subcommand. It mutates nothing: it is the
 // check half of check-before-change, and a box that already matches never gets
 // past it.
 //
 // It declares no relaying version — see confirm, which explains why the two
 // halves of this stage differ on that.
-func (i *Installer) probe(ctx context.Context, script string) (boxState, error) {
+func (i *Installer) probe(ctx context.Context) (boxState, error) {
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s probe", connection.ShellArg(script))
-	if err := i.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
+	if err := i.script.Run(ctx, &out, io.Discard, "probe"); err != nil {
 		return boxState{}, fmt.Errorf("probe the box's smith: %w", err)
 	}
 	return parseProbe(out.String()), nil

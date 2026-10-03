@@ -129,7 +129,7 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		}
 		_, err := fmt.Fprintf(stdout, "tailscale-ip=%s\n", s.enrollIP)
 		return err
-	case strings.HasSuffix(remoteCmd, " probe"):
+	case strings.HasSuffix(remoteCmd, " 'probe'"):
 		out := "arch=" + machine + "\n"
 		if s.installed != "" {
 			out += "smith-version=" + s.installed + "\n"
