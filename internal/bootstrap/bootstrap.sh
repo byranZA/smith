@@ -489,10 +489,13 @@ selftest_strip_probe_lines() {
 
 # remove_shipped_dir removes the directory named by --remove-dir, and nothing
 # when none was named. It is setup's EXIT trap, so it keeps the exit status it
-# was called with.
+# was called with: the removal is best effort, and a cleanup that fails never
+# fails the command.
 remove_shipped_dir() {
   local rc=$?
-  [ -n "$REMOVE_DIR" ] && rm -rf -- "$REMOVE_DIR"
+  if [ -n "$REMOVE_DIR" ]; then
+    rm -rf -- "$REMOVE_DIR" || true
+  fi
   return "$rc"
 }
 

@@ -117,3 +117,70 @@ func TestScriptPreflightKeepsTheShippedCopyForSetup(t *testing.T) {
 		t.Errorf("shipped directory %q still exists after setup (stat err = %v)", shippedDir, err)
 	}
 }
+
+// TestScriptSetupKeepsItsExitStatusWhenRemovalFails proves a shipped-directory
+// removal that fails never changes setup's result: a completed setup still
+// exits zero, and a failed one keeps the status its phase failed with.
+func TestScriptSetupKeepsItsExitStatusWhenRemovalFails(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tests := []struct {
+		name string
+		ssh  string
+	}{
+		{name: "all phases complete", ssh: "#!/usr/bin/env bash\nexit 0\n"},
+		{
+			name: "a phase fails mid-run",
+			ssh:  "#!/usr/bin/env bash\necho 'smith@localhost: Permission denied (publickey).' >&2\nexit 255\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// exitCode runs setup against a fresh shipped copy and returns its
+			// exit status, with the shipped directory's removal failing when
+			// removalFails is set.
+			exitCode := func(removalFails bool) int {
+				t.Helper()
+				dir, _, env := scriptFixture(t)
+				binDir := filepath.Join(dir, "bin")
+				writeFakeBin(t, binDir, "ssh", tt.ssh)
+				shippedDir, scriptPath := shippedCopy(t, dir)
+				if removalFails {
+					// The fake rm refuses only the shipped directory, so every
+					// other removal the phases make still works. Its status, 7,
+					// differs from any phase failure, so a replaced status shows.
+					rmPath, err := exec.LookPath("rm")
+					if err != nil {
+						t.Fatalf("look up rm: %v", err)
+					}
+					writeFakeBin(t, binDir, "rm", "#!/usr/bin/env bash\n"+
+						"for arg in \"$@\"; do\n"+
+						"  if [ \"$arg\" = '"+shippedDir+"' ]; then echo 'rm: permission denied' >&2; exit 7; fi\n"+
+						"done\n"+
+						"exec '"+rmPath+"' \"$@\"\n")
+				}
+				cmd := exec.Command(bash, scriptPath, "setup", "--access", "public", "--smith-version", "9.9.9-test",
+					"--remove-dir", shippedDir)
+				cmd.Env = append(os.Environ(), env...)
+				out, err := cmd.CombinedOutput()
+				code := cmd.ProcessState.ExitCode()
+				if err != nil && code < 0 {
+					t.Fatalf("setup did not run: %v\n%s", err, out)
+				}
+				if removalFails {
+					if _, err := os.Stat(scriptPath); err != nil {
+						t.Fatalf("fake rm did not refuse the shipped directory: %v\n%s", err, out)
+					}
+				}
+				return code
+			}
+
+			want := exitCode(false)
+			if got := exitCode(true); got != want {
+				t.Errorf("setup exit status with failing removal = %d, want %d (status without the failure)", got, want)
+			}
+		})
+	}
+}
