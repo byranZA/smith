@@ -9,15 +9,14 @@ import (
 	"testing"
 )
 
-// recordingExec is a fake for the process-launch boundary. It records the last
-// invocation and drains stdin so callers can assert on what was delivered.
+// recordingExec records the last launch and plays back canned output and exit code.
 type recordingExec struct {
-	name     string
-	args     []string
-	stdin    string
-	stdout   string // written to the caller's stdout writer
-	stderr   string // written to the caller's stderr writer
-	exitCode int    // when non-zero, Run returns a fakeExit with this code
+	name        string
+	args        []string
+	stdin       string
+	replyStdout string
+	replyStderr string
+	exitCode    int
 }
 
 func (r *recordingExec) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -30,13 +29,13 @@ func (r *recordingExec) Run(_ context.Context, name string, args []string, stdin
 		}
 		r.stdin = string(b)
 	}
-	if r.stdout != "" {
-		if _, err := io.WriteString(stdout, r.stdout); err != nil {
+	if r.replyStdout != "" {
+		if _, err := io.WriteString(stdout, r.replyStdout); err != nil {
 			return err
 		}
 	}
-	if r.stderr != "" {
-		if _, err := io.WriteString(stderr, r.stderr); err != nil {
+	if r.replyStderr != "" {
+		if _, err := io.WriteString(stderr, r.replyStderr); err != nil {
 			return err
 		}
 	}
@@ -51,50 +50,70 @@ type fakeExit struct{ code int }
 func (e fakeExit) Error() string { return "exit status" }
 func (e fakeExit) ExitCode() int { return e.code }
 
-func TestRunBuildsSSHCommandAndStreamsOutput(t *testing.T) {
-	fake := &recordingExec{stdout: "hello from box\n"}
+func TestRunLaunchesTheRemoteCommandOverSSH(t *testing.T) {
+	t.Parallel()
+	fake := &recordingExec{}
+	c := New("root@box", fake)
+
+	if err := c.Run(context.Background(), "uname -a", io.Discard, io.Discard); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+
+	if got := fake.name + " " + strings.Join(fake.args, " "); !strings.HasPrefix(got, "ssh ") || !strings.Contains(got, "root@box") || !strings.HasSuffix(got, "uname -a") {
+		t.Errorf("launched %q, want ssh with target root@box and trailing remote command", got)
+	}
+}
+
+func TestRunStreamsTheRemoteOutput(t *testing.T) {
+	t.Parallel()
+	fake := &recordingExec{replyStdout: "hello from box\n"}
 	c := New("root@box", fake)
 
 	var out bytes.Buffer
 	if err := c.Run(context.Background(), "uname -a", &out, io.Discard); err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("Run() error = %v, want nil", err)
 	}
 
-	if fake.name != "ssh" {
-		t.Errorf("launched %q, want ssh", fake.name)
-	}
-	if got := strings.Join(fake.args, " "); !strings.Contains(got, "root@box") || !strings.HasSuffix(got, "uname -a") {
-		t.Errorf("ssh args = %q, want target root@box and trailing remote command", got)
-	}
 	if out.String() != "hello from box\n" {
 		t.Errorf("streamed output = %q, want %q", out.String(), "hello from box\n")
 	}
 }
 
-func TestRunWithInputDeliversValueOverStdinNotArgv(t *testing.T) {
+func TestRunWithInputDeliversValueOverStdin(t *testing.T) {
+	t.Parallel()
 	fake := &recordingExec{}
 	c := New("smith@box", fake)
 
-	secret := "tskey-abc123"
-	err := c.RunWithInput(context.Background(), "cat", strings.NewReader(secret), io.Discard, io.Discard)
-	if err != nil {
-		t.Fatalf("RunWithInput() error = %v", err)
+	if err := c.RunWithInput(context.Background(), "cat", strings.NewReader("tskey-abc123"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("RunWithInput() error = %v, want nil", err)
 	}
 
-	if fake.stdin != secret {
-		t.Errorf("stdin = %q, want %q", fake.stdin, secret)
+	if fake.stdin != "tskey-abc123" {
+		t.Errorf("stdin = %q, want %q", fake.stdin, "tskey-abc123")
 	}
-	if strings.Contains(strings.Join(fake.args, " "), secret) {
-		t.Errorf("secret leaked into argv %q", fake.args)
+}
+
+func TestRunWithInputKeepsValueOutOfArgv(t *testing.T) {
+	t.Parallel()
+	fake := &recordingExec{}
+	c := New("smith@box", fake)
+
+	if err := c.RunWithInput(context.Background(), "cat", strings.NewReader("tskey-abc123"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("RunWithInput() error = %v, want nil", err)
+	}
+
+	if strings.Contains(strings.Join(fake.args, " "), "tskey-abc123") {
+		t.Errorf("argv = %q, want it free of the secret", fake.args)
 	}
 }
 
 func TestCopyBuildsScpCommand(t *testing.T) {
+	t.Parallel()
 	fake := &recordingExec{}
 	c := New("root@box", fake)
 
 	if err := c.Copy(context.Background(), "/tmp/local.sh", "/tmp/remote.sh"); err != nil {
-		t.Fatalf("Copy() error = %v", err)
+		t.Fatalf("Copy() error = %v, want nil", err)
 	}
 
 	if fake.name != "scp" {
@@ -107,7 +126,8 @@ func TestCopyBuildsScpCommand(t *testing.T) {
 }
 
 func TestCopyFailureCarriesTheBoxError(t *testing.T) {
-	fake := &recordingExec{exitCode: 1, stderr: "scp: /tmp/x/script.sh: No space left on device\n"}
+	t.Parallel()
+	fake := &recordingExec{exitCode: 1, replyStderr: "scp: /tmp/x/script.sh: No space left on device\n"}
 	c := New("root@box", fake)
 
 	err := c.Copy(context.Background(), "/tmp/local.sh", "/tmp/x/script.sh")
@@ -117,6 +137,7 @@ func TestCopyFailureCarriesTheBoxError(t *testing.T) {
 }
 
 func TestRunClassifiesConnectFailure(t *testing.T) {
+	t.Parallel()
 	fake := &recordingExec{exitCode: 255}
 	c := New("root@unreachable", fake)
 
@@ -127,6 +148,7 @@ func TestRunClassifiesConnectFailure(t *testing.T) {
 }
 
 func TestRunNonConnectFailureIsNotConnectError(t *testing.T) {
+	t.Parallel()
 	fake := &recordingExec{exitCode: 1}
 	c := New("root@box", fake)
 

@@ -9,10 +9,6 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 )
 
-// TestSystemExecInheritsTheOperatorsEnvironment locks in how a provider CLI
-// reaches its credential: smith never reads, resolves or stages a token, it
-// launches the command inside the operator's own environment and lets the CLI
-// pick the value up there itself.
 func TestSystemExecInheritsTheOperatorsEnvironment(t *testing.T) {
 	const token = "hcloud-token-a1b2c3d4"
 	t.Setenv("SMITH_TEST_TOKEN", token)
@@ -22,17 +18,15 @@ func TestSystemExecInheritsTheOperatorsEnvironment(t *testing.T) {
 		[]string{"-c", `printf %s "$SMITH_TEST_TOKEN"`}, nil, &stdout, &stderr)
 
 	if err != nil {
-		t.Fatalf("Run() err = %v (stderr: %s)", err, stderr.String())
+		t.Fatalf("Run() err = %v (stderr: %s), want nil", err, stderr.String())
 	}
 	if got := strings.TrimSpace(stdout.String()); got != token {
 		t.Errorf("subprocess read %q from the environment, want the operator's own value", got)
 	}
 }
 
-// TestExecReportsABinaryThatIsNotOnPath locks in the one path Exec can return
-// on: a successful exec leaves no caller to return to, so the only answer it
-// ever gives is why the replacement did not happen.
 func TestExecReportsABinaryThatIsNotOnPath(t *testing.T) {
+	t.Parallel()
 	err := connection.System().Exec("smith-no-such-binary", []string{"--help"})
 
 	if err == nil {

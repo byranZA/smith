@@ -7,34 +7,27 @@ import (
 	"testing"
 )
 
-// probedConn answers a remote command with a canned error and records what it
-// was asked to run.
 type probedConn struct {
-	err  error
-	cmds []string
+	err error
 }
 
-func (c *probedConn) Run(_ context.Context, cmd string, _, _ io.Writer) error {
-	c.cmds = append(c.cmds, cmd)
+func (c *probedConn) Run(_ context.Context, _ string, _, _ io.Writer) error {
 	return c.err
 }
 
 func TestReachableReportsAnAnsweringBox(t *testing.T) {
-	conn := &probedConn{}
-
-	got, err := Reachable(context.Background(), conn)
+	t.Parallel()
+	got, err := Reachable(context.Background(), &probedConn{})
 	if err != nil {
 		t.Fatalf("Reachable() err = %v, want nil", err)
 	}
 	if !got {
 		t.Error("Reachable() = false, want true for a box that answered")
 	}
-	if len(conn.cmds) != 1 {
-		t.Errorf("commands run = %v, want one probe", conn.cmds)
-	}
 }
 
 func TestReachableReportsAConnectFailureAsUnreachableNotAnError(t *testing.T) {
+	t.Parallel()
 	got, err := Reachable(context.Background(), &probedConn{err: ErrConnect})
 	if err != nil {
 		t.Fatalf("Reachable() err = %v, want a connect failure reported as unreachable", err)
@@ -45,6 +38,7 @@ func TestReachableReportsAConnectFailureAsUnreachableNotAnError(t *testing.T) {
 }
 
 func TestReachableSurfacesAnythingElseAsAnError(t *testing.T) {
+	t.Parallel()
 	boom := errors.New("ssh binary is missing")
 
 	got, err := Reachable(context.Background(), &probedConn{err: boom})

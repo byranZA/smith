@@ -1,10 +1,7 @@
 // Package connection is the one exec boundary smith uses to reach a box: a thin
-// wrapper over the system ssh and scp binaries. It runs a remote command with
-// streamed output, delivers a value to a remote command over stdin (never as a
-// command-line argument, so secrets do not leak into argv or process listings),
-// and copies a local file to the box with scp.
-//
-// It assumes ssh and scp are on PATH (Windows 10 1809+ and 11 ship OpenSSH).
+// wrapper over the ssh and scp binaries on PATH. It runs remote commands with
+// streamed output, delivers values over stdin rather than argv, and copies
+// local files to the box.
 package connection
 
 import (
@@ -70,6 +67,8 @@ func (s *SSH) RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reade
 	return s.run(ctx, remoteCmd, stdin, stdout, stderr)
 }
 
+// run executes remoteCmd over ssh with the given stdin, classifying a failure
+// to connect as ErrConnect.
 func (s *SSH) run(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	args := append(append([]string{}, defaultSSHOptions...), s.target, remoteCmd)
 	if err := s.exec.Run(ctx, "ssh", args, stdin, stdout, stderr); err != nil {
@@ -102,10 +101,8 @@ func (s *SSH) Copy(ctx context.Context, localPath, remotePath string) error {
 	return nil
 }
 
-// ShellArg single-quotes s so it interpolates as one argument in a remote shell
-// command, keeping the value out of any shell-special interpretation. It is the
-// escaping primitive callers use when building the command strings passed to
-// Run and RunWithInput.
+// ShellArg single-quotes s so it interpolates as one literal argument in the
+// remote shell commands passed to Run and RunWithInput.
 func ShellArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
