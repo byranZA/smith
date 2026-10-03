@@ -37,15 +37,15 @@ type Clock interface {
 	After(d time.Duration) <-chan time.Time
 }
 
-// SystemDialer returns the Dialer backed by real TCP connections.
-func SystemDialer() Dialer { return systemDialer{} }
+// SystemDialer returns the TCPDialer backed by real TCP connections.
+func SystemDialer() TCPDialer { return TCPDialer{} }
 
-// systemDialer dials real TCP addresses, closing each connection immediately:
+// TCPDialer dials real TCP addresses, closing each connection immediately:
 // the poll asks whether the port answers, never talks to what is behind it.
-type systemDialer struct{}
+type TCPDialer struct{}
 
 // Dial opens a TCP connection to address and closes it again.
-func (systemDialer) Dial(ctx context.Context, address string) error {
+func (TCPDialer) Dial(ctx context.Context, address string) error {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
@@ -58,16 +58,8 @@ func (systemDialer) Dial(ctx context.Context, address string) error {
 }
 
 // WaitForSSH dials port 22 at addr until sshd accepts a connection, giving up
-// after timeout. It reports nil the moment the port answers.
-//
-// No provider CLI waits for sshd, so readiness is always smith's own poll: a
-// box the provider calls ready refuses connections for some seconds while it
-// boots. The poll is deliberately not provider-specific — a box the operator
-// brought themselves becomes reachable the same way.
-//
-// Giving up, and being interrupted, both name the address the poll had
-// reached, so a caller that knows the box id can report a box that exists and
-// is being billed rather than losing it inside an error message.
+// after timeout. Giving up and being interrupted both name the address, so a
+// caller can still report a box that exists and is being billed.
 func WaitForSSH(ctx context.Context, dialer Dialer, clock Clock, addr string, timeout time.Duration) error {
 	address := net.JoinHostPort(addr, sshPort)
 	deadline := clock.Now().Add(timeout)
