@@ -7,16 +7,14 @@ import (
 	"testing"
 )
 
-// shippedCopy places the embedded script in its own directory inside the
-// fixture, as Ship does on a box, and returns that directory and the script's
-// path within it.
+// shippedCopy places the embedded script in its own directory, as the shipped package does.
 func shippedCopy(t *testing.T, fixtureDir string) (shippedDir, scriptPath string) {
 	t.Helper()
 	shippedDir = filepath.Join(fixtureDir, "smith.shipped")
 	if err := os.Mkdir(shippedDir, 0o700); err != nil {
 		t.Fatalf("mkdir shipped dir: %v", err)
 	}
-	scriptPath = filepath.Join(shippedDir, shippedName)
+	scriptPath = filepath.Join(shippedDir, "script.sh")
 	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
 		t.Fatalf("write shipped script: %v", err)
 	}

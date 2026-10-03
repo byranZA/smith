@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/shipped"
 )
 
 // installFixture is a box the embedded install.sh runs against: a temp
@@ -374,9 +376,15 @@ func (c scriptConn) Copy(_ context.Context, localPath, remotePath string) error 
 
 // Run executes a remote command against the fixture box, streaming its output.
 func (c scriptConn) Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error {
+	return c.RunWithInput(ctx, remoteCmd, nil, stdout, stderr)
+}
+
+// RunWithInput is Run with stdin fed to the remote command.
+func (c scriptConn) RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, "bash", "-c", remoteCmd)
 	cmd.Env = c.f.env
 	cmd.Dir = c.f.dir
+	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -396,7 +404,7 @@ func TestConvergeCarriesTheBoxsOwnChecksumMismatchDiagnostic(t *testing.T) {
 		t.Fatalf("seed the box's existing smith: %v", err)
 	}
 
-	_, err := NewInstaller(scriptConn{f: f}, "dev").Converge(context.Background(), "0.2.0")
+	_, err := NewInstaller(scriptConn{f: f}, shipped.New(scriptConn{f: f}, "install.sh", Script), "dev").Converge(context.Background(), "0.2.0")
 
 	if err == nil {
 		t.Fatal("Converge() succeeded on a checksum mismatch, want the failure reported")
@@ -475,7 +483,7 @@ func TestScriptInstallLeavesTheExistingBinaryAndNoStagedFileWhenTheReplacementFa
 func TestConvergeLeavesNothingInTheBoxsTempDirectory(t *testing.T) {
 	f := newInstallFixture(t, "0.2.0", true)
 
-	if _, err := NewInstaller(scriptConn{f: f}, "dev").Converge(context.Background(), "0.2.0"); err == nil {
+	if _, err := NewInstaller(scriptConn{f: f}, shipped.New(scriptConn{f: f}, "install.sh", Script), "dev").Converge(context.Background(), "0.2.0"); err == nil {
 		t.Fatal("Converge() succeeded on a checksum mismatch, want the failure reported")
 	}
 

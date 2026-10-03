@@ -8,7 +8,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/tailscale"
@@ -30,27 +29,34 @@ type Gathered struct {
 	Facts Facts
 }
 
-// Prober gathers a box's live facts read-only. It ships bootstrap.sh, runs its
-// probe subcommand as the smith user, and — in tailscale mode — runs an
-// admin-side ssh-over-tailnet probe to complete the access facts. It mutates
-// nothing: probing is a query, never a remediation.
+// ShippedScript is the shipped bootstrap.sh a Prober drives by subcommand: it
+// ships on its first run and is removed again on Close.
+type ShippedScript interface {
+	Run(ctx context.Context, stdout, stderr io.Writer, sub string, args ...string) error
+	Close(ctx context.Context)
+}
+
+// Prober gathers a box's live facts read-only by running bootstrap.sh's probe
+// subcommand as the smith user and, in tailscale mode, an admin-side
+// ssh-over-tailnet probe; it never remediates.
 type Prober struct {
-	conn  bootstrap.Conn
-	admin tailscale.Admin
+	conn   Conn
+	script ShippedScript
+	admin  tailscale.Admin
 }
 
-// NewProber returns a Prober that reaches the box over conn and, in tailscale
-// mode, runs the tailnet reach probe over admin.
-func NewProber(conn bootstrap.Conn, admin tailscale.Admin) *Prober {
-	return &Prober{conn: conn, admin: admin}
+// NewProber returns a Prober that checks reach over conn, runs the probe
+// through script and, in tailscale mode, the tailnet reach probe over admin.
+func NewProber(conn Conn, script ShippedScript, admin tailscale.Admin) *Prober {
+	return &Prober{conn: conn, script: script, admin: admin}
 }
 
-// Gather probes the box: it checks reachability, ships bootstrap.sh into a
-// private directory, runs the read-only probe against it (removing it again
-// however Gather returns), decodes the marker, and — in tailscale mode with a
-// tailnet IP — probes tailnet reach from the admin side. A connect failure is
-// reported as an unreachable Gathered rather than a Go error; a Go error is
-// returned only for unexpected infrastructure failures or a malformed marker.
+// Gather probes the box: it checks reachability, runs the read-only probe
+// subcommand (closing the shipped script however Gather returns), decodes the
+// marker, and — in tailscale mode with a tailnet IP — probes tailnet reach from
+// the admin side. A connect failure is reported as an unreachable Gathered
+// rather than a Go error; a Go error is returned only for a script that could
+// not be shipped or run, or a malformed marker.
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 	reachable, err := connection.Reachable(ctx, p.conn)
 	if err != nil {
@@ -60,18 +66,9 @@ func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
 		return Gathered{Reachable: false}, nil
 	}
 
-	shipped, err := bootstrap.Ship(ctx, p.conn, bootstrap.Script)
-	if err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return Gathered{Reachable: false}, nil
-		}
-		return Gathered{}, fmt.Errorf("ship bootstrap script: %w", err)
-	}
-	defer shipped.Remove(ctx)
-
+	defer p.script.Close(ctx)
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s probe", connection.ShellArg(shipped.Path()))
-	if err := p.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
+	if err := p.script.Run(ctx, &out, io.Discard, "probe"); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Gathered{Reachable: false}, nil
 		}

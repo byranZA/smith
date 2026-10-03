@@ -94,9 +94,11 @@ door, and over the tailnet after.
 _Avoid_: phase (reserved for the base-layer sequence), step.
 
 **Shipped script**:
-A script smith copies onto the box to drive one command — `bootstrap.sh` for setup and status,
-`install.sh` for the install stage — and removes when that command ends, or sooner when the stage
-or subcommand that shipped it finishes with it. Unlike the staged
+A script smith copies onto the box to drive one command — `bootstrap.sh` for setup's phases, the
+tailscale access stage and status, `install.sh` for the install stage — and removes when that
+command ends, or sooner when the stage or subcommand that shipped it finishes with it. smith drives
+it by **subcommand**: each call runs one named subcommand of the script (`preflight`, `setup`,
+`enroll`, `probe`, …), never the script as a whole. Unlike the staged
 blueprint, the staged env or a placement, it is **not box state**: it belongs to the login that
 shipped it, never outlives the command, and no two commands or logins share one. A cleanup that
 fails never fails the command

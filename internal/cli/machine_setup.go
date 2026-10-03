@@ -16,6 +16,7 @@ import (
 	"github.com/byranZA/smith/internal/inventory"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/secret"
+	"github.com/byranZA/smith/internal/shipped"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
@@ -78,11 +79,9 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 			conn := connection.New(target, exec)
-			// The runner ships bootstrap.sh once for every subcommand this run
-			// drives over the bootstrap login, and the box keeps no copy of it
-			// once setup ends, however it ends.
-			runner := bootstrap.NewRunner(conn)
-			defer runner.Close(ctx)
+			script := shipped.New(conn, "bootstrap.sh", bootstrap.Script)
+			defer script.Close(ctx)
+			runner := bootstrap.NewRunner(conn, script)
 
 			// Tailscale up-front, before anything on the box is mutated: acquire the
 			// auth key, refuse if this admin machine is not itself on the tailnet

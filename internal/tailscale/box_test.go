@@ -5,209 +5,133 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 
-	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/shipped"
 )
 
-// stubScript stands in for the shipped bootstrap.sh: it answers each
-// subcommand the box driver runs and leaves a trace beside itself, so a test
-// can tell the copied file is the one that ran.
-const stubScript = `case "$1" in
-tailscale-status) echo tailscale-ip=100.64.0.1 ;;
-enroll) read -r key; [ "$key" = tskey-test ] && echo tailscale-ip=100.64.0.2 ;;
-close-public-ssh) touch "$(dirname "$0")/closed" ;;
-esac
-`
+// address is the box reached at one host; the driver only hands it to its
+// shipped script, so it never answers a call itself.
+type address string
 
-// localBox is one box reachable at several addresses. Each address it is
-// dialled at runs commands in a real local bash, as the box's login shell
-// would, and records which address every call travelled to. Shipped
-// directories are made under a TMPDIR holding whitespace, an apostrophe and
-// shell metacharacters, as a box's may. A copy of bootstrap.sh lands as
-// stubScript, so the box answers without root.
-type localBox struct {
-	bash   string
-	tmpdir string
-	// calls is every call made, as "<host> <command>"; a copy is "<host> scp".
-	calls []string
+func (a address) Copy(context.Context, string, string) error {
+	return fmt.Errorf("copy over %s: the shipped script owns copies", a)
 }
 
-func newLocalBox(t *testing.T) *localBox {
-	t.Helper()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not available")
-	}
-	tmpdir := filepath.Join(t.TempDir(), "smith's dir; $HOME")
-	if err := os.Mkdir(tmpdir, 0o700); err != nil {
-		t.Fatalf("make the box's TMPDIR: %v", err)
-	}
-	return &localBox{bash: bash, tmpdir: tmpdir}
+func (a address) Run(context.Context, string, io.Writer, io.Writer) error {
+	return fmt.Errorf("run over %s: the shipped script owns runs", a)
 }
 
-// dial reaches the box at host.
-func (b *localBox) dial(host string) Remote { return boxAt{box: b, host: host} }
-
-// ranAt reports whether a command containing want ran at host.
-func (b *localBox) ranAt(host, want string) bool {
-	for _, c := range b.calls {
-		if strings.HasPrefix(c, host+" ") && strings.Contains(c, want) {
-			return true
-		}
-	}
-	return false
+func (a address) RunWithInput(context.Context, string, io.Reader, io.Writer, io.Writer) error {
+	return fmt.Errorf("run over %s: the shipped script owns runs", a)
 }
 
-// shippedDirs lists what the box's TMPDIR holds.
-func (b *localBox) shippedDirs(t *testing.T) []string {
-	t.Helper()
-	entries, err := os.ReadDir(b.tmpdir)
-	if err != nil {
-		t.Fatalf("read the box's TMPDIR: %v", err)
-	}
-	var dirs []string
-	for _, e := range entries {
-		dirs = append(dirs, e.Name())
-	}
-	return dirs
+func dialAddress(host string) shipped.Conn { return address(host) }
+
+// bootstrapAt returns a recording bootstrap.sh that starts over the public host.
+func bootstrapAt(replies map[string]shipped.Reply) *shipped.Fake {
+	return &shipped.Fake{Conn: address("203.0.113.10"), Replies: replies}
 }
 
-// boxAt is the box reached at one address.
-type boxAt struct {
-	box  *localBox
-	host string
-}
+func TestBoxDriverReadsTheTailnetIPFromTailscaleStatus(t *testing.T) {
+	script := bootstrapAt(map[string]shipped.Reply{"tailscale-status": {Stdout: "tailscale-ip=100.64.0.1\n"}})
 
-func (a boxAt) Copy(_ context.Context, localPath, remotePath string) error {
-	a.box.calls = append(a.box.calls, a.host+" scp")
-	data, err := os.ReadFile(localPath)
-	if err != nil {
-		return fmt.Errorf("read the copied file: %w", err)
-	}
-	if string(data) != bootstrap.Script {
-		return errors.New("copied something other than bootstrap.sh")
-	}
-	if err := os.WriteFile(remotePath, []byte(stubScript), 0o600); err != nil {
-		return fmt.Errorf("write the shipped script: %w", err)
-	}
-	return nil
-}
-
-func (a boxAt) Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error {
-	return a.RunWithInput(ctx, remoteCmd, nil, stdout, stderr)
-}
-
-func (a boxAt) RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
-	a.box.calls = append(a.box.calls, a.host+" "+remoteCmd)
-	if strings.HasPrefix(remoteCmd, "mktemp -d") {
-		// The box's mktemp is GNU's, which the host's may not be: make the
-		// private directory under the box's TMPDIR as it would.
-		dir, err := os.MkdirTemp(a.box.tmpdir, "smith.")
-		if err != nil {
-			return fmt.Errorf("make the shipped directory: %w", err)
-		}
-		_, err = fmt.Fprintln(stdout, dir)
-		return err
-	}
-	cmd := exec.CommandContext(ctx, a.box.bash, "-c", remoteCmd)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("bash -c %q: %w", remoteCmd, err)
-	}
-	return nil
-}
-
-func TestBoxDriverReadsStatusFromAScriptItShippedOverThePublicHost(t *testing.T) {
-	box := newLocalBox(t)
-	driver := NewBox(box.dial, "203.0.113.10")
-	defer driver.Close(context.Background())
-
-	ip, err := driver.CurrentIP(context.Background())
+	ip, err := NewBox(script, dialAddress).CurrentIP(context.Background())
 	if err != nil {
 		t.Fatalf("CurrentIP() error = %v", err)
 	}
+
 	if ip != "100.64.0.1" {
-		t.Errorf("CurrentIP() = %q, want the shipped script's tailnet IP", ip)
-	}
-	if !box.ranAt("203.0.113.10", "scp") || !box.ranAt("203.0.113.10", "tailscale-status") {
-		t.Errorf("calls = %q, want the script shipped and run over the public host", box.calls)
+		t.Errorf("CurrentIP() = %q, want 100.64.0.1", ip)
 	}
 }
 
-func TestBoxDriverEnrollsThroughTheScriptItShipped(t *testing.T) {
-	box := newLocalBox(t)
-	driver := NewBox(box.dial, "203.0.113.10")
-	defer driver.Close(context.Background())
+func TestBoxDriverEnrollsWithTheAuthKeyOnStdin(t *testing.T) {
+	script := bootstrapAt(map[string]shipped.Reply{"enroll": {Stdout: "tailscale-ip=100.64.0.2\n"}})
 
-	ip, err := driver.Enroll(context.Background(), EnrollOptions{Host: "dev", AuthKey: "tskey-test"})
-	if err != nil {
+	if _, err := NewBox(script, dialAddress).Enroll(context.Background(), EnrollOptions{Host: "dev", AuthKey: "tskey-test"}); err != nil {
 		t.Fatalf("Enroll() error = %v", err)
 	}
-	if ip != "100.64.0.2" {
-		t.Errorf("Enroll() = %q, want the shipped script's tailnet IP", ip)
+
+	want := shipped.Call{Sub: "enroll", Args: []string{"--hostname", "smith-dev"}, Input: "tskey-test", Over: address("203.0.113.10")}
+	if len(script.Calls) != 1 || !sameCall(script.Calls[0], want) {
+		t.Errorf("calls = %+v, want %+v", script.Calls, want)
+	}
+}
+
+func TestBoxDriverEnrollThatNeverReachesRunningIsAttributed(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply shipped.Reply
+	}{
+		{"enroll fails", shipped.Reply{Err: errors.New("exit status 1")}},
+		{"enroll reports no IP", shipped.Reply{Stdout: "waiting\n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := bootstrapAt(map[string]shipped.Reply{"enroll": tt.reply})
+
+			_, err := NewBox(script, dialAddress).Enroll(context.Background(), EnrollOptions{Host: "dev", AuthKey: "tskey-test"})
+
+			if !errors.Is(err, ErrEnrollNotRunning) {
+				t.Errorf("Enroll() error = %v, want ErrEnrollNotRunning", err)
+			}
+		})
+	}
+}
+
+func TestBoxDriverEnrollThatNeverRanIsNotAttributedToRunning(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"cannot connect", fmt.Errorf("ssh: %w", connection.ErrConnect)},
+		{"cannot ship", fmt.Errorf("ship bootstrap.sh: %w", shipped.ErrNotShipped)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := bootstrapAt(map[string]shipped.Reply{"enroll": {Err: tt.err}})
+
+			_, err := NewBox(script, dialAddress).Enroll(context.Background(), EnrollOptions{Host: "dev", AuthKey: "tskey-test"})
+
+			if !errors.Is(err, tt.err) || errors.Is(err, ErrEnrollNotRunning) {
+				t.Errorf("Enroll() error = %v, want %v unattributed to Running", err, tt.err)
+			}
+		})
 	}
 }
 
 func TestBoxDriverMovedToTheTailnetClosesPublicSSHAndCleansUpThere(t *testing.T) {
-	box := newLocalBox(t)
-	driver := NewBox(box.dial, "203.0.113.10")
-	if _, err := driver.CurrentIP(context.Background()); err != nil {
-		t.Fatalf("CurrentIP() error = %v", err)
-	}
-	dirs := box.shippedDirs(t)
-	if len(dirs) != 1 {
-		t.Fatalf("TMPDIR holds %q, want the one shipped directory", dirs)
-	}
-	shipped := filepath.Join(box.tmpdir, dirs[0])
+	script := bootstrapAt(nil)
+	driver := NewBox(script, dialAddress)
 
 	driver.MoveToTailnet("100.64.0.2")
 	if err := driver.ClosePublicSSH(context.Background()); err != nil {
 		t.Fatalf("ClosePublicSSH() error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(shipped, "closed")); err != nil {
-		t.Errorf("the shipped script did not run close-public-ssh: %v", err)
-	}
 	driver.Close(context.Background())
 
-	if !box.ranAt("100.64.0.2", "close-public-ssh") {
-		t.Errorf("calls = %q, want close-public-ssh run over the tailnet", box.calls)
+	want := shipped.Call{Sub: "close-public-ssh", Over: address("100.64.0.2")}
+	if len(script.Calls) != 1 || !sameCall(script.Calls[0], want) {
+		t.Errorf("calls = %+v, want %+v", script.Calls, want)
 	}
-	if !box.ranAt("100.64.0.2", "rm -rf") {
-		t.Errorf("calls = %q, want the shipped directory removed over the tailnet", box.calls)
-	}
-	if left := box.shippedDirs(t); len(left) > 0 {
-		t.Errorf("TMPDIR still holds %q, want the shipped directory gone", left)
+	if script.ClosedOver != address("100.64.0.2") {
+		t.Errorf("closed over %v, want the shipped script removed over the tailnet", script.ClosedOver)
 	}
 }
 
 func TestBoxDriverCleansUpOverThePublicHostBeforeAMove(t *testing.T) {
-	box := newLocalBox(t)
-	driver := NewBox(box.dial, "203.0.113.10")
-	if _, err := driver.CurrentIP(context.Background()); err != nil {
-		t.Fatalf("CurrentIP() error = %v", err)
-	}
+	script := bootstrapAt(nil)
 
-	driver.Close(context.Background())
+	NewBox(script, dialAddress).Close(context.Background())
 
-	if !box.ranAt("203.0.113.10", "rm -rf") {
-		t.Errorf("calls = %q, want the shipped directory removed over the public host", box.calls)
-	}
-	if left := box.shippedDirs(t); len(left) > 0 {
-		t.Errorf("TMPDIR still holds %q, want the shipped directory gone", left)
+	if script.ClosedOver != address("203.0.113.10") {
+		t.Errorf("closed over %v, want the shipped script removed over the public host", script.ClosedOver)
 	}
 }
 
-func TestBoxDriverThatShippedNothingReachesNothingOnClose(t *testing.T) {
-	box := newLocalBox(t)
-
-	NewBox(box.dial, "203.0.113.10").Close(context.Background())
-
-	if len(box.calls) > 0 {
-		t.Errorf("calls = %q, want nothing run for a driver that shipped nothing", box.calls)
-	}
+func sameCall(got, want shipped.Call) bool {
+	return got.Sub == want.Sub && slices.Equal(got.Args, want.Args) && got.Input == want.Input && got.Over == want.Over && got.Final == want.Final
 }

@@ -16,10 +16,11 @@ type recordingExec struct {
 	args     []string
 	stdin    string
 	stdout   string // written to the caller's stdout writer
+	stderr   string // written to the caller's stderr writer
 	exitCode int    // when non-zero, Run returns a fakeExit with this code
 }
 
-func (r *recordingExec) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, _ io.Writer) error {
+func (r *recordingExec) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	r.name = name
 	r.args = args
 	if stdin != nil {
@@ -31,6 +32,11 @@ func (r *recordingExec) Run(_ context.Context, name string, args []string, stdin
 	}
 	if r.stdout != "" {
 		if _, err := io.WriteString(stdout, r.stdout); err != nil {
+			return err
+		}
+	}
+	if r.stderr != "" {
+		if _, err := io.WriteString(stderr, r.stderr); err != nil {
 			return err
 		}
 	}
@@ -97,6 +103,16 @@ func TestCopyBuildsScpCommand(t *testing.T) {
 	got := strings.Join(fake.args, " ")
 	if !strings.Contains(got, "/tmp/local.sh") || !strings.Contains(got, "root@box:/tmp/remote.sh") {
 		t.Errorf("scp args = %q, want local path and root@box:/tmp/remote.sh", got)
+	}
+}
+
+func TestCopyFailureCarriesTheBoxError(t *testing.T) {
+	fake := &recordingExec{exitCode: 1, stderr: "scp: /tmp/x/script.sh: No space left on device\n"}
+	c := New("root@box", fake)
+
+	err := c.Copy(context.Background(), "/tmp/local.sh", "/tmp/x/script.sh")
+	if err == nil || !strings.Contains(err.Error(), "No space left on device") {
+		t.Errorf("Copy() error = %v, want it to carry scp's stderr", err)
 	}
 }
 

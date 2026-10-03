@@ -8,6 +8,7 @@
 package connection
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -86,11 +87,17 @@ func TerminalArgs(target, remoteCmd string) []string {
 	return append(append([]string{}, defaultSSHOptions...), "-t", target, remoteCmd)
 }
 
-// Copy sends the local file at localPath to remotePath on the box with scp.
+// Copy sends the local file at localPath to remotePath on the box with scp. A
+// copy the box refused carries scp's own error text, such as a full disk.
 func (s *SSH) Copy(ctx context.Context, localPath, remotePath string) error {
 	args := append(append([]string{}, defaultSSHOptions...), localPath, s.target+":"+remotePath)
-	if err := s.exec.Run(ctx, "scp", args, nil, io.Discard, io.Discard); err != nil {
-		return s.classify("scp", err)
+	var stderr bytes.Buffer
+	if err := s.exec.Run(ctx, "scp", args, nil, io.Discard, &stderr); err != nil {
+		err = s.classify("scp", err)
+		if text := strings.TrimSpace(stderr.String()); text != "" && !errors.Is(err, ErrConnect) {
+			return fmt.Errorf("%w: %s", err, text)
+		}
+		return err
 	}
 	return nil
 }
