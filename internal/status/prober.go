@@ -36,10 +36,9 @@ type ShippedScript interface {
 	Close(ctx context.Context)
 }
 
-// Prober gathers a box's live facts read-only. It runs bootstrap.sh's probe
-// subcommand as the smith user and — in tailscale mode — an admin-side
-// ssh-over-tailnet probe to complete the access facts. It mutates nothing:
-// probing is a query, never a remediation.
+// Prober gathers a box's live facts read-only by running bootstrap.sh's probe
+// subcommand as the smith user and, in tailscale mode, an admin-side
+// ssh-over-tailnet probe; it never remediates.
 type Prober struct {
 	conn   Conn
 	script ShippedScript

@@ -112,22 +112,11 @@ func NewInstaller(conn relay.Conn, script ShippedScript, box string) *Installer 
 	return &Installer{conn: conn, script: script, box: box}
 }
 
-// Converge brings the box's smith binary to version, and reports what it did.
-//
-// It probes first: a box already at the version downloads nothing, and a box
-// whose machine hardware name smith publishes no asset for is refused by that
-// name with nothing fetched. Otherwise the box downloads the release asset for
-// its architecture to a temp path, verifies it against the release's published
-// checksums, and installs it root-owned and 0755 — one step, so a failed
-// download or a checksum mismatch aborts with the box's existing binary
-// untouched.
-//
-// The version is the caller's: it is local smith's own, so the two sides match
-// by construction rather than by policy. Whether that version has a release to
-// fetch at all is settled before a connection is opened, by release.Installable.
-//
-// Every step runs the one shipped install.sh, which is closed however the run
-// ends, so nothing of this run's is left on the box to block a later one.
+// Converge brings the box's smith binary to version through the one shipped
+// install.sh, downloading nothing when the box already runs it and leaving the
+// existing binary untouched on a refused architecture, failed download or
+// checksum mismatch. The script is closed however the run ends, so nothing of
+// this run's is left on the box to block a later one.
 func (i *Installer) Converge(ctx context.Context, version string) (Result, error) {
 	defer i.script.Close(ctx)
 
@@ -223,12 +212,8 @@ type boxState struct {
 }
 
 // probe reads the box's machine hardware name and installed smith version by
-// running the shipped install script's probe subcommand. It mutates nothing: it is the
-// check half of check-before-change, and a box that already matches never gets
-// past it.
-//
-// It declares no relaying version — see confirm, which explains why the two
-// halves of this stage differ on that.
+// running install.sh's probe subcommand, mutating nothing and declaring no
+// relaying version (see confirm).
 func (i *Installer) probe(ctx context.Context) (boxState, error) {
 	var out bytes.Buffer
 	if err := i.script.Run(ctx, &out, io.Discard, "probe"); err != nil {

@@ -30,8 +30,7 @@ func (a address) RunWithInput(context.Context, string, io.Reader, io.Writer, io.
 
 func dialAddress(host string) shipped.Conn { return address(host) }
 
-// bootstrapAt returns a recording bootstrap.sh that starts over the public
-// host and answers each subcommand with its scripted reply.
+// bootstrapAt returns a recording bootstrap.sh that starts over the public host.
 func bootstrapAt(replies map[string]shipped.Reply) *shipped.Fake {
 	return &shipped.Fake{Conn: address("203.0.113.10"), Replies: replies}
 }
@@ -133,8 +132,6 @@ func TestBoxDriverCleansUpOverThePublicHostBeforeAMove(t *testing.T) {
 	}
 }
 
-// sameCall reports whether got records the subcommand, arguments, input and
-// connection that want does.
 func sameCall(got, want shipped.Call) bool {
 	return got.Sub == want.Sub && slices.Equal(got.Args, want.Args) && got.Input == want.Input && got.Over == want.Over && got.Final == want.Final
 }

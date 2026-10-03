@@ -34,8 +34,7 @@ const (
 	modeStuck = "stuck"
 )
 
-// recordCleanup appends to record that the command's deferred cleanup ran, for
-// the parent test process to read after the child has exited.
+// recordCleanup appends to record that the command's deferred cleanup ran.
 func recordCleanup(record string) error {
 	f, err := os.OpenFile(record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -58,8 +57,7 @@ type interruptedRun struct {
 	record string
 }
 
-// runInterrupted starts a child smith whose command defers a cleanup, sends it
-// interrupts once the command has started, and reports how the child ended.
+// runInterrupted interrupts a child smith whose command defers a cleanup.
 func runInterrupted(t *testing.T, mode string, grace time.Duration, interrupts int) interruptedRun {
 	t.Helper()
 	record := filepath.Join(t.TempDir(), "box")
@@ -115,9 +113,7 @@ func runInterrupted(t *testing.T, mode string, grace time.Duration, interrupts i
 	return run
 }
 
-// TestHelperInterruptedSmith is the child process body of runInterrupted and
-// does nothing when run directly: smith running a command that defers a cleanup,
-// as a stage closing its shipped script does, and then waits to be interrupted.
+// TestHelperInterruptedSmith is runInterrupted's child process body, a no-op when run directly.
 func TestHelperInterruptedSmith(t *testing.T) {
 	record := os.Getenv(interruptRecordEnv)
 	if record == "" {

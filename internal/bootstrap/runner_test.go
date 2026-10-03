@@ -251,8 +251,6 @@ func TestSetupPhaseFailureIsPartial(t *testing.T) {
 	}
 }
 
-// TestSetupPhaseFailureReportsRecovery checks a mid-run phase failure's report
-// names the failed phase, the completed ones, the open door and the raw stderr.
 func TestSetupPhaseFailureReportsRecovery(t *testing.T) {
 	script := scriptReplying("setup", shipped.Reply{
 		Stdout: "▶ packages\n✓ packages\n▶ smith-user\n✓ smith-user\n▶ ssh-hardening\n",

@@ -22,12 +22,10 @@ type ShippedScript interface {
 	Close(ctx context.Context)
 }
 
-// BoxDriver drives the tailscale box-side steps through bootstrap.sh
-// subcommands over ssh. It is the production Box.
-//
-// It owns one shipped bootstrap.sh for one access stage and one login, which
-// reaches the box at the public host until MoveToTailnet and at the tailnet
-// address after it — which is where Close then removes the copy from.
+// BoxDriver is the production Box, driving the tailscale box-side steps through
+// one shipped bootstrap.sh for one access stage and one login. The copy reaches
+// the box at the public host until MoveToTailnet and at the tailnet address
+// after it, which is where Close then removes it from.
 type BoxDriver struct {
 	script ShippedScript
 	dial   func(host string) shipped.Conn

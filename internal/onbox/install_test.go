@@ -47,8 +47,7 @@ func declaredVersion(remoteCmd string) string {
 	return version
 }
 
-// installScript returns a recording install.sh whose probe reports machine and,
-// when installed is not empty, the smith version already on the box.
+// installScript returns an install.sh whose probe reports machine and any installed version.
 func installScript(machine, installed string) *shipped.Fake {
 	out := "arch=" + machine + "\n"
 	if installed != "" {
@@ -57,8 +56,6 @@ func installScript(machine, installed string) *shipped.Fake {
 	return &shipped.Fake{Replies: map[string]shipped.Reply{"probe": {Stdout: out}}}
 }
 
-// installCall returns the install subcommand the script was asked to run, and
-// whether it was asked at all.
 func installCall(script *shipped.Fake) (shipped.Call, bool) {
 	i := slices.IndexFunc(script.Calls, func(c shipped.Call) bool { return c.Sub == "install" })
 	if i < 0 {
@@ -67,8 +64,6 @@ func installCall(script *shipped.Fake) (shipped.Call, bool) {
 	return script.Calls[i], true
 }
 
-// converge runs the install stage for box "dev" through script, confirming over
-// conn.
 func converge(conn *relayConn, script *shipped.Fake, version string) (Result, error) {
 	return NewInstaller(conn, script, "dev").Converge(context.Background(), version)
 }
@@ -229,9 +224,6 @@ func TestConvergeKeepsWhyTheScriptWasNotShipped(t *testing.T) {
 	}
 }
 
-// TestConvergeReportsAFailedInstall checks that the operator is left with what
-// the box said, not just how it exited, and that an install which ran and
-// failed is not mistaken for one that never shipped.
 func TestConvergeReportsAFailedInstall(t *testing.T) {
 	script := &shipped.Fake{Replies: map[string]shipped.Reply{
 		"probe":   {Stdout: "arch=x86_64\nsmith-version=0.1.0\n"},

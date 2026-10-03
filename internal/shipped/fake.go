@@ -26,12 +26,9 @@ type Reply struct {
 	Err    error
 }
 
-// Fake is a recording test double for a Script. It records every subcommand it
-// is asked to run and the connection it ran over, answers each with its
-// scripted Reply, and notes whether and over which connection it was closed, so
-// a caller's tests assert on subcommands and outcomes rather than on how a
-// script reaches the box. Conn is the connection it starts over; Move replaces
-// it.
+// Fake is a recording test double for a Script that answers each subcommand
+// with its scripted Reply and records the calls, the connection each ran over
+// (Conn, replaced by Move) and whether and over which connection it closed.
 type Fake struct {
 	Conn       Conn
 	Replies    map[string]Reply

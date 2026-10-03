@@ -79,9 +79,6 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 			conn := connection.New(target, exec)
-			// One shipped bootstrap.sh serves every subcommand this run drives
-			// over the bootstrap login, and the box keeps no copy of it once
-			// setup ends, however it ends.
 			script := shipped.New(conn, "bootstrap.sh", bootstrap.Script)
 			defer script.Close(ctx)
 			runner := bootstrap.NewRunner(conn, script)

@@ -156,8 +156,6 @@ func (s *setupSSH) refuses(target string) bool {
 	return s.closed && hostOf(target) == s.public
 }
 
-// ranSubcommandAs reports whether subcommand sub of a shipped script ran over
-// ssh as target.
 func (s *setupSSH) ranSubcommandAs(target, sub string) bool {
 	for i, cmd := range s.commands {
 		if s.targets[i] == target && isSubcommand(cmd, sub) {
@@ -461,10 +459,7 @@ func TestMachineSetupRegistersNothingWhenThePhasesNeverRan(t *testing.T) {
 	}
 }
 
-// answerShip answers the private directory a shipped script asks the box for,
-// so a test can drive the real command through a fake ssh. How a script is
-// shipped and removed is tested once, in the shipped package; a command's tests
-// assert only on which subcommands ran as which login.
+// answerShip answers the private directory a shipped script asks the box for.
 func answerShip(remoteCmd string, stdout io.Writer) (bool, error) {
 	if !strings.HasPrefix(remoteCmd, "mktemp ") {
 		return false, nil
@@ -475,8 +470,6 @@ func answerShip(remoteCmd string, stdout io.Writer) (bool, error) {
 	return true, nil
 }
 
-// isSubcommand reports whether remoteCmd runs subcommand sub of a shipped
-// script.
 func isSubcommand(remoteCmd, sub string) bool {
 	word := " " + connection.ShellArg(sub)
 	return strings.HasSuffix(remoteCmd, word) || strings.Contains(remoteCmd, word+" ")

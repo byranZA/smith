@@ -191,9 +191,7 @@ func (b *box) leftovers() []string {
 	return dirs
 }
 
-// shellWords splits cmd into words as a POSIX shell would for the subset smith
-// sends: single quotes, backslash escapes and plain words. An unquoted shell
-// metacharacter is an error, since a real shell would act on it.
+// shellWords splits cmd as a POSIX shell would, rejecting unquoted metacharacters.
 func shellWords(cmd string) ([]string, error) {
 	var words []string
 	var w strings.Builder

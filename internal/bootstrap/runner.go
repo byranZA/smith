@@ -1,16 +1,6 @@
-// Package bootstrap is the Go side of the on-box provisioning harness. It ships
-// the embedded bootstrap.sh to a box, invokes a subcommand, and turns the
-// script's output into a decision plus a process exit code.
-//
-// Preflight runs the non-recorded gate (privilege + OS support, mutating
-// nothing). Setup drives the ordered mutating phases, streaming live
-// progress and mapping a mid-run failure to a recovery report. Both run the one
-// shipped copy of the script the caller hands the Runner: setup, the final
-// subcommand, removes it as it exits, and the caller's Close removes it for a
-// run that stopped before setup. In tailscale
-// mode the caller derives the access-aware public-SSH firewall target from
-// SSHConnection before Setup; the access layer that runs after it (see the
-// tailscale package) ships and drives its own copy as the smith user.
+// Package bootstrap is the Go side of the on-box provisioning harness: it
+// drives the shipped bootstrap.sh's preflight and setup subcommands and turns
+// their output into a decision plus a process exit code.
 package bootstrap
 
 import (
@@ -169,16 +159,11 @@ type SetupResult struct {
 	Failure *FailureReport
 }
 
-// Setup runs the ordered mutating phases on the box: it runs bootstrap.sh's
-// setup as the final subcommand, so the script removes its own shipped copy as
-// it exits while the bootstrap login still reaches the box, and streams each
-// phase's live progress to stdout and stderr as it happens. A connect failure
-// and a phase failure are reported in the SetupResult rather than as Go errors,
-// so the caller can map them to an exit code; a phase failure also carries a
-// FailureReport built from the captured stream. A script that could not be
-// shipped means nothing ran on the box, so it is a Go error wrapping
-// shipped.ErrNotShipped, never a partial box. Setup assumes the preflight gate
-// has already passed.
+// Setup runs bootstrap.sh's setup as the final subcommand, streaming each
+// phase's progress and reporting a connect or phase failure in the SetupResult,
+// while an unshipped script is a Go error wrapping shipped.ErrNotShipped.
+// The script removes its own shipped copy as it exits, and Setup assumes
+// preflight has passed.
 func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io.Writer) (SetupResult, error) {
 	var outBuf, errBuf bytes.Buffer
 	teeOut := io.MultiWriter(stdout, &outBuf)

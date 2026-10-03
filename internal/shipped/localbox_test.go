@@ -22,9 +22,7 @@ type localBox struct {
 	env []string
 }
 
-// newLocalBox returns a localBox whose TMPDIR is tmpdir. The box runs Ubuntu,
-// so its mktemp is GNU coreutils; the host's mktemp is used only when it is
-// GNU too (gmktemp on macOS), and the test skips, saying why, when neither is.
+// newLocalBox returns a localBox whose TMPDIR is tmpdir, skipping without a GNU mktemp.
 func newLocalBox(t *testing.T, tmpdir string) localBox {
 	t.Helper()
 	mktemp := gnuMktemp()
@@ -41,8 +39,6 @@ func newLocalBox(t *testing.T, tmpdir string) localBox {
 	}}
 }
 
-// gnuMktemp is the path of a GNU coreutils mktemp on the host, or "" if there
-// is none.
 func gnuMktemp() string {
 	for _, name := range []string{"mktemp", "gmktemp"} {
 		p, err := exec.LookPath(name)

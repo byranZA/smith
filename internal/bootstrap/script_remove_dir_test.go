@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// shippedCopy places the embedded script in its own directory inside the
-// fixture, as the shipped package does on a box, and returns that directory and
-// the script's path within it.
+// shippedCopy places the embedded script in its own directory, as the shipped package does.
 func shippedCopy(t *testing.T, fixtureDir string) (shippedDir, scriptPath string) {
 	t.Helper()
 	shippedDir = filepath.Join(fixtureDir, "smith.shipped")
