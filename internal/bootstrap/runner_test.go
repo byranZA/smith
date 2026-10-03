@@ -339,6 +339,28 @@ func TestSetupOmitsAnUnnamedBoxAndAnAbsentBlueprint(t *testing.T) {
 	}
 }
 
+// TestSetupHandsTheScriptItsShippedDirectoryToRemove proves setup tells
+// bootstrap.sh which directory it was shipped to, so the script removes that
+// directory itself while its login still reaches the box — a root login is
+// closed by hardening before the runner's own cleanup could run.
+func TestSetupHandsTheScriptItsShippedDirectoryToRemove(t *testing.T) {
+	conn := &fakeConn{}
+	if _, err := NewRunner(conn).Setup(
+		context.Background(),
+		SetupOptions{AccessMode: "public", SmithVersion: "1.2.3"},
+		io.Discard, io.Discard,
+	); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if len(conn.copiedTo) != 1 {
+		t.Fatalf("copied to %q, want one shipped script", conn.copiedTo)
+	}
+	want := "--remove-dir " + connection.ShellArg(path.Dir(conn.copiedTo[0]))
+	if !strings.Contains(conn.setupRunCmd, want) {
+		t.Errorf("setup command = %q, want it to pass %q", conn.setupRunCmd, want)
+	}
+}
+
 // ranAgainst reports whether a command running subcommand against scriptPath
 // ran on the box.
 func (f *fakeConn) ranAgainst(scriptPath, subcommand string) bool {

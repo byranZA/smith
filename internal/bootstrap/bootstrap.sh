@@ -12,6 +12,8 @@
 #   setup     — writes the marker early, then runs the ordered mutating phases.
 #               Each phase is check-before-change and appends itself to the
 #               marker only on success; progress streams live to the operator.
+#               With --remove-dir <dir> it removes <dir>, the directory smith
+#               shipped it to, on every exit path; preflight keeps its copy.
 #   enroll    — tailscale mode only: joins the box to the tailnet as a tag:smith
 #               Tailscale SSH node (auth key on stdin) and prints its tailnet IP.
 #   tailscale-status — tailscale mode only: prints the node's tailnet IP when it is
@@ -115,6 +117,12 @@ BLUEPRINT=""
 # under, recorded in the marker so the name survives on the box itself and not
 # only in the operator's inventory. Empty when the run names the box nothing.
 BOX_NAME=""
+# REMOVE_DIR is the directory smith shipped this script to, named by setup's
+# --remove-dir. The setup run removes it on every exit path, while its bootstrap
+# login still reaches the box (hardening closes a root login, so a removal smith
+# attempts afterwards is refused). Empty — the default, as when the script is
+# run by hand — removes nothing: the script never works the directory out itself.
+REMOVE_DIR=""
 
 # The tailscale apt keyring and sources list. SMITH_TS_KEYRING and SMITH_TS_LIST
 # override them for tests; production uses the apt defaults. The keyring is the
@@ -479,6 +487,15 @@ selftest_strip_probe_lines() {
   rm -f "$tmp"
 }
 
+# remove_shipped_dir removes the directory named by --remove-dir, and nothing
+# when none was named. It is setup's EXIT trap, so it keeps the exit status it
+# was called with.
+remove_shipped_dir() {
+  local rc=$?
+  [ -n "$REMOVE_DIR" ] && rm -rf -- "$REMOVE_DIR"
+  return "$rc"
+}
+
 # selftest_cleanup scrubs the probe artifacts: the throwaway keypair's tmp dir and
 # the probe line appended to smith's authorized_keys. Idempotent, so it serves as
 # both the inline cleanup and the trap handler.
@@ -513,7 +530,8 @@ selftest_probe() {
 # The appended line touches smith's real authorized_keys, so cleanup (scrub the
 # keypair + strip the marker line) runs on every path — inline on return and via a
 # trap on interrupt/abort — and a defensive strip up front clears any line orphaned
-# by a crashed prior run. Any step failing returns non-zero so the caller reverts the
+# by a crashed prior run. The trap chains setup's remove_shipped_dir, and setup's
+# EXIT trap is restored afterwards, so the shipped directory is still removed. Any step failing returns non-zero so the caller reverts the
 # drop-in. Smith's admin-side `ssh smith@host` reconnect stays a post-confirm, not
 # this gate.
 ssh_hardening_selftest() {
@@ -529,13 +547,14 @@ ssh_hardening_selftest() {
   local tmpdir
   tmpdir="$(mktemp -d)"
   # shellcheck disable=SC2064
-  trap "selftest_cleanup '$tmpdir' '$authkeys'" EXIT INT TERM
+  trap "selftest_cleanup '$tmpdir' '$authkeys'; remove_shipped_dir" EXIT INT TERM
 
   local rc=0
   selftest_probe "$tmpdir" "$authkeys" || rc=1
 
   selftest_cleanup "$tmpdir" "$authkeys"
-  trap - EXIT INT TERM
+  trap - INT TERM
+  trap remove_shipped_dir EXIT
   return "$rc"
 }
 
@@ -633,8 +652,8 @@ phase_access() {
 }
 
 # parse_setup_args reads the setup subcommand's flags: the access mode, the
-# smith version, and the box name and blueprint pointer to stamp into the
-# marker.
+# smith version, the box name and blueprint pointer to stamp into the marker,
+# and the shipped directory to remove on exit.
 parse_setup_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -658,6 +677,10 @@ parse_setup_args() {
         PUBLIC_SSH="${2:-}"
         shift 2
         ;;
+      --remove-dir)
+        REMOVE_DIR="${2:-}"
+        shift 2
+        ;;
       *)
         echo "smith bootstrap setup: unknown argument: $1" >&2
         exit 64
@@ -674,6 +697,10 @@ parse_setup_args() {
 # side, so smith drives them separately (enroll, then close-public-ssh once the
 # probe proves reach) and records the access phase then.
 setup() {
+  # Remove the shipped directory however the run ends, while this login still
+  # reaches the box. The trap reads REMOVE_DIR at exit, so it is set before the
+  # flags are parsed and still covers a run that rejects an argument.
+  trap remove_shipped_dir EXIT
   parse_setup_args "$@"
   # Capability guard before any mutation: a box past the OS floor that still lacks
   # a needed capability fails here, named, rather than deep inside a later phase.
