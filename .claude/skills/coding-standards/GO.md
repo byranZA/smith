@@ -38,19 +38,18 @@ Go favors brevity (the conventions here follow Effective Go and the Google Go st
 
 ## Doc Comments
 
-Go has no docstrings — it has doc comments, and `go doc`/pkg.go.dev render them. They are mandatory on **exported** identifiers and on every package.
+Doc comments are the only comments in this codebase. Each is **one or two sentences** that begins with the identifier's name and says what it does — the contract a caller relies on, not the type signature or the implementation.
 
-- **Every package** has a package comment on one file: `// Package config reads and writes ...`. For a package that warrants more, lead with a paragraph explaining the *why*.
-- **Every exported identifier** (func, type, const, var) has a comment that **begins with the identifier's name**:
+- **Every package**: a package comment on one file — `// Package config reads and writes the smith config.`
+- **Every function and method**, exported or not, and every exported type, const, and var:
 
 ```go
-// Load reads the config at path and returns it. A missing file yields the
-// zero Config and no error; a malformed file is an error.
+// Load reads the config at path. A missing file yields the zero Config and no error.
 func Load(path string) (Config, error) {
 ```
 
-- Explain *what and why*, not the type signature (the signature is already visible). Unexported helpers get a comment only when the intent isn't obvious from the code.
-- Full sentences, ending with a period.
+- **Function bodies are comment-free.** Make the code carry its own explanation: when a line needs one, extract a well-named function or variable instead. Machine directives (`//go:build`, `//go:embed`, `//nolint:`) are not comments and stay.
+- **Tests are exempt.** The test name carries the explanation — `TestLoadMissingFileYieldsZeroConfig`, subtest names like `"sibling path is outside parent"`. A test or test helper takes at most a one-line doc comment, and only when the name cannot say it.
 
 ## Errors
 
