@@ -376,9 +376,15 @@ func (c scriptConn) Copy(_ context.Context, localPath, remotePath string) error 
 
 // Run executes a remote command against the fixture box, streaming its output.
 func (c scriptConn) Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error {
+	return c.RunWithInput(ctx, remoteCmd, nil, stdout, stderr)
+}
+
+// RunWithInput is Run with stdin fed to the remote command.
+func (c scriptConn) RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, "bash", "-c", remoteCmd)
 	cmd.Env = c.f.env
 	cmd.Dir = c.f.dir
+	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

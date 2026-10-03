@@ -33,6 +33,7 @@ import (
 
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/release"
+	"github.com/byranZA/smith/internal/shipped"
 )
 
 // Script is the embedded install.sh, shipped to the box and run there. It is a
@@ -51,12 +52,11 @@ var Script string
 // constants agreeing.
 const InstallPath = relay.BoxSmith
 
-// Conn is the narrow slice of a connection the install stage needs: ship a file
-// and run a remote command with streamed output. It mirrors shipped.Conn — a
-// box is reached the same way here as everywhere else in the setup domain.
+// Conn is the slice of a connection the install stage needs: the one its
+// shipped install.sh travels over — a box is reached the same way here as
+// everywhere else in the setup domain.
 type Conn interface {
-	Copy(ctx context.Context, localPath, remotePath string) error
-	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+	shipped.Conn
 }
 
 // ShippedScript is the shipped install.sh an Installer drives by subcommand: it

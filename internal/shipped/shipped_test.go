@@ -271,3 +271,67 @@ func TestClosingTwiceIsHarmless(t *testing.T) {
 		t.Errorf("second Close sent %d operations, want none", b.sent-sent)
 	}
 }
+
+func TestInputReachesTheSubcommandOnStdinNotItsArguments(t *testing.T) {
+	b := newBox()
+	s := shipped.New(b.login("smith"), "bootstrap.sh", "echo hi")
+
+	err := s.RunWithInput(context.Background(), strings.NewReader("tskey-secret"), io.Discard, io.Discard, "enroll", "--hostname", "dev")
+	if err != nil {
+		t.Fatalf("RunWithInput() error = %v", err)
+	}
+
+	if len(b.runs) != 1 || b.runs[0].stdin != "tskey-secret" || !slices.Equal(b.runs[0].args, []string{"enroll", "--hostname", "dev"}) {
+		t.Errorf("box ran %+v, want enroll --hostname dev fed tskey-secret on stdin", b.runs)
+	}
+}
+
+func TestLaterSubcommandsFollowTheMoveFromTheSameCopy(t *testing.T) {
+	b := newBox()
+	s := shipped.New(b.login("public"), "bootstrap.sh", "echo hi")
+	if err := s.Run(context.Background(), io.Discard, io.Discard, "enroll"); err != nil {
+		t.Fatalf("Run(enroll) error = %v", err)
+	}
+
+	s.Move(b.login("tailnet"))
+	if err := s.Run(context.Background(), io.Discard, io.Discard, "close-public-ssh"); err != nil {
+		t.Fatalf("Run(close-public-ssh) error = %v", err)
+	}
+
+	if b.made != 1 || len(b.runs) != 2 || b.runs[1].over != "tailnet" || b.runs[1].dir != b.runs[0].dir {
+		t.Errorf("box made %d directories and ran %+v, want close-public-ssh over the tailnet from the first copy", b.made, b.runs)
+	}
+}
+
+func TestCloseRemovesTheCopyOverTheAddressItMovedTo(t *testing.T) {
+	b := newBox()
+	public := b.login("public")
+	s := shipped.New(public, "bootstrap.sh", "echo hi")
+	if err := s.Run(context.Background(), io.Discard, io.Discard, "enroll"); err != nil {
+		t.Fatalf("Run(enroll) error = %v", err)
+	}
+	s.Move(b.login("tailnet"))
+	public.gone = true
+
+	s.Close(context.Background())
+
+	if left := b.leftovers(); len(left) != 0 {
+		t.Errorf("box still holds %q, want the copy removed over the tailnet", left)
+	}
+}
+
+func TestMovingBeforeAnythingShippedShipsOverTheNewAddress(t *testing.T) {
+	b := newBox()
+	public := b.login("public")
+	public.gone = true
+	s := shipped.New(public, "bootstrap.sh", "echo hi")
+
+	s.Move(b.login("tailnet"))
+	if err := s.Run(context.Background(), io.Discard, io.Discard, "tailscale-status"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(b.runs) != 1 || b.runs[0].over != "tailnet" {
+		t.Errorf("box ran %+v, want the script shipped and run over the tailnet", b.runs)
+	}
+}

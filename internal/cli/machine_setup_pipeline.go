@@ -9,6 +9,7 @@ import (
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/onbox"
+	"github.com/byranZA/smith/internal/shipped"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
@@ -102,8 +103,9 @@ func (r *pipelineRun) establishAccess(ctx context.Context, stdout io.Writer) err
 	if r.accessMode != "tailscale" {
 		return nil
 	}
-	dial := func(host string) tailscale.Remote { return connection.New(smithTarget(host), r.exec) }
-	access := tailscale.NewAccess(tailscale.NewBox(dial, r.host), r.admin)
+	dial := func(host string) shipped.Conn { return connection.New(smithTarget(host), r.exec) }
+	script := shipped.New(dial(r.host), "bootstrap.sh", bootstrap.Script)
+	access := tailscale.NewAccess(tailscale.NewBox(script, dial), r.admin)
 	result, err := establishTailscale(ctx, access, r.host, r.acquireKey, stdout)
 	if err != nil {
 		return err

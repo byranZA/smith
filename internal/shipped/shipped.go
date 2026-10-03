@@ -28,10 +28,11 @@ const removeTimeout = 5 * time.Second
 const shippedName = "script.sh"
 
 // Conn is the slice of a connection a shipped script needs: copy a file to the
-// box and run a remote command with streamed output.
+// box and run a remote command with streamed output, optionally fed stdin.
 type Conn interface {
 	Copy(ctx context.Context, localPath, remotePath string) error
 	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+	RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
 // Script is one use of a shipped script over a connection. It ships on the
@@ -61,6 +62,24 @@ func (s *Script) Run(ctx context.Context, stdout, stderr io.Writer, sub string, 
 		return fmt.Errorf("run %s %s: %w", s.name, sub, err)
 	}
 	return nil
+}
+
+// RunWithInput is Run with stdin fed to the subcommand, so a secret such as an
+// auth key reaches the script without ever appearing in the box's argv.
+func (s *Script) RunWithInput(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, sub string, args ...string) error {
+	if err := s.ship(ctx); err != nil {
+		return err
+	}
+	if err := s.conn.RunWithInput(ctx, s.command(sub, args), stdin, stdout, stderr); err != nil {
+		return fmt.Errorf("run %s %s: %w", s.name, sub, err)
+	}
+	return nil
+}
+
+// Move sends every later run, and Close, over conn — the box at a new address
+// — reusing any copy already shipped. Dialing conn is the caller's job.
+func (s *Script) Move(conn Conn) {
+	s.conn = conn
 }
 
 // Close removes the script's private directory from the box, best effort. It

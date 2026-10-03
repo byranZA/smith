@@ -43,6 +43,7 @@ type run struct {
 	dir    string
 	script string
 	args   []string
+	stdin  string
 }
 
 // removal is one rm -rf the box received.
@@ -61,6 +62,7 @@ func (b *box) login(name string) *boxConn { return &boxConn{box: b, name: name} 
 type boxConn struct {
 	box  *box
 	name string
+	gone bool
 }
 
 func (c *boxConn) Copy(_ context.Context, localPath, remotePath string) error {
@@ -68,7 +70,7 @@ func (c *boxConn) Copy(_ context.Context, localPath, remotePath string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.sent++
-	if b.unreachable {
+	if b.unreachable || c.gone {
 		return fmt.Errorf("scp: %w", connection.ErrConnect)
 	}
 	if b.copyErr != nil {
@@ -87,6 +89,10 @@ func (c *boxConn) Copy(_ context.Context, localPath, remotePath string) error {
 }
 
 func (c *boxConn) Run(ctx context.Context, cmd string, stdout, stderr io.Writer) error {
+	return c.RunWithInput(ctx, cmd, nil, stdout, stderr)
+}
+
+func (c *boxConn) RunWithInput(ctx context.Context, cmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	b := c.box
 	b.mu.Lock()
 	b.sent++
@@ -98,6 +104,10 @@ func (c *boxConn) Run(ctx context.Context, cmd string, stdout, stderr io.Writer)
 	if err != nil {
 		b.mu.Unlock()
 		return err
+	}
+	if c.gone {
+		b.mu.Unlock()
+		return fmt.Errorf("ssh %s: %w", c.name, connection.ErrConnect)
 	}
 	if words[0] == "rm" && b.unresponsive {
 		b.mu.Unlock()
@@ -115,7 +125,7 @@ func (c *boxConn) Run(ctx context.Context, cmd string, stdout, stderr io.Writer)
 	case "rm":
 		return b.rm(ctx, words)
 	case "bash":
-		return b.bash(c.name, words[1:], stdout, stderr)
+		return b.bash(c.name, words[1:], stdin, stdout, stderr)
 	}
 	return fmt.Errorf("sh: %s: command not found", words[0])
 }
@@ -146,14 +156,21 @@ func (b *box) rm(ctx context.Context, words []string) error {
 	return nil
 }
 
-func (b *box) bash(over string, words []string, stdout, stderr io.Writer) error {
+func (b *box) bash(over string, words []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	dir, file := path.Split(words[0])
 	dir = strings.TrimSuffix(dir, "/")
 	script, ok := b.dirs[dir][file]
 	if !ok {
 		return fmt.Errorf("bash: %s: No such file or directory", words[0])
 	}
-	b.runs = append(b.runs, run{over: over, dir: dir, script: script, args: words[1:]})
+	var input []byte
+	if stdin != nil {
+		var err error
+		if input, err = io.ReadAll(stdin); err != nil {
+			return err
+		}
+	}
+	b.runs = append(b.runs, run{over: over, dir: dir, script: script, args: words[1:], stdin: string(input)})
 	if _, err := io.WriteString(stdout, b.scriptStdout); err != nil {
 		return err
 	}

@@ -118,12 +118,12 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	case strings.HasPrefix(remoteCmd, "bash ") && strings.Contains(remoteCmd, " setup --access "):
 		s.hardened = true
 		return s.phaseErr
-	case strings.HasSuffix(remoteCmd, " close-public-ssh"):
+	case strings.HasSuffix(remoteCmd, " 'close-public-ssh'"):
 		s.closed = true
 		return nil
 	case remoteCmd == "true" && s.probeDenied && hostOf(target) != s.public:
 		return errors.New("tailscale: ssh access denied")
-	case strings.Contains(remoteCmd, " enroll --hostname "):
+	case strings.Contains(remoteCmd, " 'enroll' '--hostname' "):
 		if s.enrollIP == "" {
 			return nil
 		}
@@ -142,7 +142,7 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	case strings.Contains(remoteCmd, marker.Path):
 		_, err := io.WriteString(stdout, s.marker)
 		return err
-	case strings.HasSuffix(remoteCmd, "tailscale-status"):
+	case strings.HasSuffix(remoteCmd, " 'tailscale-status'"):
 		if s.tailnetIP == "" {
 			return nil
 		}
@@ -479,7 +479,7 @@ func TestTailscaleAccessStageReachesTheBoxAsTheSmithUser(t *testing.T) {
 	if target != "smith@203.0.113.10" {
 		t.Errorf("access stage shipped over %q, want the smith user over the public host", target)
 	}
-	for _, sub := range []string{"tailscale-status", "enroll"} {
+	for _, sub := range []string{"'tailscale-status'", "'enroll'"} {
 		if !ssh.ranAgainstAs("smith@203.0.113.10", script, sub) {
 			t.Errorf("%s did not run as smith@203.0.113.10 against %q; ran %q", sub, script, ssh.commands)
 		}
@@ -503,7 +503,7 @@ func TestTailscaleSetupClosesPublicSSHFromTheTailnet(t *testing.T) {
 	if !ok {
 		t.Fatalf("shipped bootstrap.sh to %q, want a copy shipped as the smith user", ssh.shippedBootstrap())
 	}
-	if !ssh.ranAgainstAs("smith@100.92.14.7", script, "close-public-ssh") {
+	if !ssh.ranAgainstAs("smith@100.92.14.7", script, "'close-public-ssh'") {
 		t.Errorf("close-public-ssh did not run as smith@100.92.14.7; ran %q", ssh.commands)
 	}
 	if refused := ssh.refusedAs(smithLogin); len(refused) > 0 {
