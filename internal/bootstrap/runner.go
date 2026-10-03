@@ -5,10 +5,11 @@
 // Preflight runs the non-recorded gate (privilege + OS support, mutating
 // nothing). Setup drives the ordered mutating phases, streaming live
 // progress and mapping a mid-run failure to a recovery report. Both run the one
-// copy of the script the Runner shipped, which Close removes. In tailscale
+// copy of the script the Runner shipped: setup removes it as it exits, and
+// Close removes it for a run that stopped before setup. In tailscale
 // mode the caller derives the access-aware public-SSH firewall target from
-// SSHConnection and drives the admin-side access layer (see the tailscale
-// package) around Setup.
+// SSHConnection before Setup; the access layer that runs after it (see the
+// tailscale package) ships and drives its own copy as the smith user.
 package bootstrap
 
 import (
@@ -93,7 +94,8 @@ func (r Result) Report() string {
 
 // Runner ships and drives bootstrap.sh over a connection. It ships the script
 // once, on first use, and every subcommand it runs afterwards runs that same
-// shipped script; Close removes it when the command ends.
+// shipped script. Setup has the script remove itself as it exits; Close
+// removes it for a run that stopped before setup.
 type Runner struct {
 	conn    Conn
 	shipped Shipped
@@ -175,7 +177,8 @@ type SetupResult struct {
 
 // Setup runs the ordered mutating phases on the box: it ships bootstrap.sh
 // unless Preflight already did, invokes its setup subcommand, and streams each
-// phase's live progress to stdout and stderr as it happens. A connect failure
+// phase's live progress to stdout and stderr as it happens. The script removes
+// its own shipped directory as it exits, however the run ends. A connect failure
 // and a phase failure are reported in the SetupResult rather than as Go errors,
 // so the caller can map them to an exit code; a phase failure also carries a
 // FailureReport built from the captured stream. A Go error is returned only for
@@ -200,9 +203,12 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 	if publicSSH == "" {
 		publicSSH = "open"
 	}
-	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s%s%s",
+	// --remove-dir has the script remove its own shipped directory as it exits,
+	// while the bootstrap login still reaches the box: on a root login,
+	// hardening refuses the runner's later removal in Close.
+	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s --remove-dir %s%s%s",
 		connection.ShellArg(script), connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion),
-		connection.ShellArg(publicSSH), optionalFlag("--name", opts.BoxName),
+		connection.ShellArg(publicSSH), connection.ShellArg(r.shipped.dir), optionalFlag("--name", opts.BoxName),
 		optionalFlag("--blueprint", opts.Blueprint))
 	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
@@ -237,16 +243,6 @@ func (r *Runner) SSHConnection(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("probe SSH_CONNECTION: %w", err)
 	}
 	return strings.TrimSpace(out.String()), nil
-}
-
-// ScriptPath is the remote path of the bootstrap.sh this runner shipped, so the
-// tailscale access layer drives its enroll and close-public-ssh subcommands
-// against the same copy. It is empty until Preflight or Setup has shipped it.
-func (r *Runner) ScriptPath() string {
-	if r.shipped.dir == "" {
-		return ""
-	}
-	return r.shipped.Path()
 }
 
 // Close removes the shipped bootstrap.sh from the box, best effort, and does

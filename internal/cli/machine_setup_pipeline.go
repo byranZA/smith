@@ -27,8 +27,8 @@ type pipelineRun struct {
 	host string
 	// exec is the local process boundary every stage reaches a binary over.
 	exec connection.Exec
-	// access is the tailscale access orchestrator, nil in public mode.
-	access *tailscale.Access
+	// admin is the admin machine's own tailscale surface, nil in public mode.
+	admin tailscale.Admin
 	// acquireKey resolves the tailnet auth key, called only if the box actually
 	// needs enrolling.
 	acquireKey func() (string, error)
@@ -92,11 +92,19 @@ func (r *pipelineRun) reach() string {
 // the rest of the pipeline reaches the box by. Public mode has no admin-side
 // access layer — the phases left hardened SSH open on the public IP — so the
 // stage runs and does nothing.
+//
+// Like every stage it travels as the smith user, never the bootstrap login,
+// which hardening has closed by now on a root setup. It starts at the host the
+// run came in over and moves onto the tailnet once the probe proves that
+// address, so public SSH is closed — and the stage's shipped script removed —
+// from the door that was just shown to work.
 func (r *pipelineRun) establishAccess(ctx context.Context, stdout io.Writer) error {
 	if r.accessMode != "tailscale" {
 		return nil
 	}
-	result, err := establishTailscale(ctx, r.access, r.host, r.acquireKey, stdout)
+	dial := func(host string) tailscale.Remote { return connection.New(smithTarget(host), r.exec) }
+	access := tailscale.NewAccess(tailscale.NewBox(dial, r.host), r.admin)
+	result, err := establishTailscale(ctx, access, r.host, r.acquireKey, stdout)
 	if err != nil {
 		return err
 	}

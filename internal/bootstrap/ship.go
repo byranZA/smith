@@ -38,6 +38,13 @@ func (s Shipped) Path() string {
 	return s.dir + "/" + shippedName
 }
 
+// Over returns the same shipped script reached over conn instead: the same
+// box, at another address, so a command whose reach moved partway through can
+// still remove what it shipped once the old address stops answering.
+func (s Shipped) Over(conn Conn) Shipped {
+	return Shipped{conn: conn, dir: s.dir}
+}
+
 // Remove deletes the shipped script's directory from the box, best effort. It
 // runs even when ctx is already cancelled, so an interrupted command still
 // cleans up, but waits on the box for a few seconds at most. A failed remove is

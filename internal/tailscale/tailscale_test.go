@@ -3,13 +3,16 @@ package tailscale
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // fakeBox records the box-side steps the access sequence drives, and lets each
 // be made to fail, so a test can assert the verify order and that public SSH is
-// only ever closed after a successful probe.
+// only ever closed after a successful probe. It also records the address each
+// call travelled to: "public" until the box is moved onto the tailnet, the
+// tailnet IP afterwards.
 type fakeBox struct {
 	currentIP  string
 	currentErr error
@@ -23,9 +26,23 @@ type fakeBox struct {
 	closed   bool
 	gotHost  string
 	gotKey   string
+
+	// at is where the box's calls go right now.
+	at string
+	// calls is every call made, as "<step>@<address>".
+	calls []string
+}
+
+func (b *fakeBox) record(step string) {
+	at := b.at
+	if at == "" {
+		at = "public"
+	}
+	b.calls = append(b.calls, step+"@"+at)
 }
 
 func (b *fakeBox) CurrentIP(_ context.Context) (string, error) {
+	b.record("status")
 	if b.currentErr != nil {
 		return "", b.currentErr
 	}
@@ -33,6 +50,7 @@ func (b *fakeBox) CurrentIP(_ context.Context) (string, error) {
 }
 
 func (b *fakeBox) Enroll(_ context.Context, opts EnrollOptions) (string, error) {
+	b.record("enroll")
 	b.enrolled = true
 	b.gotHost = opts.Host
 	b.gotKey = opts.AuthKey
@@ -43,9 +61,14 @@ func (b *fakeBox) Enroll(_ context.Context, opts EnrollOptions) (string, error) 
 }
 
 func (b *fakeBox) ClosePublicSSH(_ context.Context) error {
+	b.record("close")
 	b.closed = true
 	return b.closeErr
 }
+
+func (b *fakeBox) MoveToTailnet(tailnetIP string) { b.at = tailnetIP }
+
+func (b *fakeBox) Close(_ context.Context) { b.record("cleanup") }
 
 // fakeAdmin fakes the admin machine's own tailscale/ssh surface.
 type fakeAdmin struct {
@@ -226,6 +249,66 @@ func TestEstablishMissingSSHRuleAttributedAtProbe(t *testing.T) {
 	}
 	if box.closed {
 		t.Error("public SSH was closed despite a denied probe; the door must stay open")
+	}
+}
+
+func TestEstablishReachesTheBoxOverThePublicHostUntilTheProbePasses(t *testing.T) {
+	box := &fakeBox{enrollIP: "100.64.0.5"}
+	if _, err := NewAccess(box, &fakeAdmin{}).Establish(context.Background(), establishOpts()); err != nil {
+		t.Fatalf("Establish() error = %v", err)
+	}
+	want := []string{"status@public", "enroll@public", "close@100.64.0.5", "cleanup@100.64.0.5"}
+	if !slices.Equal(box.calls, want) {
+		t.Errorf("box calls = %q, want %q: close and cleanup over the tailnet once the probe passed", box.calls, want)
+	}
+}
+
+func TestEstablishCleansUpOverThePublicHostWhenItStopsBeforeTheProbePasses(t *testing.T) {
+	tests := []struct {
+		name  string
+		box   *fakeBox
+		admin *fakeAdmin
+		want  []string
+	}{
+		{
+			name:  "a denied probe",
+			box:   &fakeBox{enrollIP: "100.64.0.5"},
+			admin: &fakeAdmin{probeErr: ErrProbeDenied},
+			want:  []string{"status@public", "enroll@public", "cleanup@public"},
+		},
+		{
+			name:  "an enroll that never reaches Running",
+			box:   &fakeBox{enrollErr: ErrEnrollNotRunning},
+			admin: &fakeAdmin{},
+			want:  []string{"status@public", "enroll@public", "cleanup@public"},
+		},
+		{
+			name:  "an unreadable status",
+			box:   &fakeBox{currentErr: errors.New("ssh boom")},
+			admin: &fakeAdmin{},
+			want:  []string{"status@public", "cleanup@public"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewAccess(tt.box, tt.admin).Establish(context.Background(), establishOpts()); err == nil {
+				t.Fatal("Establish() error = nil, want the stage to fail")
+			}
+			if !slices.Equal(tt.box.calls, tt.want) {
+				t.Errorf("box calls = %q, want %q", tt.box.calls, tt.want)
+			}
+		})
+	}
+}
+
+func TestEstablishAlreadySatisfiedCleansUpOverTheTailnet(t *testing.T) {
+	box := &fakeBox{currentIP: "100.64.0.5"}
+	if _, err := NewAccess(box, &fakeAdmin{}).Establish(context.Background(), establishOpts()); err != nil {
+		t.Fatalf("Establish() error = %v", err)
+	}
+	want := []string{"status@public", "cleanup@100.64.0.5"}
+	if !slices.Equal(box.calls, want) {
+		t.Errorf("box calls = %q, want %q", box.calls, want)
 	}
 }
 
