@@ -115,7 +115,7 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		s.dirs++
 		_, err := fmt.Fprintf(stdout, "/tmp/smith.%08d\n", s.dirs)
 		return err
-	case strings.HasPrefix(remoteCmd, "bash ") && strings.Contains(remoteCmd, " setup --access "):
+	case strings.HasPrefix(remoteCmd, "bash ") && strings.Contains(remoteCmd, " 'setup' '--access' "):
 		s.hardened = true
 		return s.phaseErr
 	case strings.HasSuffix(remoteCmd, " 'close-public-ssh'"):
@@ -136,7 +136,7 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		}
 		_, err := io.WriteString(stdout, out)
 		return err
-	case strings.HasSuffix(remoteCmd, "preflight"):
+	case strings.HasSuffix(remoteCmd, " 'preflight'"):
 		_, err := io.WriteString(stdout, supportedRelease)
 		return err
 	case strings.Contains(remoteCmd, marker.Path):
@@ -402,14 +402,14 @@ func TestSetupShipsBootstrapOnceAndRemovesIt(t *testing.T) {
 			if target != "root@203.0.113.10" {
 				t.Errorf("shipped over %q, want the bootstrap login", target)
 			}
-			for _, sub := range []string{"preflight", "setup"} {
+			for _, sub := range []string{"'preflight'", "'setup'"} {
 				if !tt.ssh.ranAgainstAs(target, script, sub) {
 					t.Errorf("%s did not run against the shipped %q; ran %q", sub, script, tt.ssh.commands)
 				}
 			}
 			// Hardening has closed the root login by the time setup returns, so
 			// the script removes its own directory as it exits.
-			removeDir := "--remove-dir '" + path.Dir(script) + "'"
+			removeDir := "'--remove-dir' '" + path.Dir(script) + "'"
 			if i := commandIndex(tt.ssh.commands, removeDir); i < 0 {
 				t.Errorf("setup was not told to remove its shipped directory; ran %q", tt.ssh.commands)
 			}
@@ -484,13 +484,8 @@ func TestTailscaleAccessStageReachesTheBoxAsTheSmithUser(t *testing.T) {
 			t.Errorf("%s did not run as smith@203.0.113.10 against %q; ran %q", sub, script, ssh.commands)
 		}
 	}
-	// Hardening closes the root login, so a stage that tried it was turned
-	// away. Only the runner's own best-effort removal may try, and its script
-	// has already removed that directory itself.
-	for _, r := range ssh.refusedAs("root") {
-		if !strings.Contains(r, " rm -rf -- ") {
-			t.Errorf("the box turned away %q, want no stage to reach it as root", r)
-		}
+	if refused := ssh.refusedAs("root"); len(refused) > 0 {
+		t.Errorf("the box turned away %q, want nothing to reach it as root once hardening closed that login", refused)
 	}
 }
 

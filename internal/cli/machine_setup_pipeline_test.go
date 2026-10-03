@@ -36,7 +36,7 @@ func TestSetupInstallsTheBinaryOnlyAfterEveryPhaseCompleted(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	phases, install := commandIndex(ssh.commands, " setup --access "), commandIndex(ssh.commands, " 'install' '--url' ")
+	phases, install := commandIndex(ssh.commands, " 'setup' '--access' "), commandIndex(ssh.commands, " 'install' '--url' ")
 	if phases < 0 || install < 0 {
 		t.Fatalf("commands = %v, want the phases and then the install stage", ssh.commands)
 	}
@@ -79,7 +79,7 @@ func TestSetupUnderADevBuildBootstrapsTheBoxAndFailsOnlyAtTheInstallStage(t *tes
 	if code == 0 {
 		t.Fatal("exit code = 0, want a dev build refused at the install stage")
 	}
-	if i := commandIndex(ssh.commands, " setup --access "); i < 0 {
+	if i := commandIndex(ssh.commands, " 'setup' '--access' "); i < 0 {
 		t.Errorf("commands = %v, want a dev build to still bootstrap the box", ssh.commands)
 	}
 	if i := commandIndex(ssh.commands, " 'install' '--url' "); i >= 0 {
@@ -121,7 +121,7 @@ func TestSetupRecordsNothingAboutTheInstalledBinaryOnTheMarker(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	i := commandIndex(ssh.commands, " setup --access ")
+	i := commandIndex(ssh.commands, " 'setup' '--access' ")
 	if i < 0 {
 		t.Fatalf("commands = %v, want the phases to have run", ssh.commands)
 	}

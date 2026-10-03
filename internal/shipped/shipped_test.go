@@ -335,3 +335,68 @@ func TestMovingBeforeAnythingShippedShipsOverTheNewAddress(t *testing.T) {
 		t.Errorf("box ran %+v, want the script shipped and run over the tailnet", b.runs)
 	}
 }
+
+func TestTheFinalSubcommandIsToldWhereTheCopyLives(t *testing.T) {
+	b := newBox()
+	s := shipped.New(b.login("root"), "bootstrap.sh", "echo hi")
+
+	if err := s.RunFinal(context.Background(), io.Discard, io.Discard, "setup", "--access", "public"); err != nil {
+		t.Fatalf("RunFinal() error = %v", err)
+	}
+
+	if len(b.runs) != 1 || !slices.Equal(b.runs[0].args, []string{"setup", "--access", "public", "--remove-dir", b.runs[0].dir}) {
+		t.Errorf("box ran %+v, want setup handed its own directory to remove", b.runs)
+	}
+}
+
+func TestTheHandleIsSpentAfterTheFinalSubcommand(t *testing.T) {
+	for name, scriptErr := range map[string]error{
+		"final subcommand succeeds": nil,
+		"final subcommand fails":    errors.New("exit status 1"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := newBox()
+			b.scriptErr = scriptErr
+			s := shipped.New(b.login("root"), "bootstrap.sh", "echo hi")
+			if err := s.RunFinal(context.Background(), io.Discard, io.Discard, "setup"); (err != nil) != (scriptErr != nil) {
+				t.Fatalf("RunFinal() error = %v, want an error only when the subcommand fails", err)
+			}
+
+			s.Close(context.Background())
+
+			if len(b.removed) != 0 {
+				t.Errorf("removals = %+v, want none once the final subcommand has run", b.removed)
+			}
+		})
+	}
+}
+
+func TestRunningAfterTheFinalSubcommandIsRefused(t *testing.T) {
+	runs := map[string]func(*shipped.Script) error{
+		"Run": func(s *shipped.Script) error {
+			return s.Run(context.Background(), io.Discard, io.Discard, "probe")
+		},
+		"RunWithInput": func(s *shipped.Script) error {
+			return s.RunWithInput(context.Background(), strings.NewReader("x"), io.Discard, io.Discard, "enroll")
+		},
+		"RunFinal": func(s *shipped.Script) error {
+			return s.RunFinal(context.Background(), io.Discard, io.Discard, "setup")
+		},
+	}
+	for name, run := range runs {
+		t.Run(name, func(t *testing.T) {
+			b := newBox()
+			s := shipped.New(b.login("root"), "bootstrap.sh", "echo hi")
+			if err := s.RunFinal(context.Background(), io.Discard, io.Discard, "setup"); err != nil {
+				t.Fatalf("RunFinal() error = %v", err)
+			}
+			sent := b.sent
+
+			err := run(s)
+
+			if err == nil || b.sent != sent {
+				t.Errorf("%s after the final subcommand = %v and sent %d operations, want a refusal that sends none", name, err, b.sent-sent)
+			}
+		})
+	}
+}

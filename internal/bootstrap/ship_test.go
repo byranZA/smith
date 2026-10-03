@@ -310,3 +310,10 @@ func TestShippedReachedOverAnotherConnectionIsRemovedThere(t *testing.T) {
 		t.Error("the shipped directory was removed over the connection it was shipped over, want only the one it was moved to")
 	}
 }
+
+// shippedDir is the nth private directory the fake box's mktemp hands out. It
+// holds whitespace, an apostrophe and shell metacharacters, as a box's TMPDIR
+// may, so a script argument only names the shipped file when it is quoted.
+func shippedDir(n int) string {
+	return fmt.Sprintf("/tmp/smith's dir; $HOME.%08d", n)
+}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,10 +39,11 @@ type Conn interface {
 // Script is one use of a shipped script over a connection. It ships on the
 // first Run and is removed by Close; it is not safe for concurrent use.
 type Script struct {
-	conn Conn
-	name string
-	body string
-	dir  string
+	conn  Conn
+	name  string
+	body  string
+	dir   string
+	spent bool
 }
 
 // New returns a Script that ships body, named name (such as "bootstrap.sh"),
@@ -58,10 +60,20 @@ func (s *Script) Run(ctx context.Context, stdout, stderr io.Writer, sub string, 
 	if err := s.ship(ctx); err != nil {
 		return err
 	}
-	if err := s.conn.Run(ctx, s.command(sub, args), stdout, stderr); err != nil {
-		return fmt.Errorf("run %s %s: %w", s.name, sub, err)
+	return s.run(ctx, s.dir, stdout, stderr, sub, args)
+}
+
+// RunFinal is Run for a subcommand that removes the script's private directory
+// itself: it appends "--remove-dir <dir>" to args and leaves the handle spent
+// whatever the outcome, so Close does nothing and any later run is refused.
+func (s *Script) RunFinal(ctx context.Context, stdout, stderr io.Writer, sub string, args ...string) error {
+	err := s.ship(ctx)
+	dir := s.dir
+	s.dir, s.spent = "", true
+	if err != nil {
+		return err
 	}
-	return nil
+	return s.run(ctx, dir, stdout, stderr, sub, slices.Concat(args, []string{"--remove-dir", dir}))
 }
 
 // RunWithInput is Run with stdin fed to the subcommand, so a secret such as an
@@ -70,7 +82,7 @@ func (s *Script) RunWithInput(ctx context.Context, stdin io.Reader, stdout, stde
 	if err := s.ship(ctx); err != nil {
 		return err
 	}
-	if err := s.conn.RunWithInput(ctx, s.command(sub, args), stdin, stdout, stderr); err != nil {
+	if err := s.conn.RunWithInput(ctx, command(s.dir, sub, args), stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("run %s %s: %w", s.name, sub, err)
 	}
 	return nil
@@ -84,7 +96,8 @@ func (s *Script) Move(conn Conn) {
 
 // Close removes the script's private directory from the box, best effort. It
 // runs even when ctx is cancelled, waits on the box a few seconds at most,
-// never reports a failure, and does nothing when nothing is shipped.
+// never reports a failure, and does nothing when nothing is shipped or a final
+// subcommand has run.
 func (s *Script) Close(ctx context.Context) {
 	if s.dir == "" {
 		return
@@ -94,10 +107,19 @@ func (s *Script) Close(ctx context.Context) {
 	removeDir(ctx, s.conn, dir)
 }
 
-// command renders the remote invocation of subcommand sub with args, quoting
-// the script's path and every argument.
-func (s *Script) command(sub string, args []string) string {
-	words := []string{"bash", connection.ShellArg(s.dir + "/" + shippedName), connection.ShellArg(sub)}
+// run runs subcommand sub with args from the copy shipped to dir and streams
+// its output, wrapping a failure with the script and subcommand it ran.
+func (s *Script) run(ctx context.Context, dir string, stdout, stderr io.Writer, sub string, args []string) error {
+	if err := s.conn.Run(ctx, command(dir, sub, args), stdout, stderr); err != nil {
+		return fmt.Errorf("run %s %s: %w", s.name, sub, err)
+	}
+	return nil
+}
+
+// command renders the remote invocation of subcommand sub with args from the
+// copy shipped to dir, quoting the script's path and every argument.
+func command(dir, sub string, args []string) string {
+	words := []string{"bash", connection.ShellArg(dir + "/" + shippedName), connection.ShellArg(sub)}
 	for _, a := range args {
 		words = append(words, connection.ShellArg(a))
 	}
@@ -107,6 +129,9 @@ func (s *Script) command(sub string, args []string) string {
 // ship copies the script into a fresh private directory on the box unless it
 // is already there. A copy that fails removes the directory it made.
 func (s *Script) ship(ctx context.Context) error {
+	if s.spent {
+		return fmt.Errorf("run %s: its final subcommand has already run", s.name)
+	}
 	if s.dir != "" {
 		return nil
 	}

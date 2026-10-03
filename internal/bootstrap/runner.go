@@ -5,8 +5,9 @@
 // Preflight runs the non-recorded gate (privilege + OS support, mutating
 // nothing). Setup drives the ordered mutating phases, streaming live
 // progress and mapping a mid-run failure to a recovery report. Both run the one
-// copy of the script the Runner shipped: setup removes it as it exits, and
-// Close removes it for a run that stopped before setup. In tailscale
+// shipped copy of the script the caller hands the Runner: setup, the final
+// subcommand, removes it as it exits, and the caller's Close removes it for a
+// run that stopped before setup. In tailscale
 // mode the caller derives the access-aware public-SSH firewall target from
 // SSHConnection before Setup; the access layer that runs after it (see the
 // tailscale package) ships and drives its own copy as the smith user.
@@ -23,6 +24,7 @@ import (
 
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/osgate"
+	"github.com/byranZA/smith/internal/shipped"
 )
 
 // Script is the embedded bootstrap.sh, scp'd to the box and run there.
@@ -35,6 +37,14 @@ var Script string
 type Conn interface {
 	Copy(ctx context.Context, localPath, remotePath string) error
 	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+}
+
+// ShippedScript is the shipped bootstrap.sh a Runner drives by subcommand:
+// preflight runs as an ordinary subcommand and setup as the final one, which
+// removes the shipped copy itself as it exits.
+type ShippedScript interface {
+	Run(ctx context.Context, stdout, stderr io.Writer, sub string, args ...string) error
+	RunFinal(ctx context.Context, stdout, stderr io.Writer, sub string, args ...string) error
 }
 
 // Outcome is the terminal result of a preflight run. Its ExitCode is the
@@ -92,25 +102,25 @@ func (r Result) Report() string {
 	}
 }
 
-// Runner ships and drives bootstrap.sh over a connection. It ships the script
-// once, on first use, and every subcommand it runs afterwards runs that same
-// shipped script. Setup has the script remove itself as it exits; Close
-// removes it for a run that stopped before setup.
+// Runner drives bootstrap.sh's preflight and setup subcommands through one
+// shipped copy of the script, and probes the bootstrap login's connection.
 type Runner struct {
-	conn    Conn
-	shipped Shipped
+	conn   connection.Runner
+	script ShippedScript
 }
 
-// NewRunner returns a Runner that reaches the box over conn.
-func NewRunner(conn Conn) *Runner {
-	return &Runner{conn: conn}
+// NewRunner returns a Runner that probes the box over conn and drives script,
+// the shipped bootstrap.sh reaching the box over that same login. Removing
+// script when the run is done is the caller's job.
+func NewRunner(conn connection.Runner, script ShippedScript) *Runner {
+	return &Runner{conn: conn, script: script}
 }
 
-// Preflight runs the non-recorded preflight gate: it probes reachability,
-// ships bootstrap.sh, runs its preflight subcommand, and applies the OS
-// support gate to the reported facts. A connect failure is reported as an
-// Outcome (not a Go error); a Go error is returned only for unexpected
-// infrastructure failures.
+// Preflight runs the non-recorded preflight gate: it probes reachability, runs
+// bootstrap.sh's preflight subcommand, and applies the OS support gate to the
+// reported facts. A connect failure is reported as an Outcome (not a Go error);
+// a Go error is returned for a script that could not be shipped and for
+// unexpected infrastructure failures.
 func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 	reachable, err := connection.Reachable(ctx, r.conn)
 	if err != nil {
@@ -120,17 +130,8 @@ func (r *Runner) Preflight(ctx context.Context) (Result, error) {
 		return Result{Outcome: OutcomeConnectFailed, Reason: connection.ErrConnect.Error()}, nil
 	}
 
-	script, err := r.ship(ctx)
-	if err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return Result{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
-		}
-		return Result{}, fmt.Errorf("ship bootstrap script: %w", err)
-	}
-
 	var out bytes.Buffer
-	cmd := fmt.Sprintf("bash %s preflight", connection.ShellArg(script))
-	if err := r.conn.Run(ctx, cmd, &out, io.Discard); err != nil {
+	if err := r.script.Run(ctx, &out, io.Discard, "preflight"); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
 			return Result{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
 		}
@@ -175,62 +176,54 @@ type SetupResult struct {
 	Failure *FailureReport
 }
 
-// Setup runs the ordered mutating phases on the box: it ships bootstrap.sh
-// unless Preflight already did, invokes its setup subcommand, and streams each
-// phase's live progress to stdout and stderr as it happens. The script removes
-// its own shipped directory as it exits, however the run ends. A connect failure
+// Setup runs the ordered mutating phases on the box: it runs bootstrap.sh's
+// setup as the final subcommand, so the script removes its own shipped copy as
+// it exits while the bootstrap login still reaches the box, and streams each
+// phase's live progress to stdout and stderr as it happens. A connect failure
 // and a phase failure are reported in the SetupResult rather than as Go errors,
 // so the caller can map them to an exit code; a phase failure also carries a
-// FailureReport built from the captured stream. A Go error is returned only for
-// unexpected infrastructure failures. Setup assumes the preflight gate has
-// already passed.
+// FailureReport built from the captured stream. A script that could not be
+// shipped means nothing ran on the box, so it is a Go error wrapping
+// shipped.ErrNotShipped, never a partial box. Setup assumes the preflight gate
+// has already passed.
 func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io.Writer) (SetupResult, error) {
-	script, err := r.ship(ctx)
-	if err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return SetupResult{Outcome: OutcomeConnectFailed}, nil
-		}
-		return SetupResult{}, fmt.Errorf("ship bootstrap script: %w", err)
-	}
-
-	// Tee the live streams into buffers: the operator still sees progress as it
-	// happens, and a phase failure can be reconstructed into a report afterward.
 	var outBuf, errBuf bytes.Buffer
 	teeOut := io.MultiWriter(stdout, &outBuf)
 	teeErr := io.MultiWriter(stderr, &errBuf)
 
+	err := r.script.RunFinal(ctx, teeOut, teeErr, "setup", setupArgs(opts)...)
+	switch {
+	case err == nil:
+		return SetupResult{Outcome: OutcomePassed}, nil
+	case errors.Is(err, connection.ErrConnect):
+		return SetupResult{Outcome: OutcomeConnectFailed}, nil
+	case errors.Is(err, shipped.ErrNotShipped):
+		return SetupResult{}, fmt.Errorf("run setup: %w", err)
+	}
+	report := newFailureReport(outBuf.String(), errBuf.String(), openDoorForRun(opts))
+	return SetupResult{Outcome: OutcomePartial, Failure: &report}, nil
+}
+
+// setupArgs renders opts as setup's arguments, defaulting the public-SSH
+// target to open.
+func setupArgs(opts SetupOptions) []string {
 	publicSSH := opts.PublicSSH
 	if publicSSH == "" {
 		publicSSH = "open"
 	}
-	// --remove-dir has the script remove its own shipped directory as it exits,
-	// while the bootstrap login still reaches the box: on a root login,
-	// hardening refuses the runner's later removal in Close.
-	cmd := fmt.Sprintf("bash %s setup --access %s --smith-version %s --public-ssh %s --remove-dir %s%s%s",
-		connection.ShellArg(script), connection.ShellArg(opts.AccessMode), connection.ShellArg(opts.SmithVersion),
-		connection.ShellArg(publicSSH), connection.ShellArg(r.shipped.dir), optionalFlag("--name", opts.BoxName),
-		optionalFlag("--blueprint", opts.Blueprint))
-	if err := r.conn.Run(ctx, cmd, teeOut, teeErr); err != nil {
-		if errors.Is(err, connection.ErrConnect) {
-			return SetupResult{Outcome: OutcomeConnectFailed}, nil
-		}
-		// A non-connect error means a phase ran and failed, leaving a partial box.
-		// Build the failure report from the streams the phases just emitted,
-		// attributing the still-open reach to the door setup connected over.
-		report := newFailureReport(outBuf.String(), errBuf.String(), openDoorForRun(opts))
-		return SetupResult{Outcome: OutcomePartial, Failure: &report}, nil
-	}
-	return SetupResult{Outcome: OutcomePassed}, nil
+	args := []string{"--access", opts.AccessMode, "--smith-version", opts.SmithVersion, "--public-ssh", publicSSH}
+	args = append(args, optionalFlag("--name", opts.BoxName)...)
+	return append(args, optionalFlag("--blueprint", opts.Blueprint)...)
 }
 
-// optionalFlag renders " <flag> <value>" for a value the run has, and nothing
-// for one it does not — so a box the run names nothing, or builds from no
+// optionalFlag renders flag and value for a value the run has, and nothing for
+// one it does not — so a box the run names nothing, or builds from no
 // blueprint, is never handed an empty value to record.
-func optionalFlag(flag, value string) string {
+func optionalFlag(flag, value string) []string {
 	if value == "" {
-		return ""
+		return nil
 	}
-	return fmt.Sprintf(" %s %s", flag, connection.ShellArg(value))
+	return []string{flag, value}
 }
 
 // SSHConnection reports the box's SSH_CONNECTION for the connection smith is
@@ -243,26 +236,6 @@ func (r *Runner) SSHConnection(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("probe SSH_CONNECTION: %w", err)
 	}
 	return strings.TrimSpace(out.String()), nil
-}
-
-// Close removes the shipped bootstrap.sh from the box, best effort, and does
-// nothing when nothing was shipped. It never fails: see Shipped.Remove.
-func (r *Runner) Close(ctx context.Context) {
-	r.shipped.Remove(ctx)
-	r.shipped = Shipped{}
-}
-
-// ship ships the embedded bootstrap.sh on first use and returns the remote path
-// every later call reuses.
-func (r *Runner) ship(ctx context.Context) (string, error) {
-	if r.shipped.dir == "" {
-		shipped, err := Ship(ctx, r.conn, Script)
-		if err != nil {
-			return "", err
-		}
-		r.shipped = shipped
-	}
-	return r.shipped.Path(), nil
 }
 
 // preflightFacts are the fields bootstrap.sh's preflight reports.

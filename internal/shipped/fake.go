@@ -46,6 +46,12 @@ func (f *Fake) Run(ctx context.Context, stdout, stderr io.Writer, sub string, ar
 	return f.RunWithInput(ctx, nil, stdout, stderr, sub, args...)
 }
 
+// RunFinal is Run recorded as the final subcommand.
+func (f *Fake) RunFinal(_ context.Context, stdout, stderr io.Writer, sub string, args ...string) error {
+	f.Calls = append(f.Calls, Call{Sub: sub, Args: args, Over: f.Conn, Final: true})
+	return f.reply(stdout, stderr, sub)
+}
+
 // RunWithInput is Run that also records what stdin fed the subcommand.
 func (f *Fake) RunWithInput(_ context.Context, stdin io.Reader, stdout, stderr io.Writer, sub string, args ...string) error {
 	var input []byte
@@ -56,6 +62,11 @@ func (f *Fake) RunWithInput(_ context.Context, stdin io.Reader, stdout, stderr i
 		}
 	}
 	f.Calls = append(f.Calls, Call{Sub: sub, Args: args, Input: string(input), Over: f.Conn})
+	return f.reply(stdout, stderr, sub)
+}
+
+// reply streams the Reply scripted for sub and returns its error.
+func (f *Fake) reply(stdout, stderr io.Writer, sub string) error {
 	r := f.Replies[sub]
 	if _, err := io.WriteString(stdout, r.Stdout); err != nil {
 		return fmt.Errorf("write fake stdout: %w", err)
