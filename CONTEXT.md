@@ -34,6 +34,8 @@ _Avoid_: onboarding, first connection.
 **Bootstrap login**:
 The root-or-sudo-capable account the operator connects *as* during the bootstrap-in path.
 Under a non-root login smith runs via `sudo` and fails early if passwordless sudo is absent.
+Its reach ends with the phases: `ssh-hardening` may close it (a root login always is), so
+nothing after the phases travels as it — every stage reaches the box as the smith user.
 _Avoid_: admin user, initial user.
 
 **smith user**:
@@ -86,12 +88,15 @@ as. Unlike a phase, a stage is not in the marker's `completed_phases` and does n
 layer; a failed stage names itself, skips every stage after it, and exits partial, because the box
 is provisioned and what stopped sits on top of it. `install` and `config` must precede `workspace`,
 because on-box smith is what runs it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)), and
-`install` is also reachable alone as `smith machine upgrade`.
+`install` is also reachable alone as `smith machine upgrade`. Every stage reaches the box as the
+smith user, never the bootstrap login — over the public host until `access` proves the tailnet
+door, and over the tailnet after.
 _Avoid_: phase (reserved for the base-layer sequence), step.
 
 **Shipped script**:
 A script smith copies onto the box to drive one command — `bootstrap.sh` for setup and status,
-`install.sh` for the install stage — and removes when that command ends. Unlike the staged
+`install.sh` for the install stage — and removes when that command ends, or sooner when the stage
+or subcommand that shipped it finishes with it. Unlike the staged
 blueprint, the staged env or a placement, it is **not box state**: it belongs to the login that
 shipped it, never outlives the command, and no two commands or logins share one. A cleanup that
 fails never fails the command
