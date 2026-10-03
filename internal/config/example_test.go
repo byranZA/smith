@@ -7,41 +7,53 @@ import (
 	"github.com/byranZA/smith/internal/config"
 )
 
-// exampleHome is the shipped example config home, laid out exactly as an
-// operator's ~/.smith/ is so the examples are copied rather than translated.
-// Reading it through the real loader is what keeps the documentation from
-// drifting out of the schema: an example that no longer validates fails here
-// before an operator ever pastes it.
+// exampleHome is the shipped example config home, read through the real loader so the docs cannot drift from the schema.
 const exampleHome = "../../docs/examples"
 
 func TestTheShippedExampleBlueprintValidates(t *testing.T) {
+	t.Parallel()
+	if _, _, err := config.Load(config.NewHome(exampleHome), "acme"); err != nil {
+		t.Fatalf("Load(example acme) err = %v, want nil", err)
+	}
+}
+
+func TestTheShippedExampleBlueprintCoversTheWholeSurface(t *testing.T) {
+	t.Parallel()
 	got, _, err := config.Load(config.NewHome(exampleHome), "acme")
 	if err != nil {
 		t.Fatalf("Load(example acme) err = %v, want nil", err)
 	}
 
-	// The example earns its place by covering the whole surface, so a field
-	// quietly dropped from it is a failure too.
 	switch {
 	case len(got.Repos) < 2:
 		t.Errorf("example declares %d repos, want at least two", len(got.Repos))
 	case len(got.Repos[0].Tools) == 0:
-		t.Error("example declares no per-repo tools override")
+		t.Errorf("example repo tools = %v, want a per-repo tools override", got.Repos[0].Tools)
 	case len(got.Placements) == 0:
-		t.Error("example declares no box placement")
+		t.Errorf("example placements = %v, want a box placement", got.Placements)
 	case len(got.Repos[0].Placements) == 0:
-		t.Error("example declares no repo placement")
+		t.Errorf("example repo placements = %v, want a repo placement", got.Repos[0].Placements)
 	case got.Git.UserName == "" || got.Git.UserEmail == "":
 		t.Errorf("example Git = %+v, want a git identity", got.Git)
 	case got.Provider == nil:
-		t.Error("example declares no provider block")
+		t.Error("example provider = nil, want a provider block")
+	}
+}
+
+func TestTheShippedExampleBlueprintShowsEveryReferenceScheme(t *testing.T) {
+	t.Parallel()
+	got, _, err := config.Load(config.NewHome(exampleHome), "acme")
+	if err != nil {
+		t.Fatalf("Load(example acme) err = %v, want nil", err)
 	}
 
-	// All three reference schemes, so the example shows what each is for.
 	for _, scheme := range []string{"env:", "file:", "literal:"} {
-		if !referencesScheme(got.Env, scheme) {
-			t.Errorf("example env declares no %q reference", scheme)
-		}
+		t.Run(scheme, func(t *testing.T) {
+			t.Parallel()
+			if !referencesScheme(got.Env, scheme) {
+				t.Errorf("example env = %v, want a %q reference", got.Env, scheme)
+			}
+		})
 	}
 }
 
@@ -56,6 +68,7 @@ func referencesScheme(env map[string]string, scheme string) bool {
 }
 
 func TestTheShippedExamplePreferencesValidate(t *testing.T) {
+	t.Parallel()
 	got, err := config.LoadPreferences(config.NewHome(exampleHome))
 	if err != nil {
 		t.Fatalf("LoadPreferences(example) err = %v, want nil", err)

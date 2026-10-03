@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 )
 
 func TestSelectResolvesABareNameUnderTheConfigHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	home := config.NewHome(dir)
 
@@ -24,21 +27,34 @@ func TestSelectResolvesABareNameUnderTheConfigHome(t *testing.T) {
 }
 
 func TestSelectRejectsAnEmptyName(t *testing.T) {
+	t.Parallel()
 	if _, err := config.Select(config.NewHome(t.TempDir()), ""); err == nil {
 		t.Fatal("Select() err = nil, want an error for an empty blueprint name")
 	}
 }
 
 func TestLoadReadsAndParsesTheSelectedBlueprint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: tailscale\nrepos:\n  - url: git@github.com:acme/api.git\n")
 
-	got, path, err := config.Load(config.NewHome(dir), "acme")
+	got, _, err := config.Load(config.NewHome(dir), "acme")
 	if err != nil {
 		t.Fatalf("Load() err = %v, want nil", err)
 	}
 	if got.Access != "tailscale" || len(got.Repos) != 1 {
 		t.Errorf("Load() = %+v, want access tailscale and one repo", got)
+	}
+}
+
+func TestLoadReturnsTheFileItRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	_, path, err := config.Load(config.NewHome(dir), "acme")
+	if err != nil {
+		t.Fatalf("Load() err = %v, want nil", err)
 	}
 	if want := filepath.Join(dir, "blueprints", "acme.yaml"); path != want {
 		t.Errorf("Load() path = %q, want the file it read, %q", path, want)
@@ -46,6 +62,7 @@ func TestLoadReadsAndParsesTheSelectedBlueprint(t *testing.T) {
 }
 
 func TestLoadReportsAMissingBlueprintWithThePathItLookedFor(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	_, _, err := config.Load(config.NewHome(dir), "staging")
@@ -58,7 +75,16 @@ func TestLoadReportsAMissingBlueprintWithThePathItLookedFor(t *testing.T) {
 	}
 }
 
+func TestLoadReportsAMissingBlueprintAsNotExist(t *testing.T) {
+	t.Parallel()
+	_, _, err := config.Load(config.NewHome(t.TempDir()), "staging")
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Load() err = %v, want one matching fs.ErrNotExist", err)
+	}
+}
+
 func TestLoadCreatesNothing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	before := tree(t, dir)
 
@@ -81,8 +107,7 @@ func writeBlueprint(t *testing.T, dir, name, body string) {
 	}
 }
 
-// tree lists every path under dir, relative to it, so a test can assert that a
-// read-only command left the config home exactly as it found it.
+// tree lists every path under dir, relative to it.
 func tree(t *testing.T, dir string) []string {
 	t.Helper()
 	var paths []string
@@ -116,6 +141,7 @@ func equal(a, b []string) bool {
 }
 
 func TestSelectTreatsAValueCarryingAPathMarkerAsAPath(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		value string
 		want  string
@@ -127,6 +153,7 @@ func TestSelectTreatsAValueCarryingAPathMarkerAsAPath(t *testing.T) {
 		{value: "team/acme.yaml", want: "team/acme.yaml"},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
+			t.Parallel()
 			got, err := config.Select(config.NewHome(t.TempDir()), tc.value)
 			if err != nil {
 				t.Fatalf("Select(%q) err = %v, want nil", tc.value, err)
@@ -139,6 +166,7 @@ func TestSelectTreatsAValueCarryingAPathMarkerAsAPath(t *testing.T) {
 }
 
 func TestSelectRefusesABareNameCarryingAnExtension(t *testing.T) {
+	t.Parallel()
 	_, err := config.Select(config.NewHome(t.TempDir()), "acme.yaml")
 	if err == nil {
 		t.Fatal("Select() err = nil, want a refusal for a name carrying an extension")
@@ -153,12 +181,12 @@ func TestSelectRefusesABareNameCarryingAnExtension(t *testing.T) {
 }
 
 func TestLoadReadsABlueprintPathVerbatim(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "shared.yaml")
 	if err := os.WriteFile(outside, []byte("access: public\n"), 0o644); err != nil {
 		t.Fatalf("write blueprint: %v", err)
 	}
-	// A blueprint of the same name inside the config home must not be read.
 	writeBlueprint(t, dir, "shared", "access: tailscale\n")
 
 	got, path, err := config.Load(config.NewHome(dir), outside)
@@ -174,6 +202,7 @@ func TestLoadReadsABlueprintPathVerbatim(t *testing.T) {
 }
 
 func TestLoadReportsAMissingBlueprintPathByPath(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "shared.yaml")
 
 	_, _, err := config.Load(config.NewHome(t.TempDir()), missing)
@@ -189,25 +218,44 @@ func TestLoadReportsAMissingBlueprintPathByPath(t *testing.T) {
 	}
 }
 
-func TestLoadPreferencesReportsAnAbsentFileWithoutCreatingIt(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "absent-home")
-
-	got, err := config.LoadPreferences(config.NewHome(dir))
+func TestLoadPreferencesMarksAnAbsentFileNotFound(t *testing.T) {
+	t.Parallel()
+	got, err := config.LoadPreferences(config.NewHome(filepath.Join(t.TempDir(), "absent-home")))
 	if err != nil {
 		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
 	}
 	if got.Found {
 		t.Error("LoadPreferences() found = true, want false for an absent config home")
 	}
+}
+
+func TestLoadPreferencesNamesThePathOfAnAbsentFile(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "absent-home")
+
+	got, err := config.LoadPreferences(config.NewHome(dir))
+	if err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
+	}
 	if want := filepath.Join(dir, "preferences.yaml"); got.Path != want {
 		t.Errorf("LoadPreferences() path = %q, want %q", got.Path, want)
 	}
+}
+
+func TestLoadPreferencesCreatesNothing(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "absent-home")
+
+	if _, err := config.LoadPreferences(config.NewHome(dir)); err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil for an absent config home", err)
+	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("config home exists after LoadPreferences(), want it not created")
+		t.Errorf("Stat(config home) err = %v after LoadPreferences(), want it not created", err)
 	}
 }
 
 func TestLoadPreferencesTreatsAnAbsentFileAsUnsetPreferences(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "absent-home")
 
 	got, err := config.LoadPreferences(config.NewHome(dir))
@@ -220,6 +268,7 @@ func TestLoadPreferencesTreatsAnAbsentFileAsUnsetPreferences(t *testing.T) {
 }
 
 func TestLoadPreferencesReadsAndParsesThePreferences(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writePreferences(t, dir, "access: tailscale\nworkspace: /srv/work\n")
 
@@ -230,8 +279,30 @@ func TestLoadPreferencesReadsAndParsesThePreferences(t *testing.T) {
 	if got.Declared.Access != "tailscale" || got.Declared.Workspace != "/srv/work" {
 		t.Errorf("LoadPreferences() = %+v, want access tailscale and workspace /srv/work", got.Declared)
 	}
+}
+
+func TestLoadPreferencesMarksAPresentFileFound(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: tailscale\n")
+
+	got, err := config.LoadPreferences(config.NewHome(dir))
+	if err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil", err)
+	}
 	if !got.Found {
 		t.Error("LoadPreferences() found = false, want true for preferences in the config home")
+	}
+}
+
+func TestLoadPreferencesReturnsTheFileItRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: tailscale\n")
+
+	got, err := config.LoadPreferences(config.NewHome(dir))
+	if err != nil {
+		t.Fatalf("LoadPreferences() err = %v, want nil", err)
 	}
 	if want := filepath.Join(dir, "preferences.yaml"); got.Path != want {
 		t.Errorf("LoadPreferences() path = %q, want the file it read, %q", got.Path, want)
@@ -239,6 +310,7 @@ func TestLoadPreferencesReadsAndParsesThePreferences(t *testing.T) {
 }
 
 func TestLoadPreferencesReportsAnInvalidFileWithItsPath(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writePreferences(t, dir, "repos:\n  - url: git@github.com:acme/api.git\n")
 
@@ -263,6 +335,7 @@ func writePreferences(t *testing.T, dir, body string) {
 }
 
 func TestLoadDocumentKeepsTheBlueprintBytesVerbatim(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	document := "# acme, the one we ship\naccess: tailscale\nterminal: tmux\nrepos:\n  - url: git@github.com:acme/api.git\n"
 	writeBlueprint(t, dir, "acme", document)
@@ -274,8 +347,30 @@ func TestLoadDocumentKeepsTheBlueprintBytesVerbatim(t *testing.T) {
 	if string(got.Bytes) != document {
 		t.Errorf("LoadDocument() bytes = %q, want the file byte for byte, %q", got.Bytes, document)
 	}
+}
+
+func TestLoadDocumentParsesTheBlueprint(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	got, err := config.LoadDocument(config.NewHome(dir), "acme")
+	if err != nil {
+		t.Fatalf("LoadDocument() err = %v, want nil", err)
+	}
 	if got.Blueprint.Access != "tailscale" {
 		t.Errorf("LoadDocument() blueprint = %+v, want access tailscale", got.Blueprint)
+	}
+}
+
+func TestLoadDocumentReturnsTheFileItRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+
+	got, err := config.LoadDocument(config.NewHome(dir), "acme")
+	if err != nil {
+		t.Fatalf("LoadDocument() err = %v, want nil", err)
 	}
 	if want := filepath.Join(dir, "blueprints", "acme.yaml"); got.Path != want {
 		t.Errorf("LoadDocument() path = %q, want %q", got.Path, want)
@@ -283,6 +378,7 @@ func TestLoadDocumentKeepsTheBlueprintBytesVerbatim(t *testing.T) {
 }
 
 func TestLoadDocumentRefusesAnInvalidBlueprint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "nonsense: true\n")
 
@@ -292,6 +388,7 @@ func TestLoadDocumentRefusesAnInvalidBlueprint(t *testing.T) {
 }
 
 func TestHomeNamesTheCacheAndTheInventoryInsideIt(t *testing.T) {
+	t.Parallel()
 	home := config.NewHome("/tmp/smith-home")
 
 	if got, want := home.CachePath(), filepath.Join("/tmp/smith-home", "cache"); got != want {

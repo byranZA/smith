@@ -25,14 +25,10 @@ const gitignoreFile = ".gitignore"
 // address book.
 const gitignoreEntry = cacheDir + "/"
 
-// EnsureHome creates the config home and its cache directory, and ensures the
-// home's .gitignore keeps the cache out of version control. It is the only
-// thing in this package that writes, and it is called from write paths alone:
-// reading a config home that does not exist is still reported, never repaired.
-//
-// It is idempotent. The .gitignore is appended to and never rewritten, because
-// the file is the operator's: one that already ignores the cache is left
-// byte-identical, and one that ignores anything else keeps saying so.
+// EnsureHome idempotently creates the config home and its cache directory,
+// and ensures the home's .gitignore keeps the cache out of version control.
+// The .gitignore is the operator's, so it is only ever appended to: one that
+// already ignores the cache is left byte-identical.
 func EnsureHome(h Home) error {
 	if err := os.MkdirAll(h.CachePath(), homeMode); err != nil {
 		return fmt.Errorf("create config home %s: %w", h.path, err)
@@ -45,7 +41,7 @@ func EnsureHome(h Home) error {
 // to a file with no trailing newline gets its own line, so the operator's last
 // line is never silently joined to smith's.
 func ensureGitignore(path string) error {
-	data, err := os.ReadFile(path) // #nosec G304 -- the ignore file lives at a path smith derives itself.
+	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -57,7 +53,7 @@ func ensureGitignore(path string) error {
 	if existing != "" && !strings.HasSuffix(existing, "\n") {
 		addition = "\n" + addition
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- as above.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}

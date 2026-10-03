@@ -62,14 +62,9 @@ type Value struct {
 func (v Value) String() string { return fmt.Sprintf("%s (%s)", v.Value, v.Origin) }
 
 // Adapter is the resolved provider block: the whole adapter smith would use,
-// and where it came from. It is resolved as a block rather than field by
-// field, because an adapter is a coherent description of one provider's CLI —
-// half of one and half of another describes no provider that exists, and the
-// mismatch would surface only at box creation as a permission error naming
-// nothing useful.
-//
-// A nil Provider is a run with no adapter declared anywhere. There is no
-// built-in one to fall back to, so it carries no origin.
+// and where it came from, resolved as a block because half of one provider's
+// CLI and half of another's describes no provider that exists. A nil Provider
+// is a run with no adapter declared anywhere, and carries no origin.
 type Adapter struct {
 	// Provider is the adapter smith would use, or nil when nobody declared one.
 	Provider *blueprint.Provider
@@ -97,15 +92,9 @@ func adapterCommand(p *blueprint.Provider) string {
 	return p.Create[0]
 }
 
-// Identity is the resolved git identity the box commits as: each field
-// carrying where it came from. It is resolved field by field rather than
-// wholesale like the adapter, because a name and an address are independent —
-// a blueprint pinning the name of a shared bot leaves the operator's own
-// address standing.
-//
-// smith has no built-in identity to fall back to, so a field nobody declared
-// stays unset and carries no origin. An invented one would be worse than none:
-// it would put a wrong author on every commit the box makes.
+// Identity is the resolved git identity the box commits as, resolved field by
+// field because a name and an address are independent. smith has no built-in
+// identity, so a field nobody declared stays unset and carries no origin.
 type Identity struct {
 	// UserName is the name commits are authored under.
 	UserName Value
@@ -165,13 +154,9 @@ type Resolved struct {
 // operator to one of the two files at random.
 const resolvedSubject = "resolved configuration"
 
-// Conflicts refuses a resolved configuration whose fields disagree with each
-// other, as opposed to one whose documents are individually well formed. A
-// rule lands here rather than in the parser when the values it weighs can be
-// declared in different files: the preferences hold the git identity, the
-// blueprint holds the placements, and only the resolved picture shows both.
-//
-// It returns nil when smith would act on the configuration as it stands.
+// Conflicts refuses a resolved configuration whose fields, possibly declared
+// in different files, disagree with each other. It returns nil when smith
+// would act on the configuration as it stands.
 func (r Resolved) Conflicts() error {
 	identity := blueprint.Git{UserName: r.Git.UserName.Value, UserEmail: r.Git.UserEmail.Value}
 	findings := blueprint.GitConflicts(identity, r.Placements)
@@ -282,17 +267,10 @@ func placementLines(placements []blueprint.Placement) []string {
 	return out
 }
 
-// Resolve returns the configuration smith would use, resolved from what the
-// operator named on the command line, what the blueprint declares, what their
-// preferences declare, and what smith falls back to — in that order of
-// precedence, and field by field, so a blueprint pinning one value leaves
-// every unrelated preference standing — with the one exception of the
-// provider block, which replaces wholesale.
-//
-// It is pure: three values in, resolved values and their origins out. Nothing
-// is read and nothing is printed. A nil blueprint is a run with no blueprint
-// named, which is the path preferences alone serve; nil preferences are an
-// operator who wrote none.
+// Resolve purely resolves, field by field, the configuration smith would use
+// from the command-line overrides, the blueprint, the preferences, and the
+// built-in defaults, in that order of precedence. The provider block alone
+// replaces wholesale, and a nil blueprint or nil preferences means none.
 func Resolve(o Overrides, b *blueprint.Blueprint, p *blueprint.Preferences) Resolved {
 	if b == nil {
 		b = &blueprint.Blueprint{}
@@ -318,10 +296,8 @@ func Resolve(o Overrides, b *blueprint.Blueprint, p *blueprint.Preferences) Reso
 }
 
 // resolveProvider picks one whole adapter, never fields of two. A blueprint
-// naming a provider at all replaces the preference block entire; a blueprint
-// silent on it inherits the preference entire. This is the single deliberate
-// exception to field-level precedence, and it applies to the provider block
-// and nothing else.
+// naming a provider replaces the preference block entire; a blueprint silent
+// on it inherits the preference entire.
 func resolveProvider(declared, preferred *blueprint.Provider) Adapter {
 	switch {
 	case declared != nil && preferred != nil:
