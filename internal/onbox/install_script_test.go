@@ -315,7 +315,23 @@ func TestScriptInstallLeavesAnExistingBinaryAloneWhenTheDownloadFails(t *testing
 
 func TestScriptProbeReportsTheArchitectureAndTheInstalledVersion(t *testing.T) {
 	f := newInstallFixture(t, "0.2.0", false)
-	if err := os.WriteFile(f.installPath, []byte("#!/usr/bin/env bash\necho \"smith 0.1.0\"\necho \"commit: abc1234\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(f.installPath, []byte("#!/usr/bin/env bash\necho \"smith 0.1.0\"\n"), 0o755); err != nil {
+		t.Fatalf("seed the box's existing smith: %v", err)
+	}
+
+	out, code := f.run(t, "probe")
+	if code != 0 {
+		t.Fatalf("probe exited %d, want 0\n%s", code, out)
+	}
+
+	if got := parseProbe(out); got.machine != "x86_64" || got.version != "0.1.0" {
+		t.Errorf("probe reported %+v, want x86_64 running 0.1.0", got)
+	}
+}
+
+func TestScriptProbeReportsTheVersionOfASmithThatKeepsWritingAfterTheVersionLine(t *testing.T) {
+	f := newInstallFixture(t, "0.2.0", false)
+	if err := os.WriteFile(f.installPath, []byte("#!/usr/bin/env bash\necho \"smith 0.1.0\"\nsleep 0.2\necho \"commit: abc1234\"\n"), 0o755); err != nil {
 		t.Fatalf("seed the box's existing smith: %v", err)
 	}
 

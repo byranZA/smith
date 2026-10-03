@@ -72,7 +72,10 @@ probe() {
   printf 'arch=%s\n' "$(uname -m)"
   if [ -x "$SMITH_INSTALL_PATH" ]; then
     local reported
-    reported="$("$SMITH_INSTALL_PATH" version 2>/dev/null | head -n 1 | awk '{print $2}')" || reported=""
+    # awk reads the whole output rather than head stopping at the first line:
+    # under pipefail, a smith still writing (its commit line) after head exited
+    # dies of SIGPIPE, failing the pipeline and losing the version it did print.
+    reported="$("$SMITH_INSTALL_PATH" version 2>/dev/null | awk 'NR == 1 {print $2}')" || reported=""
     if [ -n "$reported" ]; then
       printf 'smith-version=%s\n' "$reported"
     fi
