@@ -48,8 +48,8 @@ Doc comments are the only comments in this codebase. Each is **one or two senten
 func Load(path string) (Config, error) {
 ```
 
-- **Function bodies are comment-free.** Make the code carry its own explanation: when a line needs one, extract a well-named function or variable instead. Machine directives (`//go:build`, `//go:embed`, `//nolint:`) are not comments and stay.
-- **Tests are exempt.** The test name carries the explanation — `TestLoadMissingFileYieldsZeroConfig`, subtest names like `"sibling path is outside parent"`. A test or test helper takes at most a one-line doc comment, and only when the name cannot say it.
+- **Function bodies are comment-free.** Make the code carry its own explanation: when a line needs one, extract a well-named function or variable instead. Machine directives (`//go:build`, `//go:embed`, `//nolint:`) are not comments and stay — but only for a tool the build or `make check` runs; a directive nothing reads is a comment.
+- **Tests need no doc comment.** The test name carries the explanation — `TestLoadMissingFileYieldsZeroConfig`, subtest names like `"sibling path is outside parent"`. Any declaration in a `_test.go` file — test, helper, fake, const — takes at most a one-line doc comment, and only when its name cannot say it. Test bodies are comment-free like any other.
 
 ## Errors
 
