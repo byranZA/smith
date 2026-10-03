@@ -30,6 +30,7 @@ func modeOf(t *testing.T, path string) os.FileMode {
 }
 
 func TestEnsureHomeCreatesTheHomeAndCacheDirectories(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "smith")
 	home := config.NewHome(dir)
 
@@ -45,6 +46,7 @@ func TestEnsureHomeCreatesTheHomeAndCacheDirectories(t *testing.T) {
 }
 
 func TestEnsureHomeIsIdempotent(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "smith")
 	home := config.NewHome(dir)
 
@@ -61,6 +63,7 @@ func TestEnsureHomeIsIdempotent(t *testing.T) {
 }
 
 func TestEnsureHomeGitignoresTheCacheDirectory(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "smith")
 
 	if err := config.EnsureHome(config.NewHome(dir)); err != nil {
@@ -72,6 +75,7 @@ func TestEnsureHomeGitignoresTheCacheDirectory(t *testing.T) {
 }
 
 func TestEnsureHomeAppendsToAnExistingGitignore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitignore")
 	if err := os.WriteFile(path, []byte("scratch/\n"), 0o600); err != nil {
@@ -91,6 +95,7 @@ func TestEnsureHomeAppendsToAnExistingGitignore(t *testing.T) {
 }
 
 func TestEnsureHomeLeavesAGitignoreAlreadyListingTheCacheUnchanged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitignore")
 	const content = "scratch/\ncache/\n"
@@ -107,6 +112,7 @@ func TestEnsureHomeLeavesAGitignoreAlreadyListingTheCacheUnchanged(t *testing.T)
 }
 
 func TestEnsureHomeAppendsOnItsOwnLineWhenTheGitignoreHasNoTrailingNewline(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitignore")
 	if err := os.WriteFile(path, []byte("scratch/"), 0o600); err != nil {

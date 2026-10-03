@@ -1,20 +1,12 @@
 // Package config owns smith's config home — the directory holding the
-// operator's blueprints — and turns what the operator typed into a parsed
-// blueprint.
-//
-// The home path is a dependency: it is passed in, never discovered here. That
-// keeps the package free of any assumption about where an operator's home
-// directory is, and lets a test run the real code path against a temp
-// directory rather than a stand-in filesystem.
-//
-// Reading never creates: a config home that does not exist is reported, not
-// repaired. EnsureHome is the one thing here that writes, and only write paths
-// call it — it creates the home and its cache, and appends to the operator's
-// .gitignore rather than rewriting a file that is theirs.
+// operator's blueprints, passed in rather than discovered — and turns what the
+// operator typed into a parsed blueprint. Reading never creates; EnsureHome is
+// the one thing here that writes.
 package config
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,9 +57,8 @@ func (h Home) CachePath() string { return filepath.Join(h.path, cacheDir) }
 func (h Home) InventoryPath() string { return filepath.Join(h.CachePath(), inventoryFile) }
 
 // isPath reports whether what the operator typed is a path rather than a bare
-// blueprint name. The two are told apart structurally: a value containing a
-// separator, or beginning with "~" or ".", carries a path marker. Anything
-// else is a name.
+// blueprint name. A value containing a separator, or beginning with "~" or
+// ".", carries a path marker; anything else is a name.
 func isPath(nameOrPath string) bool {
 	return strings.ContainsRune(nameOrPath, '/') ||
 		strings.HasPrefix(nameOrPath, "~") ||
@@ -84,14 +75,19 @@ func Select(home Home, nameOrPath string) (string, error) {
 	if isPath(nameOrPath) {
 		return nameOrPath, nil
 	}
-	// The extension is not part of the name, so accepting it here would make
-	// "acme" and "acme.yaml" two spellings of one blueprint — an ambiguity the
-	// marker's blueprint pointer would inherit.
-	if ext := filepath.Ext(nameOrPath); ext == blueprintExt || ext == altBlueprintExt {
+	if ext, ok := blueprintExtOf(nameOrPath); ok {
 		bare := strings.TrimSuffix(nameOrPath, ext)
 		return "", fmt.Errorf("blueprint %q: the %s extension is not part of a blueprint name — type %q instead", nameOrPath, ext, bare)
 	}
 	return filepath.Join(home.path, "blueprints", nameOrPath+blueprintExt), nil
+}
+
+// blueprintExtOf returns the blueprint extension a bare name carries, and
+// whether it carries one. Select refuses such a name, so "acme" and
+// "acme.yaml" never become two spellings of one blueprint.
+func blueprintExtOf(name string) (string, bool) {
+	ext := filepath.Ext(name)
+	return ext, ext == blueprintExt || ext == altBlueprintExt
 }
 
 // Document is a blueprint as smith read it: the parsed declaration, the bytes
@@ -118,13 +114,13 @@ func LoadDocument(home Home, nameOrPath string) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	data, err := os.ReadFile(path) // #nosec G304 -- the operator names their own blueprint.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if isPath(nameOrPath) {
-				return Document{Path: path}, fmt.Errorf("no blueprint at %s", path)
+				return Document{Path: path}, fmt.Errorf("no blueprint at %s: %w", path, fs.ErrNotExist)
 			}
-			return Document{Path: path}, fmt.Errorf("no blueprint named %q: looked for %s", nameOrPath, path)
+			return Document{Path: path}, fmt.Errorf("no blueprint named %q: looked for %s: %w", nameOrPath, path, fs.ErrNotExist)
 		}
 		return Document{Path: path}, fmt.Errorf("read blueprint %s: %w", path, err)
 	}
@@ -136,13 +132,8 @@ func LoadDocument(home Home, nameOrPath string) (Document, error) {
 }
 
 // Load selects, reads, and parses the blueprint the operator named, returning
-// it alongside the file it came from. A blueprint that does not exist is an
-// error naming the path smith looked for, so the operator can see where it
-// expected to find one.
-//
-// The path comes back because a caller reporting on a blueprint has to name
-// the file it read, and asking selection a second time to learn it would let
-// the two answers drift apart.
+// it alongside the file it came from, even on error. A blueprint that does not
+// exist is an error naming the path smith looked for.
 func Load(home Home, nameOrPath string) (blueprint.Blueprint, string, error) {
 	doc, err := LoadDocument(home, nameOrPath)
 	if err != nil {
@@ -178,16 +169,13 @@ func (h Home) PreferencesPath() string {
 	return filepath.Join(h.path, preferencesFile)
 }
 
-// LoadPreferences reads and parses the operator's preferences, returning them
-// alongside the file they came from. Preferences are optional and so is the
-// config home, so an absent file yields unset preferences and no error, marked
-// as not found: smith falls through to its built-in defaults. An invalid one
-// is an error naming the file, because preferences are part of what smith
-// would use on every run and silently ignoring them would leave a box
-// configured by something the operator never wrote. Nothing is created.
+// LoadPreferences reads and parses the operator's preferences without
+// creating anything, returning them alongside the file they came from. An
+// absent file yields unset preferences marked not found and no error; an
+// invalid one is an error naming the file.
 func LoadPreferences(home Home) (Preferences, error) {
 	path := home.PreferencesPath()
-	data, err := os.ReadFile(path) // #nosec G304 -- the preferences live at a path smith derives itself.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Preferences{Path: path}, nil

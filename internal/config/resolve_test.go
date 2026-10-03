@@ -10,6 +10,7 @@ import (
 )
 
 func TestResolveTakesTheBlueprintOverAPreference(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Access: "public"}
 	p := &blueprint.Preferences{Access: "tailscale"}
 
@@ -21,6 +22,7 @@ func TestResolveTakesTheBlueprintOverAPreference(t *testing.T) {
 }
 
 func TestResolveTakesAPreferenceOverTheBuiltInDefault(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{}
 	p := &blueprint.Preferences{Access: "tailscale"}
 
@@ -32,6 +34,7 @@ func TestResolveTakesAPreferenceOverTheBuiltInDefault(t *testing.T) {
 }
 
 func TestResolveFallsThroughToTheBuiltInDefaults(t *testing.T) {
+	t.Parallel()
 	got := config.Resolve(config.Overrides{}, nil, nil)
 
 	for _, tt := range []struct {
@@ -43,13 +46,17 @@ func TestResolveFallsThroughToTheBuiltInDefaults(t *testing.T) {
 		{"terminal", got.Terminal, "tmux"},
 		{"workspace", got.Workspace, "~/workspace"},
 	} {
-		if tt.got.Value != tt.want || tt.got.Origin != config.FromDefault {
-			t.Errorf("resolved %s = %q from %q, want %q from %q", tt.field, tt.got.Value, tt.got.Origin, tt.want, config.FromDefault)
-		}
+		t.Run(tt.field, func(t *testing.T) {
+			t.Parallel()
+			if tt.got.Value != tt.want || tt.got.Origin != config.FromDefault {
+				t.Errorf("resolved %s = %q from %q, want %q from %q", tt.field, tt.got.Value, tt.got.Origin, tt.want, config.FromDefault)
+			}
+		})
 	}
 }
 
 func TestResolveTakesTheFlagOverEverything(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Access: "public"}
 	p := &blueprint.Preferences{Access: "public"}
 
@@ -61,6 +68,7 @@ func TestResolveTakesTheFlagOverEverything(t *testing.T) {
 }
 
 func TestResolveResolvesEachFieldOnItsOwn(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Access: "public"}
 	p := &blueprint.Preferences{Access: "tailscale", Workspace: "~/dev"}
 
@@ -75,6 +83,7 @@ func TestResolveResolvesEachFieldOnItsOwn(t *testing.T) {
 }
 
 func TestResolveAppliesPreferencesWithNoBlueprintAtAll(t *testing.T) {
+	t.Parallel()
 	p := &blueprint.Preferences{Access: "tailscale"}
 
 	got := config.Resolve(config.Overrides{}, nil, p).Access
@@ -85,9 +94,10 @@ func TestResolveAppliesPreferencesWithNoBlueprintAtAll(t *testing.T) {
 }
 
 func TestResolvedReportsEveryFieldWithItsOrigin(t *testing.T) {
+	t.Parallel()
 	got := config.Resolve(config.Overrides{Access: "tailscale"}, &blueprint.Blueprint{Terminal: "tmux"}, nil).String()
 
-	for _, want := range []string{"access", "tailscale", string(config.FromFlag), "terminal", string(config.FromBlueprint), "workspace", "~/workspace", string(config.FromDefault)} {
+	for _, want := range []string{"access", "tailscale", "flag", "terminal", "blueprint", "workspace", "~/workspace", "built-in default"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", got, want)
 		}
@@ -95,6 +105,7 @@ func TestResolvedReportsEveryFieldWithItsOrigin(t *testing.T) {
 }
 
 func TestResolveReplacesThePreferenceProviderWholesale(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Provider: &blueprint.Provider{Create: []string{"doctl", "compute", "droplet", "create"}}}
 	p := &blueprint.Preferences{Provider: &blueprint.Provider{
 		Create:   []string{"hcloud", "server", "create"},
@@ -122,9 +133,12 @@ func TestResolveReplacesThePreferenceProviderWholesale(t *testing.T) {
 		{"marker", got.Provider.Marker},
 		{"extract", got.Provider.Extract},
 	} {
-		if !reflect.ValueOf(tt.got).IsZero() {
-			t.Errorf("resolved provider %s = %+v, want nothing inherited from the foreign preference adapter", tt.field, tt.got)
-		}
+		t.Run(tt.field, func(t *testing.T) {
+			t.Parallel()
+			if !reflect.ValueOf(tt.got).IsZero() {
+				t.Errorf("resolved provider %s = %+v, want nothing inherited from the foreign preference adapter", tt.field, tt.got)
+			}
+		})
 	}
 	if got.Origin != config.FromBlueprintReplacing {
 		t.Errorf("resolved provider origin = %q, want %q", got.Origin, config.FromBlueprintReplacing)
@@ -132,6 +146,7 @@ func TestResolveReplacesThePreferenceProviderWholesale(t *testing.T) {
 }
 
 func TestResolveInheritsThePreferenceProviderEntire(t *testing.T) {
+	t.Parallel()
 	adapter := &blueprint.Provider{
 		Create:   []string{"hcloud", "server", "create"},
 		Requires: []string{"HCLOUD_TOKEN"},
@@ -147,6 +162,7 @@ func TestResolveInheritsThePreferenceProviderEntire(t *testing.T) {
 }
 
 func TestResolveLeavesTheProviderAbsentWhenNobodyDeclaresOne(t *testing.T) {
+	t.Parallel()
 	got := config.Resolve(config.Overrides{}, nil, nil).Provider
 
 	if got.Provider != nil {
@@ -155,6 +171,7 @@ func TestResolveLeavesTheProviderAbsentWhenNobodyDeclaresOne(t *testing.T) {
 }
 
 func TestResolveKeepsEveryOtherFieldFieldLevelWhenTheProviderIsReplaced(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{
 		Access:   "public",
 		Provider: &blueprint.Provider{Create: []string{"doctl", "compute", "droplet", "create"}},
@@ -179,13 +196,14 @@ func TestResolveKeepsEveryOtherFieldFieldLevelWhenTheProviderIsReplaced(t *testi
 	}
 }
 
-func TestResolvedReportsWhichAdapterIsInPlay(t *testing.T) {
+func TestResolvedReportsTheBlueprintAdapterReplacingThePreference(t *testing.T) {
+	t.Parallel()
 	replaced := config.Resolve(config.Overrides{},
 		&blueprint.Blueprint{Provider: &blueprint.Provider{Create: []string{"doctl", "compute", "droplet", "create"}}},
 		&blueprint.Preferences{Provider: &blueprint.Provider{Create: []string{"hcloud", "server", "create"}}},
 	).String()
 
-	for _, want := range []string{"provider", "doctl", string(config.FromBlueprintReplacing)} {
+	for _, want := range []string{"provider", "doctl", "blueprint, replacing the preference"} {
 		if !strings.Contains(replaced, want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", replaced, want)
 		}
@@ -193,12 +211,15 @@ func TestResolvedReportsWhichAdapterIsInPlay(t *testing.T) {
 	if strings.Contains(replaced, "hcloud") {
 		t.Errorf("resolved configuration = %q, want no trace of the replaced preference adapter", replaced)
 	}
+}
 
+func TestResolvedReportsAnInheritedPreferenceAdapter(t *testing.T) {
+	t.Parallel()
 	inherited := config.Resolve(config.Overrides{}, &blueprint.Blueprint{},
 		&blueprint.Preferences{Provider: &blueprint.Provider{Create: []string{"hcloud", "server", "create"}}},
 	).String()
 
-	for _, want := range []string{"provider", "hcloud", string(config.FromPreferences)} {
+	for _, want := range []string{"provider", "hcloud", "preferences"} {
 		if !strings.Contains(inherited, want) {
 			t.Errorf("resolved configuration = %q, want it to contain %q", inherited, want)
 		}
@@ -206,6 +227,7 @@ func TestResolvedReportsWhichAdapterIsInPlay(t *testing.T) {
 }
 
 func TestResolveResolvesTheGitIdentityFieldByField(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Someone Else", UserEmail: "ada@example.com"}}
 
@@ -220,6 +242,7 @@ func TestResolveResolvesTheGitIdentityFieldByField(t *testing.T) {
 }
 
 func TestResolveKeepsAPreferenceNameUnderABlueprintEmail(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Git: blueprint.Git{UserEmail: "bot@example.com"}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
 
@@ -231,36 +254,60 @@ func TestResolveKeepsAPreferenceNameUnderABlueprintEmail(t *testing.T) {
 	if got.Git.UserName.Value != "Ada Lovelace" || got.Git.UserName.Origin != config.FromPreferences {
 		t.Errorf("resolved git user_name = %q from %q, want the untouched preference %q from %q", got.Git.UserName.Value, got.Git.UserName.Origin, "Ada Lovelace", config.FromPreferences)
 	}
-	for _, want := range []string{"user_name", "Ada Lovelace", string(config.FromPreferences), "user_email", "bot@example.com", string(config.FromBlueprint)} {
-		if !strings.Contains(got.String(), want) {
-			t.Errorf("resolved configuration = %q, want it to contain %q", got.String(), want)
+}
+
+func TestResolvedReportsEachHalfOfTheIdentityWithItsOwnOrigin(t *testing.T) {
+	t.Parallel()
+	b := &blueprint.Blueprint{Git: blueprint.Git{UserEmail: "bot@example.com"}}
+	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
+
+	got := config.Resolve(config.Overrides{}, b, p).String()
+
+	for _, want := range []string{"user_name:  Ada Lovelace (preferences)", "user_email: bot@example.com (blueprint)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("resolved configuration = %q, want it to contain %q", got, want)
 		}
 	}
 }
 
 func TestResolveLeavesAnUndeclaredHalfOfTheIdentityUnset(t *testing.T) {
+	t.Parallel()
 	got := config.Resolve(config.Overrides{}, &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}, nil)
 
 	if got.Git.UserEmail.Value != "" || got.Git.UserEmail.Origin != "" {
 		t.Errorf("resolved git user_email = %q from %q, want it left unset with no origin", got.Git.UserEmail.Value, got.Git.UserEmail.Origin)
 	}
-	if strings.Contains(got.String(), "user_email") {
-		t.Errorf("resolved configuration = %q, want no user_email reported when none is declared", got.String())
+}
+
+func TestResolvedOmitsAnUndeclaredHalfOfTheIdentity(t *testing.T) {
+	t.Parallel()
+	got := config.Resolve(config.Overrides{}, &blueprint.Blueprint{Git: blueprint.Git{UserName: "Ada Lovelace"}}, nil).String()
+
+	if strings.Contains(got, "user_email") {
+		t.Errorf("resolved configuration = %q, want no user_email reported when none is declared", got)
 	}
 }
 
 func TestResolveInventsNoGitIdentityWhenNobodyDeclaresOne(t *testing.T) {
+	t.Parallel()
 	got := config.Resolve(config.Overrides{}, nil, nil)
 
 	if got.Git.UserName.Value != "" || got.Git.UserEmail.Value != "" {
 		t.Errorf("resolved git = %+v, want nothing invented", got.Git)
 	}
-	if strings.Contains(got.String(), "user_name") {
-		t.Errorf("resolved configuration = %q, want no git identity reported when none is declared", got.String())
+}
+
+func TestResolvedOmitsTheGitIdentityWhenNobodyDeclaresOne(t *testing.T) {
+	t.Parallel()
+	got := config.Resolve(config.Overrides{}, nil, nil).String()
+
+	if strings.Contains(got, "user_name") {
+		t.Errorf("resolved configuration = %q, want no git identity reported when none is declared", got)
 	}
 }
 
 func TestResolveSurfacesTheBlueprintCollections(t *testing.T) {
+	t.Parallel()
 	document := `
 repos:
   - url: git@github.com:acme/api.git
@@ -297,6 +344,7 @@ placements:
 }
 
 func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{
 		Git:        blueprint.Git{UserName: "Ada Lovelace"},
 		Packages:   []string{"ripgrep"},
@@ -317,8 +365,8 @@ func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
 	got := config.Resolve(config.Overrides{}, b, p).String()
 
 	for _, want := range []string{
-		"user_name", "Ada Lovelace", string(config.FromBlueprint),
-		"user_email", "ada@example.com", string(config.FromPreferences),
+		"user_name", "Ada Lovelace", "blueprint",
+		"user_email", "ada@example.com", "preferences",
 		"repos", "api", "git@github.com:acme/api.git", "main", "go", "1.26", "DATABASE_URL", "packages/api/.env",
 		"packages", "ripgrep",
 		"tools", "node", "22",
@@ -332,6 +380,7 @@ func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
 }
 
 func TestResolvedOmitsCollectionsNobodyDeclared(t *testing.T) {
+	t.Parallel()
 	got := config.Resolve(config.Overrides{}, nil, nil).String()
 
 	for _, unwanted := range []string{"repos", "packages", "tools", "env", "placements", "git"} {
@@ -342,6 +391,7 @@ func TestResolvedOmitsCollectionsNobodyDeclared(t *testing.T) {
 }
 
 func TestResolvedRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace", UserEmail: "ada@example.com"}}
 
@@ -358,6 +408,7 @@ func TestResolvedRefusesAGitIdentityBesideAGitconfigPlacementAcrossFiles(t *test
 }
 
 func TestResolvedAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/gitconfig", To: "~/.gitconfig"}}}
 
 	if err := config.Resolve(config.Overrides{}, b, nil).Conflicts(); err != nil {
@@ -366,6 +417,7 @@ func TestResolvedAcceptsAGitconfigPlacementWithNoResolvedIdentity(t *testing.T) 
 }
 
 func TestResolvedAcceptsAGitIdentityWithNoGitconfigPlacement(t *testing.T) {
+	t.Parallel()
 	b := &blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:~/.secrets/tok", To: "~/.config/gh/hosts.yml"}}}
 	p := &blueprint.Preferences{Git: blueprint.Git{UserName: "Ada Lovelace"}}
 
