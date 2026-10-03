@@ -1,0 +1,160 @@
+// Package shipped owns the life of a shipped script: a script smith copies onto
+// the box into a private directory on first use, drives by subcommand, and
+// removes best effort when the stage that shipped it is done with it.
+package shipped
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/byranZA/smith/internal/connection"
+)
+
+// ErrNotShipped marks a script that could not be shipped for a reason other
+// than connecting: nothing ran on the box. Callers branch on it with errors.Is.
+var ErrNotShipped = errors.New("nothing ran on the box")
+
+// removeTimeout bounds how long Close waits on the box, so an unresponsive box
+// cannot hang a command's exit.
+const removeTimeout = 5 * time.Second
+
+// shippedName is the file name the script takes inside its private directory.
+const shippedName = "script.sh"
+
+// Conn is the slice of a connection a shipped script needs: copy a file to the
+// box and run a remote command with streamed output.
+type Conn interface {
+	Copy(ctx context.Context, localPath, remotePath string) error
+	Run(ctx context.Context, remoteCmd string, stdout, stderr io.Writer) error
+}
+
+// Script is one use of a shipped script over a connection. It ships on the
+// first Run and is removed by Close; it is not safe for concurrent use.
+type Script struct {
+	conn Conn
+	name string
+	body string
+	dir  string
+}
+
+// New returns a Script that ships body, named name (such as "bootstrap.sh"),
+// over conn when it first runs. Nothing reaches the box until then.
+func New(conn Conn, name, body string) *Script {
+	return &Script{conn: conn, name: name, body: body}
+}
+
+// Run runs subcommand sub of the script with args on the box, shipping the
+// script first if this is the first run, and streams its output to stdout and
+// stderr. A connect failure wraps connection.ErrConnect; any other failure to
+// ship wraps ErrNotShipped; a subcommand that ran and failed wraps neither.
+func (s *Script) Run(ctx context.Context, stdout, stderr io.Writer, sub string, args ...string) error {
+	if err := s.ship(ctx); err != nil {
+		return err
+	}
+	if err := s.conn.Run(ctx, s.command(sub, args), stdout, stderr); err != nil {
+		return fmt.Errorf("run %s %s: %w", s.name, sub, err)
+	}
+	return nil
+}
+
+// Close removes the script's private directory from the box, best effort. It
+// runs even when ctx is cancelled, waits on the box a few seconds at most,
+// never reports a failure, and does nothing when nothing is shipped.
+func (s *Script) Close(ctx context.Context) {
+	if s.dir == "" {
+		return
+	}
+	dir := s.dir
+	s.dir = ""
+	removeDir(ctx, s.conn, dir)
+}
+
+// command renders the remote invocation of subcommand sub with args, quoting
+// the script's path and every argument.
+func (s *Script) command(sub string, args []string) string {
+	words := []string{"bash", connection.ShellArg(s.dir + "/" + shippedName), connection.ShellArg(sub)}
+	for _, a := range args {
+		words = append(words, connection.ShellArg(a))
+	}
+	return strings.Join(words, " ")
+}
+
+// ship copies the script into a fresh private directory on the box unless it
+// is already there. A copy that fails removes the directory it made.
+func (s *Script) ship(ctx context.Context) error {
+	if s.dir != "" {
+		return nil
+	}
+	dir, err := makeDir(ctx, s.conn)
+	if err != nil {
+		return s.shipError("make private directory", err)
+	}
+	if err := copyScript(ctx, s.conn, s.body, dir+"/"+shippedName); err != nil {
+		removeDir(ctx, s.conn, dir)
+		return s.shipError("copy", err)
+	}
+	s.dir = dir
+	return nil
+}
+
+// shipError wraps a failed ship step, naming the script, as a connect failure
+// when it is one and as ErrNotShipped otherwise.
+func (s *Script) shipError(step string, err error) error {
+	if errors.Is(err, connection.ErrConnect) {
+		return fmt.Errorf("ship %s: %s: %w", s.name, step, err)
+	}
+	return fmt.Errorf("ship %s: %w: %s: %w", s.name, ErrNotShipped, step, err)
+}
+
+// makeDir makes a fresh private directory on the box with mktemp, which
+// honours the box's TMPDIR. A failure carries the box's own error text.
+func makeDir(ctx context.Context, conn Conn) (string, error) {
+	var out, errOut bytes.Buffer
+	if err := conn.Run(ctx, "mktemp -d -t smith.XXXXXXXX", &out, &errOut); err != nil {
+		if text := strings.TrimSpace(errOut.String()); text != "" {
+			return "", fmt.Errorf("%w: %s", err, text)
+		}
+		return "", fmt.Errorf("mktemp: %w", err)
+	}
+	dir := strings.TrimSpace(out.String())
+	if dir == "" {
+		return "", errors.New("mktemp printed no path")
+	}
+	return dir, nil
+}
+
+// removeDir deletes dir from the box, best effort and bounded by
+// removeTimeout even when ctx is already cancelled.
+func removeDir(ctx context.Context, conn Conn, dir string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeTimeout)
+	defer cancel()
+	//nolint:errcheck // removal is best effort: it must never change the command's result
+	conn.Run(ctx, "rm -rf -- "+connection.ShellArg(dir), io.Discard, io.Discard)
+}
+
+// copyScript writes body to a local temp file and copies it to remotePath on
+// the box.
+func copyScript(ctx context.Context, conn Conn, body, remotePath string) error {
+	f, err := os.CreateTemp("", "smith-script-*.sh")
+	if err != nil {
+		return fmt.Errorf("create temp script: %w", err)
+	}
+	//nolint:errcheck // the local temp file is harmless if left; the OS reclaims its temp dir
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(body); err != nil {
+		return errors.Join(fmt.Errorf("write temp script: %w", err), f.Close())
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temp script: %w", err)
+	}
+	if err := conn.Copy(ctx, f.Name(), remotePath); err != nil {
+		return fmt.Errorf("copy script to box: %w", err)
+	}
+	return nil
+}

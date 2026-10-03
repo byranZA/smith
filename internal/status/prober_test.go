@@ -3,14 +3,11 @@ package status
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
-	"path"
 	"strings"
 	"testing"
 
-	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/shipped"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
@@ -103,118 +100,6 @@ tailnet-ip=100.64.0.5
 	}
 }
 
-// fakeBox fakes a box at the Conn seam. It tracks which login owns each file
-// and directory and, as a sticky /tmp would, refuses a copy over a file another
-// login owns or into a directory it does not own. mktemp hands out a fresh
-// directory per call, rm -rf deletes one, and the probe subcommand only runs
-// against a script that is actually on the box.
-type fakeBox struct {
-	probeOut    string
-	probeErr    error
-	copyErr     error
-	rmErr       error
-	unreachable bool
-
-	owner   map[string]string // remote path -> owning login
-	dirs    int
-	probed  []string // script paths the probe ran against
-	removed []string // directories rm -rf deleted
-}
-
-func newFakeBox(probeOut string) *fakeBox {
-	return &fakeBox{probeOut: probeOut, owner: map[string]string{}}
-}
-
-// named resolves a shell argument to the path on the box it names, reading it
-// as a remote shell would: only a quoted argument names a path holding
-// whitespace or shell metacharacters.
-func (b *fakeBox) named(arg string) (string, bool) {
-	for p := range b.owner {
-		if arg == connection.ShellArg(p) {
-			return p, true
-		}
-	}
-	return "", false
-}
-
-// login returns a connection to the box as user.
-func (b *fakeBox) login(user string) *boxConn { return &boxConn{box: b, user: user} }
-
-// leftovers lists the paths still on the box under dir.
-func (b *fakeBox) leftovers(dir string) []string {
-	var paths []string
-	for p := range b.owner {
-		if p == dir || strings.HasPrefix(p, dir+"/") {
-			paths = append(paths, p)
-		}
-	}
-	return paths
-}
-
-type boxConn struct {
-	box  *fakeBox
-	user string
-}
-
-func (c *boxConn) Copy(_ context.Context, _, remotePath string) error {
-	b := c.box
-	if b.unreachable {
-		return connection.ErrConnect
-	}
-	if b.copyErr != nil {
-		return b.copyErr
-	}
-	if owner, ok := b.owner[remotePath]; ok && owner != c.user {
-		return fmt.Errorf("scp %s: %s owned by %s: exit status 1", c.user, remotePath, owner)
-	}
-	if dir := path.Dir(remotePath); dir != "/tmp" && b.owner[dir] != c.user {
-		return fmt.Errorf("scp %s: %s not writable: exit status 1", c.user, dir)
-	}
-	b.owner[remotePath] = c.user
-	return nil
-}
-
-func (c *boxConn) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
-	b := c.box
-	if b.unreachable {
-		return connection.ErrConnect
-	}
-	switch {
-	case cmd == "true":
-		return nil
-	case strings.HasPrefix(cmd, "mktemp -d"):
-		b.dirs++
-		dir := fmt.Sprintf("/tmp/smith's dir; $HOME.%08d", b.dirs)
-		b.owner[dir] = c.user
-		_, err := fmt.Fprintln(stdout, dir)
-		return err
-	case strings.HasPrefix(cmd, "rm -rf -- "):
-		dir, ok := b.named(strings.TrimPrefix(cmd, "rm -rf -- "))
-		if !ok {
-			return nil // rm -rf of a path that is not there succeeds
-		}
-		if b.rmErr != nil {
-			return b.rmErr
-		}
-		for _, p := range b.leftovers(dir) {
-			delete(b.owner, p)
-		}
-		b.removed = append(b.removed, dir)
-		return nil
-	case strings.HasPrefix(cmd, "bash ") && strings.HasSuffix(cmd, " probe"):
-		script, ok := b.named(strings.TrimSuffix(strings.TrimPrefix(cmd, "bash "), " probe"))
-		if !ok {
-			return fmt.Errorf("bash: %s: no such file", cmd)
-		}
-		b.probed = append(b.probed, script)
-		if _, err := io.WriteString(stdout, b.probeOut); err != nil {
-			return err
-		}
-		return b.probeErr
-	}
-	return fmt.Errorf("unexpected command %q", cmd)
-}
-
 // fakeAdmin fakes the admin-side tailnet reach probe.
 type fakeAdmin struct{ probeErr error }
 
@@ -223,20 +108,54 @@ func (a *fakeAdmin) Status(context.Context) (tailscale.AdminStatus, error) {
 }
 func (a *fakeAdmin) Probe(context.Context, string) error { return a.probeErr }
 
+// probing returns a shipped-script fake whose probe subcommand prints out.
+func probing(out string) *shipped.Fake {
+	return &shipped.Fake{Replies: map[string]shipped.Reply{"probe": {Stdout: out}}}
+}
+
+// failing returns a shipped-script fake whose probe subcommand fails with err.
+func failing(err error) *shipped.Fake {
+	return &shipped.Fake{Replies: map[string]shipped.Reply{"probe": {Err: err}}}
+}
+
+// publicProbe is probe output for a clean public-mode box.
+const publicProbe = `marker-begin
+{"schema_version":1,"access_mode":"public","completed_phases":["packages"]}
+marker-end
+smith-user-exists=yes
+passwordless-sudo=yes
+`
+
 func TestGatherUnreachable(t *testing.T) {
-	box := newFakeBox("")
-	box.unreachable = true
-	g, err := NewProber(box.login("smith"), &fakeAdmin{}).Gather(context.Background())
+	script := probing(publicProbe)
+	g, err := NewProber(&scriptedConn{err: connection.ErrConnect}, script, &fakeAdmin{}).Gather(context.Background())
 	if err != nil {
 		t.Fatalf("Gather() error = %v", err)
 	}
 	if g.Reachable {
 		t.Errorf("Reachable = true, want false on a connect failure")
 	}
+	if len(script.Calls) != 0 {
+		t.Errorf("ran %+v, want nothing run on an unreachable box", script.Calls)
+	}
+}
+
+func TestGatherRunsTheProbeSubcommand(t *testing.T) {
+	script := probing(publicProbe)
+	g, err := NewProber(&scriptedConn{}, script, &fakeAdmin{}).Gather(context.Background())
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	if len(script.Calls) != 1 || script.Calls[0].Sub != "probe" || len(script.Calls[0].Args) != 0 {
+		t.Errorf("ran %+v, want the probe subcommand once with no arguments", script.Calls)
+	}
+	if !g.Reachable || !g.MarkerPresent {
+		t.Errorf("Reachable/MarkerPresent = %v/%v, want true/true", g.Reachable, g.MarkerPresent)
+	}
 }
 
 func TestGatherProbesTailnetReachInTailscaleMode(t *testing.T) {
-	box := newFakeBox(`marker-begin
+	script := probing(`marker-begin
 {"schema_version":1,"smith_version":"1.0.0","access_mode":"tailscale","completed_phases":["packages","smith-user","smith-keys","firewall","ssh-hardening","fail2ban","auto-updates","access"]}
 marker-end
 smith-user-exists=yes
@@ -251,7 +170,7 @@ auto-updates=enabled
 tailscale-running=running
 tailnet-ip=100.64.0.5
 `)
-	g, err := NewProber(box.login("smith"), &fakeAdmin{probeErr: nil}).Gather(context.Background())
+	g, err := NewProber(&scriptedConn{}, script, &fakeAdmin{probeErr: nil}).Gather(context.Background())
 	if err != nil {
 		t.Fatalf("Gather() error = %v", err)
 	}
@@ -261,14 +180,13 @@ tailnet-ip=100.64.0.5
 	if g.Facts.TailnetReach != known("reachable") {
 		t.Errorf("TailnetReach = %+v, want known reachable", g.Facts.TailnetReach)
 	}
-	// The whole box is clean, so it should reconcile to matches.
 	if v := Reconcile(g.Marker, g.Skew, g.MarkerPresent, g.Facts).Verdict; v != VerdictMatches {
 		t.Errorf("Verdict = %v, want Matches", v)
 	}
 }
 
 func TestGatherTailnetReachDenied(t *testing.T) {
-	box := newFakeBox(`marker-begin
+	script := probing(`marker-begin
 {"schema_version":1,"access_mode":"tailscale","completed_phases":["packages"]}
 marker-end
 smith-user-exists=yes
@@ -276,7 +194,7 @@ passwordless-sudo=yes
 tailscale-running=running
 tailnet-ip=100.64.0.5
 `)
-	g, err := NewProber(box.login("smith"), &fakeAdmin{probeErr: tailscale.ErrProbeDenied}).Gather(context.Background())
+	g, err := NewProber(&scriptedConn{}, script, &fakeAdmin{probeErr: tailscale.ErrProbeDenied}).Gather(context.Background())
 	if err != nil {
 		t.Fatalf("Gather() error = %v", err)
 	}
@@ -285,114 +203,44 @@ tailnet-ip=100.64.0.5
 	}
 }
 
-// publicProbe is probe output for a clean public-mode box.
-const publicProbe = `marker-begin
-{"schema_version":1,"access_mode":"public","completed_phases":["packages"]}
-marker-end
-smith-user-exists=yes
-passwordless-sudo=yes
-`
-
-// staleScriptPath is the fixed path v0.2.0-rc.1 shipped bootstrap.sh to, which a
-// root setup left behind root-owned.
-const staleScriptPath = "/tmp/smith-bootstrap.sh"
-
-func TestGatherWorksOnABoxSetUpAsRoot(t *testing.T) {
-	box := newFakeBox(publicProbe)
-	// Setup ran as root and left its script behind at the old fixed path, as a
-	// v0.2.0-rc.1 box does.
-	if err := bootstrap.ShipTo(context.Background(), box.login("root"), bootstrap.Script, staleScriptPath); err != nil {
-		t.Fatalf("ship as root: %v", err)
-	}
-
-	g, err := NewProber(box.login("smith"), &fakeAdmin{}).Gather(context.Background())
-	if err != nil {
-		t.Fatalf("Gather() as smith error = %v", err)
-	}
-	if !g.Reachable || !g.MarkerPresent {
-		t.Errorf("Reachable/MarkerPresent = %v/%v, want true/true", g.Reachable, g.MarkerPresent)
-	}
-	if owner := box.owner[staleScriptPath]; owner != "root" {
-		t.Errorf("stale %s owned by %q, want it left untouched as root's", staleScriptPath, owner)
-	}
-}
-
-func TestGatherProbesAgainstAFreshPathEachRun(t *testing.T) {
-	box := newFakeBox(publicProbe)
-	prober := NewProber(box.login("smith"), &fakeAdmin{})
-	for range 2 {
-		if _, err := prober.Gather(context.Background()); err != nil {
-			t.Fatalf("Gather() error = %v", err)
-		}
-	}
-	if len(box.probed) != 2 || box.probed[0] == box.probed[1] {
-		t.Fatalf("probed %q, want two runs against different paths", box.probed)
-	}
-	for _, p := range box.probed {
-		if path.Dir(p) == "/tmp" {
-			t.Errorf("probed %q, a fixed name under /tmp, want a private directory", p)
-		}
-	}
-}
-
-func TestGatherRemovesTheShippedScript(t *testing.T) {
+func TestGatherClosesTheShippedScript(t *testing.T) {
 	tests := []struct {
-		name  string
-		setup func(*fakeBox)
+		name   string
+		script *shipped.Fake
 	}{
-		{"success", func(*fakeBox) {}},
-		{"probe failure", func(b *fakeBox) { b.probeErr = errors.New("probe: exit status 1") }},
-		{"box unreachable mid-probe", func(b *fakeBox) { b.probeErr = connection.ErrConnect }},
-		{"malformed marker", func(b *fakeBox) { b.probeOut = "marker-begin\n{not json\nmarker-end\n" }},
+		{"success", probing(publicProbe)},
+		{"probe failure", failing(errors.New("probe: exit status 1"))},
+		{"box unreachable mid-probe", failing(connection.ErrConnect)},
+		{"script not shipped", failing(shipped.ErrNotShipped)},
+		{"malformed marker", probing("marker-begin\n{not json\nmarker-end\n")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			box := newFakeBox(publicProbe)
-			tt.setup(box)
-			// The outcome varies by case; only what is left on the box matters here.
-			g, err := NewProber(box.login("smith"), &fakeAdmin{}).Gather(context.Background())
-			if len(box.probed) != 1 {
-				t.Fatalf("probed %q (Gather = %+v, %v), want one probe run", box.probed, g, err)
-			}
-			if left := box.leftovers(path.Dir(box.probed[0])); len(left) != 0 {
-				t.Errorf("left %q on the box, want the shipped directory removed", left)
+			g, err := NewProber(&scriptedConn{}, tt.script, &fakeAdmin{}).Gather(context.Background())
+			if !tt.script.Closed {
+				t.Errorf("Gather() = %+v, %v left the shipped script open, want it closed", g, err)
 			}
 		})
 	}
 }
 
-func TestGatherIgnoresAFailedRemove(t *testing.T) {
-	box := newFakeBox(publicProbe)
-	box.rmErr = errors.New("rm: permission denied")
-	g, err := NewProber(box.login("smith"), &fakeAdmin{}).Gather(context.Background())
-	if err != nil {
-		t.Fatalf("Gather() error = %v, want the failed remove ignored", err)
-	}
-	if !g.Reachable || !g.MarkerPresent {
-		t.Errorf("Reachable/MarkerPresent = %v/%v, want true/true", g.Reachable, g.MarkerPresent)
-	}
-}
-
-func TestGatherClassifiesAFailedCopy(t *testing.T) {
+func TestGatherClassifiesAFailedProbe(t *testing.T) {
 	t.Run("connect failure is unreachable", func(t *testing.T) {
-		box := newFakeBox(publicProbe)
-		box.copyErr = connection.ErrConnect
-		g, err := NewProber(box.login("smith"), &fakeAdmin{}).Gather(context.Background())
+		g, err := NewProber(&scriptedConn{}, failing(connection.ErrConnect), &fakeAdmin{}).Gather(context.Background())
 		if err != nil || g.Reachable {
 			t.Errorf("Gather() = %+v, %v, want unreachable and no error", g, err)
 		}
-		if left := box.leftovers("/tmp/smith.00000001"); len(left) != 0 {
-			t.Errorf("left %q on the box, want the directory it made removed", left)
+	})
+	t.Run("ship failure is a not-shipped error", func(t *testing.T) {
+		_, err := NewProber(&scriptedConn{}, failing(shipped.ErrNotShipped), &fakeAdmin{}).Gather(context.Background())
+		if !errors.Is(err, shipped.ErrNotShipped) {
+			t.Errorf("Gather() error = %v, want it to wrap ErrNotShipped", err)
 		}
 	})
-	t.Run("other failure is an error", func(t *testing.T) {
-		box := newFakeBox(publicProbe)
-		box.copyErr = errors.New("scp: exit status 1")
-		if _, err := NewProber(box.login("smith"), &fakeAdmin{}).Gather(context.Background()); err == nil {
-			t.Error("Gather() error = nil, want the copy failure")
-		}
-		if left := box.leftovers("/tmp/smith.00000001"); len(left) != 0 {
-			t.Errorf("left %q on the box, want the directory it made removed", left)
+	t.Run("run failure is an error", func(t *testing.T) {
+		_, err := NewProber(&scriptedConn{}, failing(errors.New("probe: exit status 1")), &fakeAdmin{}).Gather(context.Background())
+		if err == nil || errors.Is(err, shipped.ErrNotShipped) {
+			t.Errorf("Gather() error = %v, want the run failure", err)
 		}
 	})
 }

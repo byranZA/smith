@@ -16,6 +16,7 @@ import (
 	"github.com/byranZA/smith/internal/inventory"
 	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/provider"
+	"github.com/byranZA/smith/internal/shipped"
 	"github.com/byranZA/smith/internal/status"
 	"github.com/byranZA/smith/internal/tailscale"
 )
@@ -272,7 +273,8 @@ func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 
 			conn := connection.New(target, exec)
 			admin := tailscale.NewAdmin(connection.System())
-			prober := status.NewProber(conn, admin)
+			script := shipped.New(conn, "bootstrap.sh", bootstrap.Script)
+			prober := status.NewProber(conn, script, admin)
 
 			gathered, err := prober.Gather(ctx)
 			if err != nil {
