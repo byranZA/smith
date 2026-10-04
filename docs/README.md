@@ -52,6 +52,7 @@ gate, and how changes land.
 
 [`docs/agents/`](./agents/) documents the workflows an agent working in this
 repository follows — the [issue tracker](./agents/issue-tracker.md), [triage
-labels](./agents/triage-labels.md), and the [domain docs](./agents/domain.md).
+labels](./agents/triage-labels.md), the [domain docs](./agents/domain.md), and
+the [standards audit ledger](./agents/standards-ledger.md).
 [`docs/research/`](./research/) holds primary-source research captured while
 building a feature.

@@ -216,6 +216,10 @@ that.
 
 **`create` does not provision the box.** It writes nothing to it and runs no
 bootstrap; it stops at a reachable box and hands you the `machine setup` line.
+That line carries neither the name you gave `create` nor `--blueprint`: add
+them yourself (`smith machine setup root@203.0.113.10 --name dev --blueprint
+acme`), or the box is registered under its address and no blueprint is
+staged.
 That is deliberate: a chained setup that failed halfway would leave you holding
 a box that exists, is being billed, and that smith cannot tear down. Two
 commands, and every failure leaves one clear next step.

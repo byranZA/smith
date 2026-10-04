@@ -11,7 +11,7 @@ of box.
 Both are optional. Everything smith reads from them can still come from a flag
 or fall back to a built-in default.
 
-Two worked examples ship with smith and are checked by its test suite, so they
+Worked examples ship with smith and are checked by its test suite, so they
 cannot drift out of the schema:
 
 - [`docs/examples/blueprints/acme.yaml`](./examples/blueprints/acme.yaml)
@@ -89,6 +89,20 @@ It is resolved **per field**. A blueprint pinning `access` does not wipe the
 The built-in defaults are `access: public`, `terminal: tmux`,
 `workspace: ~/workspace`.
 
+### What setup applies today
+
+`blueprint check` resolves and shows every field, but not every resolved field
+reaches a box yet:
+
+- **`access`** — `machine setup` takes it from its own `--access` flag alone,
+  which defaults to `public`. A blueprint or preference `access: tailscale` is
+  shown by `check` but not acted on: pass `--access tailscale` to setup.
+- **`git`** and **`terminal`** — validated and shown, but not yet written to the
+  box.
+- **`workspace`** — the box reads it from the staged blueprint only, so a
+  workspace set only in your preferences does not reach the box.
+- **`provider`** — `machine create` resolves it down the full chain.
+
 ### The provider block replaces wholesale
 
 One field breaks the per-field rule. A **provider block is a coherent
@@ -108,8 +122,8 @@ The rest of the block — the three templates, the four placeholders smith
 substitutes, `requires`, `ssh_key`, `marker`, `record` and `extract` — is one
 page of its own: [Provider adapters](./providers.md). It covers what an adapter
 is, that it is optional, and the worked examples in
-[`docs/examples/adapters/`](./examples/adapters/), one verified against a real
-provider and one explicitly not.
+[`docs/examples/adapters/`](./examples/adapters/): two verified against a real
+provider (both DigitalOcean) and one, `hcloud`, explicitly not.
 
 ## Checking before you build
 
@@ -175,7 +189,8 @@ blueprint-only, so they are printed as the blueprint declared them. A repo
 appears under the name it resolves to — its own, or the last segment of its
 clone URL — which is the directory it lands in under the workspace. A field
 nobody declared and smith has no default for, such as a git identity, is left
-out rather than shown empty.
+out rather than shown empty. The one exception is `provider`, which reads
+`none declared`.
 
 `--access public|tailscale` overrides both the blueprint and your preferences,
 which is how you see the top of the precedence chain at work:
@@ -216,6 +231,10 @@ otherwise fails *silently* — the reasoning is recorded in
   one is worktree-relative.
 - **Every value naming a secret must parse as a known reference scheme.**
 
+One rule spans both files, so it is checked after precedence has run: **a git
+identity and a box placement to `~/.gitconfig` are refused together**, because
+both claim that file. Choose one and drop the other.
+
 ## References, not values
 
 A blueprint points *at* a secret; it never contains one. Every `env` value and
@@ -234,12 +253,20 @@ as a literal. `literal:` is not valid as a placement source.
 This does not stop you committing a secret. It makes doing so **deliberate**,
 and makes `grep -r 'literal:'` a complete audit.
 
+References are resolved **on your machine** when `machine setup --blueprint`
+runs, and the values are staged onto the box in plaintext under `/etc/smith/`
+(see [Config staging](./on-box.md#config-staging)). A changed value reaches the
+box on the next `machine setup`, not on `workspace converge`.
+
 ## smith knows no service by name
 
 smith **places files and exports environment variables**. That is the entirety
-of its credential story. It knows nothing about GitHub, GitLab, Anthropic or
-npm, and it never will — the moment it knew about GitHub it would owe GitLab,
-`gh` version skew, and a choice between auth modes.
+of its credential story. It provisions no credential for GitHub, GitLab,
+Anthropic or npm — the moment it did for GitHub it would owe GitLab, `gh`
+version skew, and a choice between auth modes. The one place smith knows a
+service by name is [the loop](./loop.md), which reads GitHub Issues through
+your own authenticated `gh` and holds no credential of its own
+([ADR-0012](./adr/0012-the-repo-file.md)).
 
 The concrete consequence, worth reading twice:
 
@@ -255,7 +282,9 @@ Two things that do work:
   blueprint does.
 - **Place a credential helper's own config** — for example a
   `~/.git-credentials` file, or a `~/.gitconfig` wiring up a helper — with a box
-  placement, and clone over `https://`.
+  placement, and clone over `https://`. A `~/.gitconfig` placement cannot sit
+  beside a `git` identity (see [Validation is strict](#validation-is-strict)),
+  so put the identity in that file too.
 
 Either way the declaration is yours and it is visible in the blueprint. The
 first-run cost is real, and the example is how it is paid.

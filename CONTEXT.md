@@ -267,6 +267,8 @@ name** — not GitHub, not npm, not any forge. The moment it knew one it would o
 CLI version skew and a choice between auth modes. The concrete cost is real and paid in
 documentation, not magic: a blueprint declaring `GITHUB_TOKEN` beside `https://` clone URLs does
 not authenticate, because git needs a credential helper and smith neither notices nor fixes that.
+The one exception is the loop's **tracker**, which knows GitHub Issues by name through `gh`'s
+own auth and holds no credential (ADR-0012).
 _Avoid_: provider-agnostic (reserved for the provider adapter), integration.
 
 **Box inventory**:
@@ -425,8 +427,9 @@ Who acts in a session — a human at a terminal, or a coding agent. Orthogonal t
 agent-driven session can be observed or, when it needs a hand, jumped into. The driver process is
 the tmux session's **root process**, so its exit ends the session and session-end *is* the
 completion signal; smith reports liveness only, never the driver's exit status, and never sends it
-keystrokes. **v1 creates human-driven sessions only** — `--driver agent` waits for the delegation
-loop, since with no agent adapter there is nothing to launch.
+keystrokes. **v1 creates human-driven sessions only.** The **loop** and its **agent adapters**
+exist, but run in the repo they are invoked from rather than as a session's root process, so
+`--driver agent` is still deferred.
 _Avoid_: actor, runner, operator (reserved for the human running smith).
 
 **Attach mode**:

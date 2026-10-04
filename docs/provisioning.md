@@ -118,9 +118,11 @@ Reach it by name from now on:
   `machine setup` from another machine it also needs the `tailscale` CLI and to
   be a running tailnet member.
 - **The first provision still uses your SSH key.** A brand-new box isn't on the
-  tailnet yet, so the initial `--access tailscale` run reaches it over public SSH
-  as your bootstrap login (key-based) to install and enroll Tailscale, then
-  closes public 22. The keyless model applies to everything after that.
+  tailnet yet, so the initial `--access tailscale` run reaches it over public SSH.
+  The bootstrap phases, including installing the Tailscale package, run as your
+  bootstrap login. The access stage then enrolls the box as the `smith` user,
+  proves the route as `smith@<tailnet IP>`, and closes public 22 over the
+  tailnet. The keyless model applies to everything after that.
 
 The design reasoning is in
 [ADR-0001](./adr/0001-tailscale-ssh-keyless-tagged-node.md) and
@@ -128,7 +130,21 @@ The design reasoning is in
 
 ## What runs after the bootstrap
 
-`machine setup` ends with an ordered pipeline of named stages — config staging,
-installing smith onto the box, and the workspace convergence. Those are covered
-in [smith on the box](./on-box.md) and [the workspace
-stage](./workspace.md).
+`machine setup` ends with an ordered pipeline of named stages:
+
+1. `access` — in tailscale mode, enroll the box and close public SSH. In public
+   mode it does nothing.
+2. `install` — put smith onto the box.
+3. `config` — stage the blueprint, when `--blueprint` is given.
+4. `workspace` — converge it, relayed to the smith on the box.
+
+Every stage reaches the box as the `smith` user, because hardening has closed
+the bootstrap login by then. They are covered in [smith on the
+box](./on-box.md) and [the workspace stage](./workspace.md).
+
+## Interrupting a run
+
+Ctrl-C cancels the running command and lets it remove what it shipped to the
+box. A second Ctrl-C, or 7 seconds without one, ends smith at once. An
+interrupted run prints nothing more and exits 128 plus the signal number (130
+for Ctrl-C).
