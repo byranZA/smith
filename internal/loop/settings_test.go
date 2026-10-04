@@ -71,7 +71,7 @@ func TestResolveSettingsRefusesWhatNoAgentCanRun(t *testing.T) {
 		file  repofile.File
 		want  string
 	}{
-		{"an unknown agent in the repo file", repofile.File{}, repofile.File{Agent: "gemini"}, `agent (repo file): unknown agent "gemini": known agents are claude`},
+		{"an unknown agent in the repo file", repofile.File{}, repofile.File{Agent: "gemini"}, `agent (repo file): unknown agent "gemini": known agents are claude, codex, pi`},
 		{"an unknown agent as a flag", repofile.File{Agent: "gemini"}, repofile.File{}, `agent (flag): unknown agent "gemini"`},
 		{"an effort off the scale as a flag", repofile.File{Effort: "extreme"}, repofile.File{}, `effort (flag): unknown effort "extreme": the scale is low, medium, high`},
 		{"an effort off the scale in the repo file", repofile.File{}, repofile.File{Effort: "max"}, `effort (repo file): unknown effort "max"`},

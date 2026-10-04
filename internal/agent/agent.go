@@ -46,6 +46,8 @@ const Default = "claude"
 // adapters is every agent smith knows, by the name configuration uses for it.
 var adapters = map[string]Adapter{
 	"claude": claude{},
+	"codex":  codex{},
+	"pi":     pi{},
 }
 
 // UnknownError reports an agent name smith has no adapter for.
@@ -111,6 +113,78 @@ func (claude) options(opts Options) []string {
 	}
 	if opts.Effort != "" {
 		args = append(args, "--effort", string(opts.Effort))
+	}
+	return args
+}
+
+// codex is the adapter for OpenAI's Codex CLI.
+type codex struct{}
+
+// Unattended runs codex exec with --yolo, which bypasses every approval and
+// the sandbox, so it asks the operator nothing.
+func (c codex) Unattended(prompt string, opts Options) Command {
+	args := append([]string{"exec", "--yolo"}, c.options(opts)...)
+	return Command{
+		Name: "codex",
+		Args: append(args, prompt),
+	}
+}
+
+// Interactive runs codex's own interface on the operator's terminal with
+// prompt as its first message, leaving approvals to the operator.
+func (c codex) Interactive(prompt string, opts Options) Command {
+	return Command{
+		Name:     "codex",
+		Args:     append(c.options(opts), prompt),
+		Attached: true,
+	}
+}
+
+// options are codex's flags for the model and effort opts set, in codex's
+// own terms: the model verbatim, and its model_reasoning_effort setting, whose
+// scale includes smith's.
+func (codex) options(opts Options) []string {
+	var args []string
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.Effort != "" {
+		args = append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", opts.Effort))
+	}
+	return args
+}
+
+// pi is the adapter for the pi coding agent.
+type pi struct{}
+
+// Unattended runs pi in print mode, which processes prompt and exits; pi has
+// no approval prompts to bypass.
+func (p pi) Unattended(prompt string, opts Options) Command {
+	return Command{
+		Name: "pi",
+		Args: append(p.options(opts), "--print", prompt),
+	}
+}
+
+// Interactive runs pi's own interface on the operator's terminal with prompt
+// as its first message.
+func (p pi) Interactive(prompt string, opts Options) Command {
+	return Command{
+		Name:     "pi",
+		Args:     append(p.options(opts), prompt),
+		Attached: true,
+	}
+}
+
+// options are pi's flags for the model and effort opts set, in pi's own
+// terms: the model verbatim, and a --thinking scale that includes smith's.
+func (pi) options(opts Options) []string {
+	var args []string
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.Effort != "" {
+		args = append(args, "--thinking", string(opts.Effort))
 	}
 	return args
 }

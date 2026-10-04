@@ -464,7 +464,7 @@ func TestLoopRunRefusesInvalidSettingsBeforeAnyAgentRuns(t *testing.T) {
 		want     []string
 	}{
 		"unknown key":      {"agent: claude\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
-		"unknown agent":    {"agent: gemini\n", nil, []string{`"gemini"`, "known agents are claude"}},
+		"unknown agent":    {"agent: gemini\n", nil, []string{`"gemini"`, "known agents are claude, codex, pi"}},
 		"effort off scale": {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
 	} {
 		t.Run(name, func(t *testing.T) {
