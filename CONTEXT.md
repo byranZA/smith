@@ -56,13 +56,7 @@ the box is reached.
 _Avoid_: base hardening (as a distinct thing), core setup.
 
 **Access layer**:
-The one pluggable choice layered over the base: how the box is reached. *public* leaves
-hardened SSH open on the public IP; *tailscale* joins a tailnet and closes public SSH. The mode
-is a field of the **resolved configuration**, so setup acts on the same value `blueprint check`
-reports: flag, then blueprint, then preferences, then *public*. A box whose marker records
-*tailscale* is never taken back to *public* unless the operator's flag says so; reopening public
-SSH is a decision about one box, not a side effect of a blueprint or a default. Architected as a swappable layer
-so neither mode re-architects the other.
+The one pluggable choice layered over the base: how the box is reached. *public* leaves hardened SSH open on the public IP; *tailscale* joins a tailnet and closes public SSH. The mode is a field of the **resolved configuration**, so setup acts on the same value `blueprint check` reports: flag, then blueprint, then preferences, then *public*. A box whose marker records *tailscale* is never taken back to *public* unless the operator's flag says so; reopening public SSH is a decision about one box, not a side effect of a blueprint or a default. Architected as a swappable layer so neither mode re-architects the other.
 _Avoid_: connectivity mode, networking option.
 
 **Lock-out safety**:
