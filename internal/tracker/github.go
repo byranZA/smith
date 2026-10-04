@@ -24,6 +24,19 @@ const (
 	taskFields = "number,title,state,labels,body,blockedBy"
 )
 
+// linkedQuery reads one page of an issue's linked issues over the connection
+// named by its %s verb, in the repo gh resolves for the working directory.
+const linkedQuery = `query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      %s(first: 100, after: $endCursor) {
+        nodes { number state }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`
+
 // notFoundMark is how gh says an issue number resolves to nothing.
 const notFoundMark = "Could not resolve to an issue"
 
@@ -48,17 +61,35 @@ func NewGitHub(runner Runner) GitHub {
 
 // issue is the part of gh's issue JSON the tracker reads.
 type issue struct {
-	Number    int     `json:"number"`
-	Title     string  `json:"title"`
-	State     string  `json:"state"`
-	Body      string  `json:"body"`
-	Labels    []label `json:"labels"`
-	SubIssues struct {
-		Nodes []issueNode `json:"nodes"`
-	} `json:"subIssues"`
-	BlockedBy struct {
-		Nodes []issueNode `json:"nodes"`
-	} `json:"blockedBy"`
+	Number    int        `json:"number"`
+	Title     string     `json:"title"`
+	State     string     `json:"state"`
+	Body      string     `json:"body"`
+	Labels    []label    `json:"labels"`
+	SubIssues connection `json:"subIssues"`
+	BlockedBy connection `json:"blockedBy"`
+}
+
+// connection is a list of linked issues as gh's issue view gives it: at most
+// one page of them, and how many there are in all.
+type connection struct {
+	Nodes      []issueNode `json:"nodes"`
+	TotalCount int         `json:"totalCount"`
+}
+
+// linkedPage is GitHub's answer for one page of an issue's linked issues.
+type linkedPage struct {
+	Data struct {
+		Repository struct {
+			Issue map[string]struct {
+				Nodes    []issueNode `json:"nodes"`
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+			} `json:"issue"`
+		} `json:"repository"`
+	} `json:"data"`
 }
 
 // label is a label as gh lists it on an issue.
@@ -85,13 +116,21 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 	if !spec.labelled(specLabel) {
 		return Spec{}, &NotSpecError{Number: number}
 	}
-	children := make([]int, 0, len(spec.SubIssues.Nodes))
-	for _, node := range spec.SubIssues.Nodes {
+	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
+	if err != nil {
+		return Spec{}, err
+	}
+	children := make([]int, 0, len(subIssues))
+	for _, node := range subIssues {
 		children = append(children, node.Number)
 	}
 	issues := map[int]issue{}
 	for _, n := range children {
 		task, err := g.view(ctx, n, taskFields)
+		if err != nil {
+			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
+		}
+		task.BlockedBy.Nodes, err = g.linked(ctx, n, "blockedBy", task.BlockedBy)
 		if err != nil {
 			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
 		}
@@ -150,6 +189,52 @@ func (g GitHub) view(ctx context.Context, number int, fields string) (issue, err
 		return issue{}, fmt.Errorf("read gh's answer for #%d: %w", number, err)
 	}
 	return got, nil
+}
+
+// linked returns every issue linked to issue number over the named connection.
+// When gh's view holds only the first page of them, it reads them all again
+// page by page, so a cut-off list is never taken for the whole one.
+func (g GitHub) linked(ctx context.Context, number int, name string, viewed connection) ([]issueNode, error) {
+	if len(viewed.Nodes) >= viewed.TotalCount {
+		return viewed.Nodes, nil
+	}
+	var nodes []issueNode
+	cursor := ""
+	for {
+		page, err := g.linkedPage(ctx, number, name, cursor)
+		if err != nil {
+			return nil, err
+		}
+		got, ok := page.Data.Repository.Issue[name]
+		if !ok {
+			return nil, fmt.Errorf("read %s of #%d: gh's answer holds none", name, number)
+		}
+		nodes = append(nodes, got.Nodes...)
+		if !got.PageInfo.HasNextPage {
+			return nodes, nil
+		}
+		cursor = got.PageInfo.EndCursor
+	}
+}
+
+// linkedPage reads the page of issue number's linked issues over the named
+// connection that follows cursor, or the first page when cursor is empty.
+func (g GitHub) linkedPage(ctx context.Context, number int, name, cursor string) (linkedPage, error) {
+	args := []string{"api", "graphql",
+		"-F", "owner={owner}", "-F", "repo={repo}", "-F", "number=" + strconv.Itoa(number),
+		"-f", "query=" + fmt.Sprintf(linkedQuery, name)}
+	if cursor != "" {
+		args = append(args, "-f", "endCursor="+cursor)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
+		return linkedPage{}, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+	}
+	var page linkedPage
+	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
+		return linkedPage{}, fmt.Errorf("read gh's answer for the %s of #%d: %w", name, number, err)
+	}
+	return page, nil
 }
 
 // labelled reports whether the issue carries the label called name.

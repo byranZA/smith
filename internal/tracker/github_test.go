@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -17,6 +18,7 @@ import (
 // failing the way gh does for an issue it has no answer for.
 type fakeGH struct {
 	replies map[string]string
+	pages   map[string]string
 	stderr  string
 	launch  error
 	ran     []string
@@ -36,6 +38,9 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 		}
 		return errors.New("exit status 1")
 	}
+	if args[0] == "api" {
+		return f.page(args, stdout, stderr)
+	}
 	reply, ok := f.replies[strings.Join(args, " ")]
 	if !ok {
 		if _, err := io.WriteString(stderr, "GraphQL: Could not resolve to an issue or pull request with the number of "+args[2]+". (repository.issue)\n"); err != nil {
@@ -45,6 +50,68 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	}
 	_, err := io.WriteString(stdout, reply)
 	return err
+}
+
+// page replays a recorded GraphQL page of an issue's linked issues, keyed by
+// pageKey, failing the way gh does when GitHub cannot answer.
+func (f *fakeGH) page(args []string, stdout, stderr io.Writer) error {
+	fields := map[string]string{}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-F" || args[i] == "-f" {
+			name, value, _ := strings.Cut(args[i+1], "=")
+			fields[name] = value
+		}
+	}
+	connection := "blockedBy"
+	if strings.Contains(fields["query"], "subIssues(") {
+		connection = "subIssues"
+	}
+	reply, ok := f.pages[pageKey(connection, fields["number"], fields["endCursor"])]
+	if !ok {
+		if _, err := io.WriteString(stderr, "HTTP 502: Bad Gateway (https://api.github.com/graphql)\n"); err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	}
+	_, err := io.WriteString(stdout, reply)
+	return err
+}
+
+func pageKey(connection, number, cursor string) string {
+	return connection + " " + number + " after " + cursor
+}
+
+// graphQLPage is GitHub's answer for one page of an issue's linked issues.
+func graphQLPage(connection string, nodes []string, next string) string {
+	return fmt.Sprintf(`{"data":{"repository":{"issue":{%q:{"nodes":[%s],"pageInfo":{"hasNextPage":%t,"endCursor":%q}}}}}}`,
+		connection, strings.Join(nodes, ","), next != "", next)
+}
+
+func node(n int, state string) string {
+	return fmt.Sprintf(`{"number":%d,"state":%q}`, n, state)
+}
+
+func agentTask(n int, state, blockedBy string) string {
+	return fmt.Sprintf(`{"blockedBy":%s,"body":"","labels":[{"name":"ready-for-agent"}],"number":%d,"state":%q,"title":"Task %d"}`, blockedBy, n, state, n)
+}
+
+// manyChildren is gh's output for spec #42 with 101 children: #101 to #200
+// closed and #201 open, which gh's issue view cuts off after the first 100.
+// The spec's checklist lists #201 then #150.
+func manyChildren() *fakeGH {
+	gh := &fakeGH{replies: map[string]string{}, pages: map[string]string{}}
+	var first, second []string
+	for n := 101; n <= 200; n++ {
+		first = append(first, node(n, "CLOSED"))
+		gh.replies[taskView(n)] = agentTask(n, "CLOSED", `{"nodes":[],"totalCount":0}`)
+	}
+	second = append(second, node(201, "OPEN"))
+	gh.replies[taskView(201)] = agentTask(201, "OPEN", `{"nodes":[],"totalCount":0}`)
+	gh.replies[specView(42)] = fmt.Sprintf(`{"body":"## Tasks\n\n- [ ] #201\n- [ ] #150\n","labels":[{"name":"spec"}],"number":42,"state":"OPEN","subIssues":{"nodes":[%s],"totalCount":101},"title":"Spec: many"}`, strings.Join(first, ","))
+	gh.pages[pageKey("subIssues", "42", "")] = graphQLPage("subIssues", first[:60], "c60")
+	gh.pages[pageKey("subIssues", "42", "c60")] = graphQLPage("subIssues", first[60:], "c100")
+	gh.pages[pageKey("subIssues", "42", "c100")] = graphQLPage("subIssues", second, "")
+	return gh
 }
 
 const (
@@ -95,8 +162,8 @@ func TestSpecOnlyReadsTheTracker(t *testing.T) {
 	}
 
 	for _, ran := range gh.ran {
-		if !strings.HasPrefix(ran, "issue view ") {
-			t.Errorf("ran gh %s, want only issue views", ran)
+		if !strings.HasPrefix(ran, "issue view ") && !strings.HasPrefix(ran, "api graphql ") {
+			t.Errorf("ran gh %s, want only issue views and queries", ran)
 		}
 	}
 }
@@ -148,5 +215,75 @@ func TestUnavailableErrorCarriesWhatGHSaid(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "gh auth login") {
 		t.Errorf("Spec() error = %v, want it to carry gh's own message", err)
+	}
+}
+
+func TestSpecReadsChildrenPastTheFirstHundred(t *testing.T) {
+	gh := manyChildren()
+
+	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+
+	next, ok := loop.Survey(got).Next()
+	if !ok || next.Number != 201 {
+		t.Errorf("next task = #%d (%v), want #201", next.Number, ok)
+	}
+}
+
+func TestSpecOrdersChildrenAcrossPages(t *testing.T) {
+	gh := manyChildren()
+
+	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+
+	var order []int
+	for _, task := range got.Tasks {
+		order = append(order, task.Number)
+	}
+	want := []int{201, 150}
+	for n := 101; n <= 200; n++ {
+		if n != 150 {
+			want = append(want, n)
+		}
+	}
+	if !reflect.DeepEqual(order, want) {
+		t.Errorf("task order = %v, want %v", order, want)
+	}
+}
+
+func TestSpecReadsBlockersPastTheFirstFifty(t *testing.T) {
+	gh := &fakeGH{replies: map[string]string{}, pages: map[string]string{}}
+	var first []string
+	for n := 301; n <= 350; n++ {
+		first = append(first, node(n, "CLOSED"))
+	}
+	gh.replies[specView(42)] = `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","subIssues":{"nodes":[{"number":43,"state":"OPEN"}],"totalCount":1},"title":"Spec"}`
+	gh.replies[taskView(43)] = agentTask(43, "OPEN", fmt.Sprintf(`{"nodes":[%s],"totalCount":51}`, strings.Join(first, ",")))
+	gh.pages[pageKey("blockedBy", "43", "")] = graphQLPage("blockedBy", first, "c50")
+	gh.pages[pageKey("blockedBy", "43", "c50")] = graphQLPage("blockedBy", []string{node(351, "OPEN")}, "")
+
+	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+
+	if next, ok := loop.Survey(got).Next(); ok {
+		t.Errorf("next task = #%d, want none while #351 blocks #43", next.Number)
+	}
+}
+
+func TestSpecFailsWhenALaterPageCannotBeRead(t *testing.T) {
+	gh := manyChildren()
+	delete(gh.pages, pageKey("subIssues", "42", "c100"))
+
+	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+
+	var unavailable *tracker.UnavailableError
+	if !errors.As(err, &unavailable) || !reflect.DeepEqual(got, tracker.Spec{}) {
+		t.Errorf("Spec() = %d tasks, %v; want no spec and an UnavailableError", len(got.Tasks), err)
 	}
 }
