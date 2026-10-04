@@ -20,20 +20,38 @@ import (
 func TestProcessStopsTheAgentAndWhatItStartedWhenInterrupted(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "child.pid")
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", `sleep 30 & echo $! > "$0"; wait`, pidfile}}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	go func() {
-		for !exists(pidfile) {
-			time.Sleep(10 * time.Millisecond)
-		}
-		cancel()
-	}()
+	interrupted := make(chan bool, 1)
+	go func() { interrupted <- interruptOnceWritten(ctx, cancel, pidfile) }()
 
 	start := time.Now()
 	err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(ctx, cmd)
+	elapsed := time.Since(start)
+	cancel()
 
-	if err == nil || time.Since(start) > 10*time.Second || !gone(t, pidfile) {
-		t.Errorf("Launch() = %v after %v; want an error, soon, with the agent's child stopped too", err, time.Since(start))
+	if !<-interrupted {
+		t.Fatalf("Launch() = %v after %v; the agent never wrote its child's pid", err, elapsed)
+	}
+	if err == nil || elapsed > 5*time.Second || !gone(t, pidfile) {
+		t.Errorf("Launch() = %v after %v; want an error, soon, with the agent's child stopped too", err, elapsed)
+	}
+}
+
+// interruptOnceWritten calls cancel once path is written, reporting whether it did before ctx ended.
+func interruptOnceWritten(ctx context.Context, cancel context.CancelFunc, path string) bool {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+			if exists(path) {
+				cancel()
+				return true
+			}
+		}
 	}
 }
 
