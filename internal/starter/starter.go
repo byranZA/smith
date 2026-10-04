@@ -93,7 +93,7 @@ func Scaffold(home config.Home, identity blueprint.Git) ([]Outcome, error) {
 	}
 	outcomes := make([]Outcome, 0, len(starters))
 	for _, s := range starters {
-		created, err := writeAbsent(s.path, s.content)
+		created, err := WriteAbsent(s.path, s.content, dirMode, fileMode)
 		if err != nil {
 			return outcomes, err
 		}
@@ -135,14 +135,15 @@ func renderIdentity(preferences []byte, identity blueprint.Git) ([]byte, error) 
 	return bytes.Replace(preferences, []byte(commentedGit), []byte(block), 1), nil
 }
 
-// writeAbsent writes content to path unless a file is already there, reporting
-// whether it wrote. The existence check and the create are one exclusive open,
-// so a file that appears between the two is still never overwritten.
-func writeAbsent(path string, content []byte) (bool, error) {
+// WriteAbsent writes content to path with fileMode, creating its directory with
+// dirMode, unless a file is already there, and reports whether it wrote. The
+// existence check and the create are one exclusive open, so a file that
+// appears between the two is still never overwritten.
+func WriteAbsent(path string, content []byte, dirMode, fileMode fs.FileMode) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
 		return false, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode) // #nosec G304 -- the path is derived from the config home.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode) // #nosec G304 -- the caller owns the path.
 	if errors.Is(err, fs.ErrExist) {
 		return false, nil
 	}
