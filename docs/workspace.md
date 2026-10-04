@@ -159,7 +159,7 @@ Shims on `PATH` are the courtesy for a human who SSHes in.
 ## Repos
 
 A repo the box does not have yet is cloned bare into
-`<workspace>/<repo>/repo.git`. The workspace defaults to `~/workspace` and each
+`<workspace>/<repo>/repo.git`. The workspace root is the one `machine setup` resolved on your machine and staged in `/etc/smith/resolved.json`, wherever along the chain you set it — flag, blueprint or preferences — and `~/workspace` when you set it nowhere. Each
 repo directory is `0700`. A repo the box already has is fetched
 (`git fetch origin`), never deleted and cloned again, because it may carry
 worktrees with work that is pushed nowhere.
@@ -197,4 +197,4 @@ exits non-zero, having left what the box already holds exactly where it was.
 Its two refusals are the staged-config contract's, inherited rather than
 redefined: a box with no staged blueprint exits `4` and a staged document that
 cannot be trusted exits `5`, both naming `smith machine setup` — the only
-writer of either.
+writer of either. The staged resolution is refused the same way: a box staged by a smith that predates it exits `4`, and one that is not valid JSON exits `5`. Neither falls back to a default; re-run `machine setup` from your machine.

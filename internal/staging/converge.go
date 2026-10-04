@@ -93,7 +93,9 @@ func (r Result) Report() string {
 // The blueprint's env is staged beside the document, holding the value of every
 // variable it declares, resolved on the operator's machine. It is written on
 // every run whether or not anything is declared, so an operator dropping their
-// last variable converges the box back to holding none.
+// last variable converges the box back to holding none. The resolved
+// configuration is staged beside them the same way, so a changed preference
+// reaches the box on the next run.
 //
 // The tree is then pruned to exactly what the blueprint declares: anything
 // under the placements directory that is not a currently-declared scope and
@@ -115,8 +117,8 @@ func Converge(ctx context.Context, conn Conn, tree Tree) (Result, error) {
 			return Result{}, err
 		}
 	}
-	files := make([]File, 0, 2+len(tree.Placements))
-	files = append(files, tree.Document, tree.Env.File)
+	files := make([]File, 0, 3+len(tree.Placements))
+	files = append(files, tree.Document, tree.Env.File, tree.Resolution.File)
 	for _, p := range tree.Placements {
 		files = append(files, p.File)
 	}

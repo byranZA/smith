@@ -8,10 +8,14 @@ import (
 	"strings"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/staging"
 )
 
-// Plan derives the ordered units of work from the blueprint staged on the box,
-// with home the smith user's home the box's ~/-relative paths resolve against.
+// Plan derives the ordered units of work from the blueprint and resolution
+// staged on the box, with home the smith user's home the box's ~/-relative
+// paths resolve against. The blueprint says what the box carries; the
+// resolution says where, because its fixed-key fields were resolved on the
+// operator's machine and a box resolves nothing itself.
 // It is pure: it reads nothing, writes nothing, runs no command and reaches no
 // box, so the whole ordering rule can be read and tested without an apt.
 //
@@ -20,33 +24,35 @@ import (
 // orphans scan is the exception, and deliberately: it reads what the box holds
 // rather than what the blueprint declares, so a blueprint that dropped its last
 // repo is exactly the one whose scan must still run.
-func Plan(b blueprint.Blueprint, home string) []Unit {
+func Plan(b blueprint.Blueprint, r staging.Resolution, home string) []Unit {
 	var plan []Unit
+	root := boxPath(r.Workspace, home)
 	for _, step := range Order() {
-		plan = append(plan, planStep(step, b, home)...)
+		plan = append(plan, planStep(step, b, root, home)...)
 	}
 	return plan
 }
 
-// planStep is what one step of the order plans from the blueprint. The steps
+// planStep is what one step of the order plans from the blueprint, with root
+// the workspace root every repo occupies a directory under. The steps
 // that are not yet built plan nothing and are named in Order regardless, so the
 // slice that builds one adds a case here and inherits its place in the
 // sequence rather than deciding it again.
-func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
+func planStep(step Step, b blueprint.Blueprint, root, home string) []Unit {
 	switch {
 	case step == Placements:
 		return planPlacements(b.Placements, home)
 	case step == Packages && len(b.Packages) > 0:
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Repos:
-		return planRepos(b, home)
+		return planRepos(b, root, home)
 	case step == Orphans:
 		return []Unit{{Step: Orphans, Workspace: Workspace{
-			Root:     workspaceRoot(b, home),
+			Root:     root,
 			Declared: repoNames(b),
 		}}}
 	case step == Toolchain:
-		return planToolchain(b, home)
+		return planToolchain(b, root, home)
 	default:
 		return nil
 	}
@@ -60,7 +66,7 @@ func planStep(step Step, b blueprint.Blueprint, home string) []Unit {
 // install` — differing only in where the file lands and in the directory mise
 // resolves it from. A repo that overrides nothing takes the box's toolchain
 // and earns no file of its own.
-func planToolchain(b blueprint.Blueprint, home string) []Unit {
+func planToolchain(b blueprint.Blueprint, root, home string) []Unit {
 	var units []Unit
 	if needsToolchain(b) {
 		units = append(units, Unit{Step: Toolchain, Fragment: Fragment{
@@ -70,7 +76,6 @@ func planToolchain(b blueprint.Blueprint, home string) []Unit {
 			Env:   exported(b.Env),
 		}})
 	}
-	root := workspaceRoot(b, home)
 	for _, r := range b.Repos {
 		if len(r.Tools) == 0 && len(r.Env) == 0 {
 			continue
@@ -99,12 +104,6 @@ func exported(env map[string]string) []string {
 	return slices.Sorted(maps.Keys(env))
 }
 
-// workspaceRoot is the directory every repo occupies a directory under: the
-// blueprint's when it declares one, and ~/workspace otherwise.
-func workspaceRoot(b blueprint.Blueprint, home string) string {
-	return boxPath(cmp.Or(b.Workspace, defaultWorkspace), home)
-}
-
 // planPlacements is one unit per box-scoped placement the blueprint declares,
 // so a placement that cannot be materialized is reported on its own and the
 // ones after it are still written.
@@ -127,13 +126,11 @@ func planPlacements(placements []blueprint.Placement, home string) []Unit {
 // planRepos is one unit per declared repo, so a repo that cannot be cloned is
 // reported on its own and the ones after it are still converged.
 //
-// The workspace root is the blueprint's when it declares one and ~/workspace
-// otherwise, and a repo the operator did not name takes the name its url's
-// last path segment gives it. The repo's own base branch is not read here: it
+// Every repo lands under the resolved workspace root, and a repo the operator
+// did not name takes the name its url's last path segment gives it. The repo's own base branch is not read here: it
 // is the default a session starts a worktree from, and this stage makes no
 // worktree.
-func planRepos(b blueprint.Blueprint, home string) []Unit {
-	root := workspaceRoot(b, home)
+func planRepos(b blueprint.Blueprint, root, home string) []Unit {
 	mise := filepath.Join(home, miseDir, miseFile)
 	units := make([]Unit, 0, len(b.Repos))
 	for _, r := range b.Repos {

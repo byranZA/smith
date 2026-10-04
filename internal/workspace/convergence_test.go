@@ -210,7 +210,7 @@ func convergeIn(t *testing.T, box *fakeBox, root, home string, b blueprint.Bluep
 	stageEnv(t, root, b)
 	var progress bytes.Buffer
 	env := Env{Command: box, StateRoot: root}
-	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
+	result, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}

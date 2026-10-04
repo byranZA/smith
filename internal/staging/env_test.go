@@ -56,7 +56,7 @@ func stageEnv(t *testing.T, root string, tree Tree) {
 // a file of their own, readable by the account that consumes them and nothing
 // else: they are provisioned secrets, not the world-readable document.
 func TestPlanStagesTheEnvSmithOwnedAt0600(t *testing.T) {
-	tree := Plan([]byte("access: public\n"), declaresEnv())
+	tree := Plan([]byte("access: public\n"), declaresEnv(), Resolution{})
 
 	tests := []struct {
 		name string
@@ -86,7 +86,7 @@ func TestPlanStagesTheEnvSmithOwnedAt0600(t *testing.T) {
 func TestResolveStagesTheValueOfEveryDeclaredReference(t *testing.T) {
 	root := t.TempDir()
 
-	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv()), operatorValues, operatorValues)
+	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv(), Resolution{}), operatorValues, operatorValues)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -126,7 +126,7 @@ func TestResolveEnumeratesEveryValueItCannotResolve(t *testing.T) {
 		Repos: []blueprint.Repo{{Name: "acme", URL: "https://forge.test/acme.git"}},
 	}
 
-	_, err := Resolve(Plan([]byte("access: public\n"), b), operatorValues, operatorValues)
+	_, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), operatorValues, operatorValues)
 
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want both unresolvable values refused")
@@ -150,7 +150,7 @@ func TestResolveReadsAValueThroughTheValueResolver(t *testing.T) {
 	b := blueprint.Blueprint{Env: map[string]string{"LOG_LEVEL": "literal:debug"}}
 	refuse := func(ref string) (string, error) { return "", fmt.Errorf("no source resolves %q", ref) }
 
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), refuse, operatorValues)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), refuse, operatorValues)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -165,7 +165,7 @@ func TestResolveReadsAValueThroughTheValueResolver(t *testing.T) {
 // names the variable and points at the one command that stages a value for it.
 func TestReadValueRefusesAVariableWithNoStagedValue(t *testing.T) {
 	root := t.TempDir()
-	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv()), operatorValues, operatorValues)
+	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv(), Resolution{}), operatorValues, operatorValues)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -207,7 +207,7 @@ func TestReadValueRefusesOnABoxWithNothingStaged(t *testing.T) {
 // the document, so on-box smith reads a value rather than resolving a
 // reference of its own.
 func TestConvergeStagesTheResolvedEnvOnTheBox(t *testing.T) {
-	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv()), operatorValues, operatorValues)
+	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv(), Resolution{}), operatorValues, operatorValues)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}

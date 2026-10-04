@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // TestConvergeReportsADroppedRepoAsAnOrphan proves a repo the operator removed
@@ -93,28 +94,49 @@ func TestConvergeReportsEveryOrphan(t *testing.T) {
 // repos still plans one — the scan reads the box, so dropping every repo
 // leaves every clone the box holds an orphan to report.
 func TestPlanScansForOrphansUnderTheWorkspaceRoot(t *testing.T) {
-	b := blueprint.Blueprint{Workspace: "~/code", Repos: []blueprint.Repo{{URL: forge}}}
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{URL: forge}}}
 
-	units := unitsFor(Plan(b, "/home/smith"), Orphans)
+	units := unitsFor(Plan(b, resolved, "/home/smith"), Orphans)
 
 	if len(units) != 1 {
 		t.Fatalf("Plan() planned %d orphans units, want 1", len(units))
 	}
-	if got := units[0].Workspace.Root; got != "/home/smith/code" {
-		t.Errorf("orphans unit root = %q, want the declared workspace root", got)
+	if got := units[0].Workspace.Root; got != "/home/smith/workspace" {
+		t.Errorf("orphans unit root = %q, want the resolved workspace root", got)
 	}
 	if got := strings.Join(units[0].Workspace.Declared, ","); got != "acme" {
 		t.Errorf("orphans unit declares %q, want the repo's defaulted name", got)
 	}
-	planned := unitsFor(Plan(blueprint.Blueprint{Packages: []string{"jq"}}, "/home/smith"), Orphans)
+	planned := unitsFor(Plan(blueprint.Blueprint{Packages: []string{"jq"}}, resolved, "/home/smith"), Orphans)
 	if len(planned) != 1 {
 		t.Fatalf("a blueprint declaring no repos planned %d orphans units, want 1", len(planned))
 	}
-	if got := planned[0].Workspace.Root; got != "/home/smith/workspace" {
-		t.Errorf("orphans unit root = %q, want the default workspace root", got)
+}
+
+func TestPlanClonesAndScansUnderAPreferenceOnlyWorkspace(t *testing.T) {
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{Name: "api", URL: forge}}}
+	code := staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/code"}
+
+	plan := Plan(b, code, "/home/smith")
+
+	tests := []struct {
+		step Step
+		got  func(Unit) string
+		want string
+	}{
+		{Repos, func(u Unit) string { return u.Repo.Path }, "/home/smith/code/api/repo.git"},
+		{Orphans, func(u Unit) string { return u.Workspace.Root }, "/home/smith/code"},
 	}
-	if got := len(planned[0].Workspace.Declared); got != 0 {
-		t.Errorf("orphans unit declares %d repos, want none", got)
+	for _, tt := range tests {
+		t.Run(string(tt.step), func(t *testing.T) {
+			units := unitsFor(plan, tt.step)
+			if len(units) != 1 {
+				t.Fatalf("Plan() planned %d %s units, want 1", len(units), tt.step)
+			}
+			if got := tt.got(units[0]); got != tt.want {
+				t.Errorf("%s unit lands at %q, want %q", tt.step, got, tt.want)
+			}
+		})
 	}
 }
 

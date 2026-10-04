@@ -5,7 +5,11 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/staging"
 )
+
+// resolved is the staged resolution of a box whose operator declared nothing.
+var resolved = staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"}
 
 // TestOrderIsTheStageOrder pins the order the stage converges in. It is not
 // arbitrary: placements put the box's git identity and forge credentials on
@@ -49,7 +53,7 @@ func TestPlan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Plan(tt.b, "/home/smith")
+			got := Plan(tt.b, resolved, "/home/smith")
 			if len(got) != len(tt.want) {
 				t.Fatalf("Plan() = %v, want %v", got, tt.want)
 			}
@@ -69,7 +73,7 @@ func TestPlan(t *testing.T) {
 // into the blueprint it was planned from.
 func TestPlanIsPure(t *testing.T) {
 	b := blueprint.Blueprint{Packages: []string{"ripgrep"}}
-	Plan(b, "/home/smith")[0].Packages[0] = "mutated"
+	Plan(b, resolved, "/home/smith")[0].Packages[0] = "mutated"
 	if b.Packages[0] != "ripgrep" {
 		t.Errorf("blueprint packages = %v after a caller mutated the plan, want [ripgrep]", b.Packages)
 	}
@@ -80,7 +84,7 @@ func TestPlanIsPure(t *testing.T) {
 // fields in.
 func TestPlanFollowsTheStageOrder(t *testing.T) {
 	b := blueprint.Blueprint{Packages: []string{"ripgrep"}}
-	plan := Plan(b, "/home/smith")
+	plan := Plan(b, resolved, "/home/smith")
 	at := make(map[Step]int, len(Order()))
 	for i, s := range Order() {
 		at[s] = i
@@ -126,7 +130,7 @@ func TestPlanPlacements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []Placement
-			for _, unit := range Plan(tt.b, "/home/smith") {
+			for _, unit := range Plan(tt.b, resolved, "/home/smith") {
 				if unit.Step == Placements {
 					got = append(got, unit.Placement)
 				}
@@ -153,7 +157,7 @@ func TestPlanOrdersPlacementsBeforeTheRestOfTheStage(t *testing.T) {
 		Placements: []blueprint.Placement{{From: "file:/home/op/.gitconfig", To: "~/.gitconfig"}},
 		Repos:      []blueprint.Repo{{Name: "acme", URL: "git@example.com:acme.git"}},
 	}
-	plan := Plan(b, "/home/smith")
+	plan := Plan(b, resolved, "/home/smith")
 	if len(plan) < 2 {
 		t.Fatalf("Plan() = %v, want the placement and the rest of the stage", plan)
 	}

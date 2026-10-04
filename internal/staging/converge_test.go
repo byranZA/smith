@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -152,7 +153,7 @@ func changeOf(r Result, path string) (Change, bool) {
 
 func TestConvergeStagesTheDocumentByteForByte(t *testing.T) {
 	document := "access: tailscale\nprovider:\n  create: [hcloud]\n"
-	tree := Plan([]byte(document), blueprint.Blueprint{})
+	tree := Plan([]byte(document), blueprint.Blueprint{}, Resolution{})
 	box := &fakeBox{}
 
 	result, err := Converge(context.Background(), box, tree)
@@ -170,7 +171,7 @@ func TestConvergeStagesTheDocumentByteForByte(t *testing.T) {
 func TestConvergePutsTheDocumentInPlaceRootOwnedAt0644(t *testing.T) {
 	document := "access: public\n"
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{})); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{}, Resolution{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	want := File{Path: DocumentPath, Bytes: []byte(document), Mode: "0644", Owner: "root:root"}
@@ -183,8 +184,9 @@ func TestConvergeLeavesAnUnchangedDocumentAlone(t *testing.T) {
 	document := "access: public\n"
 	tree := resolvedTree(t, blueprint.Blueprint{})
 	box := &fakeBox{files: map[string]string{
-		DocumentPath: document,
-		EnvPath:      string(tree.Env.File.Bytes),
+		DocumentPath:   document,
+		EnvPath:        string(tree.Env.File.Bytes),
+		ResolutionPath: string(tree.Resolution.File.Bytes),
 	}}
 
 	result, err := Converge(context.Background(), box, tree)
@@ -204,8 +206,9 @@ func TestConvergeReplacesAnEditedDocumentWholesale(t *testing.T) {
 	edited := "access: public\n"
 	tree := resolvedTree(t, blueprint.Blueprint{})
 	box := &fakeBox{files: map[string]string{
-		DocumentPath: staged,
-		EnvPath:      string(tree.Env.File.Bytes),
+		DocumentPath:   staged,
+		EnvPath:        string(tree.Env.File.Bytes),
+		ResolutionPath: string(tree.Resolution.File.Bytes),
 	}}
 
 	result, err := Converge(context.Background(), box, tree)
@@ -225,7 +228,7 @@ func TestConvergeReplacesAnEditedDocumentWholesale(t *testing.T) {
 
 func TestConvergeCreatesNoOperatorConfigHomeOnTheBox(t *testing.T) {
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{})); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}, Resolution{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	for _, cmd := range box.commands {
@@ -238,7 +241,7 @@ func TestConvergeCreatesNoOperatorConfigHomeOnTheBox(t *testing.T) {
 func TestConvergeDeliversTheDocumentOverStdinNotArgv(t *testing.T) {
 	document := "env:\n  NPM_TOKEN: env:NPM_TOKEN\n"
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{})); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte(document), blueprint.Blueprint{}, Resolution{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	for _, cmd := range box.commands {
@@ -250,7 +253,7 @@ func TestConvergeDeliversTheDocumentOverStdinNotArgv(t *testing.T) {
 
 func TestConvergeNamesTheWriteThatFailed(t *testing.T) {
 	box := &fakeBox{writeErr: errors.New("permission denied")}
-	_, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}))
+	_, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}, Resolution{}))
 	if err == nil {
 		t.Fatal("Converge() error = nil, want the failed write reported")
 	}
@@ -263,7 +266,7 @@ func TestConvergeStagesABoxPlacementsBytesUnderItsKey(t *testing.T) {
 	const credential = "s3cr3t-token"
 	t.Setenv("NPM_TOKEN", credential)
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc", Perms: "0640"}}}
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve, blueprint.Value)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), secret.Resolve, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -287,7 +290,7 @@ func TestConvergeDeliversPlacementBytesOverStdinNotArgv(t *testing.T) {
 	const credential = "s3cr3t-token"
 	t.Setenv("NPM_TOKEN", credential)
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "/home/smith/.npmrc"}}}
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), secret.Resolve, blueprint.Value)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), secret.Resolve, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -318,7 +321,7 @@ func delivered(stdin []string, value string) bool {
 
 func TestConvergeMakesThePlacementsDirectorySmithOwnedAt0700(t *testing.T) {
 	box := &fakeBox{}
-	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{})); err != nil {
+	if _, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}, Resolution{})); err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
 	if !box.made(Dir{Path: PlacementsDir, Mode: "0700", Owner: "smith:smith"}) {
@@ -327,23 +330,23 @@ func TestConvergeMakesThePlacementsDirectorySmithOwnedAt0700(t *testing.T) {
 }
 
 // TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared proves a blueprint
-// declaring no placement stages none: what reaches the box is the document and
-// the env beside it, which every box is owed, and nothing more.
+// declaring no placement stages none: what reaches the box is the document, and
+// the env and resolution beside it, which every box is owed, and nothing more.
 func TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared(t *testing.T) {
 	box := &fakeBox{}
 	result, err := Converge(context.Background(), box, resolvedTree(t, blueprint.Blueprint{}))
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
-	if len(box.writes) != 2 {
-		t.Errorf("the box was handed %q, want the document and the env alone", box.stdin())
+	if len(box.writes) != 3 {
+		t.Errorf("the box was handed %q, want the document, the env and the resolution alone", box.stdin())
 	}
 	var staged []string
 	for _, e := range result.Entries {
 		staged = append(staged, e.Path)
 	}
-	if len(staged) != 2 || staged[0] != DocumentPath || staged[1] != EnvPath {
-		t.Errorf("Result covered %v, want the document and the env alone", result.Entries)
+	if want := []string{DocumentPath, EnvPath, ResolutionPath}; !slices.Equal(staged, want) {
+		t.Errorf("Result covered %v, want the document, the env and the resolution alone", result.Entries)
 	}
 }
 
@@ -352,7 +355,7 @@ func TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared(t *testing.T) {
 func resolvedTree(t *testing.T, b blueprint.Blueprint) Tree {
 	t.Helper()
 	canned := func(ref string) (string, error) { return "bytes of " + ref, nil }
-	tree, err := Resolve(Plan([]byte("access: public\n"), b), canned, canned)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), canned, canned)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -426,7 +429,7 @@ func TestConvergePrunesAStrayFileLeftInTheStagedTree(t *testing.T) {
 	stray := filepath.Join(PlacementsDir, "left-by-a-human")
 	box := &fakeBox{tree: []string{stray}}
 
-	result, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}))
+	result, err := Converge(context.Background(), box, Plan([]byte("access: public\n"), blueprint.Blueprint{}, Resolution{}))
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}

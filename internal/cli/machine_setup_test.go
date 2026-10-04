@@ -67,11 +67,14 @@ type setupSSH struct {
 
 	targets  []string
 	commands []string
+	// inputs are the bytes each remote command was handed over stdin, in
+	// step with commands, so a test can read back what was staged.
+	inputs []string
 }
 
 // Run answers whichever local binary the run launched, recording every ssh
 // destination it was pointed at.
-func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+func (s *setupSSH) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, _ io.Writer) error {
 	if name == "tailscale" {
 		status := adminOnTailnet
 		if s.adminOffTailnet {
@@ -103,6 +106,11 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	}
 	s.targets = append(s.targets, target)
 	s.commands = append(s.commands, remoteCmd)
+	input, err := readInput(stdin)
+	if err != nil {
+		return err
+	}
+	s.inputs = append(s.inputs, input)
 	if target == s.deafAt && remoteCmd == "true" {
 		return refusedExit{}
 	}
@@ -151,6 +159,26 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 		return err
 	}
 	return nil
+}
+
+// readInput reads what a launch was handed over stdin, nothing when it was handed none.
+func readInput(stdin io.Reader) (string, error) {
+	if stdin == nil {
+		return "", nil
+	}
+	data, err := io.ReadAll(stdin)
+	return string(data), err
+}
+
+// stagedAt is the bytes the box was handed for the staged file at path, and
+// whether it was handed any.
+func (s *setupSSH) stagedAt(path string) (string, bool) {
+	for i, cmd := range s.commands {
+		if strings.Contains(cmd, "tee "+connection.ShellArg(path+".staging")) {
+			return s.inputs[i], true
+		}
+	}
+	return "", false
 }
 
 // refuses reports whether the box turns away a launch at target: a root login
