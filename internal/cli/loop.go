@@ -51,23 +51,33 @@ func newLoopCmd(w loopWiring) *cobra.Command {
 		Use:   "loop",
 		Short: "Work a spec's tasks with a coding agent, one task at a time",
 	}
-	cmd.AddCommand(newLoopListCmd(w), newLoopRunCmd(w))
+	cmd.AddCommand(newLoopListCmd(w), newLoopRunCmd(w), newLoopPromptCmd())
 	return cmd
+}
+
+// repo locates the git repo smith is run from, the one whose repo file and
+// ejected loop prompt the loop verbs read.
+func (w loopWiring) repo(ctx context.Context) (repofile.Repo, error) {
+	home, err := w.home()
+	if err != nil {
+		return repofile.Repo{}, err
+	}
+	dir, err := w.workdir()
+	if err != nil {
+		return repofile.Repo{}, err
+	}
+	repo, err := repofile.Locate(ctx, w.git, dir, home)
+	if err != nil {
+		return repofile.Repo{}, fmt.Errorf("locate repo: %w", err)
+	}
+	return repo, nil
 }
 
 // settings resolves the loop settings for the repo smith is run from, flags
 // over its repo file over the built-in defaults. A repo with no repo file
 // resolves to the defaults.
 func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Settings, error) {
-	home, err := w.home()
-	if err != nil {
-		return loop.Settings{}, err
-	}
-	dir, err := w.workdir()
-	if err != nil {
-		return loop.Settings{}, err
-	}
-	repo, err := repofile.Locate(ctx, w.git, dir, home)
+	repo, err := w.repo(ctx)
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
@@ -80,6 +90,20 @@ func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Set
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
 	return settings, nil
+}
+
+// prompt loads the loop prompt for the repo smith is run from: its ejected
+// copy when it has one, otherwise the built-in.
+func (w loopWiring) prompt(ctx context.Context) (loop.Prompt, error) {
+	repo, err := w.repo(ctx)
+	if err != nil {
+		return "", fmt.Errorf("load loop prompt: %w", err)
+	}
+	prompt, err := loop.LoadPrompt(repo.PromptPath())
+	if err != nil {
+		return "", fmt.Errorf("load loop prompt: %w", err)
+	}
+	return prompt, nil
 }
 
 // settingsReport renders each resolved setting with where it came from,
@@ -102,6 +126,24 @@ func settingsReport(s loop.Settings) string {
 	return b.String()
 }
 
+// newLoopPromptCmd builds `smith loop prompt`, which prints the built-in loop
+// prompt with its placeholders unfilled, whether or not the repo has ejected
+// its own. Ejecting is saving this output as .smith/prompt.md, which smith
+// itself never writes.
+func newLoopPromptCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "prompt",
+		Short: "Print the built-in loop prompt, to eject or diff against",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), loop.BuiltinPrompt()); err != nil {
+				return fmt.Errorf("write loop prompt: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
 // newLoopRunCmd builds `smith loop run <spec>`, which works the spec's tasks
 // unattended, one agent run per task, until none is available for an agent.
 // --agent, --model and --effort override the repo file for this run only, and
@@ -111,7 +153,9 @@ func settingsReport(s loop.Settings) string {
 // task alone to the agent attached to the terminal. Limits below one, invalid
 // settings and an agent missing from the PATH are refused before the tracker
 // is read. Exit 0 only when the spec is complete, or when an interactive run's
-// task was closed; otherwise the report names what was left and why.
+// task was closed; otherwise the report names what was left and why. The
+// repo's ejected .smith/prompt.md, when it has one, replaces the built-in loop
+// prompt.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
@@ -132,6 +176,10 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			prompt, err := w.prompt(cmd.Context())
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
 			adapter, err := agent.Lookup(settings.Agent.Value)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -147,7 +195,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				Launcher: w.launcher,
 				Agent:    adapter,
 				Options:  settings.Options(),
-				Prompt:   loop.BuiltinPrompt(),
+				Prompt:   prompt,
 				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
 			}

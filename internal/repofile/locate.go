@@ -20,6 +20,9 @@ const dirName = ".smith"
 // fileName is the repo file's name inside dirName.
 const fileName = "repo.yaml"
 
+// promptName is the name, inside dirName, of the loop prompt a repo ejects.
+const promptName = "prompt.md"
+
 // ErrNotARepo is returned by Locate when the directory is not inside a git repo.
 var ErrNotARepo = errors.New("must be run inside a git repo")
 
@@ -38,6 +41,10 @@ type Repo struct {
 
 // Path is where the repo's repo file is, whether or not it exists yet.
 func (r Repo) Path() string { return filepath.Join(r.root, dirName, fileName) }
+
+// PromptPath is where the repo's ejected loop prompt is, whether or not the
+// repo has ejected one.
+func (r Repo) PromptPath() string { return filepath.Join(r.root, dirName, promptName) }
 
 // Locate finds the root of the git repo dir is inside, asking git. It returns
 // ErrNotARepo when git finds none, and refuses a repo whose .smith directory

@@ -560,3 +560,117 @@ func TestLoopRunInteractiveWithNothingAvailableRunsNoAgentAndSaysWhy(t *testing.
 		})
 	}
 }
+
+// ejectPrompt writes content as the ejected loop prompt of w's repo and
+// returns its path.
+func ejectPrompt(t *testing.T, w loopWiring, content string) string {
+	t.Helper()
+	path := filepath.Join(rootOf(t, w), ".smith", "prompt.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoopRunHandsTheAgentTheEjectedPromptAndLeavesItUnchanged(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	w, _ := repoWith(t, gh, claude, "")
+	content := "Work issue **#{{TASK_NUMBER}} of #{{SPEC_NUMBER}}. Run make check before closing.\n"
+	path := ejectPrompt(t, w, content)
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Work issue **#43 of #42. Run make check before closing.\n"
+	if code != 0 || len(claude.commands) != 1 || claude.commands[0].Args[len(claude.commands[0].Args)-1] != want || string(after) != content {
+		t.Errorf("exit %d, stderr %q, ran %v, prompt file %q; want the agent handed %q and the prompt file unchanged", code, stderr, claude.commands, after, want)
+	}
+}
+
+func TestLoopRunRefusesAnUnknownPlaceholderBeforeAnyAgentRuns(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	idle := &idleAgent{}
+	w, _ := repoWith(t, gh, idle, "")
+	ejectPrompt(t, w, "Do #{{TASK_NUMBER}}, see {{ISSUE_URL}}.\n")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "{{TASK_NUMBER}}, {{TASK_TITLE}}, {{SPEC_NUMBER}}") || idle.runs != 0 || len(gh.ran) != 0 {
+		t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming the placeholder and the known ones, no agent and no gh", code, stderr, idle.runs, gh.ran)
+	}
+}
+
+func runLoopPrompt(t *testing.T, w loopWiring) (stdout string, code int) {
+	t.Helper()
+	cmd := newLoopCmd(inRepo(t, w))
+	cmd.SetArgs([]string{"prompt"})
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	code = codeFromError(cmd.Execute())
+	return out.String(), code
+}
+
+func TestLoopPromptPrintsTheBuiltInUnfilledEvenWhenTheRepoHasEjected(t *testing.T) {
+	w, _ := repoWith(t, &fakeTracker{}, &idleAgent{}, "")
+	ejectPrompt(t, w, "Our own prompt for #{{TASK_NUMBER}}.\n")
+
+	stdout, code := runLoopPrompt(t, w)
+
+	if code != 0 || !strings.HasPrefix(stdout, "You are one iteration of a smith loop.") || !strings.Contains(stdout, "**#{{TASK_NUMBER}} — {{TASK_TITLE}}**") {
+		t.Errorf("exit %d, stdout %q; want 0 and the built-in prompt with its placeholders unfilled", code, stdout)
+	}
+}
+
+func TestSavingThePrintedPromptAsTheEjectedPromptHandsTheAgentWhatTheBuiltInDid(t *testing.T) {
+	handed := func(eject bool) []string {
+		gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+		claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+		w, _ := repoWith(t, gh, claude, "")
+		if eject {
+			printed, code := runLoopPrompt(t, w)
+			if code != 0 {
+				t.Fatalf("loop prompt exit %d", code)
+			}
+			ejectPrompt(t, w, printed)
+		}
+		if _, stderr, code := runLoopRun(t, w, "42"); code != 0 || len(claude.commands) != 1 {
+			t.Fatalf("loop run exit %d, stderr %q, ran %v", code, stderr, claude.commands)
+		}
+		return claude.commands[0].Args
+	}
+
+	if builtin, ejected := handed(false), handed(true); !slices.Equal(builtin, ejected) {
+		t.Errorf("ejected copy handed the agent\n%q\nwant what the built-in did\n%q", ejected, builtin)
+	}
+}
+
+func TestRepoInitAndTheLoopLeaveAnEjectedPromptByteForByteUnchanged(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &recordingAgent{fakeAgent: fakeAgent{gh: gh}}, "")
+	content := "Our own prompt: work issue **#{{TASK_NUMBER}} carefully.\n\n"
+	path := ejectPrompt(t, w, content)
+
+	if _, stderr, code := runRepoInit(t, rootOf(t, w), rootOf(t, w), t.TempDir()); code != 0 {
+		t.Fatalf("repo init exit %d, stderr %q", code, stderr)
+	}
+	if _, stderr, code := runLoopRun(t, w, "42"); code != 0 {
+		t.Fatalf("loop run exit %d, stderr %q", code, stderr)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != content {
+		t.Errorf("prompt file = %q, want it unchanged as %q", after, content)
+	}
+}
