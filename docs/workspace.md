@@ -196,6 +196,10 @@ A repo you drop from the blueprint stays on the box. The orphans step reports it
 never deletes it. Only a directory holding a `repo.git` counts, so a directory
 you made under the workspace root yourself is never reported.
 
+Changing `workspace` does not move the clones. The ones under the old root stay
+in place, and nothing reports them, because the orphans step scans only the
+root the staged resolution names.
+
 ## What it reports, and what it refuses
 
 Each step reports as it finishes, with the commands' own output streaming live,
