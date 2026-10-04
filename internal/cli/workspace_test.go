@@ -32,6 +32,10 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 	f.calls = append(f.calls, append([]string{name}, args...))
 	line := strings.Join(args, " ")
 	switch {
+	case name == "git" && strings.HasPrefix(line, "config --global --get"):
+		return errors.New("exit status 1")
+	case name == "git" && strings.HasPrefix(line, "config --global"):
+		return f.err
 	case strings.Contains(line, "apt-get"):
 		return f.err
 	case strings.Contains(line, "mise.run"):
@@ -115,6 +119,59 @@ func TestWorkspaceConvergeInstallsDeclaredPackages(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "packages") {
 		t.Errorf("stdout = %q, want the step reported", stdout)
+	}
+}
+
+// TestWorkspaceConvergeSetsTheStagedIdentity proves the git identity resolved
+// on the operator's machine reaches the smith user's global git config.
+func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
+	box := &fakeBox{}
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{}),
+		command:   box,
+		resolution: func() (staging.Resolution, error) {
+			return staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace",
+				Git: staging.Identity{UserName: "Ada", UserEmail: "ada@example.com"}}, nil
+		},
+		boxHome: boxHomeAt(t.TempDir()),
+	}
+	stdout, stderr, code := runWorkspace(t, w, "converge")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, stderr)
+	}
+	for _, want := range [][]string{
+		{"git", "config", "--global", "user.name", "Ada"},
+		{"git", "config", "--global", "user.email", "ada@example.com"},
+	} {
+		if !slices.ContainsFunc(box.calls, func(argv []string) bool { return slices.Equal(argv, want) }) {
+			t.Errorf("the stage ran %v, want %v", box.calls, want)
+		}
+	}
+	if !strings.Contains(stdout, "identity") {
+		t.Errorf("stdout = %q, want the identity step reported", stdout)
+	}
+}
+
+// TestWorkspaceConvergeFailsOnAFailedIdentityWrite proves a git config the
+// stage cannot write fails the identity step and the whole verb.
+func TestWorkspaceConvergeFailsOnAFailedIdentityWrite(t *testing.T) {
+	box := &fakeBox{err: errors.New("could not lock config file")}
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{}),
+		command:   box,
+		resolution: func() (staging.Resolution, error) {
+			return staging.Resolution{Workspace: "~/workspace", Git: staging.Identity{UserEmail: "ada@example.com"}}, nil
+		},
+		boxHome: boxHomeAt(t.TempDir()),
+	}
+	stdout, _, code := runWorkspace(t, w, "converge")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for a failed identity write", code)
+	}
+	if !strings.Contains(stdout, "identity    failed") {
+		t.Errorf("stdout = %q, want the identity step reported failed", stdout)
 	}
 }
 

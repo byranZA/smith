@@ -39,11 +39,16 @@ type fakeBox struct {
 	// unreachable fails the git commands of one repo, keyed by its url, the
 	// way a forge that is down for that repo alone does.
 	unreachable map[string]bool
+	// gitConfig is the smith user's global git config, key by key.
+	gitConfig map[string]string
+	// gitConfigErr fails a write to the global git config the way a locked
+	// or unwritable ~/.gitconfig does.
+	gitConfigErr error
 }
 
 // newBox is a box holding nothing: no packages, no mise, and no clones.
 func newBox() *fakeBox {
-	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}}
+	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}, gitConfig: map[string]string{}}
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
@@ -54,6 +59,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return fmt.Errorf("%s: command not found", name)
 	}
 	switch {
+	case strings.HasPrefix(line, "git config --global"):
+		return f.config(args[2:], stdout)
 	case strings.Contains(line, "dpkg-query"):
 		pkg := argv[len(argv)-1]
 		if !f.installed[pkg] {
@@ -108,6 +115,29 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return f.aptErr
 	}
 	return fmt.Errorf("unexpected command %q", line)
+}
+
+// config answers a `git config --global` read or write against the box's
+// global git config.
+func (f *fakeBox) config(args []string, stdout io.Writer) error {
+	if len(args) == 2 && args[0] == "--get" {
+		value, ok := f.gitConfig[args[1]]
+		if !ok {
+			return errors.New("exit status 1")
+		}
+		if _, err := io.WriteString(stdout, value+"\n"); err != nil {
+			return fmt.Errorf("write canned git config value: %w", err)
+		}
+		return nil
+	}
+	if len(args) != 2 {
+		return fmt.Errorf("unexpected git config arguments %q", args)
+	}
+	if f.gitConfigErr != nil {
+		return f.gitConfigErr
+	}
+	f.gitConfig[args[0]] = args[1]
+	return nil
 }
 
 // isMise reports whether a command is an invocation of mise, by the plain name

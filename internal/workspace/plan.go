@@ -28,20 +28,23 @@ func Plan(b blueprint.Blueprint, r staging.Resolution, home string) []Unit {
 	var plan []Unit
 	root := boxPath(r.Workspace, home)
 	for _, step := range Order() {
-		plan = append(plan, planStep(step, b, root, home)...)
+		plan = append(plan, planStep(step, b, r, root, home)...)
 	}
 	return plan
 }
 
-// planStep is what one step of the order plans from the blueprint, with root
-// the workspace root every repo occupies a directory under. The steps
+// planStep is what one step of the order plans from the blueprint and the
+// resolution, with root the workspace root every repo occupies a directory
+// under. The steps
 // that are not yet built plan nothing and are named in Order regardless, so the
 // slice that builds one adds a case here and inherits its place in the
 // sequence rather than deciding it again.
-func planStep(step Step, b blueprint.Blueprint, root, home string) []Unit {
+func planStep(step Step, b blueprint.Blueprint, r staging.Resolution, root, home string) []Unit {
 	switch {
 	case step == Placements:
 		return planPlacements(b.Placements, home)
+	case step == Identity && r.Git != (staging.Identity{}):
+		return []Unit{{Step: Identity, Identity: r.Git}}
 	case step == Packages && len(b.Packages) > 0:
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Repos:

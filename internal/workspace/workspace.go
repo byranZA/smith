@@ -25,19 +25,24 @@ package workspace
 import (
 	"context"
 	"io"
+
+	"github.com/byranZA/smith/internal/staging"
 )
 
-// Step is one of the four kinds of work the stage does, in the order it does
+// Step is one of the kinds of work the stage does, in the order it does
 // them.
 type Step string
 
 const (
 	// Placements materializes the box-scoped placements from their staged
-	// bytes. It is first because it is what puts the box's git identity and
-	// forge credentials on disk: a clone attempted before them fails as an
-	// authentication error that reads like a credential bug rather than the
-	// ordering bug it is.
+	// bytes. It is first because it is what puts the box's forge credentials
+	// on disk: a clone attempted before them fails as an authentication error
+	// that reads like a credential bug rather than the ordering bug it is.
 	Placements Step = "placements"
+	// Identity sets the resolved git identity in the smith user's global git
+	// config, one key per declared field. It follows the placements so a
+	// placed config file can never land on top of the keys it set.
+	Identity Step = "identity"
 	// Packages installs the blueprint's apt packages — the OS substrate and
 	// build prerequisites, unversioned by design.
 	Packages Step = "packages"
@@ -59,7 +64,7 @@ const (
 // one place: a step is converged before another because it puts something on
 // the box the later one needs, never for tidiness.
 func Order() []Step {
-	return []Step{Placements, Packages, Toolchain, Repos, Orphans}
+	return []Step{Placements, Identity, Packages, Toolchain, Repos, Orphans}
 }
 
 // Unit is one unit of work the stage converges: which step it belongs to and
@@ -72,6 +77,9 @@ type Unit struct {
 	Packages []string
 	// Placement is the box-scoped file a placements unit materializes.
 	Placement Placement
+	// Identity is the git identity an identity unit sets, a field nobody
+	// declared left empty.
+	Identity staging.Identity
 	// Fragment is the generated mise config a toolchain unit writes.
 	Fragment Fragment
 	// Repo is the repository a repos unit clones into the workspace.

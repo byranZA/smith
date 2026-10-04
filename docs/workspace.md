@@ -31,16 +31,18 @@ The order is not arbitrary — each step puts something on the box the next one
 needs:
 
 1. **Placements** — box-scoped placements are materialized from their staged
-   bytes. First, because this is what puts a git identity and forge credentials
-   on the box; a clone that runs before them fails with an authentication error
-   that looks like a credential bug rather than the ordering bug it is.
-2. **Packages** — the blueprint's `packages` are installed with `apt`.
-3. **Toolchain** — `mise` is installed, and smith writes the generated config
+   bytes. First, because this is what puts forge credentials on the box; a
+   clone that runs before them fails with an authentication error that looks
+   like a credential bug rather than the ordering bug it is.
+2. **Identity** — the resolved git identity is set in the smith user's global
+   git config. See [Git identity](#git-identity).
+3. **Packages** — the blueprint's `packages` are installed with `apt`.
+4. **Toolchain** — `mise` is installed, and smith writes the generated config
    pinning the blueprint's `tools` and exporting its `env`.
-4. **Repos** — each declared repo is cloned bare into
+5. **Repos** — each declared repo is cloned bare into
    `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is
    in scope for a token-authenticated clone.
-5. **Orphans** — the workspace root is scanned for repos the blueprint no
+6. **Orphans** — the workspace root is scanned for repos the blueprint no
    longer declares. This runs on every converge, even when the blueprint
    declares no repos at all.
 
@@ -60,6 +62,24 @@ its `mode` decides what happens to a file the box already has:
 Whatever the mode, a file whose content already matches has its permissions and
 ownership brought back to what the placement declares (`corrected the
 permissions of <path>`), without moving its modification time.
+
+## Git identity
+
+The `git` identity `smith blueprint check` resolved — `user_name` and
+`user_email`, from the blueprint or your preferences — is set with one
+`git config --global` per declared field, so commits made on the box are
+authored as you declared. smith sets those two keys and does not own
+`~/.gitconfig`: anything else in it survives.
+
+- A value that already matches is reported unchanged (`user.name, user.email
+  already set`), and a changed one replaces the old value.
+- A field you did not declare is neither set nor unset. Dropping the identity
+  from your config leaves the last one on the box, and a box with no declared
+  identity runs no identity step at all.
+- A write git refuses fails the identity step, and the stage exits non-zero.
+
+Because a box placement to `~/.gitconfig` would replace the whole file and wipe
+these keys, `blueprint check` refuses a git identity beside one.
 
 ## Packages
 
