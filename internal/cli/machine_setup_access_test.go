@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,23 +47,103 @@ func TestSetupReachesTheBoxOverTheTailnetWhenThePreferencesAskForTailscale(t *te
 	}
 }
 
-func TestSetupAccessFlagOutranksTheBlueprintAndThePreferences(t *testing.T) {
+// accessPrecedence is the spec's precedence table: what preferences, a
+// blueprint "acme" and the --access flag each declare (empty for nothing), and
+// the access a fresh box is provisioned with and the origin setup reports.
+var accessPrecedence = []struct {
+	preference, blueprint, flag string
+	resolved, origin            string
+}{
+	{"", "", "", "public", "built-in default"},
+	{"tailscale", "", "", "tailscale", "preferences"},
+	{"", "tailscale", "", "tailscale", "blueprint"},
+	{"public", "tailscale", "", "tailscale", "blueprint"},
+	{"tailscale", "public", "", "public", "blueprint"},
+	{"", "tailscale", "public", "public", "flag"},
+	{"public", "public", "tailscale", "tailscale", "flag"},
+}
+
+// runPrecedenceRow sets up a fresh box with blueprint "acme" under the
+// declarations one precedence row names, returning the fake box and stdout.
+func runPrecedenceRow(t *testing.T, preference, blueprintAccess, flag string) (*setupSSH, string) {
+	t.Helper()
 	dir := t.TempDir()
-	writeBlueprint(t, dir, "acme", "access: tailscale\n")
-	writePreferences(t, dir, "access: tailscale\n")
+	if preference != "" {
+		writePreferences(t, dir, "access: "+preference+"\n")
+	}
+	body := ""
+	if blueprintAccess != "" {
+		body = "access: " + blueprintAccess + "\n"
+	}
+	writeBlueprint(t, dir, "acme", body)
 	ssh := &setupSSH{tailnetIP: "100.92.14.7"}
 
-	_, stderr, code := runSetup(t, dir, ssh, "--access", "public", "--blueprint", "acme", "root@203.0.113.10")
+	args := append(tailscaleKeyRef(t), "--blueprint", "acme")
+	if flag != "" {
+		args = append(args, "--access", flag)
+	}
+	stdout, stderr, code := runSetup(t, dir, ssh, append(args, "root@203.0.113.10")...)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	return ssh, stdout
+}
+
+func TestSetupProvisionsTheBoxWithTheMostSpecificAccess(t *testing.T) {
+	for _, tc := range accessPrecedence {
+		t.Run(tc.preference+"/"+tc.blueprint+"/"+tc.flag, func(t *testing.T) {
+			ssh, _ := runPrecedenceRow(t, tc.preference, tc.blueprint, tc.flag)
+
+			if got := ssh.setupFlag("--access"); got != tc.resolved {
+				t.Errorf("box provisioned with --access %q, want %q", got, tc.resolved)
+			}
+		})
+	}
+}
+
+func TestSetupReportsTheAccessItChoseAndWhereItCameFrom(t *testing.T) {
+	for _, tc := range accessPrecedence {
+		t.Run(tc.preference+"/"+tc.blueprint+"/"+tc.flag, func(t *testing.T) {
+			_, stdout := runPrecedenceRow(t, tc.preference, tc.blueprint, tc.flag)
+
+			want := "access: " + tc.resolved + " (" + tc.origin + ")\n"
+			if !strings.Contains(stdout, want) {
+				t.Errorf("stdout = %q, want the line %q", stdout, want)
+			}
+		})
+	}
+}
+
+func TestSetupOpensPublicSSHOnAFreshBoxWhileItIsReachedPublicly(t *testing.T) {
+	for _, access := range []string{"public", "tailscale"} {
+		t.Run(access, func(t *testing.T) {
+			ssh, _ := runPrecedenceRow(t, "", "", access)
+
+			if got := ssh.setupFlag("--public-ssh"); got != "open" {
+				t.Errorf("box provisioned with --public-ssh %q, want %q", got, "open")
+			}
+		})
+	}
+}
+
+func TestSetupWithNoConfigHomeProvisionsPublicAccess(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent")
+	ssh := &setupSSH{}
+
+	stdout, stderr, code := runSetup(t, dir, ssh, "--name", "dev", "root@203.0.113.10")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if got := inventoryContent(t, dir); !strings.Contains(got, `"smith@203.0.113.10"`) {
-		t.Errorf("inventory = %q, want the box registered at its public address", got)
+	if got := ssh.setupFlag("--access"); got != "public" {
+		t.Errorf("box provisioned with --access %q, want %q", got, "public")
+	}
+	if !strings.Contains(stdout, "access: public (built-in default)\n") {
+		t.Errorf("stdout = %q, want the line %q", stdout, "access: public (built-in default)")
 	}
 }
 
-func TestSetupSaysWhichAccessItChoseAndWhere(t *testing.T) {
+func TestSetupReportsTheAccessBeforeThePreflightReport(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: tailscale\n")
 	ssh := &setupSSH{tailnetIP: "100.92.14.7"}
@@ -70,8 +151,26 @@ func TestSetupSaysWhichAccessItChoseAndWhere(t *testing.T) {
 	args := append(tailscaleKeyRef(t), "--blueprint", "acme", "root@203.0.113.10")
 	stdout, _, _ := runSetup(t, dir, ssh, args...)
 
-	if !strings.Contains(stdout, "access: tailscale (blueprint)\n") {
-		t.Errorf("stdout = %q, want the line %q", stdout, "access: tailscale (blueprint)")
+	access := strings.Index(stdout, "access: tailscale (blueprint)\n")
+	preflight := strings.Index(stdout, "preflight passed\n")
+	if access < 0 || preflight < 0 || access > preflight {
+		t.Errorf("stdout = %q, want the access line before the preflight report", stdout)
+	}
+}
+
+func TestSetupRefusesAResolvedTailscaleAccessFromAnOffTailnetMachine(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: tailscale\n")
+	ssh := &setupSSH{adminOffTailnet: true}
+
+	args := append(tailscaleKeyRef(t), "--blueprint", "acme", "root@203.0.113.10")
+	_, stderr, code := runSetup(t, dir, ssh, args...)
+
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2, a gate rejection (stderr: %s)", code, stderr)
+	}
+	if len(ssh.targets) != 0 {
+		t.Errorf("ssh targets = %v, want the box never reached", ssh.targets)
 	}
 }
 
@@ -84,6 +183,34 @@ func TestSetupRefusesMalformedPreferencesBeforeTouchingTheBox(t *testing.T) {
 
 	if code != 2 {
 		t.Errorf("exit code = %d, want 2, a gate rejection (stderr: %s)", code, stderr)
+	}
+	if len(ssh.targets) != 0 {
+		t.Errorf("ssh targets = %v, want the box never reached", ssh.targets)
+	}
+}
+
+func TestSetupNamesTheMalformedPreferencesFileItRefused(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: [unclosed\n")
+
+	_, stderr, _ := runSetup(t, dir, &setupSSH{}, "root@203.0.113.10")
+
+	if !strings.Contains(stderr, filepath.Join(dir, "preferences.yaml")) {
+		t.Errorf("stderr = %q, want it to name the preferences file", stderr)
+	}
+}
+
+func TestSetupRefusesAnUnknownBlueprintBeforeTouchingTheBox(t *testing.T) {
+	dir := t.TempDir()
+	ssh := &setupSSH{}
+
+	_, stderr, code := runSetup(t, dir, ssh, "--blueprint", "missing", "root@203.0.113.10")
+
+	if code == 0 {
+		t.Errorf("exit code = 0, want setup refused (stderr: %s)", stderr)
+	}
+	if !strings.Contains(stderr, "missing") {
+		t.Errorf("stderr = %q, want it to name the blueprint %q", stderr, "missing")
 	}
 	if len(ssh.targets) != 0 {
 		t.Errorf("ssh targets = %v, want the box never reached", ssh.targets)
@@ -151,8 +278,27 @@ func TestSetupReopensPublicSSHOnATailscaleBoxWhenTheFlagSaysSo(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if !ssh.hardened {
-		t.Error("the base layer did not run, want the box provisioned with public access")
+	if got := ssh.setupFlag("--access"); got != "public" {
+		t.Errorf("box provisioned with --access %q, want %q", got, "public")
+	}
+	if got := ssh.setupFlag("--public-ssh"); got != "open" {
+		t.Errorf("box provisioned with --public-ssh %q, want %q", got, "open")
+	}
+}
+
+func TestSetupKeepsPublicSSHClosedWhenTheTailscaleBoxIsRerunAsTailscale(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "access: tailscale\n")
+	ssh := &setupSSH{marker: markerOnTailscale, tailnetIP: "100.92.14.7"}
+
+	args := append(tailscaleKeyRef(t), "smith@100.92.14.7")
+	_, stderr, code := runSetup(t, dir, ssh, args...)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if got := ssh.setupFlag("--public-ssh"); got != "closed" {
+		t.Errorf("box provisioned with --public-ssh %q, want %q", got, "closed")
 	}
 }
 
