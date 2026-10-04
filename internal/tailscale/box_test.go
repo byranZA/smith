@@ -51,11 +51,11 @@ func TestBoxDriverReadsTheTailnetIPFromTailscaleStatus(t *testing.T) {
 func TestBoxDriverEnrollsWithTheAuthKeyOnStdin(t *testing.T) {
 	script := bootstrapAt(map[string]shipped.Reply{"enroll": {Stdout: "tailscale-ip=100.64.0.2\n"}})
 
-	if _, err := NewBox(script, dialAddress).Enroll(context.Background(), EnrollOptions{Host: "dev", AuthKey: "tskey-test"}); err != nil {
+	if _, err := NewBox(script, dialAddress).Enroll(context.Background(), EnrollOptions{Host: "203.0.113.10", AuthKey: "tskey-test"}); err != nil {
 		t.Fatalf("Enroll() error = %v", err)
 	}
 
-	want := shipped.Call{Sub: "enroll", Args: []string{"--hostname", "smith-dev"}, Input: "tskey-test", Over: address("203.0.113.10")}
+	want := shipped.Call{Sub: "enroll", Args: []string{"--hostname", "smith-203-0-113-10"}, Input: "tskey-test", Over: address("203.0.113.10")}
 	if len(script.Calls) != 1 || !sameCall(script.Calls[0], want) {
 		t.Errorf("calls = %+v, want %+v", script.Calls, want)
 	}

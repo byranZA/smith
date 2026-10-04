@@ -133,8 +133,7 @@ type EstablishOptions struct {
 }
 
 // Result reports a successful establish: the box's tailnet IP, whether this run
-// closed public SSH, whether the box was already satisfied, and the tailnet name
-// the operator should re-run over.
+// closed public SSH, and whether the box was already satisfied.
 type Result struct {
 	// TailnetIP is the box's 100.x tailnet address.
 	TailnetIP string
@@ -145,8 +144,6 @@ type Result struct {
 	// over the tailnet, so establish was a no-op — no enrollment, no fresh key,
 	// no firewall change.
 	AlreadySatisfied bool
-	// ReRunHost is the box's tailnet name — the host to pass on a re-run.
-	ReRunHost string
 }
 
 // Access orchestrates the tailscale access layer over its injected box-side and
@@ -202,7 +199,7 @@ func (a *Access) Establish(ctx context.Context, opts EstablishOptions) (Result, 
 	}
 	if currentIP != "" && a.admin.Probe(ctx, currentIP) == nil {
 		a.box.MoveToTailnet(currentIP)
-		return Result{TailnetIP: currentIP, AlreadySatisfied: true, ReRunHost: nodeName(opts.Host)}, nil
+		return Result{TailnetIP: currentIP, AlreadySatisfied: true}, nil
 	}
 
 	key, err := opts.AcquireKey()
@@ -230,12 +227,33 @@ func (a *Access) Establish(ctx context.Context, opts EstablishOptions) (Result, 
 		return Result{}, fmt.Errorf("close public ssh: %w", err)
 	}
 
-	return Result{TailnetIP: ip, PublicSSHClosed: true, ReRunHost: nodeName(opts.Host)}, nil
+	return Result{TailnetIP: ip, PublicSSHClosed: true}, nil
 }
 
-// nodeName is the tailnet hostname smith advertises for a box at host: smith-<host>.
+// maxLabel is the longest a DNS label, and so a tailnet node name, may be.
+const maxLabel = 63
+
+// nodeName is the tailnet hostname smith advertises for a box at host:
+// smith-<host> as one valid DNS label. It is lowercased, every character
+// outside [a-z0-9-] becomes '-', runs of '-' collapse, and it is cut to 63
+// characters with no '-' at either end, so the name smith prints is the one
+// tailscaled keeps.
 func nodeName(host string) string {
-	return "smith-" + host
+	var b strings.Builder
+	for _, r := range "smith-" + strings.ToLower(host) {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			r = '-'
+		}
+		if r == '-' && strings.HasSuffix(b.String(), "-") {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	name := b.String()
+	if len(name) > maxLabel {
+		name = name[:maxLabel]
+	}
+	return strings.Trim(name, "-")
 }
 
 // Prereqs renders the two one-time-per-tailnet prerequisites the enrollment auth
