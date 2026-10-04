@@ -1,0 +1,15 @@
+# The repo file: the loop settings everyone running `smith loop` on this repo
+# shares. Commit it. A setting left commented out uses smith's built-in
+# default, and a flag on `smith loop run` overrides any setting for one run
+# without editing this file.
+
+# The coding agent the loop hands each task to: claude (the default), codex or pi.
+agent: claude
+
+# The model the agent runs, passed to it verbatim. Unset, the agent uses its
+# own default.
+model: opus
+
+# How hard the agent thinks: low, medium or high. Unset, the agent uses its
+# own default.
+effort: medium

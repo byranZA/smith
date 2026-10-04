@@ -185,6 +185,20 @@ func Parse(data []byte) (Blueprint, error) {
 	return b, nil
 }
 
+// DecodeStrict decodes a config document about subject into target exactly as
+// blueprints and preferences are decoded, returning a *ValidationError that
+// names every key target does not define with its line.
+func DecodeStrict(data []byte, subject string, target any) error {
+	_, findings, err := decodeStrict(data, subject, target)
+	if err != nil {
+		return err
+	}
+	if len(findings) > 0 {
+		return &ValidationError{Subject: subject, Findings: findings}
+	}
+	return nil
+}
+
 // decodeStrict decodes one config document into target, refusing any key the
 // schema does not define, and hands back the parsed document alongside the
 // findings for the keys it refused. Both blueprints and preferences are read

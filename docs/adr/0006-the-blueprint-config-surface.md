@@ -1,5 +1,7 @@
 # The config surface arrives — the Blueprint in `~/.smith/`
 
+> **Amended by [ADR-0012](./0012-the-repo-file.md).** A repo may hold one committed file, `.smith/repo.yaml`, read only by the loop and `smith repo`. For every other verb, the single config home still holds.
+
 ## Context
 
 [ADR-0003](./0003-no-local-config-file-in-v1.md) deliberately refused a local config file. The
