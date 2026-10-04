@@ -20,7 +20,7 @@ const (
 
 // The issue fields read for a spec and for a task.
 const (
-	specFields = "number,title,state,labels,body,subIssues"
+	specFields = "number,title,state,labels,body,subIssues,url"
 	taskFields = "number,title,state,labels,body,blockedBy"
 )
 
@@ -30,7 +30,7 @@ const linkedQuery = `query($owner: String!, $repo: String!, $number: Int!, $endC
   repository(owner: $owner, name: $repo) {
     issue(number: $number) {
       %s(first: 100, after: $endCursor) {
-        nodes { number state }
+        nodes { number state url }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -64,6 +64,7 @@ type issue struct {
 	Number    int        `json:"number"`
 	Title     string     `json:"title"`
 	State     string     `json:"state"`
+	URL       string     `json:"url"`
 	Body      string     `json:"body"`
 	Labels    []label    `json:"labels"`
 	SubIssues connection `json:"subIssues"`
@@ -101,6 +102,33 @@ type label struct {
 type issueNode struct {
 	Number int    `json:"number"`
 	State  string `json:"state"`
+	URL    string `json:"url"`
+}
+
+// repoView is the part of gh's repo JSON the tracker reads.
+type repoView struct {
+	NameWithOwner string `json:"nameWithOwner"`
+}
+
+// Local returns the number of the issue ref names in the repo gh resolves
+// for the working directory, refusing an issue in any other repo so a spec
+// there is never worked as the same-numbered one here.
+func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
+	if ref.Repo == "" {
+		return ref.Number, nil
+	}
+	var stdout, stderr bytes.Buffer
+	if err := g.gh.Run(ctx, "gh", []string{"repo", "view", "--json", "nameWithOwner"}, nil, &stdout, &stderr); err != nil {
+		return 0, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+	}
+	var here repoView
+	if err := json.Unmarshal(stdout.Bytes(), &here); err != nil {
+		return 0, fmt.Errorf("read gh's answer for the current repo: %w", err)
+	}
+	if ref.in(here.NameWithOwner).Repo != "" {
+		return 0, &ForeignError{Ref: ref, Repo: here.NameWithOwner}
+	}
+	return ref.Number, nil
 }
 
 // Spec reads spec number and its tasks: the spec's sub-issues, those its
@@ -109,7 +137,7 @@ type issueNode struct {
 // written. A task's blockers are its blocked-by links and the issues its
 // "## Blocked by" section names.
 func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
-	spec, err := g.view(ctx, number, specFields)
+	spec, err := g.view(ctx, Ref{Number: number}, specFields)
 	if err != nil {
 		return Spec{}, err
 	}
@@ -120,13 +148,18 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 	if err != nil {
 		return Spec{}, err
 	}
+	repo := spec.repo()
 	children := make([]int, 0, len(subIssues))
 	for _, node := range subIssues {
-		children = append(children, node.Number)
+		child := node.ref().in(repo)
+		if child.Repo != "" {
+			return Spec{}, &ForeignError{Ref: child, Repo: repo}
+		}
+		children = append(children, child.Number)
 	}
 	issues := map[int]issue{}
 	for _, n := range children {
-		task, err := g.view(ctx, n, taskFields)
+		task, err := g.view(ctx, Ref{Number: n}, taskFields)
 		if err != nil {
 			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
 		}
@@ -137,8 +170,8 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 		issues[n] = task
 	}
 	tasks := make([]Task, 0, len(children))
-	for _, n := range listedOrder(listedTasks(spec.Body), children) {
-		blockers, err := g.blockers(ctx, issues[n], issues)
+	for _, n := range listedOrder(localNumbers(listedTasks(spec.Body), repo), children) {
+		blockers, err := g.blockers(ctx, repo, issues[n], issues)
 		if err != nil {
 			return Spec{}, err
 		}
@@ -147,46 +180,55 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 	return Spec{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }
 
-// blockers returns what blocks task: its blocked-by links, then the issues its
-// body names that are not already linked. A named issue's state comes from
-// the spec's own tasks when it is one of them, and from gh otherwise.
-func (g GitHub) blockers(ctx context.Context, task issue, tasks map[int]issue) ([]Blocker, error) {
+// blockers returns what blocks task in repo: its blocked-by links, then the
+// issues its body names that are not already linked. A named issue's state
+// comes from the spec's own tasks when it is one of them, and from gh, in the
+// repo it names, otherwise.
+func (g GitHub) blockers(ctx context.Context, repo string, task issue, tasks map[int]issue) ([]Blocker, error) {
 	var blockers []Blocker
-	linked := map[int]bool{}
+	seen := map[Ref]bool{}
 	for _, node := range task.BlockedBy.Nodes {
-		linked[node.Number] = true
-		blockers = append(blockers, Blocker{Number: node.Number, Open: isOpen(node.State)})
+		ref := node.ref().in(repo)
+		seen[ref] = true
+		blockers = append(blockers, Blocker{Repo: ref.Repo, Number: ref.Number, Open: isOpen(node.State)})
 	}
-	for _, n := range blockersIn(task.Body) {
-		if linked[n] {
+	for _, ref := range blockersIn(task.Body) {
+		ref = ref.in(repo)
+		if seen[ref] {
 			continue
 		}
-		named, ok := tasks[n]
-		if !ok {
+		seen[ref] = true
+		named, ok := tasks[ref.Number]
+		if !ok || ref.Repo != "" {
 			var err error
-			named, err = g.view(ctx, n, "number,state")
+			named, err = g.view(ctx, ref, "number,state")
 			if err != nil {
-				return nil, fmt.Errorf("read blocker of #%d: %w", task.Number, err)
+				return nil, fmt.Errorf("read blocker %s of #%d: %w", ref, task.Number, err)
 			}
 		}
-		blockers = append(blockers, Blocker{Number: n, Open: isOpen(named.State)})
+		blockers = append(blockers, Blocker{Repo: ref.Repo, Number: ref.Number, Open: isOpen(named.State)})
 	}
 	return blockers, nil
 }
 
-// view reads issue number's fields through gh, telling an issue gh has no
-// record of apart from gh not being usable at all.
-func (g GitHub) view(ctx context.Context, number int, fields string) (issue, error) {
+// view reads the fields of the issue ref names through gh, in the repo it
+// names or the current one, telling an issue gh has no record of apart from
+// gh not being usable at all.
+func (g GitHub) view(ctx context.Context, ref Ref, fields string) (issue, error) {
+	args := []string{"issue", "view", strconv.Itoa(ref.Number)}
+	if ref.Repo != "" {
+		args = append(args, "-R", ref.Repo)
+	}
 	var stdout, stderr bytes.Buffer
-	if err := g.gh.Run(ctx, "gh", []string{"issue", "view", strconv.Itoa(number), "--json", fields}, nil, &stdout, &stderr); err != nil {
+	if err := g.gh.Run(ctx, "gh", append(args, "--json", fields), nil, &stdout, &stderr); err != nil {
 		if strings.Contains(stderr.String(), notFoundMark) {
-			return issue{}, &NotFoundError{Number: number}
+			return issue{}, &NotFoundError{Number: ref.Number}
 		}
 		return issue{}, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
 	}
 	var got issue
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		return issue{}, fmt.Errorf("read gh's answer for #%d: %w", number, err)
+		return issue{}, fmt.Errorf("read gh's answer for %s: %w", ref, err)
 	}
 	return got, nil
 }
@@ -254,6 +296,37 @@ func (i issue) audience() Audience {
 		return Agent
 	}
 	return Nobody
+}
+
+// repo returns the owner/name of the repo the issue is in, as its URL names
+// it, or nothing when gh gave no URL.
+func (i issue) repo() string {
+	ref, err := ParseRef(i.URL)
+	if err != nil {
+		return ""
+	}
+	return ref.Repo
+}
+
+// ref returns the issue the node is, in the repo its URL names. A node gh
+// gave no URL for is taken to be in the repo it was listed in.
+func (n issueNode) ref() Ref {
+	ref, err := ParseRef(n.URL)
+	if err != nil {
+		return Ref{Number: n.Number}
+	}
+	return ref
+}
+
+// localNumbers returns the numbers of the refs in repo, dropping the rest.
+func localNumbers(refs []Ref, repo string) []int {
+	var numbers []int
+	for _, ref := range refs {
+		if ref = ref.in(repo); ref.Repo == "" {
+			numbers = append(numbers, ref.Number)
+		}
+	}
+	return numbers
 }
 
 // isOpen reports whether a GitHub issue state is open.

@@ -37,8 +37,11 @@ const (
 	Human
 )
 
-// Blocker is an issue blocking a task, and whether it is still open.
+// Blocker is an issue blocking a task, and whether it is still open. Repo
+// names the owner/name of a blocker outside the spec's repo, and is empty for
+// one inside it.
 type Blocker struct {
+	Repo   string
 	Number int
 	Open   bool
 }
@@ -59,6 +62,18 @@ type NotSpecError struct {
 // Error implements error.
 func (e *NotSpecError) Error() string {
 	return fmt.Sprintf("#%d is not a spec: it is not labelled %q", e.Number, specLabel)
+}
+
+// ForeignError reports an issue in a repo other than the one the loop works,
+// which v1 refuses rather than take for the same-numbered issue here.
+type ForeignError struct {
+	Ref  Ref
+	Repo string
+}
+
+// Error implements error.
+func (e *ForeignError) Error() string {
+	return fmt.Sprintf("%s is not in %s: the loop works only issues in the repo it is run in", e.Ref, e.Repo)
 }
 
 // UnavailableError reports that the tracker could not be reached at all, with

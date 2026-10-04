@@ -18,8 +18,8 @@ import (
 )
 
 // fakeTracker answers `gh issue view <n> --json …` from recorded JSON keyed by
-// issue number, failing as gh does for an issue it does not know, and records
-// every gh command it is asked to run.
+// issue number, failing as gh does for an issue it does not know, places the
+// current repo at byranZA/smith, and records every gh command it is asked to run.
 type fakeTracker struct {
 	issues map[string]string
 	stderr string
@@ -33,6 +33,10 @@ func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Re
 			return err
 		}
 		return errors.New("exit status 4")
+	}
+	if name == "gh" && len(args) > 1 && args[0] == "repo" && args[1] == "view" {
+		_, err := io.WriteString(stdout, `{"nameWithOwner":"byranZA/smith"}`)
+		return err
 	}
 	if name != "gh" || len(args) < 3 || args[0] != "issue" || args[1] != "view" {
 		return fmt.Errorf("unexpected command %s %v", name, args)
@@ -158,6 +162,20 @@ func TestLoopListReportsACompleteSpec(t *testing.T) {
 	}
 }
 
+func TestLoopListNamesABlockerInAnotherRepoByItsRepo(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43, 44),
+		"43": taskJSON(43, "CLOSED", "ready-for-agent"),
+		"44": `{"number":44,"title":"Task 44","state":"OPEN","body":"","labels":[{"name":"ready-for-agent"}],"blockedBy":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/other/repo/issues/43"}]}}`,
+	}}
+
+	stdout, _, _ := runLoopList(t, gh, "42")
+
+	if !strings.Contains(stdout, "blocked: #44 (by other/repo#43)\n") {
+		t.Errorf("stdout = %q, want #44 blocked by other/repo#43", stdout)
+	}
+}
+
 func TestLoopListOnlyReadsTheTracker(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{
 		"42": specJSON(43),
@@ -183,6 +201,7 @@ func TestLoopListFailsNamingTheCause(t *testing.T) {
 		"not a spec":    {&fakeTracker{issues: map[string]string{"43": taskJSON(43, "OPEN", "ready-for-agent")}}, "43", "#43 is not a spec"},
 		"gh unusable":   {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
 		"not an issue":  {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
+		"another repo":  {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, code := runLoopList(t, tc.gh, tc.ref)
@@ -253,6 +272,20 @@ func TestLoopRunOnACompleteSpecRunsNoAgentAndSucceeds(t *testing.T) {
 
 	if code != 0 || len(claude.handed) != 0 || stdout != defaultSettings+"spec #42 complete\n" {
 		t.Errorf("exit %d, handed %v, stdout %q; want 0, no agent run, the spec complete", code, claude.handed, stdout)
+	}
+}
+
+func TestLoopRunRefusesASpecInAnotherRepoBeforeAnyAgentRuns(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+	}}
+	claude := &fakeAgent{gh: gh}
+
+	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "https://github.com/other/repo/issues/42")
+
+	if code == 0 || len(claude.handed) != 0 || !strings.Contains(stderr, "other/repo#42") {
+		t.Errorf("exit %d, handed %v, stderr %q; want non-zero, no agent run, naming other/repo#42", code, claude.handed, stderr)
 	}
 }
 
@@ -351,6 +384,7 @@ func TestLoopRunFailsNamingTheCauseBeforeAnyAgentRuns(t *testing.T) {
 		"not a spec":    {&fakeTracker{issues: map[string]string{"43": taskJSON(43, "OPEN", "ready-for-agent")}}, "43", "#43 is not a spec"},
 		"gh unusable":   {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
 		"not an issue":  {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
+		"another repo":  {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			claude := &fakeAgent{gh: tc.gh}

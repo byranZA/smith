@@ -41,6 +41,10 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if args[0] == "api" {
 		return f.page(args, stdout, stderr)
 	}
+	if args[0] == "repo" {
+		_, err := io.WriteString(stdout, `{"nameWithOwner":"o/r"}`)
+		return err
+	}
 	reply, ok := f.replies[strings.Join(args, " ")]
 	if !ok {
 		if _, err := io.WriteString(stderr, "GraphQL: Could not resolve to an issue or pull request with the number of "+args[2]+". (repository.issue)\n"); err != nil {
@@ -115,7 +119,7 @@ func manyChildren() *fakeGH {
 }
 
 const (
-	specFields = "number,title,state,labels,body,subIssues"
+	specFields = "number,title,state,labels,body,subIssues,url"
 	taskFields = "number,title,state,labels,body,blockedBy"
 )
 
@@ -126,7 +130,7 @@ func taskView(n int) string { return fmt.Sprintf("issue view %d --json %s", n, t
 // with #44 left off it and #50 filed as a child after the spec was written.
 func recorded() map[string]string {
 	return map[string]string{
-		specView(42):                       `{"body":"## Problem\n\nSee #7.\n\n## Tasks\n\n- [ ] #45\n- [ ] #43\n","labels":[{"id":"LA_1","name":"spec","description":"Feature spec / PRD","color":"0E8A16"}],"number":42,"state":"OPEN","subIssues":{"nodes":[{"id":"I_43","number":43,"state":"CLOSED","title":"The tracker","url":"https://github.com/o/r/issues/43"},{"id":"I_44","number":44,"state":"OPEN","title":"The prompt","url":"https://github.com/o/r/issues/44"},{"id":"I_45","number":45,"state":"OPEN","title":"The repo file","url":"https://github.com/o/r/issues/45"},{"id":"I_50","number":50,"state":"OPEN","title":"Fix the summary","url":"https://github.com/o/r/issues/50"}],"totalCount":4},"title":"Spec: the loop"}`,
+		specView(42):                       `{"body":"## Problem\n\nSee #7.\n\n## Tasks\n\n- [ ] #45\n- [ ] #43\n","labels":[{"id":"LA_1","name":"spec","description":"Feature spec / PRD","color":"0E8A16"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"id":"I_43","number":43,"state":"CLOSED","title":"The tracker","url":"https://github.com/o/r/issues/43"},{"id":"I_44","number":44,"state":"OPEN","title":"The prompt","url":"https://github.com/o/r/issues/44"},{"id":"I_45","number":45,"state":"OPEN","title":"The repo file","url":"https://github.com/o/r/issues/45"},{"id":"I_50","number":50,"state":"OPEN","title":"Fix the summary","url":"https://github.com/o/r/issues/50"}],"totalCount":4},"title":"Spec: the loop"}`,
 		taskView(43):                       `{"blockedBy":{"nodes":[],"totalCount":0},"body":"## What to build\n\nThe tracker.\n\n## Blocked by\n\nNone - can start immediately\n","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"}],"number":43,"state":"CLOSED","title":"The tracker"}`,
 		taskView(44):                       `{"blockedBy":{"nodes":[{"id":"I_45","number":45,"state":"OPEN","title":"The repo file","url":"https://github.com/o/r/issues/45"}],"totalCount":1},"body":"## Blocked by\n\n- #43\n- #7\n","labels":[{"id":"LA_3","name":"ready-for-human","description":"","color":"000000"}],"number":44,"state":"OPEN","title":"The prompt"}`,
 		taskView(45):                       `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"},{"id":"LA_3","name":"ready-for-human","description":"","color":"000000"}],"number":45,"state":"OPEN","title":"The repo file"}`,
@@ -285,5 +289,98 @@ func TestSpecFailsWhenALaterPageCannotBeRead(t *testing.T) {
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || !reflect.DeepEqual(got, tracker.Spec{}) {
 		t.Errorf("Spec() = %d tasks, %v; want no spec and an UnavailableError", len(got.Tasks), err)
+	}
+}
+
+func TestLocalNamesAnIssueInTheCurrentRepo(t *testing.T) {
+	for _, ref := range []tracker.Ref{{Number: 42}, {Repo: "o/r", Number: 42}, {Repo: "O/R", Number: 42}} {
+		t.Run(ref.String(), func(t *testing.T) {
+			got, err := tracker.NewGitHub(&fakeGH{}).Local(context.Background(), ref)
+			if err != nil || got != 42 {
+				t.Errorf("Local(%v) = %d, %v; want 42", ref, got, err)
+			}
+		})
+	}
+}
+
+func TestLocalRefusesAnIssueInAnotherRepo(t *testing.T) {
+	gh := &fakeGH{replies: recorded()}
+
+	got, err := tracker.NewGitHub(gh).Local(context.Background(), tracker.Ref{Repo: "other/repo", Number: 42})
+
+	var foreign *tracker.ForeignError
+	if !errors.As(err, &foreign) || foreign.Ref != (tracker.Ref{Repo: "other/repo", Number: 42}) {
+		t.Errorf("Local() = %d, %v; want a ForeignError for other/repo#42", got, err)
+	}
+}
+
+// sameNumbers is gh's output for spec #42 in o/r, whose task #44 is blocked
+// by blockedBy, links and says what in its body, beside its closed sibling #43.
+func sameNumbers(blockedBy, body string) *fakeGH {
+	return &fakeGH{replies: map[string]string{
+		specView(42): `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"CLOSED","url":"https://github.com/o/r/issues/43"},{"number":44,"state":"OPEN","url":"https://github.com/o/r/issues/44"}],"totalCount":2},"title":"Spec"}`,
+		taskView(43): agentTask(43, "CLOSED", `{"nodes":[],"totalCount":0}`),
+		taskView(44): fmt.Sprintf(`{"blockedBy":%s,"body":%q,"labels":[{"name":"ready-for-agent"}],"number":44,"state":"OPEN","title":"Task 44"}`, blockedBy, body),
+		"issue view 43 -R other/repo --json number,state": `{"number":43,"state":"OPEN"}`,
+	}}
+}
+
+func blockersOf(t *testing.T, gh *fakeGH, number int) []tracker.Blocker {
+	t.Helper()
+	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Spec() error = %v", err)
+	}
+	for _, task := range got.Tasks {
+		if task.Number == number {
+			return task.Blockers
+		}
+	}
+	t.Fatalf("Spec() has no task #%d", number)
+	return nil
+}
+
+func TestSpecReadsABlockerNamedInAnotherRepoFromThatRepo(t *testing.T) {
+	gh := sameNumbers(`{"nodes":[],"totalCount":0}`, "## Blocked by\n\n- https://github.com/other/repo/issues/43\n")
+
+	got := blockersOf(t, gh, 44)
+
+	want := []tracker.Blocker{{Repo: "other/repo", Number: 43, Open: true}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("blockers of #44 = %+v, want %+v", got, want)
+	}
+}
+
+func TestSpecKeepsALinkedBlockerInAnotherRepoApartFromTheSameNumberHere(t *testing.T) {
+	gh := sameNumbers(`{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/other/repo/issues/43"}],"totalCount":1}`, "## Blocked by\n\n- #43\n")
+
+	got := blockersOf(t, gh, 44)
+
+	want := []tracker.Blocker{{Repo: "other/repo", Number: 43, Open: true}, {Number: 43, Open: false}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("blockers of #44 = %+v, want %+v", got, want)
+	}
+}
+
+func TestSpecTakesABlockerURLInTheSameRepoAsTheLinkedOne(t *testing.T) {
+	gh := sameNumbers(`{"nodes":[{"number":43,"state":"CLOSED","url":"https://github.com/o/r/issues/43"}],"totalCount":1}`, "## Blocked by\n\n- https://github.com/O/R/issues/43\n")
+
+	got := blockersOf(t, gh, 44)
+
+	want := []tracker.Blocker{{Number: 43, Open: false}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("blockers of #44 = %+v, want %+v", got, want)
+	}
+}
+
+func TestSpecRefusesATaskInAnotherRepo(t *testing.T) {
+	gh := sameNumbers(`{"nodes":[],"totalCount":0}`, "")
+	gh.replies[specView(42)] = `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/other/repo/issues/43"}],"totalCount":1},"title":"Spec"}`
+
+	_, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+
+	var foreign *tracker.ForeignError
+	if !errors.As(err, &foreign) || foreign.Ref != (tracker.Ref{Repo: "other/repo", Number: 43}) {
+		t.Errorf("Spec() error = %v, want a ForeignError for other/repo#43", err)
 	}
 }

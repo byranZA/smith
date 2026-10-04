@@ -6,21 +6,22 @@ import (
 	"strings"
 )
 
-// issueRef matches a reference to an issue in a body, as #43 or as an issue URL.
-var issueRef = regexp.MustCompile(`(?:#|/issues/)(\d+)\b`)
+// issueRef matches a reference to an issue in a body, as #43, owner/name#43
+// or an issue URL, capturing the owner/name a qualified one names.
+var issueRef = regexp.MustCompile(`(?:[^/\s]+/([\w.-]+/[\w.-]+)/issues/|([\w.-]+/[\w.-]+)#|#)(\d+)\b`)
 
 // heading matches a Markdown heading line and captures its text.
 var heading = regexp.MustCompile(`^\s*#{1,6}\s+(.*?)\s*$`)
 
-// listedTasks returns the issue numbers a spec body's "## Tasks" checklist
+// listedTasks returns the issues a spec body's "## Tasks" checklist
 // names, in the order it names them, each once.
-func listedTasks(body string) []int {
+func listedTasks(body string) []Ref {
 	return refsIn(section(body, "Tasks"))
 }
 
-// blockersIn returns the issue numbers a task body's "## Blocked by" section
+// blockersIn returns the issues a task body's "## Blocked by" section
 // names, each once. A section that says "None" names none.
-func blockersIn(body string) []int {
+func blockersIn(body string) []Ref {
 	return refsIn(section(body, "Blocked by"))
 }
 
@@ -44,17 +45,19 @@ func section(body, name string) string {
 	return strings.Join(lines, "\n")
 }
 
-// refsIn returns the issue numbers referenced in text, in order, each once.
-func refsIn(text string) []int {
-	var refs []int
-	seen := map[int]bool{}
+// refsIn returns the issues referenced in text, in order, each once, keeping
+// the repo a qualified reference names.
+func refsIn(text string) []Ref {
+	var refs []Ref
+	seen := map[Ref]bool{}
 	for _, m := range issueRef.FindAllStringSubmatch(text, -1) {
-		n, err := strconv.Atoi(m[1])
-		if err != nil || seen[n] {
+		n, err := strconv.Atoi(m[3])
+		ref := Ref{Repo: m[1] + m[2], Number: n}
+		if err != nil || seen[ref] {
 			continue
 		}
-		seen[n] = true
-		refs = append(refs, n)
+		seen[ref] = true
+		refs = append(refs, ref)
 	}
 	return refs
 }

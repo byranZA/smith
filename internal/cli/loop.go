@@ -165,7 +165,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 		Short: "Work a spec's tasks to completion with a coding agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			number, err := tracker.ParseRef(args[0])
+			ref, err := tracker.ParseRef(args[0])
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -187,11 +187,16 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if _, err := w.lookPath(settings.Agent.Value); err != nil {
 				return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", settings.Agent.Value, err))
 			}
+			github := tracker.NewGitHub(w.gh)
+			number, err := github.Local(cmd.Context(), ref)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			l := loop.Loop{
-				Tracker:  tracker.NewGitHub(w.gh),
+				Tracker:  github,
 				Launcher: w.launcher,
 				Agent:    adapter,
 				Options:  settings.Options(),
@@ -292,7 +297,7 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 		Short: "Show the next task the loop would run, and what remains",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			number, err := tracker.ParseRef(args[0])
+			ref, err := tracker.ParseRef(args[0])
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -300,7 +305,12 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			spec, err := tracker.NewGitHub(w.gh).Spec(cmd.Context(), number)
+			github := tracker.NewGitHub(w.gh)
+			number, err := github.Local(cmd.Context(), ref)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			spec, err := github.Spec(cmd.Context(), number)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -363,7 +373,7 @@ func taskList(tasks []tracker.Task) string {
 		var open []string
 		for _, b := range task.Blockers {
 			if b.Open {
-				open = append(open, fmt.Sprintf("#%d", b.Number))
+				open = append(open, tracker.Ref{Repo: b.Repo, Number: b.Number}.String())
 			}
 		}
 		if len(open) > 0 {
