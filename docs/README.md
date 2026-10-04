@@ -20,6 +20,7 @@ detail.
 | [The box inventory](./inventory.md) | the four `machine` verbs, naming rules, collisions and renames, the file's schema versioning |
 | [The workspace stage](./workspace.md) | what `workspace converge` converges, the order the steps land in, and why it is that order |
 | [Sessions](./sessions.md) | the five session verbs and their flags, the three paths through `start`, the two access levels, what `rm` destroys, the pre-teardown read |
+| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, attempts and the iteration cap, `--interactive`, the agent adapters, the repo file and its precedence, ejecting the loop prompt |
 | [smith on the box](./on-box.md) | the setup pipeline's stages, the relay, version skew and `machine upgrade`, the refusal paths |
 
 ## Examples

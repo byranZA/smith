@@ -474,5 +474,5 @@ _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 _Avoid_: project config, repo config, local config, config file.
 
 **Loop prompt**:
-The prompt the loop hands an agent for one task, with the task and spec filled in through placeholders. smith ships a built-in one and uses it unless the repo has **ejected** its own copy to `.smith/prompt.md`. A repo that never ejects follows smith's latest default on every upgrade. A repo that has ejected owns the file, which smith never overwrites, and catches up by diffing against the printed built-in.
+The prompt the loop hands an agent for one task, with the task filled in through placeholders; the agent finds the spec from the task itself. smith ships a built-in one and uses it unless the repo has **ejected** its own copy to `.smith/prompt.md`. A repo that never ejects follows smith's latest default on every upgrade. A repo that has ejected owns the file, which smith never overwrites, and catches up by diffing against the printed built-in.
 _Avoid_: system prompt, template (reserved for an adapter's command lines).

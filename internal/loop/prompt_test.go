@@ -20,10 +20,10 @@ func TestRenderFillsInTheTaskAndItsSpec(t *testing.T) {
 	}
 }
 
-func TestTheBuiltInPromptNamesTheTaskAndSpec(t *testing.T) {
+func TestTheBuiltInPromptNamesTheTaskAndPointsToItsParent(t *testing.T) {
 	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, 42)
 
-	for _, want := range []string{"#43", "Loop: run", "#42"} {
+	for _, want := range []string{"#43", "Loop: run", "`parent:`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("built-in prompt is missing %q", want)
 		}

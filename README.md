@@ -132,6 +132,9 @@ mismatch rather than silently misparsing a renamed flag. `smith machine upgrade
 dev` converges the box to *your* version — including backwards.
 → [docs/on-box.md](docs/on-box.md)
 
+**The loop.** `smith loop run <spec>` works a spec's tasks with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model and effort the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
+→ [docs/loop.md](docs/loop.md)
+
 > **smith knows no service by name.** It places files and exports environment
 > variables; it knows nothing about GitHub or npm. A blueprint declaring
 > `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git
