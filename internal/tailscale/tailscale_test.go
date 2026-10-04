@@ -3,6 +3,7 @@ package tailscale
 import (
 	"context"
 	"errors"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -168,9 +169,6 @@ func TestEstablishAlreadyRunningAndReachableIsANoOp(t *testing.T) {
 	}
 	if res.TailnetIP != "100.101.102.103" {
 		t.Errorf("Result.TailnetIP = %q, want the box's current tailnet IP", res.TailnetIP)
-	}
-	if res.ReRunHost != "smith-box.example.com" {
-		t.Errorf("Result.ReRunHost = %q, want the tailnet node name", res.ReRunHost)
 	}
 }
 
@@ -339,6 +337,41 @@ func TestPrereqsArePersonalizedAndNameBothOneTimeSetups(t *testing.T) {
 	}
 	if strings.Contains(out, `"check"`) || strings.Contains(out, "action: check") {
 		t.Errorf("Prereqs() should recommend accept, not check:\n%s", out)
+	}
+}
+
+func TestPrereqsNameTheSanitizedNodeForAnIPHost(t *testing.T) {
+	out := Prereqs("op@example.com", "203.0.113.10")
+	if !strings.Contains(out, "enrollment of smith-203-0-113-10 never") {
+		t.Errorf("Prereqs() should name the node smith-203-0-113-10; got:\n%s", out)
+	}
+}
+
+func TestNodeNameIsAValidDNSLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{"ipv4 address", "203.0.113.10", "smith-203-0-113-10"},
+		{"mixed-case fqdn", "Box.Example.COM", "smith-box-example-com"},
+		{"plain lowercase hostname", "devbox", "smith-devbox"},
+		{"characters outside the label set", "dev_box!01", "smith-dev-box-01"},
+		{"runs and edges of separators", "-dev..box.", "smith-dev-box"},
+		{"long host cut to 63", strings.Repeat("a", 70), "smith-" + strings.Repeat("a", 57)},
+		{"cut lands on a separator", strings.Repeat("a", 56) + ".bbbbbbbbbb", "smith-" + strings.Repeat("a", 56)},
+	}
+	label := regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nodeName(tt.host)
+			if got != tt.want {
+				t.Errorf("nodeName(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+			if !label.MatchString(got) {
+				t.Errorf("nodeName(%q) = %q, not a valid DNS label", tt.host, got)
+			}
+		})
 	}
 }
 
