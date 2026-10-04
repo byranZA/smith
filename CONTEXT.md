@@ -209,12 +209,7 @@ verbatim onto the box** at `/etc/smith/blueprint.yaml` so on-box smith reads the
 _Avoid_: manifest (reserved, avoided for the marker), config file, template, profile.
 
 **Config home vs box state**:
-`~/.smith/` is the **operator's** config home — `blueprints/`, `preferences`, and a gitignored
-`cache/` holding the box inventory. `/etc/smith/` is a **provisioned box's** state — the marker,
-the staged blueprint, the staged placement bytes, the staged env, and the staged resolution. Separate locations and roles, same format;
-they must never share a directory, because one machine could one day hold both. The config home is
-created by the **first write** into it and never by a read, and its `.gitignore` is appended to
-rather than rewritten: the file is the operator's.
+`~/.smith/` is the **operator's** config home — `blueprints/`, `preferences`, and a gitignored `cache/` holding the box inventory. `/etc/smith/` is a **provisioned box's** state — the marker, the staged blueprint, the staged placement bytes, the staged env, and the staged resolution. Separate locations and roles, same format; they must never share a directory, because one machine could one day hold both. The config home is created by the **first write** into it and never by a read, and its `.gitignore` is appended to rather than rewritten: the file is the operator's.
 _Avoid_: config dir (ambiguous between the two).
 
 **Staged blueprint**:
@@ -238,13 +233,7 @@ world-readable document beside them.
 _Avoid_: on-box resolution, box environment.
 
 **Staged resolution**:
-`/etc/smith/resolved.json` — the box's **resolved configuration**, every fixed-key field but
-`provider`, **resolved on the operator's machine** at `machine setup` and staged beside the
-document. It exists for the same reason the staged env does: a field set only in the operator's
-preferences is invisible to a box, which is deliberately given no config home. On-box smith reads
-these values rather than resolving anything itself, so the box acts on the values `blueprint check`
-showed the operator. A box with a staged blueprint but no staged resolution is refused with "re-run
-`machine setup`", never filled in from defaults. Root-owned and `0644`: nothing in it is secret.
+`/etc/smith/resolved.json` — the box's **resolved configuration**, every fixed-key field but `provider`, **resolved on the operator's machine** at `machine setup` and staged beside the document. It exists for the same reason the staged env does: a field set only in the operator's preferences is invisible to a box, which is deliberately given no config home. On-box smith reads these values rather than resolving anything itself, so the box acts on the values `blueprint check` showed the operator. A box with a staged blueprint but no staged resolution is refused with "re-run `machine setup`", never filled in from defaults. Root-owned and `0644`: nothing in it is secret.
 _Avoid_: box preferences, on-box resolution.
 
 **Preferences**:
