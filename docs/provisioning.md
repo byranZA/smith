@@ -112,10 +112,19 @@ Reach it by name from now on:
   the tailnet is the only way in.
 - **Authorization follows you, not one machine.** The ACL `src` is your tailnet
   user login, which matches every device you own on the tailnet. Any of your
-  machines that's on the tailnet can `ssh smith@smith-<host>` or run
-  `smith machine status smith@smith-<host>` — no key, no per-machine setup. To run
-  `machine setup` from another machine it also needs the `tailscale` CLI and to
-  be a running tailnet member.
+  machines that's on the tailnet can `ssh smith@<tailnet IP>` or run
+  `smith machine status smith@<tailnet IP>` — no key, no per-machine setup. The
+  tailnet IP is the address in the setup report's `tailscale reach established
+  over …` line, `100.92.14.7` above. To run `machine setup` from another
+  machine it also needs the `tailscale` CLI and to be a running tailnet member.
+- **The node name is requested, not guaranteed.** Enrollment asks Tailscale to
+  name the node `smith-<host>`, made into one valid DNS label: lowercased, every
+  character outside `a-z`, `0-9` and `-` replaced by `-`, runs of `-` collapsed,
+  cut to 63 characters and trimmed of `-` at either end. Bootstrapping
+  `203.0.113.10` requests `smith-203-0-113-10`, not `smith-203.0.113.10`. If
+  another node on the tailnet already holds that name, Tailscale assigns a
+  suffixed MagicDNS name instead, so check the admin console or `tailscale
+  status` before reaching the box by name. The tailnet IP always works.
 - **The first provision still uses your SSH key.** A brand-new box isn't on the
   tailnet yet, so the initial `--access tailscale` run reaches it over public SSH.
   The bootstrap phases, including installing the Tailscale package, run as your
