@@ -67,8 +67,7 @@ type setupSSH struct {
 
 	targets  []string
 	commands []string
-	// inputs are the bytes each remote command was handed over stdin, in
-	// step with commands, so a test can read back what was staged.
+	// inputs are the bytes each remote command was handed over stdin, in step with commands.
 	inputs []string
 }
 
@@ -170,8 +169,7 @@ func readInput(stdin io.Reader) (string, error) {
 	return string(data), err
 }
 
-// stagedAt is the bytes the box was handed for the staged file at path, and
-// whether it was handed any.
+// stagedAt is the bytes the box was handed for the staged file at path, if any.
 func (s *setupSSH) stagedAt(path string) (string, bool) {
 	for i, cmd := range s.commands {
 		if strings.Contains(cmd, "tee "+connection.ShellArg(path+".staging")) {

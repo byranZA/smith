@@ -41,15 +41,11 @@ type fakeBox struct {
 	unreachable map[string]bool
 	// gitConfig is the smith user's global git config, key by key.
 	gitConfig map[string]string
-	// included is what a file the global git config includes after its own
-	// keys declares, key by key. git commits with these over gitConfig, and
-	// only a read that follows includes sees them.
+	// included is what an included file declares after gitConfig, seen only by a read that follows includes.
 	included map[string]string
-	// gitConfigErr fails a write to the global git config the way a locked
-	// or unwritable ~/.gitconfig does.
+	// gitConfigErr fails a write to the global git config, as an unwritable ~/.gitconfig does.
 	gitConfigErr error
-	// gitReadErr fails a read of the global git config the way a malformed
-	// ~/.gitconfig does, with gitReadStderr as git's diagnostic.
+	// gitReadErr fails a read of the global git config, with gitReadStderr as git's diagnostic.
 	gitReadErr    error
 	gitReadStderr string
 }
@@ -132,9 +128,7 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 	return fmt.Errorf("unexpected command %q", line)
 }
 
-// config answers a `git config --global` read or write against the box's
-// global git config, letting a read that follows includes see the included
-// file's later declarations.
+// config answers a `git config --global` read or write against the box's global git config.
 func (f *fakeBox) config(args []string, stdout, stderr io.Writer) error {
 	includes := len(args) > 0 && args[0] == "--includes"
 	if includes {

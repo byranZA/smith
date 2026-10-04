@@ -21,8 +21,7 @@ func adasResolution() Resolution {
 	}
 }
 
-// stageResolution writes bytes as the staged resolution of a box rooted at a
-// fresh temporary directory, and answers with that root.
+// stageResolution stages data as the resolution under a fresh box root and returns that root.
 func stageResolution(t *testing.T, data []byte) string {
 	t.Helper()
 	root := t.TempDir()

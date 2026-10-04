@@ -11,11 +11,6 @@ import (
 // resolved is the staged resolution of a box whose operator declared nothing.
 var resolved = staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"}
 
-// TestOrderIsTheStageOrder pins the order the stage converges in. It is not
-// arbitrary: placements put the box's forge credentials on disk before a clone
-// needs them, the identity is set after a placed file could land on it, the
-// toolchain exports the blueprint's env before a clone runs under it, and the
-// orphans scan reads what the clones left behind.
 func TestOrderIsTheStageOrder(t *testing.T) {
 	want := "placements,identity,packages,toolchain,repos,orphans"
 	got := make([]string, 0, len(Order()))

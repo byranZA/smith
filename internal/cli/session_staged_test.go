@@ -10,9 +10,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 )
 
-// stageBox writes a staged blueprint, and a staged resolution when resolution
-// is not nil, under a box state directory of the test's own, and answers with
-// that directory.
+// stageBox stages a blueprint, and a resolution when not nil, under a fresh box state directory.
 func stageBox(t *testing.T, document string, resolution []byte) string {
 	t.Helper()
 	root := t.TempDir()
@@ -27,8 +25,7 @@ func stageBox(t *testing.T, document string, resolution []byte) string {
 	return root
 }
 
-// stagedIn reads the box configuration staged under root, as on-box smith
-// reads it under /etc/smith.
+// stagedIn reads the box configuration staged under root.
 func stagedIn(root string) boxResolver {
 	return func() (boxConfig, error) { return stagedBoxConfigIn(root) }
 }

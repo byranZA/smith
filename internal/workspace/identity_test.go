@@ -15,8 +15,7 @@ import (
 // ada is the identity an operator declared in full.
 var ada = staging.Identity{UserName: "Ada", UserEmail: "ada@example.com"}
 
-// convergeIdentity runs the stage over one identity unit against the box and
-// returns what it did.
+// convergeIdentity runs the stage over one identity unit against the box.
 func convergeIdentity(t *testing.T, box *fakeBox, id staging.Identity) Result {
 	t.Helper()
 	var progress bytes.Buffer

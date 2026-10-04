@@ -14,10 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/gitidentity"
 )
 
-// fakeGit answers `git config --global --includes --get <key>` from a map of global
-// values, exiting 1 for a key that is unset the way git does. A non-nil
-// launch error stands in for git not being there to run at all, and a non-nil
-// fail error for git failing with stderr as its diagnostic.
+// fakeGit answers `git config --global --includes --get <key>` from global, or fails with launch or fail.
 type fakeGit struct {
 	global map[string]string
 	launch error

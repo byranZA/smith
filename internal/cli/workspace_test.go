@@ -29,8 +29,7 @@ type fakeBox struct {
 	// hasMise is whether the box holds mise, which its install turns on the
 	// way a real one does.
 	hasMise bool
-	// gitConfig is the smith user's global git config, holding what the
-	// stage wrote to it.
+	// gitConfig is the smith user's global git config, as the stage wrote it.
 	gitConfig map[string]string
 }
 
@@ -140,8 +139,6 @@ func TestWorkspaceConvergeInstallsDeclaredPackages(t *testing.T) {
 	}
 }
 
-// TestWorkspaceConvergeSetsTheStagedIdentity proves the git identity resolved
-// on the operator's machine reaches the smith user's global git config.
 func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
 	box := &fakeBox{}
 	w := workspaceWiring{
@@ -171,8 +168,6 @@ func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
 	}
 }
 
-// TestWorkspaceConvergeFailsOnAFailedIdentityWrite proves a git config the
-// stage cannot write fails the identity step and the whole verb.
 func TestWorkspaceConvergeFailsOnAFailedIdentityWrite(t *testing.T) {
 	box := &fakeBox{err: errors.New("could not lock config file")}
 	w := workspaceWiring{

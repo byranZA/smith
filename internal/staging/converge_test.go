@@ -329,9 +329,6 @@ func TestConvergeMakesThePlacementsDirectorySmithOwnedAt0700(t *testing.T) {
 	}
 }
 
-// TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared proves a blueprint
-// declaring no placement stages none: what reaches the box is the document, and
-// the env and resolution beside it, which every box is owed, and nothing more.
 func TestConvergeStagesNoPlacementBytesWhenNoneAreDeclared(t *testing.T) {
 	box := &fakeBox{}
 	result, err := Converge(context.Background(), box, resolvedTree(t, blueprint.Blueprint{}))

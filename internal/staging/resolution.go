@@ -71,15 +71,12 @@ func ResolutionPathIn(root string) string {
 	return filepath.Join(root, resolutionFile)
 }
 
-// LoadResolution reads the resolution staged under root — /etc/smith on a real
-// box. An absent file is refused as an *AbsentError, and one that is unparsable,
-// missing a resolved field or carrying a value smith does not recognise as a
-// *MalformedError, both naming `machine setup`, exactly as the staged
-// blueprint's refusals are. Nothing falls back to a default: a box silently
-// acting on a default the operator did not resolve is the bug this file fixes.
+// LoadResolution reads the resolution staged under root, never falling back to a
+// default. An absent file is an *AbsentError; an unparsable, incomplete or
+// unrecognised one is a *MalformedError.
 func LoadResolution(root string) (Resolution, error) {
 	path := ResolutionPathIn(root)
-	data, err := os.ReadFile(path) // #nosec G304 -- the staged resolution sits at a path smith derives itself.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Resolution{}, &AbsentError{Path: path}
