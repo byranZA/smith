@@ -1,6 +1,6 @@
 ---
 name: coding-standards
-description: Coding standards for the smith Go CLI. Use when writing, modifying, or reviewing any code in this project.
+description: Coding standards for the smith Go CLI. Use when writing, modifying, or reviewing any code, Markdown, or agent prompt in this project.
 ---
 
 # Coding Standards
@@ -67,9 +67,11 @@ Do NOT consider work complete until every item passes:
 - [ ] **Tests** — every logic function has corresponding tests and they pass (`go test ./...`); `-race` for concurrent code
 - [ ] **Vet** — `go vet ./...` is clean on changed packages
 - [ ] **Full suite** — `go build ./...` and `go test ./...` all pass
+- [ ] **Prompts** — every agent or LLM prompt lives in its own `.md` file, none inline in code (see [MARKDOWN.md](MARKDOWN.md#prompts))
 
 Fix failures before marking done. This checklist is a hard gate, not a suggestion.
 
 ## Language-Specific Standards
 
 - **Go**: See [GO.md](GO.md)
+- **Markdown and prompts**: See [MARKDOWN.md](MARKDOWN.md)
