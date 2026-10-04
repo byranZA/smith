@@ -21,7 +21,10 @@ The box you're provisioning must be:
   prompt at all** — including no key passphrase (load a passphrase-protected key
   into `ssh-agent` first). This is the same access you used to reach the box;
   smith reuses it, copying that login's `authorized_keys` onto the new `smith`
-  user.
+  user. A key at a non-default path belongs in a `Host` entry in
+  `~/.ssh/config`, and that alias works as a smith argument.
+- Running sshd on **port 22**. The firewall smith enables allows SSH on 22
+  only, so other ports aren't supported yet.
 
 If you'd rather smith created the box too, describe your provider's CLI as data
 in a `provider` block and run `smith machine create dev --blueprint acme` — see
