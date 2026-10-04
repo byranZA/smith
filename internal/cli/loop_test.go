@@ -505,3 +505,58 @@ func containsRun(args, want []string) bool {
 	}
 	return false
 }
+
+func TestLoopRunInteractiveAttachesTheAgentForOneTaskAndSucceedsWhenItIsClosed(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43, 44),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+		"44": taskJSON(44, "OPEN", "ready-for-agent"),
+	}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+
+	stdout, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "42", "--interactive")
+
+	attached := len(claude.commands) == 1 && claude.commands[0].Attached &&
+		strings.Contains(claude.commands[0].Args[len(claude.commands[0].Args)-1], "A human is at the terminal")
+	if code != 0 || !slices.Equal(claude.handed, []string{"43"}) || !attached || stdout != defaultSettings+"task #43 closed\n" {
+		t.Errorf("exit %d, handed %v, commands %+v, stdout %q, stderr %q; want 0, #43 alone to an attached agent with the interactive note, and #43 reported closed", code, claude.handed, claude.commands, stdout, stderr)
+	}
+}
+
+func TestLoopRunInteractiveFailsWhenTheTaskIsLeftOpen(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+	}}
+	idle := &idleAgent{}
+
+	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--interactive")
+
+	if code == 0 || idle.runs != 1 || stdout != defaultSettings+"task #43 still open\n" {
+		t.Errorf("exit %d after %d agent runs, stdout %q; want non-zero after 1 run, reporting #43 still open", code, idle.runs, stdout)
+	}
+}
+
+func TestLoopRunInteractiveWithNothingAvailableRunsNoAgentAndSaysWhy(t *testing.T) {
+	tests := []struct {
+		name     string
+		task     string
+		wantCode int
+		want     string
+	}{
+		{"spec complete", taskJSON(43, "CLOSED", "ready-for-agent"), 0, "spec #42 complete\n"},
+		{"only a human task", taskJSON(43, "OPEN", "ready-for-human"), 1, "spec #42 stopped: no task is available for an agent\n  waiting on a human: #43\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": tt.task}}
+			idle := &idleAgent{}
+
+			stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--interactive")
+
+			if code != tt.wantCode || idle.runs != 0 || stdout != defaultSettings+tt.want {
+				t.Errorf("exit %d after %d agent runs, stdout %q; want %d, no agent run, and %q", code, idle.runs, stdout, tt.wantCode, tt.want)
+			}
+		})
+	}
+}

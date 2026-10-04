@@ -9,12 +9,16 @@ import (
 	"strings"
 )
 
-// Command is a coding-agent invocation: the program, its arguments, and the
-// environment variables to add to smith's own.
+// Command is a coding-agent invocation: the program, its arguments, the
+// environment variables to add to smith's own, and whether it is attached to
+// the operator's terminal.
 type Command struct {
 	Name string
 	Args []string
 	Env  []string
+	// Attached commands read the operator's terminal and own it until they
+	// exit; the rest read no input.
+	Attached bool
 }
 
 // Options are what a run asks of the agent beyond its prompt. A field left
@@ -31,6 +35,9 @@ type Adapter interface {
 	// Unattended returns the command that runs the agent headless and fully
 	// autonomous on prompt, asking the operator nothing.
 	Unattended(prompt string, opts Options) Command
+	// Interactive returns the command that runs the agent's own interface
+	// attached to the operator's terminal, starting on prompt.
+	Interactive(prompt string, opts Options) Command
 }
 
 // Default is the agent the loop runs when nothing names one.
@@ -76,17 +83,34 @@ type claude struct{}
 // Unattended runs claude headless in auto permission mode, so it asks for no
 // approval, with background tasks disabled so nothing outlives the run.
 // claude's own --effort scale includes smith's, so effort passes through.
-func (claude) Unattended(prompt string, opts Options) Command {
-	args := []string{"--permission-mode", "auto"}
+func (c claude) Unattended(prompt string, opts Options) Command {
+	args := append([]string{"--permission-mode", "auto"}, c.options(opts)...)
+	return Command{
+		Name: "claude",
+		Args: append(args, "--print", prompt),
+		Env:  []string{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"},
+	}
+}
+
+// Interactive runs claude's own interface on the operator's terminal with
+// prompt as its first message, leaving approvals to the operator.
+func (c claude) Interactive(prompt string, opts Options) Command {
+	return Command{
+		Name:     "claude",
+		Args:     append(c.options(opts), prompt),
+		Attached: true,
+	}
+}
+
+// options are claude's flags for the model and effort opts set, in claude's
+// own terms: the model verbatim, and an --effort scale that includes smith's.
+func (claude) options(opts Options) []string {
+	var args []string
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
 	if opts.Effort != "" {
 		args = append(args, "--effort", string(opts.Effort))
 	}
-	return Command{
-		Name: "claude",
-		Args: append(args, "--print", prompt),
-		Env:  []string{"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"},
-	}
+	return args
 }

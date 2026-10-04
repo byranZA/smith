@@ -3,6 +3,7 @@ package loop_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/agent"
@@ -28,5 +29,30 @@ func TestProcessReportsAnAgentThatFails(t *testing.T) {
 
 	if err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(context.Background(), cmd); err == nil {
 		t.Error("Launch() error = nil, want the failed exit reported")
+	}
+}
+
+func TestProcessGivesTheTerminalsInputOnlyToAnAttachedAgent(t *testing.T) {
+	tests := []struct {
+		name     string
+		attached bool
+		want     string
+	}{
+		{"attached", true, "steer\n"},
+		{"unattended", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			p := loop.Process{Stdin: strings.NewReader("steer\n"), Stdout: &out, Stderr: &out}
+
+			if err := p.Launch(context.Background(), agent.Command{Name: "cat", Attached: tt.attached}); err != nil {
+				t.Fatalf("Launch() error = %v", err)
+			}
+
+			if got := out.String(); got != tt.want {
+				t.Errorf("output = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

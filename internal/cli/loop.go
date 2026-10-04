@@ -31,12 +31,11 @@ type loopWiring struct {
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
-// agents started as processes streaming to smith's own output, and the real
-// PATH.
+// agents started as processes on smith's own terminal, and the real PATH.
 func systemLoop() loopWiring {
 	return loopWiring{
 		gh:       connection.System(),
-		launcher: loop.Process{Stdout: os.Stdout, Stderr: os.Stderr},
+		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
 		lookPath: exec.LookPath,
 		git:      connection.System(),
 		home:     userConfigHome,
@@ -108,13 +107,15 @@ func settingsReport(s loop.Settings) string {
 // --agent, --model and --effort override the repo file for this run only, and
 // the run first reports each setting with where it came from. A task the agent
 // leaves open is retried up to --max-attempts, then skipped, and
-// --max-iterations caps the agent runs. Limits below one, invalid settings and
-// an agent missing from the PATH are refused before the tracker is read. Exit
-// 0 only when the spec is complete; otherwise the report names what was left
-// and why.
+// --max-iterations caps the agent runs. --interactive instead hands the next
+// task alone to the agent attached to the terminal. Limits below one, invalid
+// settings and an agent missing from the PATH are refused before the tracker
+// is read. Exit 0 only when the spec is complete, or when an interactive run's
+// task was closed; otherwise the report names what was left and why.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
+	var interactive bool
 	cmd := &cobra.Command{
 		Use:   "run <spec>",
 		Short: "Work a spec's tasks to completion with a coding agent",
@@ -150,14 +151,14 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
 			}
-			outcome, err := l.Run(cmd.Context(), number)
+			report, succeeded, err := runLoop(cmd.Context(), l, number, interactive)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), runReport(number, limits, outcome)); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
-			if !outcome.Complete() {
+			if !succeeded {
 				return &exitError{code: 1}
 			}
 			return nil
@@ -168,7 +169,39 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd.Flags().StringVar(&flags.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the repo file")
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
+	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
 	return cmd
+}
+
+// runLoop works spec with l, unattended to completion or, when interactive,
+// one task attached to the terminal, and returns the report of how it ended
+// and whether it succeeded: the spec complete, or the interactive task closed.
+func runLoop(ctx context.Context, l loop.Loop, spec int, interactive bool) (string, bool, error) {
+	if !interactive {
+		outcome, err := l.Run(ctx, spec)
+		if err != nil {
+			return "", false, fmt.Errorf("work spec #%d: %w", spec, err)
+		}
+		return runReport(spec, l.Limits, outcome), outcome.Complete(), nil
+	}
+	outcome, err := l.RunInteractive(ctx, spec)
+	if err != nil {
+		return "", false, fmt.Errorf("work spec #%d interactively: %w", spec, err)
+	}
+	return interactiveReport(spec, outcome), outcome.Succeeded(), nil
+}
+
+// interactiveReport renders how an interactive run ended: whether the task it
+// handed was closed or, with no task to hand, why not.
+func interactiveReport(spec int, outcome loop.InteractiveOutcome) string {
+	switch {
+	case !outcome.Handed:
+		return runReport(spec, loop.Limits{}, loop.Outcome{Remaining: outcome.Remaining})
+	case outcome.Closed():
+		return fmt.Sprintf("task #%d closed\n", outcome.Task.Number)
+	default:
+		return fmt.Sprintf("task #%d still open\n", outcome.Task.Number)
+	}
 }
 
 // checkLimits refuses a limit below one, naming its flag.

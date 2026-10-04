@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/tracker"
@@ -81,7 +82,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		if runs >= l.Limits.MaxIterations {
 			return Outcome{Remaining: remaining, Capped: true}, nil
 		}
-		if err := l.hand(ctx, next, spec); err != nil {
+		if err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next, spec), l.Options)); err != nil {
 			return Outcome{}, err
 		}
 		runs++
@@ -90,14 +91,63 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	}
 }
 
-// hand gives task to one unattended agent run. An agent that exits with a
+// InteractiveOutcome is how an interactive run ended: the task it handed the
+// agent, if any, and what remained of the spec once the agent exited.
+type InteractiveOutcome struct {
+	// Task is the task handed to the agent, when Handed.
+	Task tracker.Task
+	// Handed reports whether a task was available to hand to the agent.
+	Handed bool
+	// Remaining is the spec as the tracker told it after the run.
+	Remaining Remaining
+}
+
+// Closed reports whether the run handed a task and the agent closed it.
+func (o InteractiveOutcome) Closed() bool {
+	return o.Handed && slices.ContainsFunc(o.Remaining.Closed, func(t tracker.Task) bool { return t.Number == o.Task.Number })
+}
+
+// Succeeded reports whether the run closed the task it handed, or, with
+// nothing to hand, found the spec complete.
+func (o InteractiveOutcome) Succeeded() bool {
+	if o.Handed {
+		return o.Closed()
+	}
+	return o.Remaining.Complete()
+}
+
+// RunInteractive hands spec's next available task to one agent run attached
+// to the operator's terminal, its prompt carrying the interactive note, and
+// reads the tracker again once the agent exits. It starts no other task, and
+// runs no agent when none is available. Limits play no part.
+func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
+	current, err := l.Tracker.Spec(ctx, spec)
+	if err != nil {
+		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+	}
+	remaining := Survey(current)
+	next, ok := remaining.Next()
+	if !ok {
+		return InteractiveOutcome{Remaining: remaining}, nil
+	}
+	if err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next, spec), l.Options)); err != nil {
+		return InteractiveOutcome{}, err
+	}
+	after, err := l.Tracker.Spec(ctx, spec)
+	if err != nil {
+		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+	}
+	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after)}, nil
+}
+
+// hand gives task to one agent run of cmd. An agent that exits with a
 // failure is reported and left to the tracker to judge; only an interrupted
 // run is an error.
-func (l Loop) hand(ctx context.Context, task tracker.Task, spec int) error {
+func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) error {
 	if err := l.report("smith: handing #%d %s to the agent\n", task.Number, task.Title); err != nil {
 		return err
 	}
-	err := l.Launcher.Launch(ctx, l.Agent.Unattended(l.Prompt.Render(task, spec), l.Options))
+	err := l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
 		return fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 	}

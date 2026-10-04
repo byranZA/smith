@@ -87,3 +87,28 @@ func TestParseEffortAcceptsTheScaleAndNothingElse(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeRunsInteractiveAttachedToTheTerminal(t *testing.T) {
+	adapter, err := Lookup("claude")
+	if err != nil {
+		t.Fatalf("Lookup(claude) error = %v", err)
+	}
+
+	got := adapter.Interactive("do #43", Options{Model: "opus", Effort: High})
+
+	want := []string{"--model", "opus", "--effort", "high", "do #43"}
+	if got.Name != "claude" || !slices.Equal(got.Args, want) || !got.Attached {
+		t.Errorf("Interactive() = %+v, want claude attached with args %q", got, want)
+	}
+}
+
+func TestClaudeRunsUnattendedDetachedFromTheTerminal(t *testing.T) {
+	adapter, err := Lookup("claude")
+	if err != nil {
+		t.Fatalf("Lookup(claude) error = %v", err)
+	}
+
+	if got := adapter.Unattended("do #43", Options{}); got.Attached {
+		t.Errorf("Unattended() = %+v, want it detached from the terminal", got)
+	}
+}

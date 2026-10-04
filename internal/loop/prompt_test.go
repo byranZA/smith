@@ -30,3 +30,11 @@ func TestTheBuiltInPromptNamesTheTaskAndSpec(t *testing.T) {
 		t.Errorf("built-in prompt left a placeholder unfilled:\n%s", got)
 	}
 }
+
+func TestAnInteractivePromptCarriesTheInteractiveNoteAfterTheTask(t *testing.T) {
+	got := loop.Prompt("Do #{{TASK_NUMBER}}.").Interactive().Render(tracker.Task{Number: 43}, 42)
+
+	if !strings.HasPrefix(got, "Do #43.\n") || !strings.Contains(got, "A human is at the terminal") {
+		t.Errorf("interactive prompt = %q, want the task followed by the interactive note", got)
+	}
+}

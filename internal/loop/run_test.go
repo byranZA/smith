@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/agent"
@@ -29,7 +30,7 @@ func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
 
 func (b *board) Launch(_ context.Context, cmd agent.Command) error {
 	b.launched = append(b.launched, cmd)
-	n, err := strconv.Atoi(cmd.Args[len(cmd.Args)-1])
+	n, err := strconv.Atoi(taskOf(cmd))
 	if err != nil {
 		return err
 	}
@@ -47,9 +48,14 @@ func (b *board) Launch(_ context.Context, cmd agent.Command) error {
 func (b *board) handed() []string {
 	var prompts []string
 	for _, cmd := range b.launched {
-		prompts = append(prompts, cmd.Args[len(cmd.Args)-1])
+		prompts = append(prompts, taskOf(cmd))
 	}
 	return prompts
+}
+
+// taskOf is the task number a prompt of "{{TASK_NUMBER}}", with any note after it, hands the agent.
+func taskOf(cmd agent.Command) string {
+	return strings.Fields(cmd.Args[len(cmd.Args)-1])[0]
 }
 
 func run(t *testing.T, b *board) loop.Outcome {
@@ -241,5 +247,71 @@ func TestRunAsksEveryAgentRunForTheModelAndEffort(t *testing.T) {
 	want := []string{"--permission-mode", "auto", "--model", "opus", "--effort", "high", "--print", "43"}
 	if len(b.launched) != 1 || !slices.Equal(b.launched[0].Args, want) {
 		t.Errorf("launched %v, want one run with args %q", b.launched, want)
+	}
+}
+
+func TestRunInteractiveAttachesTheAgentForExactlyTheNextTask(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
+
+	outcome, err := loopOn(t, b, b).RunInteractive(context.Background(), 42)
+
+	if err != nil || !slices.Equal(b.handed(), []string{"43"}) || !b.launched[0].Attached || outcome.Task.Number != 43 || !outcome.Closed() {
+		t.Errorf("RunInteractive() = %+v, %v, launched %+v; want #43 alone handed to an attached agent and closed", outcome, err, b.launched)
+	}
+}
+
+func TestRunInteractiveHandsTheAgentThePromptWithTheInteractiveNote(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+
+	if _, err := loopOn(t, b, b).RunInteractive(context.Background(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	if want := loop.Prompt("{{TASK_NUMBER}}").Interactive().Render(agentTask(43), 42); len(b.launched) != 1 || b.launched[0].Args[len(b.launched[0].Args)-1] != want {
+		t.Errorf("launched %+v, want one run on the prompt with the interactive note", b.launched)
+	}
+}
+
+func TestRunInteractiveSucceedsOnlyWhenTheTaskWasClosed(t *testing.T) {
+	tests := []struct {
+		name      string
+		leaveOpen []int
+		want      bool
+	}{
+		{"closed", nil, true},
+		{"left open", []int{43}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: tt.leaveOpen}
+
+			outcome, err := loopOn(t, b, b).RunInteractive(context.Background(), 42)
+
+			if err != nil || outcome.Succeeded() != tt.want {
+				t.Errorf("RunInteractive() = %+v, %v; want succeeded %v", outcome, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunInteractiveWithNothingAvailableRunsNoAgent(t *testing.T) {
+	tests := []struct {
+		name  string
+		tasks []tracker.Task
+		want  bool
+	}{
+		{"spec complete", []tracker.Task{closed(agentTask(43))}, true},
+		{"only a human task", []tracker.Task{humanTask(43)}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &board{tasks: tt.tasks}
+
+			outcome, err := loopOn(t, b, b).RunInteractive(context.Background(), 42)
+
+			if err != nil || len(b.launched) != 0 || outcome.Handed || outcome.Succeeded() != tt.want {
+				t.Errorf("RunInteractive() = %+v, %v after %d agent runs; want no agent run and succeeded %v", outcome, err, len(b.launched), tt.want)
+			}
+		})
 	}
 }
