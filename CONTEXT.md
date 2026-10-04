@@ -253,7 +253,8 @@ A commented config file `smith init` writes into an empty config home — a star
 file and a starter blueprint — valid as written and resolving to built-in defaults until the
 operator uncomments something. Distinct from the **worked examples** in the docs, which are filled
 in end to end to show the whole surface; a starter is the blank to fill, an example is the filled
-one to read. Written only where no file exists, never over one.
+one to read. Written only where no file exists, never over one. `smith repo init` writes the
+repo file's starter the same way.
 _Avoid_: template (reserved for an adapter's command lines), skeleton, default config.
 
 **Resolved configuration**:
@@ -441,3 +442,37 @@ anyone who can SSH as `smith` can attach writable regardless. It guards against 
 typing into an agent's session — it is not a permission boundary
 ([ADR-0005](./docs/adr/0005-terminal-rides-the-ssh-door.md)).
 _Avoid_: view mode, permission.
+
+### The loop
+
+**Loop**:
+The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs, in the repo it is invoked from. Locally that is the operator's machine acting as its own box. On a box, an agent-driven session's root process will be this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). v1 runs an execution's tasks one after another, in the current working tree on the current branch, and does no branch management.
+_Avoid_: ralph, runner, orchestrator, delegation loop (the old name for it).
+
+**Spec**:
+The tracker item an execution is derived from: a PRD whose children are the execution's tasks, in the order the spec lists them. The loop never hands a spec itself to an agent.
+_Avoid_: PRD (as the domain term), epic, parent issue.
+
+**Task**:
+One child of a spec, and one iteration of the loop: an agent gets exactly one task per run. A task is meant either for an agent or for a human, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it.
+_Avoid_: ticket, job, step.
+
+**Tracker**:
+Where specs and tasks live and where the loop reads their state. v1 knows exactly one tracker, GitHub Issues through the `gh` CLI, and uses `gh`'s own authentication, so smith still holds no credential. Knowing GitHub's issue model by name is a deliberate exception to *credential-agnostic* that covers the loop alone and sits behind one seam ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+_Avoid_: forge (the hosting service, not its issue model), backlog, board.
+
+**Agent adapter**:
+smith's built-in knowledge of one coding-agent CLI (`claude`, `codex`, `pi`): how to run it unattended or attached to a terminal, and how to pass it a model and an effort. Unlike the provider adapter it is **code, not data**, because there are only a few agent CLIs and what separates them is behaviour, not configuration. Configuration names an adapter and never describes one. An unattended run is always fully autonomous, so there is no permission setting to configure ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+_Avoid_: backend, provider (reserved for the provider adapter), agent plugin.
+
+**Effort**:
+smith's own small scale for how hard an agent should think, which each agent adapter translates into its CLI's flag. An adapter whose CLI cannot express effort refuses it by name. A **model**, by contrast, is passed to the agent verbatim, because model names change faster than smith releases.
+_Avoid_: thinking level, reasoning effort (each agent's own name for it).
+
+**Repo file**:
+`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone running the loop on that repo should share (agent, model, effort). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+_Avoid_: project config, repo config, local config, config file.
+
+**Loop prompt**:
+The prompt the loop hands an agent for one task, with the task and spec filled in through placeholders. smith ships a built-in one and uses it unless the repo has **ejected** its own copy to `.smith/prompt.md`. A repo that never ejects follows smith's latest default on every upgrade. A repo that has ejected owns the file, which smith never overwrites, and catches up by diffing against the printed built-in.
+_Avoid_: system prompt, template (reserved for an adapter's command lines).
