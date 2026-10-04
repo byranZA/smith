@@ -1,12 +1,12 @@
 package workspace
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/byranZA/smith/internal/gitidentity"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -30,15 +30,19 @@ func declaredKeys(id staging.Identity) []gitKey {
 	return keys
 }
 
-// setIdentity sets each declared identity key that differs in the smith
-// user's global git config, and reports what it set and what already held.
+// setIdentity sets each declared identity key that differs from the one git
+// commits with for the smith user, and reports what it set and what already
+// held.
 //
 // It sets keys through `git config --global` rather than writing ~/.gitconfig,
-// because smith does not own that file: anything else in it survives.
+// because smith does not own that file: anything else in it survives. A file
+// that config includes after its own keys outranks them, so each write is read
+// back the way git commits: a key the include still overrides fails the step
+// rather than reporting an identity git does not use.
 func setIdentity(ctx context.Context, run Runner, id staging.Identity, progress io.Writer) (string, error) {
 	var set, held []string
 	for _, k := range declaredKeys(id) {
-		if globalConfig(ctx, run, k.name) == k.value {
+		if gitidentity.Value(ctx, run, k.name) == k.value {
 			held = append(held, k.name)
 			continue
 		}
@@ -46,21 +50,12 @@ func setIdentity(ctx context.Context, run Runner, id staging.Identity, progress 
 		if err := run.Run(ctx, "git", args, nil, progress, progress); err != nil {
 			return "", fmt.Errorf("set %s in the smith user's global git config: %w", k.name, err)
 		}
+		if got := gitidentity.Value(ctx, run, k.name); got != k.value {
+			return "", fmt.Errorf("set %s in the smith user's global git config, but git still commits with %q: a file that config includes overrides it", k.name, got)
+		}
 		set = append(set, k.name)
 	}
 	return identitySummary(set, held), nil
-}
-
-// globalConfig is the value the smith user's global git config holds for key.
-// git exits non-zero for a key it does not hold, so a failed read is an unset
-// key rather than an error: the write that follows reports a config git
-// cannot touch.
-func globalConfig(ctx context.Context, run Runner, key string) string {
-	var out bytes.Buffer
-	if err := run.Run(ctx, "git", []string{"config", "--global", "--get", key}, nil, &out, io.Discard); err != nil {
-		return ""
-	}
-	return strings.TrimSuffix(out.String(), "\n")
 }
 
 // identitySummary renders what the identity step set and what already held,

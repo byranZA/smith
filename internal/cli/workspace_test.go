@@ -26,16 +26,31 @@ type fakeBox struct {
 	// hasMise is whether the box holds mise, which its install turns on the
 	// way a real one does.
 	hasMise bool
+	// gitConfig is the smith user's global git config, holding what the
+	// stage wrote to it.
+	gitConfig map[string]string
 }
 
-func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
+func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
 	f.calls = append(f.calls, append([]string{name}, args...))
 	line := strings.Join(args, " ")
 	switch {
-	case name == "git" && strings.HasPrefix(line, "config --global --get"):
-		return errors.New("exit status 1")
+	case name == "git" && strings.HasPrefix(line, "config --global --includes --get"):
+		value, ok := f.gitConfig[args[len(args)-1]]
+		if !ok {
+			return errors.New("exit status 1")
+		}
+		_, err := io.WriteString(stdout, value+"\n")
+		return err
 	case name == "git" && strings.HasPrefix(line, "config --global"):
-		return f.err
+		if f.err != nil {
+			return f.err
+		}
+		if f.gitConfig == nil {
+			f.gitConfig = map[string]string{}
+		}
+		f.gitConfig[args[2]] = args[3]
+		return nil
 	case strings.Contains(line, "apt-get"):
 		return f.err
 	case strings.Contains(line, "mise.run"):

@@ -93,6 +93,39 @@ func TestConvergeIdentityReportsUnchangedWhenAlreadySet(t *testing.T) {
 	}
 }
 
+func TestConvergeIdentityReportsUnchangedWhenAnIncludedFileHoldsIt(t *testing.T) {
+	box := newBox()
+	box.included["user.name"] = "Ada"
+	box.included["user.email"] = "ada@example.com"
+	result := convergeIdentity(t, box, ada)
+
+	if summary := result.Outcomes[0].Summary; summary != "user.name, user.email already set" {
+		t.Errorf("outcome summary = %q, want %q", summary, "user.name, user.email already set")
+	}
+	for _, argv := range box.calls {
+		if !strings.Contains(strings.Join(argv, " "), "--get") {
+			t.Errorf("the stage ran %q on an identity an include already holds, want only reads", strings.Join(argv, " "))
+		}
+	}
+}
+
+func TestConvergeIdentityFailsWhenALaterIncludeOverridesIt(t *testing.T) {
+	box := newBox()
+	box.gitConfig["user.email"] = "old@example.com"
+	box.included["user.email"] = "grace@example.com"
+
+	for run := range 2 {
+		result := convergeIdentity(t, box, staging.Identity{UserEmail: "ada@example.com"})
+		o := result.Outcomes[0]
+		if !result.Failed() || o.Step != Identity || o.Err == nil {
+			t.Fatalf("run %d: outcome = %+v, want the identity step failed while git commits as grace", run+1, o)
+		}
+		if !strings.Contains(o.Err.Error(), "grace@example.com") {
+			t.Errorf("run %d: error = %q, want it to name the identity git commits with", run+1, o.Err)
+		}
+	}
+}
+
 func TestConvergeIdentityReportsAFailedWrite(t *testing.T) {
 	box := newBox()
 	box.gitConfigErr = errors.New("error: could not lock config file /home/smith/.gitconfig: Permission denied")

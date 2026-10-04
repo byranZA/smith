@@ -41,6 +41,10 @@ type fakeBox struct {
 	unreachable map[string]bool
 	// gitConfig is the smith user's global git config, key by key.
 	gitConfig map[string]string
+	// included is what a file the global git config includes after its own
+	// keys declares, key by key. git commits with these over gitConfig, and
+	// only a read that follows includes sees them.
+	included map[string]string
 	// gitConfigErr fails a write to the global git config the way a locked
 	// or unwritable ~/.gitconfig does.
 	gitConfigErr error
@@ -48,7 +52,7 @@ type fakeBox struct {
 
 // newBox is a box holding nothing: no packages, no mise, and no clones.
 func newBox() *fakeBox {
-	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}, gitConfig: map[string]string{}}
+	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}, gitConfig: map[string]string{}, included: map[string]string{}}
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
@@ -118,10 +122,18 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 }
 
 // config answers a `git config --global` read or write against the box's
-// global git config.
+// global git config, letting a read that follows includes see the included
+// file's later declarations.
 func (f *fakeBox) config(args []string, stdout io.Writer) error {
+	includes := len(args) > 0 && args[0] == "--includes"
+	if includes {
+		args = args[1:]
+	}
 	if len(args) == 2 && args[0] == "--get" {
 		value, ok := f.gitConfig[args[1]]
+		if v, in := f.included[args[1]]; includes && in {
+			value, ok = v, true
+		}
 		if !ok {
 			return errors.New("exit status 1")
 		}

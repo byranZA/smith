@@ -63,3 +63,14 @@ func TestGlobalIsEmptyWithoutGit(t *testing.T) {
 		t.Errorf("Global() = %+v, want no identity when git is not installed", got)
 	}
 }
+
+func TestValueIsExactWhereGlobalTrims(t *testing.T) {
+	git := fakeGit{global: map[string]string{"user.name": " Ada Lovelace "}}
+
+	if got := gitidentity.Value(context.Background(), git, "user.name"); got != " Ada Lovelace " {
+		t.Errorf("Value() = %q, want the value exactly as git holds it", got)
+	}
+	if got := gitidentity.Global(context.Background(), git).UserName; got != "Ada Lovelace" {
+		t.Errorf("Global().UserName = %q, want it trimmed for the starter", got)
+	}
+}
