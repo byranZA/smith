@@ -30,6 +30,10 @@ detail.
   [doctl with a name marker](./examples/adapters/doctl-name-marker.yaml),
   [hcloud](./examples/adapters/hcloud.yaml)
 
+## Release notes
+
+[`docs/releases/`](./releases/) holds the notes for each release — what changed and what to do when upgrading — and the docs audit behind it.
+
 ## Design decisions
 
 [`docs/adr/`](./adr/) holds the architecture decision records — one file per

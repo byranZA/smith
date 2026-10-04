@@ -68,6 +68,10 @@ prints what `tools-install` would install without installing it.
   in the same change — [`docs/`](./README.md) for behaviour, an ADR for a
   decision that constrains future work.
 
+## Releasing
+
+Run `/release <tag>` in Claude Code. The skill audits the docs against every PR since the last stable release, writes the notes in [`releases/`](./releases/), lands both through a PR, then tags and verifies the published release. Pins in the install docs move only on a stable release.
+
 ## Documentation layout
 
 Keep the README thin: what smith is, and enough of each capability to know
