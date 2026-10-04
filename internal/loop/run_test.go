@@ -228,3 +228,18 @@ func (f failing) Launch(ctx context.Context, cmd agent.Command) error {
 	}
 	return errors.New("exit status 1")
 }
+
+func TestRunAsksEveryAgentRunForTheModelAndEffort(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l := loopOn(t, b, b)
+	l.Options = agent.Options{Model: "opus", Effort: agent.High}
+
+	if _, err := l.Run(context.Background(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{"--permission-mode", "auto", "--model", "opus", "--effort", "high", "--print", "43"}
+	if len(b.launched) != 1 || !slices.Equal(b.launched[0].Args, want) {
+		t.Errorf("launched %v, want one run with args %q", b.launched, want)
+	}
+}

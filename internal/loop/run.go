@@ -29,8 +29,10 @@ type Loop struct {
 	Tracker  Tracker
 	Launcher Launcher
 	Agent    agent.Adapter
-	Prompt   Prompt
-	Limits   Limits
+	// Options are the model and effort every agent run asks for.
+	Options agent.Options
+	Prompt  Prompt
+	Limits  Limits
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
 }
@@ -95,7 +97,7 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, spec int) error {
 	if err := l.report("smith: handing #%d %s to the agent\n", task.Number, task.Title); err != nil {
 		return err
 	}
-	err := l.Launcher.Launch(ctx, l.Agent.Unattended(l.Prompt.Render(task, spec)))
+	err := l.Launcher.Launch(ctx, l.Agent.Unattended(l.Prompt.Render(task, spec), l.Options))
 	if ctx.Err() != nil {
 		return fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 	}

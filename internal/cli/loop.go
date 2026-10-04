@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,18 +10,24 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
 // loopWiring is what the loop verbs reach the outside world through: gh for
-// the tracker, the launcher that starts an agent, and the PATH search that
-// finds one.
+// the tracker, the launcher that starts an agent, the PATH search that finds
+// one, and git, the config home and the working directory that locate the
+// repo file.
 type loopWiring struct {
 	gh       tracker.Runner
 	launcher loop.Launcher
 	lookPath func(name string) (string, error)
+	git      repofile.Runner
+	home     homeResolver
+	workdir  workdirResolver
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
@@ -31,6 +38,9 @@ func systemLoop() loopWiring {
 		gh:       connection.System(),
 		launcher: loop.Process{Stdout: os.Stdout, Stderr: os.Stderr},
 		lookPath: exec.LookPath,
+		git:      connection.System(),
+		home:     userConfigHome,
+		workdir:  currentDir,
 	}
 }
 
@@ -42,18 +52,69 @@ func newLoopCmd(w loopWiring) *cobra.Command {
 		Use:   "loop",
 		Short: "Work a spec's tasks with a coding agent, one task at a time",
 	}
-	cmd.AddCommand(newLoopListCmd(tracker.NewGitHub(w.gh)), newLoopRunCmd(w))
+	cmd.AddCommand(newLoopListCmd(w), newLoopRunCmd(w))
 	return cmd
+}
+
+// settings resolves the loop settings for the repo smith is run from, flags
+// over its repo file over the built-in defaults. A repo with no repo file
+// resolves to the defaults.
+func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Settings, error) {
+	home, err := w.home()
+	if err != nil {
+		return loop.Settings{}, err
+	}
+	dir, err := w.workdir()
+	if err != nil {
+		return loop.Settings{}, err
+	}
+	repo, err := repofile.Locate(ctx, w.git, dir, home)
+	if err != nil {
+		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+	}
+	file, err := repofile.Load(repo)
+	if err != nil {
+		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+	}
+	settings, err := loop.ResolveSettings(flags, file)
+	if err != nil {
+		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+	}
+	return settings, nil
+}
+
+// settingsReport renders each resolved setting with where it came from,
+// naming an unset model or effort as the agent's own default.
+func settingsReport(s loop.Settings) string {
+	var b strings.Builder
+	for _, setting := range []struct {
+		name  string
+		value config.Value
+	}{
+		{"agent", s.Agent},
+		{"model", s.Model},
+		{"effort", s.Effort},
+	} {
+		if setting.value.Value == "" {
+			setting.value.Value = "the agent's own default"
+		}
+		fmt.Fprintf(&b, "%-7s %s\n", setting.name+":", setting.value)
+	}
+	return b.String()
 }
 
 // newLoopRunCmd builds `smith loop run <spec>`, which works the spec's tasks
 // unattended, one agent run per task, until none is available for an agent.
-// A task the agent leaves open is retried up to --max-attempts, then skipped,
-// and --max-iterations caps the agent runs. Limits below one, and an agent
-// missing from the PATH, are refused before the tracker is read. Exit 0 only
-// when the spec is complete; otherwise the report names what was left and why.
+// --agent, --model and --effort override the repo file for this run only, and
+// the run first reports each setting with where it came from. A task the agent
+// leaves open is retried up to --max-attempts, then skipped, and
+// --max-iterations caps the agent runs. Limits below one, invalid settings and
+// an agent missing from the PATH are refused before the tracker is read. Exit
+// 0 only when the spec is complete; otherwise the report names what was left
+// and why.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
+	var flags repofile.File
 	cmd := &cobra.Command{
 		Use:   "run <spec>",
 		Short: "Work a spec's tasks to completion with a coding agent",
@@ -66,17 +127,25 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err := checkLimits(limits); err != nil {
 				return reportInvalid(cmd, err)
 			}
-			adapter, err := agent.Lookup(agent.Default)
+			settings, err := w.settings(cmd.Context(), flags)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := w.lookPath(agent.Default); err != nil {
-				return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", agent.Default, err))
+			adapter, err := agent.Lookup(settings.Agent.Value)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := w.lookPath(settings.Agent.Value); err != nil {
+				return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", settings.Agent.Value, err))
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
+				return fmt.Errorf("write report: %w", err)
 			}
 			l := loop.Loop{
 				Tracker:  tracker.NewGitHub(w.gh),
 				Launcher: w.launcher,
 				Agent:    adapter,
+				Options:  settings.Options(),
 				Prompt:   loop.BuiltinPrompt(),
 				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
@@ -94,6 +163,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&flags.Agent, "agent", "", "the agent to hand each task to, over the repo file")
+	cmd.Flags().StringVar(&flags.Model, "model", "", "the model the agent runs, over the repo file")
+	cmd.Flags().StringVar(&flags.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the repo file")
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	return cmd
@@ -130,10 +202,10 @@ func runReport(spec int, limits loop.Limits, outcome loop.Outcome) string {
 }
 
 // newLoopListCmd builds `smith loop list <spec>`, which names the spec's next
-// available task and sorts what remains, running no agent and changing
-// nothing in the tracker. Exit 0 once the spec is read, whatever it holds; a
+// available task and sorts what remains, after the loop settings the repo
+// file resolves to, running no agent and changing nothing in the tracker. Exit 0 once the spec is read, whatever it holds; a
 // spec that cannot be read is reported naming why.
-func newLoopListCmd(tr tracker.GitHub) *cobra.Command {
+func newLoopListCmd(w loopWiring) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list <spec>",
 		Short: "Show the next task the loop would run, and what remains",
@@ -143,11 +215,15 @@ func newLoopListCmd(tr tracker.GitHub) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			spec, err := tr.Spec(cmd.Context(), number)
+			settings, err := w.settings(cmd.Context(), repofile.File{})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), listReport(spec, loop.Survey(spec))); err != nil {
+			spec, err := tracker.NewGitHub(w.gh).Spec(cmd.Context(), number)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)+listReport(spec, loop.Survey(spec))); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			return nil

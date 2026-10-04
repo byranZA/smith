@@ -4,7 +4,10 @@
 package repofile
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"github.com/byranZA/smith/internal/blueprint"
 )
@@ -30,6 +33,23 @@ func Parse(data []byte) (File, error) {
 	var f File
 	if err := blueprint.DecodeStrict(data, subject, &f); err != nil {
 		return File{}, fmt.Errorf("parse repo file: %w", err)
+	}
+	return f, nil
+}
+
+// Load reads and parses repo's repo file. The file is optional: a repo with
+// none yields the empty File, which leaves every setting to its default.
+func Load(repo Repo) (File, error) {
+	data, err := os.ReadFile(repo.Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return File{}, nil
+	}
+	if err != nil {
+		return File{}, fmt.Errorf("read repo file: %w", err)
+	}
+	f, err := Parse(data)
+	if err != nil {
+		return File{}, fmt.Errorf("%s: %w", repo.Path(), err)
 	}
 	return f, nil
 }

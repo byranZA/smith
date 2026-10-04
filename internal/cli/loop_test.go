@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/loop"
 )
 
 // fakeTracker answers `gh issue view <n> --json …` from recorded JSON keyed by
@@ -60,9 +64,35 @@ func taskJSON(n int, state, label string, blockedBy ...int) string {
 	return fmt.Sprintf(`{"number":%d,"title":"Task %d","state":%q,"body":"","labels":[{"name":%q}],"blockedBy":{"nodes":[%s]}}`, n, n, state, label, strings.Join(nodes, ","))
 }
 
+// inRepo fills in w's repo wiring, when the test left it out, with a fresh
+// git repo that has no repo file and a config home outside it.
+func inRepo(t *testing.T, w loopWiring) loopWiring {
+	t.Helper()
+	if w.git == nil {
+		root := t.TempDir()
+		w.git = toplevelGit{root: root}
+		w.workdir = func() (string, error) { return root, nil }
+	}
+	if w.home == nil {
+		home := t.TempDir()
+		w.home = func() (config.Home, error) { return config.NewHome(home), nil }
+	}
+	return w
+}
+
+// defaultSettings is the settings report of a run with no flag and no repo file.
+const defaultSettings = "agent:  claude (built-in default)\n" +
+	"model:  the agent's own default (built-in default)\n" +
+	"effort: the agent's own default (built-in default)\n"
+
 func runLoopList(t *testing.T, gh *fakeTracker, ref string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := newLoopCmd(loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath})
+	return runLoopListIn(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath}, ref)
+}
+
+func runLoopListIn(t *testing.T, w loopWiring, ref string) (stdout, stderr string, code int) {
+	t.Helper()
+	cmd := newLoopCmd(inRepo(t, w))
 	cmd.SetArgs([]string{"list", ref})
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
@@ -86,7 +116,8 @@ func TestLoopListNamesTheNextTaskAndWhatRemains(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	want := "spec #42 Spec: the loop\n" +
+	want := defaultSettings +
+		"spec #42 Spec: the loop\n" +
 		"next: #46 Task 46\n" +
 		"  available: #46\n" +
 		"  blocked: #44 (by #43)\n" +
@@ -186,7 +217,7 @@ func (f *fakeAgent) Launch(_ context.Context, cmd agent.Command) error {
 
 func runLoopRun(t *testing.T, w loopWiring, ref string, flags ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := newLoopCmd(w)
+	cmd := newLoopCmd(inRepo(t, w))
 	cmd.SetArgs(append([]string{"run", ref}, flags...))
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
@@ -220,7 +251,7 @@ func TestLoopRunOnACompleteSpecRunsNoAgentAndSucceeds(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "#42")
 
-	if code != 0 || len(claude.handed) != 0 || stdout != "spec #42 complete\n" {
+	if code != 0 || len(claude.handed) != 0 || stdout != defaultSettings+"spec #42 complete\n" {
 		t.Errorf("exit %d, handed %v, stdout %q; want 0, no agent run, the spec complete", code, claude.handed, stdout)
 	}
 }
@@ -235,7 +266,7 @@ func TestLoopRunStopsNamingTheHumanAndBlockedTasksLeft(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "42")
 
-	want := "spec #42 stopped: no task is available for an agent\n" +
+	want := defaultSettings + "spec #42 stopped: no task is available for an agent\n" +
 		"  blocked: #44 (by #43)\n" +
 		"  waiting on a human: #43\n"
 	if code == 0 || len(claude.handed) != 0 || stdout != want {
@@ -252,7 +283,7 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
-	want := "spec #42 stopped: the agent left a task open on every attempt\n" +
+	want := defaultSettings + "spec #42 stopped: the agent left a task open on every attempt\n" +
 		"  skipped after 3 attempts: #43\n"
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
@@ -269,7 +300,7 @@ func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-iterations", "3")
 
-	want := "spec #42 stopped: reached the cap of 3 agent runs\n" +
+	want := defaultSettings + "spec #42 stopped: reached the cap of 3 agent runs\n" +
 		"  available: #44\n" +
 		"  skipped after 2 attempts: #43\n"
 	if code == 0 || idle.runs != 3 || stdout != want {
@@ -331,4 +362,146 @@ func TestLoopRunFailsNamingTheCauseBeforeAnyAgentRuns(t *testing.T) {
 			}
 		})
 	}
+}
+
+// repoWith is the loop wiring of a git repo whose repo file holds content, or
+// that has no repo file when content is empty; it returns the repo file's path.
+func repoWith(t *testing.T, gh *fakeTracker, launcher loop.Launcher, content string) (loopWiring, string) {
+	t.Helper()
+	root := t.TempDir()
+	path := filepath.Join(root, ".smith", "repo.yaml")
+	if content != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := loopWiring{
+		gh:       gh,
+		launcher: launcher,
+		lookPath: onPath,
+		git:      toplevelGit{root: root},
+		workdir:  func() (string, error) { return root, nil },
+	}
+	return w, path
+}
+
+func TestLoopListReportsAnUntouchedStarterAsTheBuiltInDefaults(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "CLOSED", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &idleAgent{}, "")
+	home := t.TempDir()
+	if _, _, code := runRepoInit(t, rootOf(t, w), rootOf(t, w), home); code != 0 {
+		t.Fatalf("repo init exit %d", code)
+	}
+
+	stdout, stderr, code := runLoopListIn(t, w, "42")
+
+	if code != 0 || !strings.HasPrefix(stdout, defaultSettings) {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and every setting from the built-in default", code, stdout, stderr)
+	}
+}
+
+func rootOf(t *testing.T, w loopWiring) string {
+	t.Helper()
+	root, err := w.workdir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestLoopRunReportsEachSettingWithItsOrigin(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	w, _ := repoWith(t, gh, claude, "agent: claude\nmodel: opus\n")
+
+	stdout, stderr, code := runLoopRun(t, w, "42", "--effort", "low")
+
+	wantReport := "agent:  claude (repo file)\n" +
+		"model:  opus (repo file)\n" +
+		"effort: low (flag)\n"
+	wantArgs := []string{"--model", "opus", "--effort", "low"}
+	if code != 0 || !strings.HasPrefix(stdout, wantReport) || len(claude.commands) != 1 || !containsRun(claude.commands[0].Args, wantArgs) {
+		t.Errorf("exit %d, stdout %q, stderr %q, ran %v; want 0, the report\n%s\nand claude given %q", code, stdout, stderr, claude.commands, wantReport, wantArgs)
+	}
+}
+
+func TestLoopRunFlagOverridesTheRepoFileForOneRunAndLeavesItUnchanged(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	content := "model: opus\n"
+	w, path := repoWith(t, gh, claude, content)
+
+	stdout, _, code := runLoopRun(t, w, "42", "--model", "sonnet")
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || !strings.Contains(stdout, "model:  sonnet (flag)\n") || len(claude.commands) != 1 || !containsRun(claude.commands[0].Args, []string{"--model", "sonnet"}) || string(after) != content {
+		t.Errorf("exit %d, stdout %q, ran %v, repo file %q; want sonnet from a flag and the repo file unchanged", code, stdout, claude.commands, after)
+	}
+}
+
+func TestLoopRunWithNoModelGivesTheAgentNone(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	w, _ := repoWith(t, gh, claude, "")
+
+	_, _, code := runLoopRun(t, w, "42")
+
+	if code != 0 || len(claude.commands) != 1 || slices.Contains(claude.commands[0].Args, "--model") || slices.Contains(claude.commands[0].Args, "--effort") {
+		t.Errorf("exit %d, ran %v; want claude given no model and no effort", code, claude.commands)
+	}
+}
+
+func TestLoopRunRefusesInvalidSettingsBeforeAnyAgentRuns(t *testing.T) {
+	for name, tc := range map[string]struct {
+		repoFile string
+		flags    []string
+		want     []string
+	}{
+		"unknown key":      {"agent: claude\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
+		"unknown agent":    {"agent: gemini\n", nil, []string{`"gemini"`, "known agents are claude"}},
+		"effort off scale": {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+			idle := &idleAgent{}
+			w, _ := repoWith(t, gh, idle, tc.repoFile)
+
+			_, stderr, code := runLoopRun(t, w, "42", tc.flags...)
+
+			named := true
+			for _, want := range tc.want {
+				named = named && strings.Contains(stderr, want)
+			}
+			if code == 0 || !named || idle.runs != 0 || len(gh.ran) != 0 {
+				t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming %q, no agent and no gh", code, stderr, idle.runs, gh.ran, tc.want)
+			}
+		})
+	}
+}
+
+// recordingAgent is a fakeAgent that also records every command it was handed.
+type recordingAgent struct {
+	fakeAgent
+	commands []agent.Command
+}
+
+func (r *recordingAgent) Launch(ctx context.Context, cmd agent.Command) error {
+	r.commands = append(r.commands, cmd)
+	return r.fakeAgent.Launch(ctx, cmd)
+}
+
+// containsRun reports whether args holds want as a contiguous run.
+func containsRun(args, want []string) bool {
+	for i := range args {
+		if slices.Equal(args[i:min(i+len(want), len(args))], want) {
+			return true
+		}
+	}
+	return false
 }
