@@ -91,14 +91,67 @@ func TestRunOnACompleteSpecRunsNoAgent(t *testing.T) {
 	}
 }
 
-func TestRunStopsWhenTheAgentLeavesItsTaskOpen(t *testing.T) {
+func TestRunRetriesATaskLeftOpenThenSkipsItAndWorksTheRest(t *testing.T) {
 	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43}}
 
 	outcome := run(t, b)
 
-	if got := b.handed(); !slices.Equal(got, []string{"43"}) || !slices.Equal(numbers(outcome.LeftOpen), []int{43}) || outcome.Complete() {
-		t.Errorf("handed %v, outcome %+v; want #43 handed once and named as left open", got, outcome)
+	if got := b.handed(); !slices.Equal(got, []string{"43", "43", "44"}) || !slices.Equal(numbers(outcome.Remaining.Skipped), []int{43}) || outcome.Complete() {
+		t.Errorf("handed %v, outcome %+v; want #43 twice then #44, and #43 named as skipped", got, outcome)
 	}
+}
+
+func TestRunStopsAtTheIterationCap(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44), agentTask(45)}, leaveOpen: []int{43, 44, 45}}
+	l := loopOn(t, b, b)
+	l.Limits.MaxIterations = 3
+
+	outcome, err := l.Run(context.Background(), 42)
+
+	if err != nil || len(b.launched) != 3 || !outcome.Capped || outcome.Complete() {
+		t.Errorf("Run() = %+v, %v after %d agent runs; want 3 runs and the cap reported", outcome, err, len(b.launched))
+	}
+}
+
+func TestRunThatCompletesTheSpecOnItsLastAllowedRunIsNotCapped(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
+	l := loopOn(t, b, b)
+	l.Limits.MaxIterations = 2
+
+	outcome, err := l.Run(context.Background(), 42)
+
+	if err != nil || outcome.Capped || !outcome.Complete() {
+		t.Errorf("Run() = %+v, %v; want the spec complete and not capped", outcome, err)
+	}
+}
+
+func TestRunLeavesAFailedAttemptsWorkForTheNextAttempt(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	tree := &wip{board: b}
+
+	if _, err := loopOn(t, b, tree).Run(context.Background(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !slices.Equal(tree.found, []string{"", "half done"}) {
+		t.Errorf("working tree seen by each attempt = %q, want empty then the first attempt's changes", tree.found)
+	}
+}
+
+// wip is a launcher whose agent leaves uncommitted changes in a working tree on its first attempt and finishes on its second.
+type wip struct {
+	board *board
+	tree  string
+	found []string
+}
+
+func (w *wip) Launch(ctx context.Context, cmd agent.Command) error {
+	w.found = append(w.found, w.tree)
+	if w.tree == "" {
+		w.tree = "half done"
+		return nil
+	}
+	return w.board.Launch(ctx, cmd)
 }
 
 func TestRunPicksUpATaskFiledMidRun(t *testing.T) {
@@ -157,7 +210,7 @@ func loopOn(t *testing.T, b *board, launcher loop.Launcher) loop.Loop {
 	if err != nil {
 		t.Fatalf("Lookup(claude) error = %v", err)
 	}
-	return loop.Loop{Tracker: b, Launcher: launcher, Agent: claude, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard}
+	return loop.Loop{Tracker: b, Launcher: launcher, Agent: claude, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard, Limits: loop.DefaultLimits()}
 }
 
 // failing is a launcher whose agent does its work and then exits with a failure, cancelling the run first when cancel is set.

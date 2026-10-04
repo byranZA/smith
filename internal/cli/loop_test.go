@@ -184,10 +184,10 @@ func (f *fakeAgent) Launch(_ context.Context, cmd agent.Command) error {
 	return nil
 }
 
-func runLoopRun(t *testing.T, w loopWiring, ref string) (stdout, stderr string, code int) {
+func runLoopRun(t *testing.T, w loopWiring, ref string, flags ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	cmd := newLoopCmd(w)
-	cmd.SetArgs([]string{"run", ref})
+	cmd.SetArgs(append([]string{"run", ref}, flags...))
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)
@@ -243,29 +243,67 @@ func TestLoopRunStopsNamingTheHumanAndBlockedTasksLeft(t *testing.T) {
 	}
 }
 
-func TestLoopRunStopsNamingATaskTheAgentLeftOpen(t *testing.T) {
+func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{
 		"42": specJSON(43),
 		"43": taskJSON(43, "OPEN", "ready-for-agent"),
 	}}
+	idle := &idleAgent{}
 
-	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idleAgent{}, lookPath: onPath}, "42")
+	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
-	if code == 0 || !strings.Contains(stdout, "spec #42 stopped: the agent left #43 open\n") {
-		t.Errorf("exit %d, stdout %q; want non-zero naming #43 as left open", code, stdout)
+	want := "spec #42 stopped: the agent left a task open on every attempt\n" +
+		"  skipped after 3 attempts: #43\n"
+	if code == 0 || idle.runs != 3 || stdout != want {
+		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
 	}
 }
 
-// idleAgent is a launcher whose agent finishes without closing its task.
-type idleAgent struct{}
+func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43, 44),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+		"44": taskJSON(44, "OPEN", "ready-for-agent"),
+	}}
+	idle := &idleAgent{}
 
-func (idleAgent) Launch(context.Context, agent.Command) error { return nil }
+	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-iterations", "3")
+
+	want := "spec #42 stopped: reached the cap of 3 agent runs\n" +
+		"  available: #44\n" +
+		"  skipped after 2 attempts: #43\n"
+	if code == 0 || idle.runs != 3 || stdout != want {
+		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
+	}
+}
+
+func TestLoopRunRefusesLimitsBelowOne(t *testing.T) {
+	for _, flag := range []string{"--max-iterations", "--max-attempts"} {
+		t.Run(flag, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{}}
+
+			_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", flag, "0")
+
+			if code == 0 || !strings.Contains(stderr, flag) || len(gh.ran) != 0 {
+				t.Errorf("exit %d, stderr %q, ran %v; want non-zero naming %s, gh never run", code, stderr, gh.ran, flag)
+			}
+		})
+	}
+}
+
+// idleAgent is a launcher whose agent finishes without closing its task, counting its runs.
+type idleAgent struct{ runs int }
+
+func (i *idleAgent) Launch(context.Context, agent.Command) error {
+	i.runs++
+	return nil
+}
 
 func TestLoopRunRefusesAMissingAgentBeforeReadingTheTracker(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{}}
 	missing := func(name string) (string, error) { return "", errors.New("executable file not found in $PATH") }
 
-	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: idleAgent{}, lookPath: missing}, "42")
+	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: missing}, "42")
 
 	if code == 0 || !strings.Contains(stderr, "claude") || len(gh.ran) != 0 {
 		t.Errorf("exit %d, stderr %q, ran %v; want non-zero naming claude, gh never run", code, stderr, gh.ran)

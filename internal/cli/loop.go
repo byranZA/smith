@@ -48,16 +48,22 @@ func newLoopCmd(w loopWiring) *cobra.Command {
 
 // newLoopRunCmd builds `smith loop run <spec>`, which works the spec's tasks
 // unattended, one agent run per task, until none is available for an agent.
-// An agent missing from the PATH is refused before the tracker is read. Exit 0
-// only when the spec is complete; otherwise the report names what was left.
+// A task the agent leaves open is retried up to --max-attempts, then skipped,
+// and --max-iterations caps the agent runs. Limits below one, and an agent
+// missing from the PATH, are refused before the tracker is read. Exit 0 only
+// when the spec is complete; otherwise the report names what was left and why.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
-	return &cobra.Command{
+	limits := loop.DefaultLimits()
+	cmd := &cobra.Command{
 		Use:   "run <spec>",
 		Short: "Work a spec's tasks to completion with a coding agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			number, err := tracker.ParseRef(args[0])
 			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			if err := checkLimits(limits); err != nil {
 				return reportInvalid(cmd, err)
 			}
 			adapter, err := agent.Lookup(agent.Default)
@@ -72,13 +78,14 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				Launcher: w.launcher,
 				Agent:    adapter,
 				Prompt:   loop.BuiltinPrompt(),
+				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
 			}
 			outcome, err := l.Run(cmd.Context(), number)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), runReport(number, outcome)); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), runReport(number, limits, outcome)); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			if !outcome.Complete() {
@@ -87,21 +94,38 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
+	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
+	return cmd
+}
+
+// checkLimits refuses a limit below one, naming its flag.
+func checkLimits(limits loop.Limits) error {
+	if limits.MaxIterations < 1 {
+		return fmt.Errorf("--max-iterations must be at least 1, got %d", limits.MaxIterations)
+	}
+	if limits.MaxAttempts < 1 {
+		return fmt.Errorf("--max-attempts must be at least 1, got %d", limits.MaxAttempts)
+	}
+	return nil
 }
 
 // runReport renders how a run ended: the spec complete, or why it stopped and
-// what remains open.
-func runReport(spec int, outcome loop.Outcome) string {
+// what remains open, naming the tasks it skipped and the attempts each had.
+func runReport(spec int, limits loop.Limits, outcome loop.Outcome) string {
 	if outcome.Complete() {
 		return fmt.Sprintf("spec #%d complete\n", spec)
 	}
 	var b strings.Builder
-	if len(outcome.LeftOpen) > 0 {
-		fmt.Fprintf(&b, "spec #%d stopped: the agent left %s open\n", spec, taskList(outcome.LeftOpen))
-	} else {
+	switch {
+	case outcome.Capped:
+		fmt.Fprintf(&b, "spec #%d stopped: reached the cap of %d agent runs\n", spec, limits.MaxIterations)
+	case len(outcome.Remaining.Skipped) > 0:
+		fmt.Fprintf(&b, "spec #%d stopped: the agent left a task open on every attempt\n", spec)
+	default:
 		fmt.Fprintf(&b, "spec #%d stopped: no task is available for an agent\n", spec)
 	}
-	writeKinds(&b, outcome.Remaining, false)
+	writeKinds(&b, outcome.Remaining, limits, false)
 	return b.String()
 }
 
@@ -144,13 +168,14 @@ func listReport(spec tracker.Spec, remaining loop.Remaining) string {
 	default:
 		b.WriteString("next: none\n")
 	}
-	writeKinds(&b, remaining, true)
+	writeKinds(&b, remaining, loop.Limits{}, true)
 	return b.String()
 }
 
 // writeKinds writes one line for each kind of task that remains, leaving out
 // the kinds it has none of, and the closed tasks unless withClosed is set.
-func writeKinds(b *strings.Builder, remaining loop.Remaining, withClosed bool) {
+// Skipped tasks are named with the attempts limits allowed them.
+func writeKinds(b *strings.Builder, remaining loop.Remaining, limits loop.Limits, withClosed bool) {
 	var closed []tracker.Task
 	if withClosed {
 		closed = remaining.Closed
@@ -160,6 +185,7 @@ func writeKinds(b *strings.Builder, remaining loop.Remaining, withClosed bool) {
 		tasks []tracker.Task
 	}{
 		{"available", remaining.Available},
+		{fmt.Sprintf("skipped after %d attempts", limits.MaxAttempts), remaining.Skipped},
 		{"blocked", remaining.Blocked},
 		{"waiting on a human", remaining.Human},
 		{"not ready for an agent or a human", remaining.Unready},

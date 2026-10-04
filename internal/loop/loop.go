@@ -19,6 +19,9 @@ type Remaining struct {
 	Human []tracker.Task
 	// Unready tasks are open but meant for neither an agent nor a human yet.
 	Unready []tracker.Task
+	// Skipped tasks are available but were left open by the agent on every
+	// attempt the run allowed, so the run hands them out no more.
+	Skipped []tracker.Task
 	// Closed tasks are done.
 	Closed []tracker.Task
 }
@@ -43,6 +46,21 @@ func Survey(spec tracker.Spec) Remaining {
 	return r
 }
 
+// Skip moves the available tasks numbered in skipped to Skipped, leaving the
+// other kinds alone: a skipped task that is now blocked or closed stays so.
+func (r Remaining) Skip(skipped map[int]bool) Remaining {
+	available := r.Available
+	r.Available, r.Skipped = nil, slices.Clone(r.Skipped)
+	for _, task := range available {
+		if skipped[task.Number] {
+			r.Skipped = append(r.Skipped, task)
+		} else {
+			r.Available = append(r.Available, task)
+		}
+	}
+	return r
+}
+
 // Next returns the first available task, and false when there is none.
 func (r Remaining) Next() (tracker.Task, bool) {
 	if len(r.Available) == 0 {
@@ -53,7 +71,7 @@ func (r Remaining) Next() (tracker.Task, bool) {
 
 // Complete reports whether every task of the spec is closed.
 func (r Remaining) Complete() bool {
-	return len(r.Available)+len(r.Blocked)+len(r.Human)+len(r.Unready) == 0
+	return len(r.Available)+len(r.Blocked)+len(r.Human)+len(r.Unready)+len(r.Skipped) == 0
 }
 
 // blocked reports whether any of task's blockers is still open.

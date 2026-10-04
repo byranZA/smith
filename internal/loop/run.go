@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"slices"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/tracker"
@@ -24,48 +23,68 @@ type Launcher interface {
 
 // Loop works one spec's tasks with a coding agent, one task per agent run.
 // It never commits, pushes, switches branch or looks at the working tree:
-// that is the agent's work, asked for through the prompt.
+// that is the agent's work, asked for through the prompt, so a failed
+// attempt's changes are still there for the next.
 type Loop struct {
 	Tracker  Tracker
 	Launcher Launcher
 	Agent    agent.Adapter
 	Prompt   Prompt
+	Limits   Limits
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
 }
 
-// Outcome is how a run ended: what remained of the spec when it stopped, and
-// the task the agent left open, if that is why it stopped.
+// Limits bound an unattended run so it can be left alone.
+type Limits struct {
+	// MaxIterations caps the agent runs the whole loop makes.
+	MaxIterations int
+	// MaxAttempts caps the agent runs one task gets before it is skipped.
+	MaxAttempts int
+}
+
+// DefaultLimits are the limits of a run that sets none: ten agent runs in
+// all, and two attempts at each task.
+func DefaultLimits() Limits { return Limits{MaxIterations: 10, MaxAttempts: 2} }
+
+// Outcome is how a run ended: what remained of the spec when it stopped,
+// with the tasks it skipped among it, and whether the iteration cap stopped it.
 type Outcome struct {
 	Remaining Remaining
-	LeftOpen  []tracker.Task
+	Capped    bool
 }
 
 // Complete reports whether the run ended with every task of the spec closed.
 func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
 // Run works spec until no task is available for an agent, re-reading the
-// tracker before every selection so a task filed mid-run is seen. It stops
-// early when the agent leaves the task it was handed open.
+// tracker before every selection so a task filed mid-run is seen. A task the
+// agent leaves open is handed out again until it has had MaxAttempts runs,
+// then skipped; the run stops once it has made MaxIterations agent runs.
+// Cancelling ctx stops the running agent and starts no further task.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
-	var last *tracker.Task
+	attempts := map[int]int{}
+	skipped := map[int]bool{}
+	runs := 0
 	for {
 		current, err := l.Tracker.Spec(ctx, spec)
 		if err != nil {
 			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
 		}
-		remaining := Survey(current)
-		if last != nil && stillOpen(current, *last) {
-			return Outcome{Remaining: remaining, LeftOpen: []tracker.Task{*last}}, nil
-		}
+		remaining := Survey(current).Skip(skipped)
 		next, ok := remaining.Next()
 		if !ok {
 			return Outcome{Remaining: remaining}, nil
 		}
+		if runs >= l.Limits.MaxIterations {
+			return Outcome{Remaining: remaining, Capped: true}, nil
+		}
 		if err := l.hand(ctx, next, spec); err != nil {
 			return Outcome{}, err
 		}
-		last = &next
+		runs++
+		attempts[next.Number]++
+		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
 	}
 }
 
@@ -92,9 +111,4 @@ func (l Loop) report(format string, args ...any) error {
 		return fmt.Errorf("write progress: %w", err)
 	}
 	return nil
-}
-
-// stillOpen reports whether task is among spec's tasks and still open.
-func stillOpen(spec tracker.Spec, task tracker.Task) bool {
-	return slices.ContainsFunc(spec.Tasks, func(t tracker.Task) bool { return t.Number == task.Number && t.Open })
 }
