@@ -17,3 +17,7 @@ The five canonical triage roles use their default label strings, all present in 
 ### Domain docs
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## `.smith/` is production
+
+`.smith/` at this repo's root holds the repo file and loop prompt the loop runs *this* repo with: live configuration, not a fixture or a scratch area. Feature work, tests and examples build their own `.smith/` in a temp directory. The committed one changes only in a task that names it, and that task is HITL.

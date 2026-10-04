@@ -12,6 +12,7 @@ Your task is issue **#{{ISSUE_NUMBER}} — {{ISSUE_TITLE}}**, a child of spec is
 - **Do not modify these files** — they are loop infrastructure or secrets:
   - `.claude/` (settings and skills — these are guardrails)
   - `ralph/` (the loop driver and this prompt)
+  - `.smith/` (this repo's live loop configuration — see `AGENTS.md`; tests build their own in a temp dir)
 
 ## Steps
 
