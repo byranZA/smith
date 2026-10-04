@@ -110,3 +110,25 @@ func TestRepoInitRefusesWhenTheReposSmithIsTheConfigHome(t *testing.T) {
 		t.Errorf("stat repo.yaml = %v, want the config home unchanged", err)
 	}
 }
+
+func TestRepoInitRefusesWhenTheReposSmithSymlinksToTheConfigHome(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(t.TempDir(), ".smith")
+	writeFile(t, filepath.Join(home, "preferences.yaml"), "access: tailscale\n")
+	if err := os.Symlink(home, filepath.Join(root, ".smith")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runRepoInit(t, root, root, home)
+
+	if code == 0 || !strings.Contains(stderr, home) {
+		t.Errorf("exit code = %d, stderr = %q, want a refusal naming the config home %s", code, stderr, home)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "preferences.yaml" {
+		t.Errorf("config home holds %v, want it unchanged", entries)
+	}
+}

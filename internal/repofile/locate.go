@@ -61,19 +61,31 @@ func Locate(ctx context.Context, git Runner, dir string, home config.Home) (Repo
 	return Repo{root: root}, nil
 }
 
-// isConfigHome reports whether root's .smith directory is the config home,
-// comparing the directories themselves so a symlinked path is still caught.
+// isConfigHome reports whether root's .smith directory is the config home.
+// When both exist it compares the directories themselves, so a .smith that
+// symlinks to the config home is caught. Otherwise it compares the paths with
+// every symlink in their existing ancestors resolved, so the home directory's
+// repo is still refused before the config home has been created.
 func isConfigHome(root string, home config.Home) bool {
-	if filepath.Base(home.Path()) != dirName {
-		return false
+	smith := filepath.Join(root, dirName)
+	smithInfo, smithErr := os.Stat(smith)
+	homeInfo, homeErr := os.Stat(home.Path())
+	if smithErr == nil && homeErr == nil {
+		return os.SameFile(smithInfo, homeInfo)
 	}
-	rootInfo, err := os.Stat(root)
-	if err != nil {
-		return false
+	return resolve(smith) == resolve(home.Path())
+}
+
+// resolve returns path with the symlinks in its longest existing prefix
+// evaluated and the missing remainder appended as written.
+func resolve(path string) string {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
 	}
-	parentInfo, err := os.Stat(filepath.Dir(home.Path()))
-	if err != nil {
-		return false
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path
 	}
-	return os.SameFile(rootInfo, parentInfo)
+	return filepath.Join(resolve(parent), filepath.Base(path))
 }

@@ -81,3 +81,53 @@ func TestLocateRefusesTheConfigHomeReachedThroughASymlink(t *testing.T) {
 		t.Error("Locate() error = nil, want a refusal when the config home is the repo's .smith through a symlink")
 	}
 }
+
+func TestLocateRefusesARepoWhoseSmithSymlinksToTheConfigHome(t *testing.T) {
+	for name, homeName := range map[string]string{
+		"config home named .smith": ".smith",
+		"custom config home path":  "smith-config",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			home := filepath.Join(t.TempDir(), homeName)
+			if err := os.Mkdir(home, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(home, filepath.Join(root, ".smith")); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := repofile.Locate(context.Background(), fakeGit{root: root}, root, config.NewHome(home))
+
+			if err == nil || !strings.Contains(err.Error(), home) {
+				t.Errorf("Locate() error = %v, want a refusal naming the config home %s", err, home)
+			}
+		})
+	}
+}
+
+func TestLocateRefusesTheHomeDirectoryRepoBeforeTheConfigHomeExists(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".smith")
+
+	_, err := repofile.Locate(context.Background(), fakeGit{root: root}, root, config.NewHome(home))
+
+	if err == nil || !strings.Contains(err.Error(), home) {
+		t.Errorf("Locate() error = %v, want a refusal naming the config home %s", err, home)
+	}
+}
+
+func TestLocateAcceptsARepoWhoseSmithIsItsOwn(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".smith"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(t.TempDir(), ".smith")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repofile.Locate(context.Background(), fakeGit{root: root}, root, config.NewHome(home)); err != nil {
+		t.Errorf("Locate() error = %v, want a repo with its own .smith accepted", err)
+	}
+}
