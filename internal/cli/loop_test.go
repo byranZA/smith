@@ -17,9 +17,7 @@ import (
 	"github.com/byranZA/smith/internal/loop"
 )
 
-// fakeTracker answers `gh issue view <n> --json …` from recorded JSON keyed by
-// issue number, failing as gh does for an issue it does not know, places the
-// current repo at byranZA/smith, and records every gh command it is asked to run.
+// fakeTracker answers `gh` from recorded JSON keyed by issue number.
 type fakeTracker struct {
 	issues map[string]string
 	stderr string
@@ -68,8 +66,7 @@ func taskJSON(n int, state, label string, blockedBy ...int) string {
 	return fmt.Sprintf(`{"number":%d,"title":"Task %d","state":%q,"body":"","labels":[{"name":%q}],"blockedBy":{"nodes":[%s]}}`, n, n, state, label, strings.Join(nodes, ","))
 }
 
-// inRepo fills in w's repo wiring, when the test left it out, with a fresh
-// git repo that has no repo file and a config home outside it.
+// inRepo gives w a fresh git repo with no repo file when the test left its repo out.
 func inRepo(t *testing.T, w loopWiring) loopWiring {
 	t.Helper()
 	if w.git == nil {
@@ -216,8 +213,7 @@ func TestLoopListFailsNamingTheCause(t *testing.T) {
 // onPath finds every program, as a machine with all agents installed would.
 func onPath(name string) (string, error) { return "/usr/local/bin/" + name, nil }
 
-// fakeAgent is a launcher whose agent closes, in the fake tracker, the task its
-// prompt names, recording each task it was handed.
+// fakeAgent is a launcher whose agent closes the task its prompt names.
 type fakeAgent struct {
 	gh     *fakeTracker
 	handed []string
@@ -398,8 +394,7 @@ func TestLoopRunFailsNamingTheCauseBeforeAnyAgentRuns(t *testing.T) {
 	}
 }
 
-// repoWith is the loop wiring of a git repo whose repo file holds content, or
-// that has no repo file when content is empty; it returns the repo file's path.
+// repoWith returns wiring for a git repo whose repo file holds content, and the file's path.
 func repoWith(t *testing.T, gh *fakeTracker, launcher loop.Launcher, content string) (loopWiring, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -595,8 +590,7 @@ func TestLoopRunInteractiveWithNothingAvailableRunsNoAgentAndSaysWhy(t *testing.
 	}
 }
 
-// ejectPrompt writes content as the ejected loop prompt of w's repo and
-// returns its path.
+// ejectPrompt writes content as w's ejected loop prompt and returns its path.
 func ejectPrompt(t *testing.T, w loopWiring, content string) string {
 	t.Helper()
 	path := filepath.Join(rootOf(t, w), ".smith", "prompt.md")

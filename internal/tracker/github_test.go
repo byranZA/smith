@@ -14,8 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// fakeGH replays recorded `gh` output keyed by the arguments it was run with,
-// failing the way gh does for an issue it has no answer for.
+// fakeGH replays recorded `gh` output keyed by its arguments.
 type fakeGH struct {
 	replies map[string]string
 	pages   map[string]string
@@ -56,8 +55,7 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	return err
 }
 
-// page replays a recorded GraphQL page of an issue's linked issues, keyed by
-// pageKey, failing the way gh does when GitHub cannot answer.
+// page replays a recorded GraphQL page of an issue's linked issues, keyed by pageKey.
 func (f *fakeGH) page(args []string, stdout, stderr io.Writer) error {
 	fields := map[string]string{}
 	for i := 0; i+1 < len(args); i++ {
@@ -99,9 +97,7 @@ func agentTask(n int, state, blockedBy string) string {
 	return fmt.Sprintf(`{"blockedBy":%s,"body":"","labels":[{"name":"ready-for-agent"}],"number":%d,"state":%q,"title":"Task %d"}`, blockedBy, n, state, n)
 }
 
-// manyChildren is gh's output for spec #42 with 101 children: #101 to #200
-// closed and #201 open, which gh's issue view cuts off after the first 100.
-// The spec's checklist lists #201 then #150.
+// manyChildren is spec #42 with 101 children, more than gh's issue view returns.
 func manyChildren() *fakeGH {
 	gh := &fakeGH{replies: map[string]string{}, pages: map[string]string{}}
 	var first, second []string
@@ -126,8 +122,7 @@ const (
 func specView(n int) string { return fmt.Sprintf("issue view %d --json %s", n, specFields) }
 func taskView(n int) string { return fmt.Sprintf("issue view %d --json %s", n, taskFields) }
 
-// recorded is gh's output for spec #42, whose checklist lists #45 before #43,
-// with #44 left off it and #50 filed as a child after the spec was written.
+// recorded is spec #42, whose checklist orders #45 before #43 and omits #44 and #50.
 func recorded() map[string]string {
 	return map[string]string{
 		specView(42):                       `{"body":"## Problem\n\nSee #7.\n\n## Tasks\n\n- [ ] #45\n- [ ] #43\n","labels":[{"id":"LA_1","name":"spec","description":"Feature spec / PRD","color":"0E8A16"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"id":"I_43","number":43,"state":"CLOSED","title":"The tracker","url":"https://github.com/o/r/issues/43"},{"id":"I_44","number":44,"state":"OPEN","title":"The prompt","url":"https://github.com/o/r/issues/44"},{"id":"I_45","number":45,"state":"OPEN","title":"The repo file","url":"https://github.com/o/r/issues/45"},{"id":"I_50","number":50,"state":"OPEN","title":"Fix the summary","url":"https://github.com/o/r/issues/50"}],"totalCount":4},"title":"Spec: the loop"}`,
@@ -314,8 +309,7 @@ func TestLocalRefusesAnIssueInAnotherRepo(t *testing.T) {
 	}
 }
 
-// sameNumbers is gh's output for spec #42 in o/r, whose task #44 is blocked
-// by blockedBy, links and says what in its body, beside its closed sibling #43.
+// sameNumbers is spec #42 in o/r, whose task #44 has blockedBy and body.
 func sameNumbers(blockedBy, body string) *fakeGH {
 	return &fakeGH{replies: map[string]string{
 		specView(42): `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"CLOSED","url":"https://github.com/o/r/issues/43"},{"number":44,"state":"OPEN","url":"https://github.com/o/r/issues/44"}],"totalCount":2},"title":"Spec"}`,

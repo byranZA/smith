@@ -15,8 +15,7 @@ import (
 	"github.com/byranZA/smith/internal/repofile"
 )
 
-// fakeGit answers `git -C <dir> rev-parse --show-toplevel` with root, or exits
-// 128 the way git does outside a repo when root is empty.
+// fakeGit answers `git rev-parse --show-toplevel` with root, exiting 128 when root is empty.
 type fakeGit struct {
 	root string
 }

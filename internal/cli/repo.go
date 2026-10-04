@@ -24,12 +24,8 @@ func newRepoCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolv
 	return cmd
 }
 
-// newRepoInitCmd builds `smith repo init [--agent] [--model] [--effort]`,
-// which writes a commented starter repo file at the root of the git repo it is
-// run from, filling in any value given as a flag, unless one is already there.
-// It asks no questions, writes no prompt, and reports the file as created or
-// left alone. Outside a git repo, or where the repo's .smith is the config
-// home, it fails and writes nothing.
+// newRepoInitCmd builds `smith repo init`, which writes a commented starter
+// repo file at the root of the current git repo unless one is already there.
 func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver) *cobra.Command {
 	var values repofile.File
 	cmd := &cobra.Command{

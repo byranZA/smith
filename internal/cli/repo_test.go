@@ -14,8 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/config"
 )
 
-// toplevelGit answers `git -C <dir> rev-parse --show-toplevel` with root, or
-// fails as git does outside a repo when root is empty.
+// toplevelGit answers `git rev-parse --show-toplevel` with root, failing when root is empty.
 type toplevelGit struct {
 	root string
 }
@@ -28,8 +27,7 @@ func (g toplevelGit) Run(_ context.Context, _ string, args []string, _ io.Reader
 	return err
 }
 
-// runRepoInit runs `smith repo init` from workdir in the repo git reports as
-// root, against the config home home.
+// runRepoInit runs `smith repo init` from workdir in a repo rooted at root.
 func runRepoInit(t *testing.T, root, workdir, home string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	cmd := newRepoCmd(func() (config.Home, error) { return config.NewHome(home), nil }, toplevelGit{root: root}, func() (string, error) { return workdir, nil })

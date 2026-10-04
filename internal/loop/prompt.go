@@ -32,8 +32,7 @@ var placeholders = []string{"{{TASK_NUMBER}}", "{{TASK_TITLE}}"}
 var placeholderPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
 
 // LoadPrompt reads the loop prompt a repo ejected to path, falling back to the
-// built-in prompt when there is none. A prompt holding a placeholder smith does
-// not fill is refused, naming it and the known placeholders. It never writes.
+// built-in prompt when there is none, and refuses a placeholder smith does not fill.
 func LoadPrompt(path string) (Prompt, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

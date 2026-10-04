@@ -143,7 +143,7 @@ func WriteAbsent(path string, content []byte, dirMode, fileMode fs.FileMode) (bo
 	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
 		return false, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode) // #nosec G304 -- the caller owns the path.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
 	if errors.Is(err, fs.ErrExist) {
 		return false, nil
 	}

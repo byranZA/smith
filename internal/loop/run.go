@@ -60,11 +60,8 @@ type Outcome struct {
 // Complete reports whether the run ended with every task of the spec closed.
 func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
-// Run works spec until no task is available for an agent, re-reading the
-// tracker before every selection so a task filed mid-run is seen. A task the
-// agent leaves open is handed out again until it has had MaxAttempts runs,
-// then skipped; the run stops once it has made MaxIterations agent runs.
-// Cancelling ctx stops the running agent and starts no further task.
+// Run works spec until no task is available for an agent, handing a task left
+// open out again up to MaxAttempts and stopping after MaxIterations agent runs.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -116,10 +113,8 @@ func (o InteractiveOutcome) Succeeded() bool {
 	return o.Remaining.Complete()
 }
 
-// RunInteractive hands spec's next available task to one agent run attached
-// to the operator's terminal, its prompt carrying the interactive note, and
-// reads the tracker again once the agent exits. It starts no other task, and
-// runs no agent when none is available. Limits play no part.
+// RunInteractive hands spec's next available task to one agent run attached to
+// the operator's terminal, and runs no agent when no task is available.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Spec(ctx, spec)
 	if err != nil {

@@ -145,17 +145,8 @@ func newLoopPromptCmd() *cobra.Command {
 }
 
 // newLoopRunCmd builds `smith loop run <spec>`, which works the spec's tasks
-// unattended, one agent run per task, until none is available for an agent.
-// --agent, --model and --effort override the repo file for this run only, and
-// the run first reports each setting with where it came from. A task the agent
-// leaves open is retried up to --max-attempts, then skipped, and
-// --max-iterations caps the agent runs. --interactive instead hands the next
-// task alone to the agent attached to the terminal. Limits below one, invalid
-// settings and an agent missing from the PATH are refused before the tracker
-// is read. Exit 0 only when the spec is complete, or when an interactive run's
-// task was closed; otherwise the report names what was left and why. The
-// repo's ejected .smith/prompt.md, when it has one, replaces the built-in loop
-// prompt.
+// with a coding agent, or hands one task to an attached agent with --interactive.
+// It exits 0 only when the spec is complete or the interactive run's task was closed.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File

@@ -14,8 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// board is a fake tracker holding spec #42, and a fake launcher whose agent
-// closes each task it is handed unless that task is listed in leaveOpen.
+// board fakes spec #42's tracker and an agent that closes each task not in leaveOpen.
 type board struct {
 	tasks     []tracker.Task
 	leaveOpen []int
