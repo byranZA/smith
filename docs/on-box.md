@@ -110,6 +110,19 @@ this box was built from the blueprint "acme": re-run with --blueprint acme, or t
 A box whose marker records no blueprint takes a setup without `--blueprint`,
 and stages nothing.
 
+**A box remembers its access layer.** The marker records the access mode a box
+was provisioned with. A later `machine setup` of a tailscale box that resolves
+`access: public` without `--access` is refused, because it would reopen public
+SSH. That covers a `public` from the built-in default, from your preferences
+and from a blueprint, since one blueprint describes many boxes:
+
+```
+setup refused: devbox was provisioned with access tailscale, but this run resolves access: public (built-in default); pass --access tailscale to keep it, or --access public to reopen public SSH
+```
+
+Only `--access public` reopens it. Moving a public box to tailscale is not
+refused: public SSH closes only once the tailnet probe proves reach.
+
 ## `machine upgrade`
 
 ```sh
