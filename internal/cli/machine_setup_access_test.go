@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// tailscaleKeyRef is the auth key reference a run that may resolve to
-// tailscale is driven with, so it never reaches for a terminal prompt whether
-// or not the access mode came from its flag.
+// tailscaleKeyRef is the auth key reference that keeps a tailscale run off the terminal prompt.
 func tailscaleKeyRef(t *testing.T) []string {
 	t.Helper()
 	t.Setenv("SMITH_TEST_TAILSCALE_KEY", "tskey-auth-test")
@@ -47,9 +45,7 @@ func TestSetupReachesTheBoxOverTheTailnetWhenThePreferencesAskForTailscale(t *te
 	}
 }
 
-// accessPrecedence is the spec's precedence table: what preferences, a
-// blueprint "acme" and the --access flag each declare (empty for nothing), and
-// the access a fresh box is provisioned with and the origin setup reports.
+// accessPrecedence is the spec's access precedence table; an empty declaration declares nothing.
 var accessPrecedence = []struct {
 	preference, blueprint, flag string
 	resolved, origin            string
@@ -63,8 +59,7 @@ var accessPrecedence = []struct {
 	{"public", "public", "tailscale", "tailscale", "flag"},
 }
 
-// runPrecedenceRow sets up a fresh box with blueprint "acme" under the
-// declarations one precedence row names, returning the fake box and stdout.
+// runPrecedenceRow sets up a fresh box under one precedence row, returning the fake box and stdout.
 func runPrecedenceRow(t *testing.T, preference, blueprintAccess, flag string) (*setupSSH, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -217,8 +212,7 @@ func TestSetupRefusesAnUnknownBlueprintBeforeTouchingTheBox(t *testing.T) {
 	}
 }
 
-// markerOnTailscale is the marker a box smith already set up with tailscale
-// access carries: public SSH closed, reached over the tailnet.
+// markerOnTailscale is the marker a box smith already set up with tailscale access carries.
 const markerOnTailscale = `{"schema_version":2,"access_mode":"tailscale","name":"devbox"}`
 
 func TestSetupRefusesToReopenPublicSSHOnATailscaleBox(t *testing.T) {

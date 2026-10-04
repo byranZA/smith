@@ -67,9 +67,7 @@ func (f *fakeStagingBox) staged(path string) (string, bool) {
 	return "", false
 }
 
-// documentOrFatal reads the named blueprint from a config home rooted at dir,
-// as `machine setup` does before it touches the box, and fails the test if it
-// will not read.
+// documentOrFatal reads the named blueprint from the config home at dir, failing the test if it will not.
 func documentOrFatal(t *testing.T, dir, name string) *config.Document {
 	t.Helper()
 	doc, err := config.LoadDocument(config.NewHome(dir), name)

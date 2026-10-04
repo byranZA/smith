@@ -175,8 +175,7 @@ func (s *setupSSH) ranSubcommandAs(target, sub string) bool {
 	return false
 }
 
-// setupFlag reports the value the run handed the box's setup subcommand for
-// flag, empty when no setup ran or it carried no such flag.
+// setupFlag reports the value the box's setup subcommand got for flag, empty when absent.
 func (s *setupSSH) setupFlag(flag string) string {
 	for _, cmd := range s.commands {
 		if !isSubcommand(cmd, "setup") {
@@ -192,9 +191,7 @@ func (s *setupSSH) setupFlag(flag string) string {
 	return ""
 }
 
-// sshConnection is the SSH_CONNECTION a box reached at target sees: a session
-// to its tailnet address arrives from the operator's own tailnet address, and
-// any other from their public one.
+// sshConnection is the SSH_CONNECTION a box reached at target sees.
 func sshConnection(target string) string {
 	client := "198.51.100.200"
 	if strings.HasPrefix(hostOf(target), "100.") {
@@ -220,8 +217,7 @@ os-release-end
 // machine that is itself a Running tailnet member.
 const adminOnTailnet = `{"BackendState":"Running","Self":{"UserID":1},"User":{"1":{"LoginName":"operator@example.com"}}}`
 
-// adminOffTailnet is what `tailscale status --json` prints on an operator's
-// machine whose tailscale is installed but not connected.
+// adminOffTailnet is `tailscale status --json` on an operator machine off the tailnet.
 const adminOffTailnet = `{"BackendState":"Stopped"}`
 
 // markerNamedDev is the marker a box smith already set up as "dev" carries.

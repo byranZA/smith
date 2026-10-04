@@ -71,10 +71,6 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			}
 			host := hostOf(target)
 			ctx := cmd.Context()
-			// The config home is located up front — locating it reads nothing —
-			// because a successful setup registers the box in the inventory
-			// inside it. It is created only by that registration, so an
-			// operator with no config home can still set a box up.
 			home, err := resolve()
 			if err != nil {
 				return err
@@ -281,8 +277,9 @@ type stagedConfig struct {
 
 // resolveStagedConfig resolves every reference the blueprint setup read
 // declares on the operator's machine: each placement's source, and the value
-// of every variable its env exports, at the box scope and inside each repo. It takes no connection and reaches no box, so
-// a refusal here cannot have created or modified a byte of /etc/smith.
+// of every variable its env exports, at the box scope and inside each repo.
+// It takes no connection and reaches no box, so a refusal here cannot have
+// created or modified a byte of /etc/smith.
 //
 // Both grammars resolve here and neither resolves on the box. env:GH_TOKEN
 // names a variable in the operator's shell and file:/home/op/.secrets a path on

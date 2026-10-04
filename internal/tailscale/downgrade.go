@@ -26,21 +26,8 @@ func (e *DowngradeError) Error() string {
 		e.Box, e.Recorded, e.Resolved)
 }
 
-// Downgrade applies the access-downgrade rule to the access mode a box's
-// marker records and the access this run resolved: a run that would reopen
-// public SSH on a box provisioned with tailscale access is refused, unless
-// --access said so. It guards the resolved value rather than joining the
-// precedence chain, so `blueprint check` and setup still report the same
-// access. A blueprint's public does not get past it: one blueprint describes
-// many boxes, and editing it is not a decision to reopen public SSH on every
-// one of them, where the flag is a decision about this box.
-//
-// public to tailscale is not guarded, because lock-out safety already closes
-// public SSH only once the tailnet proves reach, and nor is a box whose marker
-// records no access mode, which has nothing to downgrade.
-//
-// It is a decision on values: it reaches no box, so a refusal leaves the box
-// exactly as it was.
+// Downgrade returns a *DowngradeError when a box whose marker records tailscale
+// access resolves to public from anywhere but --access, and nil otherwise.
 func Downgrade(box, recorded string, resolved config.Value) error {
 	if recorded != "tailscale" || resolved.Value != "public" || resolved.Origin == config.FromFlag {
 		return nil
