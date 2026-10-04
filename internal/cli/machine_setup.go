@@ -14,7 +14,6 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/inventory"
-	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/shipped"
@@ -149,7 +148,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				Host:      host,
 			}
 			resolvedName, _ := inventory.Name(names)
-			if err := accessDowngrade(recorded, cfg.access, resolvedName); err != nil {
+			if err := tailscale.Downgrade(resolvedName, recorded.AccessMode, cfg.access); err != nil {
 				return refuseSetup(stderr, err)
 			}
 
@@ -268,24 +267,6 @@ func loadSetupConfig(home config.Home, accessFlag, blueprintName string) (setupC
 	}
 	resolved := config.Resolve(config.Overrides{Access: accessFlag}, b, &prefs.Declared)
 	return setupConfig{doc: doc, access: resolved.Access}, nil
-}
-
-// accessDowngrade refuses a run that would reopen public SSH on a box provisioned
-// with tailscale access, unless --access said so. It guards the resolved value
-// rather than joining the precedence chain, so `blueprint check` and setup still
-// report the same access. A blueprint's public does not get past it: one
-// blueprint describes many boxes, and editing it is not a decision to reopen
-// public SSH on every one of them, where the flag is a decision about this box.
-//
-// public to tailscale is not guarded, because lock-out safety already closes
-// public SSH only once the tailnet proves reach, and nor is a box whose marker
-// records no access mode, which has nothing to downgrade.
-func accessDowngrade(recorded marker.Marker, access config.Value, name string) error {
-	if recorded.AccessMode != "tailscale" || access.Value != "public" || access.Origin == config.FromFlag {
-		return nil
-	}
-	return fmt.Errorf("%s was provisioned with access tailscale, but this run resolves access: %s; "+
-		"pass --access tailscale to keep it, or --access public to reopen public SSH", name, access)
 }
 
 // stagedConfig is the operator's blueprint resolved and ready to go onto the
