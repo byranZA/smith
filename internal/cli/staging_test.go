@@ -67,12 +67,22 @@ func (f *fakeStagingBox) staged(path string) (string, bool) {
 	return "", false
 }
 
+// documentOrFatal reads the named blueprint from the config home at dir, failing the test if it will not.
+func documentOrFatal(t *testing.T, dir, name string) *config.Document {
+	t.Helper()
+	doc, err := config.LoadDocument(config.NewHome(dir), name)
+	if err != nil {
+		t.Fatalf("LoadDocument(%q) err = %v, want it to read", name, err)
+	}
+	return &doc
+}
+
 // stagedOrFatal resolves the named blueprint from a config home rooted at dir,
 // as `machine setup` does before it touches the box, and fails the test if it
 // will not resolve.
 func stagedOrFatal(t *testing.T, dir, name string) *stagedConfig {
 	t.Helper()
-	staged, err := resolveStagedConfig(config.NewHome(dir), name, io.Discard)
+	staged, err := resolveStagedConfig(documentOrFatal(t, dir, name), io.Discard)
 	if err != nil {
 		t.Fatalf("resolveStagedConfig(%q) err = %v, want it to resolve", name, err)
 	}
@@ -132,7 +142,7 @@ func TestStageConfigStagesNothingWithoutABlueprint(t *testing.T) {
 	box := &fakeStagingBox{}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, stagedOrFatal(t, t.TempDir(), ""), &out); err != nil {
+	if err := stageConfig(context.Background(), box, nil, &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 	if len(box.commands) != 0 {
@@ -171,23 +181,21 @@ func TestStageConfigNamesTheBlueprintTheBoxChokedOn(t *testing.T) {
 	}
 }
 
-func TestResolveStagedConfigRefusesAnInvalidBlueprintAsAGateRejection(t *testing.T) {
+func TestSetupRefusesAnInvalidBlueprintAsAGateRejectionBeforeTouchingTheBox(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "terminals: tmux\n")
-	var errOut bytes.Buffer
+	ssh := &setupSSH{}
 
-	staged, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut)
-	if err == nil {
-		t.Fatal("resolveStagedConfig() err = nil, want an invalid blueprint refused")
+	_, stderr, code := runSetup(t, dir, ssh, "--blueprint", "acme", "root@203.0.113.10")
+
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2, a gate rejection (stderr: %s)", code, stderr)
 	}
-	if staged != nil {
-		t.Errorf("resolveStagedConfig() = %v, want nothing to stage on a refusal", staged)
+	if !strings.Contains(stderr, "terminals") {
+		t.Errorf("stderr = %q, want it to name the unknown field", stderr)
 	}
-	if code, ok := gateRejection(err); !ok || code != 2 {
-		t.Errorf("resolveStagedConfig() err = %v, want a gate rejection (exit 2)", err)
-	}
-	if !strings.Contains(errOut.String(), "terminals") {
-		t.Errorf("resolveStagedConfig() reported %q, want it to name the unknown field", errOut.String())
+	if len(ssh.targets) != 0 {
+		t.Errorf("ssh targets = %v, want the box never reached", ssh.targets)
 	}
 }
 
@@ -196,7 +204,7 @@ func TestResolveStagedConfigRefusesAnUnresolvableSourceAsAGateRejection(t *testi
 	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n")
 	var errOut bytes.Buffer
 
-	staged, err := resolveStagedConfig(config.NewHome(dir), "acme", &errOut)
+	staged, err := resolveStagedConfig(documentOrFatal(t, dir, "acme"), &errOut)
 	if err == nil {
 		t.Fatal("resolveStagedConfig() err = nil, want the unresolvable source refused")
 	}

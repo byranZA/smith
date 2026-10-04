@@ -54,11 +54,7 @@ See [the box inventory](./inventory.md).
 
 ## Provision over Tailscale
 
-To reach the box over a tailnet instead of the public internet, use
-`--access tailscale`. This requires the machine you're running smith from to
-already be a member of the tailnet (the `tailscale` CLI installed and running),
-plus a Tailscale auth key passed as a reference — `env:VAR` or `file:/path`,
-never a bare literal.
+To reach the box over a tailnet instead of the public internet, use `--access tailscale`, or set `access: tailscale` in the blueprint or your preferences: setup resolves it like `blueprint check` does. This requires the machine you're running smith from to already be a member of the tailnet (the `tailscale` CLI installed and running), plus a Tailscale auth key passed as a reference — `env:VAR` or `file:/path`, never a bare literal.
 
 ### First, add two entries to your tailnet ACL policy
 

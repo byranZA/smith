@@ -49,6 +49,9 @@ type setupSSH struct {
 	// probeDenied has the tailnet deny the live ssh probe, the shape of a
 	// tailnet missing its ssh ACL rule for tag:smith.
 	probeDenied bool
+	// adminOffTailnet has this machine's own tailscale report it is not a
+	// Running tailnet member, so smith could not verify reach over it.
+	adminOffTailnet bool
 
 	// public is the host the run first reached the box at: its public host.
 	public string
@@ -70,7 +73,11 @@ type setupSSH struct {
 // destination it was pointed at.
 func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
 	if name == "tailscale" {
-		_, err := io.WriteString(stdout, adminOnTailnet)
+		status := adminOnTailnet
+		if s.adminOffTailnet {
+			status = adminOffTailnet
+		}
+		_, err := io.WriteString(stdout, status)
 		return err
 	}
 	if name == "scp" && len(args) > 1 {
@@ -130,6 +137,9 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, _ io.Reade
 	case isSubcommand(remoteCmd, "preflight"):
 		_, err := io.WriteString(stdout, supportedRelease)
 		return err
+	case strings.Contains(remoteCmd, "$SSH_CONNECTION"):
+		_, err := io.WriteString(stdout, sshConnection(target))
+		return err
 	case strings.Contains(remoteCmd, marker.Path):
 		_, err := io.WriteString(stdout, s.marker)
 		return err
@@ -165,6 +175,31 @@ func (s *setupSSH) ranSubcommandAs(target, sub string) bool {
 	return false
 }
 
+// setupFlag reports the value the box's setup subcommand got for flag, empty when absent.
+func (s *setupSSH) setupFlag(flag string) string {
+	for _, cmd := range s.commands {
+		if !isSubcommand(cmd, "setup") {
+			continue
+		}
+		fields := strings.Fields(cmd)
+		for i, f := range fields[:len(fields)-1] {
+			if f == connection.ShellArg(flag) {
+				return strings.Trim(fields[i+1], "'")
+			}
+		}
+	}
+	return ""
+}
+
+// sshConnection is the SSH_CONNECTION a box reached at target sees.
+func sshConnection(target string) string {
+	client := "198.51.100.200"
+	if strings.HasPrefix(hostOf(target), "100.") {
+		client = "100.101.102.103"
+	}
+	return client + " 51234 " + hostOf(target) + " 22"
+}
+
 // reached reports whether any ssh launch was pointed at the given destination.
 func (s *setupSSH) reached(target string) bool { return slices.Contains(s.targets, target) }
 
@@ -181,6 +216,9 @@ os-release-end
 // adminOnTailnet is what `tailscale status --json` prints on an operator's
 // machine that is itself a Running tailnet member.
 const adminOnTailnet = `{"BackendState":"Running","Self":{"UserID":1},"User":{"1":{"LoginName":"operator@example.com"}}}`
+
+// adminOffTailnet is `tailscale status --json` on an operator machine off the tailnet.
+const adminOffTailnet = `{"BackendState":"Stopped"}`
 
 // markerNamedDev is the marker a box smith already set up as "dev" carries.
 const markerNamedDev = `{"schema_version":2,"access_mode":"public","name":"dev"}`
