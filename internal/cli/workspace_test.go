@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,9 @@ import (
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
 )
+
+// errUnsetKey is how git config --get exits for a key nothing sets.
+var errUnsetKey error = relayExit(1)
 
 // fakeBox stands in for the box the workspace stage runs on: it records the
 // argv of every command and answers the package probe as a box that holds
@@ -25,12 +29,30 @@ type fakeBox struct {
 	// hasMise is whether the box holds mise, which its install turns on the
 	// way a real one does.
 	hasMise bool
+	// gitConfig is the smith user's global git config, as the stage wrote it.
+	gitConfig map[string]string
 }
 
-func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, _, _ io.Writer) error {
+func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
 	f.calls = append(f.calls, append([]string{name}, args...))
 	line := strings.Join(args, " ")
 	switch {
+	case name == "git" && strings.HasPrefix(line, "config --global --includes --get"):
+		value, ok := f.gitConfig[args[len(args)-1]]
+		if !ok {
+			return errUnsetKey
+		}
+		_, err := io.WriteString(stdout, value+"\n")
+		return err
+	case name == "git" && strings.HasPrefix(line, "config --global"):
+		if f.err != nil {
+			return f.err
+		}
+		if f.gitConfig == nil {
+			f.gitConfig = map[string]string{}
+		}
+		f.gitConfig[args[2]] = args[3]
+		return nil
 	case strings.Contains(line, "apt-get"):
 		return f.err
 	case strings.Contains(line, "mise.run"):
@@ -65,6 +87,13 @@ func staged(b blueprint.Blueprint) stagedResolver {
 	return func() (blueprint.Blueprint, error) { return b, nil }
 }
 
+// resolvedAs answers with a staged resolution whose workspace root is workspace.
+func resolvedAs(workspace string) resolutionReader {
+	return func() (staging.Resolution, error) {
+		return staging.Resolution{Access: "public", Terminal: "tmux", Workspace: workspace}, nil
+	}
+}
+
 // boxHomeAt answers with the home of the smith user on the box a test stands
 // in for.
 func boxHomeAt(dir string) pathResolver {
@@ -92,9 +121,10 @@ func runWorkspace(t *testing.T, w workspaceWiring, args ...string) (stdout, stde
 func TestWorkspaceConvergeInstallsDeclaredPackages(t *testing.T) {
 	box := &fakeBox{}
 	w := workspaceWiring{
-		blueprint: staged(blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}}),
-		command:   box,
-		boxHome:   boxHomeAt(t.TempDir()),
+		blueprint:  staged(blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}}),
+		command:    box,
+		resolution: resolvedAs("~/workspace"),
+		boxHome:    boxHomeAt(t.TempDir()),
 	}
 	stdout, stderr, code := runWorkspace(t, w, "converge")
 
@@ -109,6 +139,55 @@ func TestWorkspaceConvergeInstallsDeclaredPackages(t *testing.T) {
 	}
 }
 
+func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
+	box := &fakeBox{}
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{}),
+		command:   box,
+		resolution: func() (staging.Resolution, error) {
+			return staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace",
+				Git: staging.Identity{UserName: "Ada", UserEmail: "ada@example.com"}}, nil
+		},
+		boxHome: boxHomeAt(t.TempDir()),
+	}
+	stdout, stderr, code := runWorkspace(t, w, "converge")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, stderr)
+	}
+	for _, want := range [][]string{
+		{"git", "config", "--global", "user.name", "Ada"},
+		{"git", "config", "--global", "user.email", "ada@example.com"},
+	} {
+		if !slices.ContainsFunc(box.calls, func(argv []string) bool { return slices.Equal(argv, want) }) {
+			t.Errorf("the stage ran %v, want %v", box.calls, want)
+		}
+	}
+	if !strings.Contains(stdout, "identity") {
+		t.Errorf("stdout = %q, want the identity step reported", stdout)
+	}
+}
+
+func TestWorkspaceConvergeFailsOnAFailedIdentityWrite(t *testing.T) {
+	box := &fakeBox{err: errors.New("could not lock config file")}
+	w := workspaceWiring{
+		blueprint: staged(blueprint.Blueprint{}),
+		command:   box,
+		resolution: func() (staging.Resolution, error) {
+			return staging.Resolution{Workspace: "~/workspace", Git: staging.Identity{UserEmail: "ada@example.com"}}, nil
+		},
+		boxHome: boxHomeAt(t.TempDir()),
+	}
+	stdout, _, code := runWorkspace(t, w, "converge")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for a failed identity write", code)
+	}
+	if !strings.Contains(stdout, "identity    failed") {
+		t.Errorf("stdout = %q, want the identity step reported failed", stdout)
+	}
+}
+
 // TestWorkspaceConvergeRefusesWithNothingStaged proves the verb inherits the
 // staged-config refusal rather than redefining one: the exit code the absent
 // document is owed, and a message naming the command that stages it.
@@ -118,8 +197,9 @@ func TestWorkspaceConvergeRefusesWithNothingStaged(t *testing.T) {
 		blueprint: func() (blueprint.Blueprint, error) {
 			return blueprint.Blueprint{}, &staging.AbsentError{Path: staging.DocumentPath}
 		},
-		command: box,
-		boxHome: boxHomeAt(t.TempDir()),
+		command:    box,
+		resolution: resolvedAs("~/workspace"),
+		boxHome:    boxHomeAt(t.TempDir()),
 	}
 	cmd := newWorkspaceCmd(w)
 	cmd.SetArgs([]string{"converge"})
@@ -142,9 +222,10 @@ func TestWorkspaceConvergeRefusesWithNothingStaged(t *testing.T) {
 func TestWorkspaceConvergeFailsOnAFailedStep(t *testing.T) {
 	box := &fakeBox{err: relayExit(100)}
 	w := workspaceWiring{
-		blueprint: staged(blueprint.Blueprint{Packages: []string{"jq"}}),
-		command:   box,
-		boxHome:   boxHomeAt(t.TempDir()),
+		blueprint:  staged(blueprint.Blueprint{Packages: []string{"jq"}}),
+		command:    box,
+		resolution: resolvedAs("~/workspace"),
+		boxHome:    boxHomeAt(t.TempDir()),
 	}
 	stdout, _, code := runWorkspace(t, w, "converge")
 
@@ -207,9 +288,10 @@ func TestWorkspaceConvergeMaterializesBoxPlacements(t *testing.T) {
 		blueprint: staged(blueprint.Blueprint{Placements: []blueprint.Placement{
 			{From: "file:/home/op/.gitconfig", To: "~/.gitconfig", Mode: "converge", Perms: "0644"},
 		}}),
-		command: &fakeBox{},
-		root:    root,
-		boxHome: boxHomeAt(home),
+		command:    &fakeBox{},
+		root:       root,
+		resolution: resolvedAs("~/workspace"),
+		boxHome:    boxHomeAt(home),
 	}
 
 	stdout, stderr, code := runWorkspace(t, w, "converge")
@@ -239,9 +321,10 @@ func TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 		blueprint: staged(blueprint.Blueprint{Placements: []blueprint.Placement{
 			{From: "file:/home/op/.npmrc", To: "~/.npmrc", Mode: "converge"},
 		}}),
-		command: &fakeBox{},
-		root:    t.TempDir(),
-		boxHome: boxHomeAt(home),
+		command:    &fakeBox{},
+		root:       t.TempDir(),
+		resolution: resolvedAs("~/workspace"),
+		boxHome:    boxHomeAt(home),
 	}
 
 	stdout, _, code := runWorkspace(t, w, "converge")
@@ -261,7 +344,7 @@ func TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 // the box, and read back there by name.
 func stageEnvFor(t *testing.T, root string, b blueprint.Blueprint) {
 	t.Helper()
-	tree, err := staging.Resolve(staging.Plan(nil, b), secret.Resolve, blueprint.Value)
+	tree, err := staging.Resolve(staging.Plan(nil, b, staging.Resolution{}), secret.Resolve, blueprint.Value)
 	if err != nil {
 		t.Fatalf("resolve the blueprint's env on the operator's machine: %v", err)
 	}
@@ -283,10 +366,11 @@ func TestWorkspaceConvergePinsTheDeclaredToolchain(t *testing.T) {
 	}
 	stageEnvFor(t, root, b)
 	w := workspaceWiring{
-		blueprint: staged(b),
-		command:   box,
-		root:      root,
-		boxHome:   boxHomeAt(home),
+		blueprint:  staged(b),
+		command:    box,
+		root:       root,
+		resolution: resolvedAs("~/workspace"),
+		boxHome:    boxHomeAt(home),
 	}
 	stdout, stderr, code := runWorkspace(t, w, "converge")
 
@@ -304,5 +388,76 @@ func TestWorkspaceConvergePinsTheDeclaredToolchain(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "toolchain") {
 		t.Errorf("stdout = %q, want the toolchain step reported", stdout)
+	}
+}
+
+func TestWorkspaceConvergeClonesAndScansUnderTheStagedWorkspaceRoot(t *testing.T) {
+	home := t.TempDir()
+	box := &fakeBox{hasMise: true}
+	w := workspaceWiring{
+		blueprint:  staged(blueprint.Blueprint{Repos: []blueprint.Repo{{Name: "api", URL: "https://forge.test/api.git"}}}),
+		resolution: resolvedAs("~/code"),
+		command:    box,
+		root:       t.TempDir(),
+		boxHome:    boxHomeAt(home),
+	}
+
+	stdout, stderr, code := runWorkspace(t, w, "converge")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q, stdout %q)", code, stderr, stdout)
+	}
+	clone := filepath.Join(home, "code", "api", "repo.git")
+	if !slices.ContainsFunc(box.calls, func(argv []string) bool { return slices.Contains(argv, clone) }) {
+		t.Errorf("the stage ran %v, want the clone at %s", box.calls, clone)
+	}
+	if !strings.Contains(stdout, filepath.Join(home, "code")) {
+		t.Errorf("stdout = %q, want orphans reported from %s", stdout, filepath.Join(home, "code"))
+	}
+}
+
+func TestWorkspaceConvergeRefusesABoxWithNoUsableStagedResolution(t *testing.T) {
+	tests := []struct {
+		name   string
+		staged []byte
+		code   int
+	}{
+		{"absent", nil, exitStagedBlueprintAbsent},
+		{"malformed", []byte(`{"workspace": "~/co`), exitStagedBlueprintMalformed},
+		{"null", []byte(`null`), exitStagedBlueprintMalformed},
+		{"no workspace", []byte(`{"access": "public", "terminal": "tmux"}`), exitStagedBlueprintMalformed},
+		{"unknown terminal", []byte(`{"access": "public", "terminal": "screen", "workspace": "~/code"}`), exitStagedBlueprintMalformed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tt.staged != nil {
+				if err := os.WriteFile(staging.ResolutionPathIn(root), tt.staged, 0o644); err != nil {
+					t.Fatalf("stage the resolution: %v", err)
+				}
+			}
+			box := &fakeBox{}
+			w := workspaceWiring{
+				blueprint:  staged(blueprint.Blueprint{Repos: []blueprint.Repo{{Name: "api", URL: "https://forge.test/api.git"}}}),
+				resolution: func() (staging.Resolution, error) { return stagedResolutionIn(root) },
+				command:    box,
+				root:       root,
+				boxHome:    boxHomeAt(t.TempDir()),
+			}
+			cmd := newWorkspaceCmd(w)
+			cmd.SetArgs([]string{"converge"})
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+			err := cmd.Execute()
+
+			if err == nil || !strings.Contains(err.Error(), "machine setup") {
+				t.Errorf("refusal = %v, want it to name machine setup", err)
+			}
+			if code := codeFromError(err); code != tt.code {
+				t.Errorf("exit code = %d, want %d", code, tt.code)
+			}
+			if len(box.calls) != 0 {
+				t.Errorf("a refused converge ran %v, want nothing", box.calls)
+			}
+		})
 	}
 }

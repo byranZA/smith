@@ -17,7 +17,7 @@
 # How boxes are reached, unless a blueprint or --access says otherwise.
 access: tailscale
 
-# The terminal substrate sessions run under.
+# The terminal substrate sessions run under. tmux is the only value.
 terminal: tmux
 
 # Where repo worktrees live on a box.

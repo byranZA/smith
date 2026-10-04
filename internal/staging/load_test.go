@@ -122,7 +122,7 @@ func TestLoadWordsTheTwoRefusalsApart(t *testing.T) {
 
 func TestLoadReadsTheDocumentTheWriterStages(t *testing.T) {
 	document := []byte("access: tailscale\n")
-	tree := Plan(document, blueprint.Blueprint{})
+	tree := Plan(document, blueprint.Blueprint{}, Resolution{})
 	root := stage(t, string(document))
 
 	if got := filepath.Join(root, filepath.Base(tree.Document.Path)); got != DocumentPathIn(root) {
@@ -194,7 +194,7 @@ func TestReadPlacementReadsEveryPlacementTheWriterStaged(t *testing.T) {
 		}},
 	}
 	root := t.TempDir()
-	tree := Plan(nil, b)
+	tree := Plan(nil, b, Resolution{})
 	for i, p := range tree.Placements {
 		stagePlacement(t, filepath.Join(root, strings.TrimPrefix(p.File.Path, Root)), fmt.Sprintf("bytes %d\n", i))
 	}

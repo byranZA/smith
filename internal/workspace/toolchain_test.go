@@ -60,7 +60,7 @@ func TestPlanToolchain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []Fragment
-			for _, unit := range Plan(tt.b, "/home/smith") {
+			for _, unit := range Plan(tt.b, resolved, "/home/smith") {
 				if unit.Step == Toolchain {
 					got = append(got, unit.Fragment)
 				}
@@ -87,7 +87,7 @@ func TestPlanToolchain(t *testing.T) {
 // reach back into the blueprint it was planned from.
 func TestPlanToolchainIsPure(t *testing.T) {
 	b := blueprint.Blueprint{Tools: map[string]string{"node": "20"}}
-	for _, unit := range Plan(b, "/home/smith") {
+	for _, unit := range Plan(b, resolved, "/home/smith") {
 		if unit.Step == Toolchain {
 			unit.Fragment.Tools["node"] = "22"
 		}
@@ -180,7 +180,7 @@ func operatorValue(ref string) (string, error) {
 func stageEnv(t *testing.T, root string, b blueprint.Blueprint) {
 	t.Helper()
 	sources := func(ref string) (string, error) { return "bytes of " + ref, nil }
-	tree, err := staging.Resolve(staging.Plan(nil, b), sources, operatorValue)
+	tree, err := staging.Resolve(staging.Plan(nil, b, staging.Resolution{}), sources, operatorValue)
 	if err != nil {
 		t.Fatalf("resolve the blueprint's env on the operator's machine: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestConvergeRefusesAVariableWithNoStagedValue(t *testing.T) {
 
 	var progress bytes.Buffer
 	env := Env{Command: box, StateRoot: t.TempDir()}
-	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
+	result, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
@@ -465,25 +465,11 @@ func TestPlanRepoToolchain(t *testing.T) {
 				Tools: map[string]string{"node": "22"},
 			}},
 		},
-		{
-			name: "the file follows the workspace root the blueprint overrides",
-			b: blueprint.Blueprint{Workspace: "~/code", Repos: []blueprint.Repo{{
-				Name:  "acme",
-				URL:   "git@example.com:acme.git",
-				Tools: map[string]string{"node": "22"},
-			}}},
-			want: []Fragment{{
-				Path:  "/home/smith/code/acme/mise.toml",
-				Dir:   "/home/smith/code/acme",
-				Mise:  "/home/smith/.local/bin/mise",
-				Tools: map[string]string{"node": "22"},
-			}},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []Fragment
-			for _, unit := range Plan(tt.b, "/home/smith") {
+			for _, unit := range Plan(tt.b, resolved, "/home/smith") {
 				if unit.Step == Toolchain && unit.Fragment.Dir != "" {
 					got = append(got, unit.Fragment)
 				}
@@ -503,6 +489,25 @@ func TestPlanRepoToolchain(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPlanPutsARepoToolchainUnderTheResolvedWorkspaceRoot(t *testing.T) {
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name:  "acme",
+		URL:   "git@example.com:acme.git",
+		Tools: map[string]string{"node": "22"},
+	}}}
+	code := staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/code"}
+
+	var got []string
+	for _, unit := range Plan(b, code, "/home/smith") {
+		if unit.Step == Toolchain && unit.Fragment.Dir != "" {
+			got = append(got, unit.Fragment.Path)
+		}
+	}
+	if want := []string{"/home/smith/code/acme/mise.toml"}; !slices.Equal(got, want) {
+		t.Errorf("Plan() repo toolchain paths = %q, want %q", got, want)
 	}
 }
 

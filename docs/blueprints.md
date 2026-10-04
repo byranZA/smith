@@ -89,16 +89,13 @@ It is resolved **per field**. A blueprint pinning `access` does not wipe the
 The built-in defaults are `access: public`, `terminal: tmux`,
 `workspace: ~/workspace`.
 
-### What setup applies today
+`terminal` is a one-value choice: `tmux` is the only value, and the terminal every session runs under. Any other value is refused by `blueprint check`.
 
-`blueprint check` resolves and shows every field, but not every resolved field
-reaches a box yet:
+### Every resolved field reaches the box
 
-- **`git`** and **`terminal`** — validated and shown, but not yet written to the
-  box.
-- **`workspace`** — the box reads it from the staged blueprint only, so a
-  workspace set only in your preferences does not reach the box.
-- **`provider`** — `machine create` resolves it down the full chain.
+`machine setup` resolves the chain on your machine and stages the result onto the box as the **staged resolution**, `/etc/smith/resolved.json`, beside the verbatim blueprint (see [Config staging](./on-box.md#config-staging)). On-box smith reads `access`, `terminal`, `workspace` and the git identity from there and resolves nothing itself, so the box acts on exactly what `blueprint check` showed you, including a `workspace` set only in your preferences. `provider` is not staged: it is `machine create`'s concern, resolved on your machine. A changed field reaches the box on the next `machine setup`.
+
+Changing `workspace` changes where clones and sessions land from then on. The clones under the old root stay where they are, and nothing reports them: the orphans step scans only the current root.
 
 ### The provider block replaces wholesale
 

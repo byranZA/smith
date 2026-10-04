@@ -39,7 +39,7 @@ func TestBoxPlacementPathDistinguishesADestinationFromItsEncoding(t *testing.T) 
 
 func TestPlanKeysABoxPlacementWhereTheReaderLooksForIt(t *testing.T) {
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:/home/op/.secrets/npmrc", To: "/home/smith/.npmrc"}}}
-	tree := Plan([]byte("access: public\n"), b)
+	tree := Plan([]byte("access: public\n"), b, Resolution{})
 	if len(tree.Placements) != 1 {
 		t.Fatalf("Plan() planned %d placements, want 1", len(tree.Placements))
 	}
@@ -49,8 +49,8 @@ func TestPlanKeysABoxPlacementWhereTheReaderLooksForIt(t *testing.T) {
 }
 
 func TestPlanKeysBothSpellingsOfABoxDestinationIdentically(t *testing.T) {
-	tilde := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:T", To: "~/.npmrc"}}})
-	absolute := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:T", To: "/home/smith/.npmrc"}}})
+	tilde := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:T", To: "~/.npmrc"}}}, Resolution{})
+	absolute := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:T", To: "/home/smith/.npmrc"}}}, Resolution{})
 	if tilde.Placements[0].File.Path != absolute.Placements[0].File.Path {
 		t.Errorf("~/.npmrc staged at %q but /home/smith/.npmrc at %q, want one key",
 			tilde.Placements[0].File.Path, absolute.Placements[0].File.Path)
@@ -68,7 +68,7 @@ func TestPlanGivesAPlacementItsDeclaredPerms(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:T", To: "/home/smith/.npmrc", Perms: tt.perms}}})
+			tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:T", To: "/home/smith/.npmrc", Perms: tt.perms}}}, Resolution{})
 			if got := tree.Placements[0].File.Mode; got != tt.want {
 				t.Errorf("placement mode = %q, want %q", got, tt.want)
 			}
@@ -80,7 +80,7 @@ func TestPlanGivesAPlacementItsDeclaredPerms(t *testing.T) {
 }
 
 func TestPlanAlwaysDeclaresThePlacementsDirectorySmithOwnedAt0700(t *testing.T) {
-	tree := Plan([]byte("access: public\n"), blueprint.Blueprint{})
+	tree := Plan([]byte("access: public\n"), blueprint.Blueprint{}, Resolution{})
 	var found bool
 	for _, d := range tree.Dirs {
 		if d.Path != PlacementsDir {
@@ -98,7 +98,7 @@ func TestPlanAlwaysDeclaresThePlacementsDirectorySmithOwnedAt0700(t *testing.T) 
 
 func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 	t.Setenv("NPM_TOKEN", "//registry.npmjs.org/:_authToken=s3cr3t")
-	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc"}}})
+	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc"}}}, Resolution{})
 
 	resolved, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 }
 
 func TestResolveNamesAReferenceItCannotResolve(t *testing.T) {
-	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:/home/op/.missing", To: "/home/smith/.npmrc"}}})
+	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:/home/op/.missing", To: "/home/smith/.npmrc"}}}, Resolution{})
 
 	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err == nil {
@@ -165,7 +165,7 @@ func TestPlanKeysARepoPlacementWhereTheReaderLooksForIt(t *testing.T) {
 		URL:        "git@github.com:acme/api.git",
 		Placements: []blueprint.Placement{{From: "file:/home/op/.env.api", To: ".env"}},
 	}}}
-	tree := Plan([]byte("access: public\n"), b)
+	tree := Plan([]byte("access: public\n"), b, Resolution{})
 	if len(tree.Placements) != 1 {
 		t.Fatalf("Plan() planned %d placements, want 1", len(tree.Placements))
 	}
@@ -187,7 +187,7 @@ func TestPlanDeclaresARepoScopedDirectorySmithOwnedAt0700(t *testing.T) {
 		URL:        "git@github.com:acme/api.git",
 		Placements: []blueprint.Placement{{From: "env:T", To: ".env"}},
 	}}}
-	tree := Plan(nil, b)
+	tree := Plan(nil, b, Resolution{})
 	want := map[string]bool{"/etc/smith/placements/repo": false, "/etc/smith/placements/repo/api": false}
 	for _, d := range tree.Dirs {
 		if _, ok := want[d.Path]; !ok {
@@ -214,7 +214,7 @@ func TestPlanKeepsRepoAndBoxPlacementsOfOneDestinationApart(t *testing.T) {
 			Placements: []blueprint.Placement{{From: "env:T", To: ".env"}},
 		}},
 	}
-	tree := Plan(nil, b)
+	tree := Plan(nil, b, Resolution{})
 	if len(tree.Placements) != 2 {
 		t.Fatalf("Plan() planned %d placements, want both scopes", len(tree.Placements))
 	}
@@ -230,7 +230,7 @@ func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
 			Name:       "api",
 			Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: ".env"}},
 		}},
-	})
+	}, Resolution{})
 
 	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err == nil {
@@ -251,7 +251,7 @@ func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
 }
 
 func TestResolveNamesAnUnsetEnvironmentVariable(t *testing.T) {
-	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: "~/.npmrc"}}})
+	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: "~/.npmrc"}}}, Resolution{})
 
 	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
 	if err == nil {

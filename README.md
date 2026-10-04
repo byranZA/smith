@@ -81,9 +81,8 @@ works, so a half-ready ACL never locks you out.
 **Blueprints.** A blueprint (`~/.smith/blueprints/`) declares what kind of box
 smith builds; preferences (`~/.smith/preferences.yaml`) hold what belongs to you
 across every box. Both are optional — every field has a default, and `access`
-also has a flag, resolved **flag → blueprint → preference → default**. Not every
-resolved field reaches the box yet: see [what setup applies
-today](docs/blueprints.md#what-setup-applies-today). `smith blueprint check`
+also has a flag, resolved **flag → blueprint → preference → default**, and
+every resolved field reaches the box. `smith blueprint check`
 validates them offline and prints the resolved configuration with the source of
 each value.
 `smith init` writes commented starters for both.

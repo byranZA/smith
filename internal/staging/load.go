@@ -18,26 +18,28 @@ const documentFile = "blueprint.yaml"
 // writer of the staged config, so it is the only fix for either.
 const restage = "run `smith machine setup` from the operator's machine"
 
-// AbsentError reports that no blueprint is staged on this box. It is a
-// provisioning gap rather than a user error — the box was never given a
-// document, or was given one before the config-staging stage existed — which
-// is why it is a type of its own and worded apart from a malformed one.
+// AbsentError reports that a file on-box smith needs — the staged blueprint or
+// the staged resolution — is not staged on this box. It is a provisioning gap
+// rather than a user error — the box was never given one, or was given one by
+// a smith that predates it — which is why it is a type of its own and worded
+// apart from a malformed one.
 type AbsentError struct {
-	// Path is where the staged blueprint was looked for.
+	// Path is where the staged file was looked for.
 	Path string
 }
 
 // Error implements error.
 func (e *AbsentError) Error() string {
-	return fmt.Sprintf("no blueprint is staged on this box at %s: %s to stage one", e.Path, restage)
+	return fmt.Sprintf("no %s is staged on this box at %s: %s to stage one", artifact(e.Path), e.Path, restage)
 }
 
-// MalformedError reports that the staged blueprint cannot be trusted: it is
-// not YAML at all, or it does not fit the schema. On-box smith runs the same
-// strict parser as the operator's, so a document that passed on the way out
-// and fails here has been truncated or hand-edited on the box.
+// MalformedError reports that a staged file cannot be trusted: a blueprint
+// that is not YAML or does not fit the schema, or a resolution that is not
+// JSON. On-box smith runs the same strict parser as the operator's, so a file
+// that passed on the way out and fails here has been truncated or hand-edited
+// on the box.
 type MalformedError struct {
-	// Path is the staged blueprint that could not be read.
+	// Path is the staged file that could not be read.
 	Path string
 	// Err is the parse refusal, naming every problem and its line.
 	Err error
@@ -45,7 +47,16 @@ type MalformedError struct {
 
 // Error implements error.
 func (e *MalformedError) Error() string {
-	return fmt.Sprintf("the staged blueprint at %s is malformed: %v\n%s to re-stage it", e.Path, e.Err, restage)
+	return fmt.Sprintf("the staged %s at %s is malformed: %v\n%s to re-stage it", artifact(e.Path), e.Path, e.Err, restage)
+}
+
+// artifact names the staged file at path the way the operator knows it, so a
+// refusal reads the same whichever of the two it is about.
+func artifact(path string) string {
+	if filepath.Base(path) == resolutionFile {
+		return "resolution"
+	}
+	return "blueprint"
 }
 
 // Unwrap gives up the parse refusal underneath.

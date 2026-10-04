@@ -3,12 +3,14 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // forge is the remote a declared repo is cloned from. No test reaches it: the
@@ -86,7 +88,7 @@ func TestConvergeClonesAfterThePlacementsThatAuthenticateIt(t *testing.T) {
 
 	var progress bytes.Buffer
 	env := Env{Command: watcher, StateRoot: root}
-	if _, err := Converge(context.Background(), env, Plan(b, home), &progress); err != nil {
+	if _, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress); err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 
@@ -113,16 +115,16 @@ func TestConvergeNamesARepoFromItsURL(t *testing.T) {
 	}
 }
 
-// TestConvergeClonesUnderTheDeclaredWorkspaceRoot proves the blueprint's
-// workspace field overrides the default root the clones land under.
-func TestConvergeClonesUnderTheDeclaredWorkspaceRoot(t *testing.T) {
+func TestConvergeClonesUnderTheResolvedWorkspaceRoot(t *testing.T) {
 	home := t.TempDir()
 	box := newBox()
 	box.hasMise = true
-	b := declaresRepo("acme")
-	b.Workspace = "~/code"
+	code := staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/code"}
+	env := Env{Command: box, StateRoot: t.TempDir()}
 
-	convergeOnBox(t, box, home, b)
+	if _, err := Converge(context.Background(), env, Plan(declaresRepo("acme"), code, home), io.Discard); err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
 
 	if want := filepath.Join(home, "code", "acme", "repo.git"); !box.ran(want) {
 		t.Errorf("the stage ran %v, want the clone at %s", box.calls, want)

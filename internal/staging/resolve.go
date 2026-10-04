@@ -108,8 +108,8 @@ func (v UnresolvedValue) scope() string {
 }
 
 // Resolve fills in everything the operator's machine must read before the box
-// is touched: each placement's bytes, and the value of every variable the
-// blueprint's env declares. It returns a tree of its own rather than filling in
+// is touched: each placement's bytes, the value of every variable the
+// blueprint's env declares, and the rendered resolved configuration. It returns a tree of its own rather than filling in
 // the one it was given.
 //
 // Every reference resolves on the operator's machine and nowhere else.
@@ -149,8 +149,13 @@ func Resolve(tree Tree, source, value Resolver) (Tree, error) {
 	if err != nil {
 		return Tree{}, err
 	}
+	resolution, err := tree.Resolution.Values.bytes()
+	if err != nil {
+		return Tree{}, err
+	}
 	tree.Placements = placements
 	tree.Env.File.Bytes = data
+	tree.Resolution.File.Bytes = resolution
 	return tree, nil
 }
 

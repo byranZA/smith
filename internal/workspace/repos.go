@@ -12,9 +12,6 @@ import (
 
 // Where a declared repo lands on the box.
 const (
-	// defaultWorkspace is the root the clones live under when the blueprint
-	// overrides it with nothing.
-	defaultWorkspace = "~/workspace"
 	// cloneDir is the bare clone's directory inside a repo's own directory,
 	// with worktrees/ beside it for the sessions a later stage stands up.
 	cloneDir = "repo.git"

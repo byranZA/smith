@@ -29,6 +29,27 @@ func stagedBlueprint() (blueprint.Blueprint, error) {
 	return b, nil
 }
 
+// resolutionReader reads the resolution staged beside the blueprint: the
+// fixed-key fields the operator's machine resolved. It is passed into the
+// workspace command rather than called inside it, so a test drives the real
+// command against a resolution of its own.
+type resolutionReader func() (staging.Resolution, error)
+
+// stagedResolution reads the resolution `machine setup` staged on this box.
+func stagedResolution() (staging.Resolution, error) { return stagedResolutionIn(staging.Root) }
+
+// stagedResolutionIn reads the resolution staged under root. A box staged
+// before the resolution existed, or one whose resolution cannot be parsed,
+// travels out untouched so it keeps the exit code its kind is owed; there is
+// no fallback to defaults, because a box resolves nothing itself.
+func stagedResolutionIn(root string) (staging.Resolution, error) {
+	r, err := staging.LoadResolution(root)
+	if err != nil {
+		return staging.Resolution{}, fmt.Errorf("read the resolution staged on this box: %w", err)
+	}
+	return r, nil
+}
+
 // pathResolver locates a directory on the box a verb acts against. It is
 // passed into the workspace command rather than read inside it, so a test
 // drives the real command against a directory of its own.
@@ -46,6 +67,9 @@ type workspaceWiring struct {
 	// blueprint reads the blueprint staged on this box, for a verb running
 	// here.
 	blueprint stagedResolver
+	// resolution reads the resolution staged on this box, which the
+	// workspace root is taken from.
+	resolution resolutionReader
 	// home locates the operator's config home, where a box name is resolved
 	// to the target it was proven at.
 	home homeResolver
@@ -110,12 +134,16 @@ func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 	}
 }
 
-// converge runs the stage on this box: read what was staged, plan the ordered
-// units of work, and apply them, streaming progress to the operator's terminal
-// as each step finishes. The final summary follows it, and a run with a failed
+// converge runs the stage on this box: read the staged blueprint and the
+// staged resolution, plan the ordered units of work, and apply them, streaming
+// progress to the operator's terminal as each step finishes. The final summary follows it, and a run with a failed
 // step exits non-zero having already said which one.
 func (w workspaceWiring) converge(cmd *cobra.Command) error {
 	b, err := w.blueprint()
+	if err != nil {
+		return err
+	}
+	r, err := w.resolution()
 	if err != nil {
 		return err
 	}
@@ -125,7 +153,7 @@ func (w workspaceWiring) converge(cmd *cobra.Command) error {
 	}
 	stdout := cmd.OutOrStdout()
 	env := workspace.Env{Command: w.command, StateRoot: w.root, Owner: workspace.SmithUser{}}
-	result, err := workspace.Converge(cmd.Context(), env, workspace.Plan(b, home), stdout)
+	result, err := workspace.Converge(cmd.Context(), env, workspace.Plan(b, r, home), stdout)
 	if err != nil {
 		return fmt.Errorf("converge this box's workspace: %w", err)
 	}

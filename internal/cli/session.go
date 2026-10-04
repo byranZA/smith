@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/byranZA/smith/internal/blueprint"
-	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/inventory"
 	"github.com/byranZA/smith/internal/relay"
@@ -19,25 +18,39 @@ import (
 	"github.com/byranZA/smith/internal/staging"
 )
 
+// boxConfig is what a session verb running here acts on: the repos the staged
+// blueprint declares, with the placements each asks for, and every fixed-key
+// field from the staged resolution beside it. Nothing in it is resolved on the
+// box: the operator's machine resolved it once, and `blueprint check` showed it.
+type boxConfig struct {
+	// Repos are the repos the staged blueprint declares.
+	Repos []blueprint.Repo
+	// Resolution is the configuration the operator's machine resolved.
+	Resolution staging.Resolution
+}
+
 // boxResolver reads the configuration the box smith is running on was built
 // from. It is passed into the session command rather than called inside it, so
 // a test drives the real command against a temp workspace.
-type boxResolver func() (config.Resolved, error)
+type boxResolver func() (boxConfig, error)
 
-// stagedBoxConfig reads what `machine setup` staged on this box and resolves
-// it the same way the operator's own `blueprint check` does, so the workspace
-// root and the declared repos a session verb acts on are the ones the operator
-// would be shown. A box with nothing staged, or a staged document that cannot
-// be trusted, is refused with the exit code its kind is owed.
-//
-// The operator's preferences are not consulted: they live on the operator's
-// machine, and a box is deliberately given no config home of its own.
-func stagedBoxConfig() (config.Resolved, error) {
-	b, err := staging.Load(staging.Root)
+// stagedBoxConfig reads what `machine setup` staged on this box.
+func stagedBoxConfig() (boxConfig, error) { return stagedBoxConfigIn(staging.Root) }
+
+// stagedBoxConfigIn reads the blueprint and the resolution staged under root.
+// A box with either one absent, or holding one that cannot be trusted, is
+// refused with the exit code its kind is owed; there is no fallback to
+// defaults, because a box resolves nothing itself.
+func stagedBoxConfigIn(root string) (boxConfig, error) {
+	b, err := staging.Load(root)
 	if err != nil {
-		return config.Resolved{}, fmt.Errorf("read the blueprint staged on this box: %w", err)
+		return boxConfig{}, fmt.Errorf("read the blueprint staged on this box: %w", err)
 	}
-	return config.Resolve(config.Overrides{}, &b, nil), nil
+	r, err := stagedResolutionIn(root)
+	if err != nil {
+		return boxConfig{}, err
+	}
+	return boxConfig{Repos: b.Repos, Resolution: r}, nil
 }
 
 // newSessionCmd builds `smith session` and its subcommands from the wiring
@@ -67,7 +80,8 @@ func newSessionCmd(w sessionWiring) *cobra.Command {
 // because which one a verb uses is decided by the operator's own command line
 // and not at wiring time.
 type sessionWiring struct {
-	// box reads the blueprint staged on this box, for a verb running here.
+	// box reads the blueprint and the resolution staged on this box, for a
+	// verb running here.
 	box boxResolver
 	// home locates the operator's config home, where a box name is resolved
 	// to the target it was proven at.
@@ -144,15 +158,15 @@ func (w sessionWiring) target(box string) (string, error) {
 }
 
 // localEnv resolves what a verb running on this machine acts against: the
-// blueprint staged here, paired with the commands smith drives the box with.
-// A staged blueprint that is absent or cannot be trusted travels out untouched
-// so it keeps the exit code its kind is owed.
+// blueprint and resolution staged here, paired with the commands smith drives
+// the box with. A staged file that is absent or cannot be trusted travels out
+// untouched so it keeps the exit code its kind is owed.
 func (w sessionWiring) localEnv(cmd *cobra.Command, connect session.Execer) (session.Env, error) {
-	resolved, err := w.box()
+	box, err := w.box()
 	if err != nil {
 		return session.Env{}, err
 	}
-	env, err := sessionEnv(resolved, w.root, w.git, w.tmux, connect)
+	env, err := sessionEnv(box, w.root, w.git, w.tmux, connect)
 	if err != nil {
 		return session.Env{}, reportInvalid(cmd, err)
 	}
@@ -492,21 +506,21 @@ func writeOneRemoved(cmd *cobra.Command, removed session.Removal) error {
 	return nil
 }
 
-// sessionEnv turns the box's resolved configuration into what a session verb
+// sessionEnv turns the box's staged configuration into what a session verb
 // runs against: an absolute workspace root and the repos the blueprint
 // declares, paired with the commands smith drives the box with.
-func sessionEnv(resolved config.Resolved, root string, git, tmux session.Runner, connect session.Execer) (session.Env, error) {
-	workspace, err := boxPath(resolved.Workspace.Value)
+func sessionEnv(box boxConfig, root string, git, tmux session.Runner, connect session.Execer) (session.Env, error) {
+	workspace, err := boxPath(box.Resolution.Workspace)
 	if err != nil {
 		return session.Env{}, err
 	}
 	return session.Env{
 		Workspace: workspace,
-		Repos:     declaredRepos(resolved.Repos),
+		Repos:     declaredRepos(box.Repos),
 		Git:       git,
 		Tmux:      tmux,
 		Exec:      connect,
-		Placer:    stagedPlacer{root: root, repos: resolved.Repos},
+		Placer:    stagedPlacer{root: root, repos: box.Repos},
 	}, nil
 }
 

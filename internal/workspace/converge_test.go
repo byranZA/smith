@@ -39,14 +39,30 @@ type fakeBox struct {
 	// unreachable fails the git commands of one repo, keyed by its url, the
 	// way a forge that is down for that repo alone does.
 	unreachable map[string]bool
+	// gitConfig is the smith user's global git config, key by key.
+	gitConfig map[string]string
+	// included is what an included file declares after gitConfig, seen only by a read that follows includes.
+	included map[string]string
+	// gitConfigErr fails a write to the global git config, as an unwritable ~/.gitconfig does.
+	gitConfigErr error
+	// gitReadErr fails a read of the global git config, with gitReadStderr as git's diagnostic.
+	gitReadErr    error
+	gitReadStderr string
 }
+
+// exitStatus is a process error carrying the status a command exited with.
+type exitStatus int
+
+func (e exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+func (e exitStatus) ExitCode() int { return int(e) }
 
 // newBox is a box holding nothing: no packages, no mise, and no clones.
 func newBox() *fakeBox {
-	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}}
+	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}, gitConfig: map[string]string{}, included: map[string]string{}}
 }
 
-func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
 	argv := append([]string{name}, args...)
 	f.calls = append(f.calls, argv)
 	line := strings.Join(argv, " ")
@@ -54,6 +70,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return fmt.Errorf("%s: command not found", name)
 	}
 	switch {
+	case strings.HasPrefix(line, "git config --global"):
+		return f.config(args[2:], stdout, stderr)
 	case strings.Contains(line, "dpkg-query"):
 		pkg := argv[len(argv)-1]
 		if !f.installed[pkg] {
@@ -108,6 +126,41 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return f.aptErr
 	}
 	return fmt.Errorf("unexpected command %q", line)
+}
+
+// config answers a `git config --global` read or write against the box's global git config.
+func (f *fakeBox) config(args []string, stdout, stderr io.Writer) error {
+	includes := len(args) > 0 && args[0] == "--includes"
+	if includes {
+		args = args[1:]
+	}
+	if len(args) == 2 && args[0] == "--get" {
+		if f.gitReadErr != nil {
+			if _, err := io.WriteString(stderr, f.gitReadStderr); err != nil {
+				return fmt.Errorf("write canned git config diagnostic: %w", err)
+			}
+			return f.gitReadErr
+		}
+		value, ok := f.gitConfig[args[1]]
+		if v, in := f.included[args[1]]; includes && in {
+			value, ok = v, true
+		}
+		if !ok {
+			return exitStatus(1)
+		}
+		if _, err := io.WriteString(stdout, value+"\n"); err != nil {
+			return fmt.Errorf("write canned git config value: %w", err)
+		}
+		return nil
+	}
+	if len(args) != 2 {
+		return fmt.Errorf("unexpected git config arguments %q", args)
+	}
+	if f.gitConfigErr != nil {
+		return f.gitConfigErr
+	}
+	f.gitConfig[args[0]] = args[1]
+	return nil
 }
 
 // isMise reports whether a command is an invocation of mise, by the plain name

@@ -37,7 +37,7 @@ func convergeBlueprint(t *testing.T, b blueprint.Blueprint, root, home string) (
 	t.Helper()
 	var progress bytes.Buffer
 	env := Env{Command: box(), StateRoot: root}
-	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
+	result, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
@@ -50,7 +50,7 @@ func convergeAs(t *testing.T, b blueprint.Blueprint, root, home string, owner Ow
 	t.Helper()
 	var progress bytes.Buffer
 	env := Env{Command: box(), StateRoot: root, Owner: owner}
-	result, err := Converge(context.Background(), env, Plan(b, home), &progress)
+	result, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
@@ -280,7 +280,7 @@ func TestConvergeWritesPlacementsBeforeTheCommandsThatNeedThem(t *testing.T) {
 	}
 
 	var progress bytes.Buffer
-	if _, err := Converge(context.Background(), Env{Command: watcher, StateRoot: root}, Plan(b, home), &progress); err != nil {
+	if _, err := Converge(context.Background(), Env{Command: watcher, StateRoot: root}, Plan(b, resolved, home), &progress); err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 

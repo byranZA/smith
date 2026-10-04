@@ -82,7 +82,7 @@ func documentOrFatal(t *testing.T, dir, name string) *config.Document {
 // will not resolve.
 func stagedOrFatal(t *testing.T, dir, name string) *stagedConfig {
 	t.Helper()
-	staged, err := resolveStagedConfig(documentOrFatal(t, dir, name), io.Discard)
+	staged, err := resolveStagedConfig(documentOrFatal(t, dir, name), staging.Resolution{}, io.Discard)
 	if err != nil {
 		t.Fatalf("resolveStagedConfig(%q) err = %v, want it to resolve", name, err)
 	}
@@ -204,7 +204,7 @@ func TestResolveStagedConfigRefusesAnUnresolvableSourceAsAGateRejection(t *testi
 	writeBlueprint(t, dir, "acme", "placements:\n  - from: file:"+dir+"/missing\n    to: /home/smith/.npmrc\n")
 	var errOut bytes.Buffer
 
-	staged, err := resolveStagedConfig(documentOrFatal(t, dir, "acme"), &errOut)
+	staged, err := resolveStagedConfig(documentOrFatal(t, dir, "acme"), staging.Resolution{}, &errOut)
 	if err == nil {
 		t.Fatal("resolveStagedConfig() err = nil, want the unresolvable source refused")
 	}
@@ -262,5 +262,48 @@ func TestStageConfigStagesTheResolvedEnvBeforeTheWorkspaceStageRelays(t *testing
 	}
 	if strings.Contains(staged, "env:GH_TOKEN") {
 		t.Errorf("staged env = %q, want the value rather than the reference the document keeps", staged)
+	}
+}
+
+func TestSetupStagesTheResolvedConfigurationBesideTheBlueprint(t *testing.T) {
+	dir := t.TempDir()
+	writePreferences(t, dir, "workspace: ~/code\ngit:\n  user_name: Ada\n  user_email: ada@example.com\nprovider:\n  create: [hcloud, server, create]\n")
+	writeBlueprint(t, dir, "acme", "access: public\n")
+	ssh := &setupSSH{tailnetIP: "100.92.14.7"}
+
+	args := append(tailscaleKeyRef(t), "--access", "tailscale", "--blueprint", "acme", "root@203.0.113.10")
+	_, stderr, code := runSetup(t, dir, ssh, args...)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	want := `{
+  "access": "tailscale",
+  "terminal": "tmux",
+  "workspace": "~/code",
+  "git": {
+    "user_name": "Ada",
+    "user_email": "ada@example.com"
+  }
+}
+`
+	if got, ok := ssh.stagedAt(staging.ResolutionPath); !ok || got != want {
+		t.Errorf("staged resolution =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestSetupStillStagesTheBlueprintByteForByte(t *testing.T) {
+	dir := t.TempDir()
+	document := "# acme\nworkspace: ~/code\n"
+	writeBlueprint(t, dir, "acme", document)
+	ssh := &setupSSH{}
+
+	_, stderr, code := runSetup(t, dir, ssh, "--blueprint", "acme", "root@203.0.113.10")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+
+	if got, ok := ssh.stagedAt(staging.DocumentPath); !ok || got != document {
+		t.Errorf("staged blueprint = %q, want %q", got, document)
 	}
 }

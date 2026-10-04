@@ -7,10 +7,10 @@ import "fmt"
 // identity fields and a box placement can collide on.
 const gitconfigPath = "~/.gitconfig"
 
-// GitConflicts refuses an identity and a box placement that would both write
-// ~/.gitconfig. Identity fields mean smith writes that file itself, so a box
-// placement to it would land on top of what smith wrote, in whichever order
-// the two happened to run. Only the operator knows which they meant, so the
+// GitConflicts refuses an identity and a box placement that would both claim
+// ~/.gitconfig. Identity fields mean smith sets the identity in that file, so a
+// box placement to it would overwrite the whole file and wipe the keys smith
+// set. Only the operator knows which they meant, so the
 // pair is refused rather than resolved.
 //
 // It takes the identity and the placements rather than a whole document,

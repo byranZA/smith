@@ -122,14 +122,15 @@ func newRootCmd() *cobra.Command {
 		version: resolveVersion(),
 		skew:    operatorSkew(),
 	}), newWorkspaceCmd(workspaceWiring{
-		blueprint: stagedBlueprint,
-		home:      userConfigHome,
-		command:   connection.System(),
-		root:      staging.Root,
-		boxHome:   boxHomeDir,
-		ssh:       connection.System(),
-		version:   resolveVersion(),
-		skew:      operatorSkew(),
+		blueprint:  stagedBlueprint,
+		resolution: stagedResolution,
+		home:       userConfigHome,
+		command:    connection.System(),
+		root:       staging.Root,
+		boxHome:    boxHomeDir,
+		ssh:        connection.System(),
+		version:    resolveVersion(),
+		skew:       operatorSkew(),
 	}), newInitCmd(userConfigHome, connection.System()), newLoopCmd(systemLoop()), newRepoCmd(userConfigHome, connection.System(), currentDir), newVersionCmd())
 	return root
 }

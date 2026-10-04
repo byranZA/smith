@@ -193,3 +193,14 @@ func ValidateAccess(mode string) error {
 	}
 	return errors.New(report[0].Message)
 }
+
+// ValidateTerminal refuses a terminal smith does not recognise, so a reader of
+// a resolved value — the resolution staged on a box — refuses it in the same
+// words and against the same set as a blueprint declaring it.
+func ValidateTerminal(terminal string) error {
+	report := choice("terminal", terminal, terminals)
+	if len(report) == 0 {
+		return nil
+	}
+	return errors.New(report[0].Message)
+}

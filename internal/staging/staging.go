@@ -148,6 +148,9 @@ type Tree struct {
 	// Env is the blueprint's env: the references it declares, and the file
 	// their resolved values are staged in.
 	Env EnvFile
+	// Resolution is the operator's resolved configuration, staged beside the
+	// verbatim document so the box acts on exactly what was resolved.
+	Resolution ResolutionFile
 }
 
 // Plan derives the staged tree from the bytes of the operator's blueprint and
@@ -159,7 +162,11 @@ type Tree struct {
 // nothing and could only lose a field the operator wrote. The declaration is
 // taken as well because a placement's staged path is a function of its scope
 // and destination, which only the parsed form carries.
-func Plan(document []byte, b blueprint.Blueprint) Tree {
+//
+// The resolved configuration is taken too, and staged beside the document
+// rather than written into it: the document stays the operator's own, and the
+// values only their machine can resolve travel next to it.
+func Plan(document []byte, b blueprint.Blueprint, r Resolution) Tree {
 	tree := Tree{
 		Dirs: []Dir{
 			{Path: Root, Mode: rootMode, Owner: rootOwner},
@@ -173,6 +180,7 @@ func Plan(document []byte, b blueprint.Blueprint) Tree {
 		},
 	}
 	tree.Env = plannedEnv(b)
+	tree.Resolution = plannedResolution(r)
 	if len(b.Placements) > 0 {
 		tree.Dirs = append(tree.Dirs, scopeDir(boxDirIn(Root)))
 	}

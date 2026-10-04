@@ -90,6 +90,7 @@ first phase that changes the box. If any fails, setup is refused with
 - `blueprint.yaml` — the blueprint, verbatim.
 - `placements/` — the bytes of every placement.
 - `env.json` — the resolved value of every `env` variable.
+- `resolved.json` — the staged resolution: the `access`, `terminal`, `workspace` and git identity `smith blueprint check` shows you, each resolved on your machine down flag → blueprint → preferences → default. It holds values only, never the provider, and is root-owned and world-readable. On-box smith reads these fields from here and resolves nothing itself, so a `workspace` set only in your preferences still reaches the box.
 
 The bytes travel over stdin, never in an argument. A file whose digest already
 matches is left alone, and a placement you drop from the blueprint is deleted

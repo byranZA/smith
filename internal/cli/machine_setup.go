@@ -155,7 +155,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			// reference that will not resolve refuses the run with the box
 			// untouched, rather than landing a base layer the operator then has
 			// to discover is missing its credentials.
-			staged, err := resolveStagedConfig(cfg.doc, stderr)
+			staged, err := resolveStagedConfig(cfg.doc, cfg.resolution, stderr)
 			if err != nil {
 				return err
 			}
@@ -233,10 +233,12 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 
 // setupConfig is what setup reads from the operator's config home before it
 // reaches the box: the blueprint it is built from, nil when none was named,
-// and the access mode resolved down the precedence chain with its origin.
+// the access mode resolved down the precedence chain with its origin, and the
+// resolved fixed-key fields the box is staged with.
 type setupConfig struct {
-	doc    *config.Document
-	access config.Value
+	doc        *config.Document
+	access     config.Value
+	resolution staging.Resolution
 }
 
 // loadSetupConfig reads the named blueprint and the operator's preferences and
@@ -262,7 +264,22 @@ func loadSetupConfig(home config.Home, accessFlag, blueprintName string) (setupC
 		b = &doc.Blueprint
 	}
 	resolved := config.Resolve(config.Overrides{Access: accessFlag}, b, &prefs.Declared)
-	return setupConfig{doc: doc, access: resolved.Access}, nil
+	return setupConfig{doc: doc, access: resolved.Access, resolution: resolutionToStage(resolved)}, nil
+}
+
+// resolutionToStage is the resolved configuration as the box is staged with it:
+// the value of every fixed-key field but the provider, with the origins left on
+// the operator's machine where `blueprint check` shows them.
+func resolutionToStage(r config.Resolved) staging.Resolution {
+	return staging.Resolution{
+		Access:    r.Access.Value,
+		Terminal:  r.Terminal.Value,
+		Workspace: r.Workspace.Value,
+		Git: staging.Identity{
+			UserName:  r.Git.UserName.Value,
+			UserEmail: r.Git.UserEmail.Value,
+		},
+	}
 }
 
 // stagedConfig is the operator's blueprint resolved and ready to go onto the
@@ -277,7 +294,8 @@ type stagedConfig struct {
 
 // resolveStagedConfig resolves every reference the blueprint setup read
 // declares on the operator's machine: each placement's source, and the value
-// of every variable its env exports, at the box scope and inside each repo.
+// of every variable its env exports, at the box scope and inside each repo. The
+// resolved configuration rides along, to be staged beside the document.
 // It takes no connection and reaches no box, so a refusal here cannot have
 // created or modified a byte of /etc/smith.
 //
@@ -299,11 +317,11 @@ type stagedConfig struct {
 //
 // A run naming no blueprint resolves nothing and stages nothing: the box keeps
 // whatever it already holds, and the flag-only path survives.
-func resolveStagedConfig(doc *config.Document, stderr io.Writer) (*stagedConfig, error) {
+func resolveStagedConfig(doc *config.Document, resolution staging.Resolution, stderr io.Writer) (*stagedConfig, error) {
 	if doc == nil {
 		return nil, nil
 	}
-	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve, blueprint.Value)
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), secret.Resolve, blueprint.Value)
 	if err != nil {
 		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
 	}
