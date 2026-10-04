@@ -10,6 +10,8 @@ package gitidentity
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 
@@ -34,20 +36,48 @@ type Runner interface {
 // the identity only fills in a starter the operator can still edit by hand.
 func Global(ctx context.Context, git Runner) blueprint.Git {
 	return blueprint.Git{
-		UserName:  strings.TrimSpace(Value(ctx, git, "user.name")),
-		UserEmail: strings.TrimSpace(Value(ctx, git, "user.email")),
+		UserName:  starterValue(ctx, git, "user.name"),
+		UserEmail: starterValue(ctx, git, "user.email"),
 	}
 }
 
-// Value returns key from the global git config exactly as git holds it, or
-// empty when git does not answer with one. Files the global config includes
-// are followed, and git answers with the last declaration it reads, so this is
-// the value git itself commits with; scoping to --global alone would skip an
-// identity declared in an included file.
-func Value(ctx context.Context, git Runner, key string) string {
-	var stdout bytes.Buffer
-	if err := git.Run(ctx, "git", []string{"config", "--global", "--includes", "--get", key}, nil, &stdout, io.Discard); err != nil {
+// starterValue is key from the global git config trimmed for the starter, or
+// empty when git does not answer with one for any reason.
+func starterValue(ctx context.Context, git Runner, key string) string {
+	value, err := Value(ctx, git, key)
+	if err != nil {
 		return ""
 	}
-	return strings.TrimSuffix(stdout.String(), "\n")
+	return strings.TrimSpace(value)
+}
+
+// unsetStatus is the status `git config --get` exits with for a key no config
+// file sets.
+const unsetStatus = 1
+
+// Value returns key from the global git config exactly as git holds it, or
+// empty when no config file sets it. Files the global config includes are
+// followed, and git answers with the last declaration it reads, so this is the
+// value git itself commits with; scoping to --global alone would skip an
+// identity declared in an included file.
+//
+// Any other way git fails to answer is an error carrying git's own diagnostic,
+// and a cancelled ctx is reported as such rather than read as an unset key.
+func Value(ctx context.Context, git Runner, key string) (string, error) {
+	var stdout, stderr bytes.Buffer
+	err := git.Run(ctx, "git", []string{"config", "--global", "--includes", "--get", key}, nil, &stdout, &stderr)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", fmt.Errorf("read %s from the global git config: %w", key, ctxErr)
+	}
+	if err == nil {
+		return strings.TrimSuffix(stdout.String(), "\n"), nil
+	}
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) && exit.ExitCode() == unsetStatus {
+		return "", nil
+	}
+	if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
+		return "", fmt.Errorf("read %s from the global git config: %w: %s", key, err, diagnostic)
+	}
+	return "", fmt.Errorf("read %s from the global git config: %w", key, err)
 }

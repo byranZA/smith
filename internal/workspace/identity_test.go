@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -139,6 +140,42 @@ func TestConvergeIdentityReportsAFailedWrite(t *testing.T) {
 	}
 	if report := result.Report(); !strings.Contains(report, "identity") {
 		t.Errorf("Report() = %q, want it to name the identity step", report)
+	}
+}
+
+func TestConvergeIdentityFailsOnAnUnexpectedReadBeforeWriting(t *testing.T) {
+	box := newBox()
+	box.gitReadErr = exitStatus(128)
+	box.gitReadStderr = "fatal: bad config line 3 in file /home/smith/.gitconfig\n"
+	result := convergeIdentity(t, box, ada)
+
+	o := result.Outcomes[0]
+	if !result.Failed() || o.Step != Identity || o.Err == nil {
+		t.Fatalf("outcome = %+v, want the identity step failed on the read", o)
+	}
+	for _, want := range []string{"user.name", "bad config line 3"} {
+		if !strings.Contains(o.Err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", o.Err, want)
+		}
+	}
+	if len(box.gitConfig) != 0 {
+		t.Errorf("git config = %v, want nothing written after a failed read", box.gitConfig)
+	}
+}
+
+func TestConvergeIdentityPropagatesCancellation(t *testing.T) {
+	box := newBox()
+	box.gitReadErr = exitStatus(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := setIdentity(ctx, box, ada, io.Discard)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("setIdentity() error = %v, want %v", err, context.Canceled)
+	}
+	if len(box.gitConfig) != 0 {
+		t.Errorf("git config = %v, want nothing written after cancellation", box.gitConfig)
 	}
 }
 

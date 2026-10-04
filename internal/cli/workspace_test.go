@@ -17,6 +17,9 @@ import (
 	"github.com/byranZA/smith/internal/staging"
 )
 
+// errUnsetKey is how git config --get exits for a key nothing sets.
+var errUnsetKey error = relayExit(1)
+
 // fakeBox stands in for the box the workspace stage runs on: it records the
 // argv of every command and answers the package probe as a box that holds
 // nothing installed.
@@ -38,7 +41,7 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 	case name == "git" && strings.HasPrefix(line, "config --global --includes --get"):
 		value, ok := f.gitConfig[args[len(args)-1]]
 		if !ok {
-			return errors.New("exit status 1")
+			return errUnsetKey
 		}
 		_, err := io.WriteString(stdout, value+"\n")
 		return err

@@ -48,14 +48,25 @@ type fakeBox struct {
 	// gitConfigErr fails a write to the global git config the way a locked
 	// or unwritable ~/.gitconfig does.
 	gitConfigErr error
+	// gitReadErr fails a read of the global git config the way a malformed
+	// ~/.gitconfig does, with gitReadStderr as git's diagnostic.
+	gitReadErr    error
+	gitReadStderr string
 }
+
+// exitStatus is a process error carrying the status a command exited with.
+type exitStatus int
+
+func (e exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+func (e exitStatus) ExitCode() int { return int(e) }
 
 // newBox is a box holding nothing: no packages, no mise, and no clones.
 func newBox() *fakeBox {
 	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}, gitConfig: map[string]string{}, included: map[string]string{}}
 }
 
-func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
 	argv := append([]string{name}, args...)
 	f.calls = append(f.calls, argv)
 	line := strings.Join(argv, " ")
@@ -64,7 +75,7 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 	}
 	switch {
 	case strings.HasPrefix(line, "git config --global"):
-		return f.config(args[2:], stdout)
+		return f.config(args[2:], stdout, stderr)
 	case strings.Contains(line, "dpkg-query"):
 		pkg := argv[len(argv)-1]
 		if !f.installed[pkg] {
@@ -124,18 +135,24 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 // config answers a `git config --global` read or write against the box's
 // global git config, letting a read that follows includes see the included
 // file's later declarations.
-func (f *fakeBox) config(args []string, stdout io.Writer) error {
+func (f *fakeBox) config(args []string, stdout, stderr io.Writer) error {
 	includes := len(args) > 0 && args[0] == "--includes"
 	if includes {
 		args = args[1:]
 	}
 	if len(args) == 2 && args[0] == "--get" {
+		if f.gitReadErr != nil {
+			if _, err := io.WriteString(stderr, f.gitReadStderr); err != nil {
+				return fmt.Errorf("write canned git config diagnostic: %w", err)
+			}
+			return f.gitReadErr
+		}
 		value, ok := f.gitConfig[args[1]]
 		if v, in := f.included[args[1]]; includes && in {
 			value, ok = v, true
 		}
 		if !ok {
-			return errors.New("exit status 1")
+			return exitStatus(1)
 		}
 		if _, err := io.WriteString(stdout, value+"\n"); err != nil {
 			return fmt.Errorf("write canned git config value: %w", err)

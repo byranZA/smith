@@ -38,11 +38,16 @@ func declaredKeys(id staging.Identity) []gitKey {
 // because smith does not own that file: anything else in it survives. A file
 // that config includes after its own keys outranks them, so each write is read
 // back the way git commits: a key the include still overrides fails the step
-// rather than reporting an identity git does not use.
+// rather than reporting an identity git does not use. A read that fails other
+// than for an unset key fails the step before anything is written.
 func setIdentity(ctx context.Context, run Runner, id staging.Identity, progress io.Writer) (string, error) {
 	var set, held []string
 	for _, k := range declaredKeys(id) {
-		if gitidentity.Value(ctx, run, k.name) == k.value {
+		current, err := gitidentity.Value(ctx, run, k.name)
+		if err != nil {
+			return "", fmt.Errorf("check %s in the smith user's global git config: %w", k.name, err)
+		}
+		if current == k.value {
 			held = append(held, k.name)
 			continue
 		}
@@ -50,7 +55,11 @@ func setIdentity(ctx context.Context, run Runner, id staging.Identity, progress 
 		if err := run.Run(ctx, "git", args, nil, progress, progress); err != nil {
 			return "", fmt.Errorf("set %s in the smith user's global git config: %w", k.name, err)
 		}
-		if got := gitidentity.Value(ctx, run, k.name); got != k.value {
+		got, err := gitidentity.Value(ctx, run, k.name)
+		if err != nil {
+			return "", fmt.Errorf("read back %s from the smith user's global git config: %w", k.name, err)
+		}
+		if got != k.value {
 			return "", fmt.Errorf("set %s in the smith user's global git config, but git still commits with %q: a file that config includes overrides it", k.name, got)
 		}
 		set = append(set, k.name)
