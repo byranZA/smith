@@ -69,6 +69,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PROMPT_FILE = HERE / "ralph-prompt.md"
+HITL_NOTE_FILE = HERE / "ralph-hitl-note.md"
 LOG_FILE = HERE / "ralph.log"
 
 READY_LABEL = "ready-for-agent"   # AFK — an agent may pick it up
@@ -306,8 +307,7 @@ def build_prompt(issue_num: int, issue_title: str, spec_num: int) -> str:
             .replace("{{SPEC_NUMBER}}", str(spec_num)))
 
 
-HITL_NOTE = ("\n\nThis is an interactive HITL session — pause and ask the human "
-             "whenever a decision needs their input.")
+HITL_NOTE = "\n\n" + HITL_NOTE_FILE.read_text(encoding="utf-8").strip()
 
 
 def _headless_cmd(agent: str, prompt: str, model: str | None,
