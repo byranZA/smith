@@ -94,9 +94,6 @@ The built-in defaults are `access: public`, `terminal: tmux`,
 `blueprint check` resolves and shows every field, but not every resolved field
 reaches a box yet:
 
-- **`access`** — `machine setup` takes it from its own `--access` flag alone,
-  which defaults to `public`. A blueprint or preference `access: tailscale` is
-  shown by `check` but not acted on: pass `--access tailscale` to setup.
 - **`git`** and **`terminal`** — validated and shown, but not yet written to the
   box.
 - **`workspace`** — the box reads it from the staged blueprint only, so a

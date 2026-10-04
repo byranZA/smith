@@ -14,7 +14,7 @@ func TestConvergeWorkspaceRelaysTheStageToTheBox(t *testing.T) {
 	ssh := &fakeSSHRelay{stdout: "workspace: 1 step converged\n"}
 	var out, errBuf bytes.Buffer
 
-	if err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "0.2.0", stagedOrFatal(t, t.TempDir(), ""), &out, &errBuf); err != nil {
+	if err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "0.2.0", nil, &out, &errBuf); err != nil {
 		t.Fatalf("convergeWorkspace() err = %v, want nil", err)
 	}
 	if len(ssh.calls) != 0 {

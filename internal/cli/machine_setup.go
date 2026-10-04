@@ -30,10 +30,12 @@ const smithLogin = "smith"
 
 // newSetupCmd builds `smith machine setup <login>@<host>`. It connects, runs the
 // preflight gate, and on a pass runs the ordered mutating phases, streaming their
-// live progress. --access selects the access layer: public (default) leaves
-// hardened SSH open on the public IP; tailscale joins the box to the operator's
-// tailnet as a tag:smith node and closes public SSH once a live tailnet probe
-// proves reach. --blueprint names the blueprint the box is built from, read
+// live progress. The access layer resolves like any other field — --access,
+// then the blueprint's, then the preferences', then public — and is read before
+// the box is reached, because it decides whether Tailscale is prepared first.
+// public leaves hardened SSH open on the public IP; tailscale joins the box to
+// the operator's tailnet as a tag:smith node and closes public SSH once a live
+// tailnet probe proves reach. --blueprint names the blueprint the box is built from, read
 // through the config home resolve locates and staged onto the box. --name names
 // the box, stamped onto its marker so the box records what the operator calls
 // it and registered in the inventory so they can type it instead of an address.
@@ -48,7 +50,7 @@ const smithLogin = "smith"
 // reachable by from now on and registering it — the address setup used to print
 // once and throw away.
 func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
-	var accessMode, authKeyRef, blueprintName, boxName, boxTarget, smithVersion string
+	var accessFlag, authKeyRef, blueprintName, boxName, boxTarget, smithVersion string
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
@@ -62,21 +64,31 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if accessMode != "public" && accessMode != "tailscale" {
-				return fmt.Errorf("invalid --access %q: want public or tailscale", accessMode)
+			if accessFlag != "" {
+				if err := blueprint.ValidateAccess(accessFlag); err != nil {
+					return reportInvalid(cmd, fmt.Errorf("--access %w", err))
+				}
 			}
 			host := hostOf(target)
 			ctx := cmd.Context()
 			// The config home is located up front — locating it reads nothing —
 			// because a successful setup registers the box in the inventory
-			// inside it. It is read only when there is a blueprint to stage, and
-			// created only by that registration, so an operator with no config
-			// home can still set a box up.
+			// inside it. It is created only by that registration, so an
+			// operator with no config home can still set a box up.
 			home, err := resolve()
 			if err != nil {
 				return err
 			}
 			stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
+
+			cfg, err := loadSetupConfig(home, accessFlag, blueprintName)
+			if err != nil {
+				return refuseSetup(stderr, err)
+			}
+			accessMode := cfg.access.Value
+			if _, err := fmt.Fprintf(stdout, "access: %s\n", cfg.access); err != nil {
+				return fmt.Errorf("write access: %w", err)
+			}
 
 			conn := connection.New(target, exec)
 			script := shipped.New(conn, "bootstrap.sh", bootstrap.Script)
@@ -144,7 +156,7 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			// reference that will not resolve refuses the run with the box
 			// untouched, rather than landing a base layer the operator then has
 			// to discover is missing its credentials.
-			staged, err := resolveStagedConfig(home, blueprintName, stderr)
+			staged, err := resolveStagedConfig(cfg.doc, stderr)
 			if err != nil {
 				return err
 			}
@@ -205,7 +217,8 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			return concludeSetup(ctx, exec, home, conclusion, stdout, stderr)
 		},
 	}
-	cmd.Flags().StringVar(&accessMode, "access", "public", "how the box is reached: public or tailscale")
+	cmd.Flags().StringVar(&accessFlag, "access", "",
+		"how the box is reached: public or tailscale; omitted, the blueprint's, then preferences', then public")
 	cmd.Flags().StringVar(&authKeyRef, "tailscale-auth-key", "",
 		"reference to the Tailscale auth key for --access=tailscale (env:VAR or file:/path); prompts if omitted on a terminal")
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
@@ -219,6 +232,40 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return cmd
 }
 
+// setupConfig is what setup reads from the operator's config home before it
+// reaches the box: the blueprint it is built from, nil when none was named,
+// and the access mode resolved down the precedence chain with its origin.
+type setupConfig struct {
+	doc    *config.Document
+	access config.Value
+}
+
+// loadSetupConfig reads the named blueprint and the operator's preferences and
+// resolves the access mode from them and the --access flag, flag first. An
+// absent preferences file falls through to smith's defaults, so a config home
+// is still optional; a malformed one, or a blueprint that will not read, is an
+// error the caller refuses the run with before the box is touched.
+func loadSetupConfig(home config.Home, accessFlag, blueprintName string) (setupConfig, error) {
+	var doc *config.Document
+	if blueprintName != "" {
+		d, err := config.LoadDocument(home, blueprintName)
+		if err != nil {
+			return setupConfig{}, fmt.Errorf("read blueprint: %w", err)
+		}
+		doc = &d
+	}
+	prefs, err := config.LoadPreferences(home)
+	if err != nil {
+		return setupConfig{}, fmt.Errorf("read preferences: %w", err)
+	}
+	var b *blueprint.Blueprint
+	if doc != nil {
+		b = &doc.Blueprint
+	}
+	resolved := config.Resolve(config.Overrides{Access: accessFlag}, b, &prefs.Declared)
+	return setupConfig{doc: doc, access: resolved.Access}, nil
+}
+
 // stagedConfig is the operator's blueprint resolved and ready to go onto the
 // box: the tree the staging stage converges — document, placement bytes and
 // resolved env — and the document it was read from,
@@ -229,10 +276,9 @@ type stagedConfig struct {
 	path string
 }
 
-// resolveStagedConfig reads the named blueprint from the operator's config home
-// and resolves every reference it declares on the operator's machine: each
-// placement's source, and the value of every variable its env exports, at the
-// box scope and inside each repo. It takes no connection and reaches no box, so
+// resolveStagedConfig resolves every reference the blueprint setup read
+// declares on the operator's machine: each placement's source, and the value
+// of every variable its env exports, at the box scope and inside each repo. It takes no connection and reaches no box, so
 // a refusal here cannot have created or modified a byte of /etc/smith.
 //
 // Both grammars resolve here and neither resolves on the box. env:GH_TOKEN
@@ -253,13 +299,9 @@ type stagedConfig struct {
 //
 // A run naming no blueprint resolves nothing and stages nothing: the box keeps
 // whatever it already holds, and the flag-only path survives.
-func resolveStagedConfig(home config.Home, blueprintName string, stderr io.Writer) (*stagedConfig, error) {
-	if blueprintName == "" {
+func resolveStagedConfig(doc *config.Document, stderr io.Writer) (*stagedConfig, error) {
+	if doc == nil {
 		return nil, nil
-	}
-	doc, err := config.LoadDocument(home, blueprintName)
-	if err != nil {
-		return nil, refuseSetup(stderr, fmt.Errorf("read blueprint: %w", err))
 	}
 	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint), secret.Resolve, blueprint.Value)
 	if err != nil {
