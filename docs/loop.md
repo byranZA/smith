@@ -123,6 +123,5 @@ The prompt takes these placeholders, filled in for each task:
 | --- | --- |
 | `{{TASK_NUMBER}}` | the task's issue number |
 | `{{TASK_TITLE}}` | the task's title |
-| `{{SPEC_NUMBER}}` | the number of the spec the run was started on |
 
-A prompt holding any other `{{…}}` is refused, naming it. The built-in prompt uses only the task: the agent finds the spec through the task's `parent:` line in `gh issue view`, so a task carries its own context.
+A prompt holding any other `{{…}}` is refused, naming it.

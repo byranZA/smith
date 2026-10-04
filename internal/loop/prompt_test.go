@@ -10,18 +10,18 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-func TestRenderFillsInTheTaskAndItsSpec(t *testing.T) {
-	prompt := loop.Prompt("Do #{{TASK_NUMBER}} ({{TASK_TITLE}}) of spec #{{SPEC_NUMBER}}; close #{{TASK_NUMBER}}.")
+func TestRenderFillsInTheTask(t *testing.T) {
+	prompt := loop.Prompt("Do #{{TASK_NUMBER}} ({{TASK_TITLE}}); close #{{TASK_NUMBER}}.")
 
-	got := prompt.Render(tracker.Task{Number: 43, Title: "Loop: run"}, 42)
+	got := prompt.Render(tracker.Task{Number: 43, Title: "Loop: run"})
 
-	if want := "Do #43 (Loop: run) of spec #42; close #43."; got != want {
+	if want := "Do #43 (Loop: run); close #43."; got != want {
 		t.Errorf("Render() = %q, want %q", got, want)
 	}
 }
 
 func TestTheBuiltInPromptNamesTheTaskAndPointsToItsParent(t *testing.T) {
-	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, 42)
+	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"})
 
 	for _, want := range []string{"#43", "Loop: run", "`parent:`"} {
 		if !strings.Contains(got, want) {
@@ -34,7 +34,7 @@ func TestTheBuiltInPromptNamesTheTaskAndPointsToItsParent(t *testing.T) {
 }
 
 func TestAnInteractivePromptCarriesTheInteractiveNoteAfterTheTask(t *testing.T) {
-	got := loop.Prompt("Do #{{TASK_NUMBER}}.").Interactive().Render(tracker.Task{Number: 43}, 42)
+	got := loop.Prompt("Do #{{TASK_NUMBER}}.").Interactive().Render(tracker.Task{Number: 43})
 
 	if !strings.HasPrefix(got, "Do #43.\n") || !strings.Contains(got, "A human is at the terminal") {
 		t.Errorf("interactive prompt = %q, want the task followed by the interactive note", got)
@@ -43,7 +43,7 @@ func TestAnInteractivePromptCarriesTheInteractiveNoteAfterTheTask(t *testing.T) 
 
 func TestAnEjectedPromptReplacesTheBuiltInWithItsPlaceholdersFilled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prompt.md")
-	if err := os.WriteFile(path, []byte("Do #{{TASK_NUMBER}} of #{{SPEC_NUMBER}}. Run make check before closing.\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("Do #{{TASK_NUMBER}}. Run make check before closing.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,7 +52,7 @@ func TestAnEjectedPromptReplacesTheBuiltInWithItsPlaceholdersFilled(t *testing.T
 		t.Fatalf("LoadPrompt() error = %v", err)
 	}
 
-	if got, want := prompt.Render(tracker.Task{Number: 43}, 42), "Do #43 of #42. Run make check before closing.\n"; got != want {
+	if got, want := prompt.Render(tracker.Task{Number: 43}), "Do #43. Run make check before closing.\n"; got != want {
 		t.Errorf("Render() = %q, want %q", got, want)
 	}
 }
@@ -80,7 +80,7 @@ func TestAnEjectedCopyOfTheBuiltInRendersTheSameAsTheBuiltIn(t *testing.T) {
 		t.Fatalf("LoadPrompt() error = %v", err)
 	}
 
-	if got, want := prompt.Interactive().Render(task, 42), loop.BuiltinPrompt().Interactive().Render(task, 42); got != want {
+	if got, want := prompt.Interactive().Render(task), loop.BuiltinPrompt().Interactive().Render(task); got != want {
 		t.Errorf("ejected copy renders\n%s\nwant\n%s", got, want)
 	}
 }
@@ -93,10 +93,24 @@ func TestAnUnknownPlaceholderInAnEjectedPromptIsRefused(t *testing.T) {
 
 	_, err := loop.LoadPrompt(path)
 
-	want := []string{path, "{{ISSUE_URL}}", "{{TASK_NUMBER}}, {{TASK_TITLE}}, {{SPEC_NUMBER}}"}
+	want := []string{path, "{{ISSUE_URL}}", "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}\n"}
 	for _, w := range want {
-		if err == nil || !strings.Contains(err.Error(), w) {
+		if err == nil || !strings.Contains(err.Error()+"\n", w) {
 			t.Errorf("LoadPrompt() error = %v, want one naming %q", err, w)
 		}
+	}
+}
+
+func TestAnEjectedPromptHoldingTheSpecPlaceholderIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prompt.md")
+	if err := os.WriteFile(path, []byte("Do #{{TASK_NUMBER}} of #{{SPEC_NUMBER}}.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := loop.LoadPrompt(path)
+
+	want := path + ": unknown placeholder {{SPEC_NUMBER}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}"
+	if err == nil || err.Error() != want {
+		t.Errorf("LoadPrompt() error = %v, want %q", err, want)
 	}
 }

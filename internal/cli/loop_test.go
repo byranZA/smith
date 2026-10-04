@@ -579,7 +579,7 @@ func TestLoopRunHandsTheAgentTheEjectedPromptAndLeavesItUnchanged(t *testing.T) 
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
 	w, _ := repoWith(t, gh, claude, "")
-	content := "Work issue **#{{TASK_NUMBER}} of #{{SPEC_NUMBER}}. Run make check before closing.\n"
+	content := "Work issue **#{{TASK_NUMBER}} ({{TASK_TITLE}}). Run make check before closing.\n"
 	path := ejectPrompt(t, w, content)
 
 	_, stderr, code := runLoopRun(t, w, "42")
@@ -588,7 +588,7 @@ func TestLoopRunHandsTheAgentTheEjectedPromptAndLeavesItUnchanged(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Work issue **#43 of #42. Run make check before closing.\n"
+	want := "Work issue **#43 (Task 43). Run make check before closing.\n"
 	if code != 0 || len(claude.commands) != 1 || claude.commands[0].Args[len(claude.commands[0].Args)-1] != want || string(after) != content {
 		t.Errorf("exit %d, stderr %q, ran %v, prompt file %q; want the agent handed %q and the prompt file unchanged", code, stderr, claude.commands, after, want)
 	}
@@ -602,7 +602,7 @@ func TestLoopRunRefusesAnUnknownPlaceholderBeforeAnyAgentRuns(t *testing.T) {
 
 	_, stderr, code := runLoopRun(t, w, "42")
 
-	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "{{TASK_NUMBER}}, {{TASK_TITLE}}, {{SPEC_NUMBER}}") || idle.runs != 0 || len(gh.ran) != 0 {
+	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}\n") || idle.runs != 0 || len(gh.ran) != 0 {
 		t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming the placeholder and the known ones, no agent and no gh", code, stderr, idle.runs, gh.ran)
 	}
 }

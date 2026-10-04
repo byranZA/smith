@@ -82,7 +82,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		if runs >= l.Limits.MaxIterations {
 			return Outcome{Remaining: remaining, Capped: true}, nil
 		}
-		if err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next, spec), l.Options)); err != nil {
+		if err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options)); err != nil {
 			return Outcome{}, err
 		}
 		runs++
@@ -130,7 +130,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining}, nil
 	}
-	if err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next, spec), l.Options)); err != nil {
+	if err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	after, err := l.Tracker.Spec(ctx, spec)
