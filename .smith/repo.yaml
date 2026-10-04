@@ -12,4 +12,4 @@ model: opus
 
 # How hard the agent thinks: low, medium or high. Unset, the agent uses its
 # own default.
-effort: high
+effort: medium
