@@ -2,9 +2,12 @@ package staging
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/byranZA/smith/internal/blueprint"
 )
 
 // ResolutionPath is where the operator's resolved configuration is staged on
@@ -69,7 +72,8 @@ func ResolutionPathIn(root string) string {
 }
 
 // LoadResolution reads the resolution staged under root — /etc/smith on a real
-// box. An absent file is refused as an *AbsentError and an unparsable one as a
+// box. An absent file is refused as an *AbsentError, and one that is unparsable,
+// missing a resolved field or carrying a value smith does not recognise as a
 // *MalformedError, both naming `machine setup`, exactly as the staged
 // blueprint's refusals are. Nothing falls back to a default: a box silently
 // acting on a default the operator did not resolve is the bug this file fixes.
@@ -86,7 +90,33 @@ func LoadResolution(root string) (Resolution, error) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return Resolution{}, &MalformedError{Path: path, Err: err}
 	}
+	if err := r.validate(); err != nil {
+		return Resolution{}, &MalformedError{Path: path, Err: err}
+	}
 	return r, nil
+}
+
+// validate refuses a resolution the operator's machine could not have staged:
+// one missing a field every resolution carries, or carrying a value outside
+// the set smith recognises for it. A missing workspace matters most, since a
+// repo path joined under an empty one lands in the working directory. The git
+// identity is optional, whole or in part, because nobody has to declare one.
+func (r Resolution) validate() error {
+	var problems []error
+	for _, f := range []struct{ name, value string }{
+		{"access", r.Access}, {"terminal", r.Terminal}, {"workspace", r.Workspace},
+	} {
+		if f.value == "" {
+			problems = append(problems, fmt.Errorf("%s is missing", f.name))
+		}
+	}
+	if err := blueprint.ValidateAccess(r.Access); err != nil {
+		problems = append(problems, fmt.Errorf("access: %w", err))
+	}
+	if err := blueprint.ValidateTerminal(r.Terminal); err != nil {
+		problems = append(problems, fmt.Errorf("terminal: %w", err))
+	}
+	return errors.Join(problems...)
 }
 
 // plannedResolution is the resolved configuration as the staged tree carries

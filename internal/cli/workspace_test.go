@@ -426,6 +426,9 @@ func TestWorkspaceConvergeRefusesABoxWithNoUsableStagedResolution(t *testing.T) 
 	}{
 		{"absent", nil, exitStagedBlueprintAbsent},
 		{"malformed", []byte(`{"workspace": "~/co`), exitStagedBlueprintMalformed},
+		{"null", []byte(`null`), exitStagedBlueprintMalformed},
+		{"no workspace", []byte(`{"access": "public", "terminal": "tmux"}`), exitStagedBlueprintMalformed},
+		{"unknown terminal", []byte(`{"access": "public", "terminal": "screen", "workspace": "~/code"}`), exitStagedBlueprintMalformed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

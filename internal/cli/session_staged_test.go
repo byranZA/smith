@@ -63,6 +63,9 @@ func TestSessionVerbsRefuseABoxWithNoUsableStagedResolution(t *testing.T) {
 	}{
 		{"absent", nil, exitStagedBlueprintAbsent, []string{"no resolution is staged", "machine setup"}},
 		{"malformed", []byte(`{"workspace": "~/co`), exitStagedBlueprintMalformed, []string{"staged resolution", "is malformed", "machine setup"}},
+		{"null", []byte(`null`), exitStagedBlueprintMalformed, []string{"staged resolution", "is malformed", "workspace", "machine setup"}},
+		{"no workspace", []byte(`{"access": "public", "terminal": "tmux"}`), exitStagedBlueprintMalformed, []string{"staged resolution", "workspace is missing", "machine setup"}},
+		{"unknown access", []byte(`{"access": "vpn", "terminal": "tmux", "workspace": "~/code"}`), exitStagedBlueprintMalformed, []string{"staged resolution", `"vpn"`, "machine setup"}},
 	}
 	verbs := [][]string{
 		{"start", "--repo", "smith", "--branch", "spec-42", "--detach"},

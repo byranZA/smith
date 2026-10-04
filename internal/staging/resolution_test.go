@@ -187,3 +187,62 @@ func resolvedTreeOf(t *testing.T, r Resolution) Tree {
 	}
 	return tree
 }
+
+func TestLoadResolutionRefusesAnIncompleteOrInvalidResolutionAsMalformed(t *testing.T) {
+	tests := []struct {
+		name  string
+		data  string
+		names string
+	}{
+		{"null", `null`, "workspace"},
+		{"empty object", `{}`, "workspace"},
+		{"missing workspace", `{"access": "public", "terminal": "tmux"}`, "workspace"},
+		{"null workspace", `{"access": "public", "terminal": "tmux", "workspace": null}`, "workspace"},
+		{"empty workspace", `{"access": "public", "terminal": "tmux", "workspace": ""}`, "workspace"},
+		{"missing access", `{"terminal": "tmux", "workspace": "~/code"}`, "access"},
+		{"missing terminal", `{"access": "public", "workspace": "~/code"}`, "terminal"},
+		{"unknown access", `{"access": "vpn", "terminal": "tmux", "workspace": "~/code"}`, `"vpn"`},
+		{"unknown terminal", `{"access": "public", "terminal": "screen", "workspace": "~/code"}`, `"screen"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := stageResolution(t, []byte(tt.data))
+
+			_, err := LoadResolution(root)
+			var malformed *MalformedError
+			if !errors.As(err, &malformed) {
+				t.Fatalf("LoadResolution() err = %v, want a *MalformedError", err)
+			}
+			for _, want := range []string{"machine setup", "resolution", tt.names} {
+				if !strings.Contains(malformed.Error(), want) {
+					t.Errorf("LoadResolution() err = %q, want it to name %q", malformed, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadResolutionAcceptsAnOmittedOrPartialIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want Identity
+	}{
+		{"omitted", `{"access": "public", "terminal": "tmux", "workspace": "~/code"}`, Identity{}},
+		{"name only", `{"access": "public", "terminal": "tmux", "workspace": "~/code", "git": {"user_name": "Ada"}}`, Identity{UserName: "Ada"}},
+		{"email only", `{"access": "public", "terminal": "tmux", "workspace": "~/code", "git": {"user_email": "ada@example.com"}}`, Identity{UserEmail: "ada@example.com"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := stageResolution(t, []byte(tt.data))
+
+			got, err := LoadResolution(root)
+			if err != nil {
+				t.Fatalf("LoadResolution() error = %v", err)
+			}
+			if got.Git != tt.want {
+				t.Errorf("LoadResolution().Git = %+v, want %+v", got.Git, tt.want)
+			}
+		})
+	}
+}
