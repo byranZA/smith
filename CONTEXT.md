@@ -249,12 +249,7 @@ pointer is enough to reproduce a box. Optional, like the blueprint itself
 _Avoid_: settings, defaults, user config, global config.
 
 **Starter**:
-A commented config file `smith init` writes into an empty config home — a starter preferences
-file and a starter blueprint — valid as written and resolving to built-in defaults until the
-operator uncomments something. Distinct from the **worked examples** in the docs, which are filled
-in end to end to show the whole surface; a starter is the blank to fill, an example is the filled
-one to read. Written only where no file exists, never over one. `smith repo init` writes the
-repo file's starter the same way.
+A commented config file `smith init` writes into an empty config home — a starter preferences file and a starter blueprint — valid as written and resolving to built-in defaults until the operator uncomments something. Distinct from the **worked examples** in the docs, which are filled in end to end to show the whole surface; a starter is the blank to fill, an example is the filled one to read. Written only where no file exists, never over one. `smith repo init` writes the repo file's starter the same way.
 _Avoid_: template (reserved for an adapter's command lines), skeleton, default config.
 
 **Resolved configuration**:
