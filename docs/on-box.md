@@ -75,6 +75,41 @@ that came out of this stage is a box the relay is known to work against. (The
 initial probe deliberately declares no version; a probe that declared one would
 be refused by the very skew it exists to detect.)
 
+## Config staging
+
+The `config` stage is how a blueprint reaches the box. It runs only when
+`machine setup` is given `--blueprint`.
+
+**References resolve on your machine, before anything changes.** Every `file:`
+placement and every `env` reference is read on your machine first, before the
+first phase that changes the box. If any fails, setup is refused with
+`setup refused:` and every failure listed at once, and the box is untouched.
+
+**What lands on the box**, all under `/etc/smith/`:
+
+- `blueprint.yaml` — the blueprint, verbatim.
+- `placements/` — the bytes of every placement.
+- `env.json` — the resolved value of every `env` variable.
+
+The bytes travel over stdin, never in an argument. A file whose digest already
+matches is left alone, and a placement you drop from the blueprint is deleted
+from `placements/` and reported. Nothing outside `/etc/smith/` is touched: a
+changed placement reaches a worktree on its next `session start`.
+
+The resolved values sit on the box **in plaintext**, readable by the smith user
+([ADR-0009](./adr/0009-provisioned-secrets-sit-in-plaintext.md)).
+
+**A box remembers its blueprint.** The marker records the blueprint a box was
+built from. A later `machine setup` of that box without `--blueprint` is
+refused:
+
+```
+this box was built from the blueprint "acme": re-run with --blueprint acme, or the staged config would come to describe a box that no longer matches it
+```
+
+A box whose marker records no blueprint takes a setup without `--blueprint`,
+and stages nothing.
+
 ## `machine upgrade`
 
 ```sh
@@ -170,7 +205,8 @@ neither `machine setup`'s install stage nor `machine upgrade` writes the marker.
 ## Contributing: a dev build cannot install
 
 A build from a checkout — `make build`, or `go build ./cmd/smith` — reports its
-version as `dev`. There is no `dev` release, so there is no asset for a box to
+version as `dev`, unless the checkout is clean and exactly at a release tag, in
+which case Go stamps that tag's version. There is no `dev` release, so there is no asset for a box to
 fetch, and smith **refuses to guess**: silently resolving "latest" would install
 a version you never chose.
 

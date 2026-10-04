@@ -16,7 +16,8 @@ Every verb runs in the repo it is invoked from: the loop works the current worki
 
 The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed and authenticated.
 
-- **A spec** is an issue labelled `spec`. Its tasks are its sub-issues, in the order its `## Tasks` checklist lists them.
+- **A spec** is an issue labelled `spec`, named as `42`, `#42` or its issue URL. A URL for an issue in a different repo from the one `gh` sees in the working directory is refused.
+- **Its tasks** are its sub-issues. The ones its `## Tasks` checklist lists come first, in that order, then any other sub-issue in the order GitHub holds them.
 - **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue labelled `spec` is a nested spec, never a task.
 - **Blockers** are a task's GitHub "blocked by" links, plus any issue named in its `## Blocked by` section. A task is **available** when it is open, for an agent, and every blocker is closed.
 
@@ -41,7 +42,7 @@ Each setting names where its value came from. A kind of task with nothing in it 
 
 ## `smith loop run`
 
-Works the spec unattended until no task is available, then reports why it stopped:
+Prints the same settings block as `list`, then works the spec unattended until no task is available. As it goes, it writes `smith: handing #N <title> to the agent` to stderr before each agent run, and `smith: the agent on #N ended with a failure: …` when one fails. At the end it reports why it stopped:
 
 - **`spec #N complete`**: every task is closed. Exit 0.
 - **No task is available for an agent**: what remains is blocked, for a human, or not ready. Exit 1.
@@ -57,7 +58,7 @@ An agent that exits with a failure is reported and the loop carries on: whether 
 
 ### `--interactive`
 
-Hands the next available task to one agent run attached to your terminal, then stops. The prompt gains a note asking the agent to check its plan with you, ask rather than guess, and show you the result before it commits and closes the task. Approvals are the agent's own, so you answer them as you would in any session. The limits play no part. It exits 0 when the task ends closed, and 1 when it is still open.
+Hands the next available task to one agent run attached to your terminal, then stops. The prompt gains a note asking the agent to check its plan with you, ask rather than guess, and show you the result before it commits and closes the task. Approvals are the agent's own, so you answer them as you would in any session. The limits play no part. It reports `task #N closed` and exits 0, or `task #N still open` and exits 1. With no task available it runs no agent, prints the same stop report as `run`, and exits 0 only if the spec is complete.
 
 Use it for the first run on a new repo or prompt, or for a task you want to steer.
 
@@ -70,6 +71,8 @@ An **agent adapter** is smith's built-in knowledge of one coding-agent CLI. The 
 | `claude` (default) | `claude --permission-mode auto --print <prompt>` | `--effort` |
 | `codex` | `codex exec --yolo <prompt>` | `--config model_reasoning_effort=…` |
 | `pi` | `pi --print <prompt>` | `--thinking` |
+
+An unattended `claude` run also sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, so the run ends when the agent's work does.
 
 > **An unattended run asks you nothing.** `codex --yolo` bypasses both its approvals and its sandbox. Run the unattended loop where an agent with your shell is acceptable: a box, a container, or a machine you would trust it on.
 
@@ -85,7 +88,7 @@ model: opus
 effort: high
 ```
 
-`smith repo init` writes a commented starter, filling in any value you give as a flag. It never overwrites an existing file.
+`smith repo init` writes a commented starter, filling in any value you give as a flag, and reports `created <path>`. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`.
 
 Each setting resolves on its own, most specific first:
 
@@ -93,7 +96,7 @@ Each setting resolves on its own, most specific first:
 2. The repo file.
 3. The built-in default: `claude`, and the agent's own model and effort.
 
-The file is validated strictly: an unknown key is refused with its line, and so are an unknown agent and an effort off the scale. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The file is validated strictly: an unknown key is refused with its line. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
 
 ## The loop prompt
 

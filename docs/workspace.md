@@ -40,13 +40,26 @@ needs:
 4. **Repos** — each declared repo is cloned bare into
    `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is
    in scope for a token-authenticated clone.
-
-**The placements, packages and toolchain steps are built today.** The repos
-step lands in the slice that follows.
+5. **Orphans** — the workspace root is scanned for repos the blueprint no
+   longer declares. This runs on every converge, even when the blueprint
+   declares no repos at all.
 
 No worktree is created and no repo-scoped placement is materialized: those
 happen on `smith session start`. A converged box is one you can immediately
 start a session on, not one that already has a checkout.
+
+## Placements
+
+Each box-scoped placement is written from the bytes `machine setup` staged, and
+its `mode` decides what happens to a file the box already has:
+
+- **`once`** keeps an existing file untouched (`kept <path>, which this box
+  owns`), so a credential you rotated on the box by hand survives.
+- **`converge`** rewrites a file whose content differs from the staged bytes.
+
+Whatever the mode, a file whose content already matches has its permissions and
+ownership brought back to what the placement declares (`corrected the
+permissions of <path>`), without moving its modification time.
 
 ## Packages
 
@@ -70,7 +83,8 @@ than aborting.
 ## The toolchain
 
 `mise` gives the box its version-pinned runtimes. smith installs it as a single
-binary — not an apt package — on a box that does not already have one.
+binary — not an apt package, but from `https://mise.run` into `~/.local/bin/mise`
+— on a box that does not already have one on `PATH`.
 
 smith declares versions by writing a config file it **fully owns** and then
 running `mise install`. It never runs `mise use`, which would write into
@@ -104,11 +118,19 @@ GITHUB_TOKEN = "ghp_…"
 NODE_ENV = "production"
 ```
 
-Each `env` value is a reference, resolved on the box into the value the
-fragment exports; a reference that does not resolve fails the step by the
-variable's name rather than exporting the reference as though it were a token.
-The fragment holds resolved values, so it is written `0600` and owned by the
-smith user.
+Each `env` value is a reference, and it is resolved **on your machine**, not
+the box: `machine setup --blueprint` reads `env:GITHUB_TOKEN` from your shell
+and `file:` paths from your disk, and stages the values to
+`/etc/smith/env.json` on the box. A reference that does not resolve refuses
+setup before anything reaches the box (`N reference(s) will not resolve, so
+nothing was staged:`, then one line per variable). The toolchain step only
+reads the staged values; a variable with none fails the step by name
+(`export <VAR>: …`) rather than falling back to whatever the box holds.
+
+So **`smith workspace converge` alone does not pick up a changed value**: after
+rotating a token, re-run `smith machine setup <box> --blueprint <name>` to
+re-stage it. The fragment holds resolved values, so it is written `0600` and
+owned by the smith user.
 
 The file is written only when its bytes differ, so a converged re-run moves no
 modification time — and a version the blueprint has changed rewrites it and
@@ -134,6 +156,26 @@ Invocation is **`mise exec`, never `mise activate`** — `activate` does not fir
 in the non-interactive and daemon-started shells smith and its agents run in.
 Shims on `PATH` are the courtesy for a human who SSHes in.
 
+## Repos
+
+A repo the box does not have yet is cloned bare into
+`<workspace>/<repo>/repo.git`. The workspace defaults to `~/workspace` and each
+repo directory is `0700`. A repo the box already has is fetched
+(`git fetch origin`), never deleted and cloned again, because it may carry
+worktrees with work that is pushed nowhere.
+
+A clone whose `origin` differs from the blueprint's `url` is not repointed. That
+repo fails with `the clone at <path> is of <url>, not the <url> the blueprint
+declares: move or remove that directory to clone the declared url`, and the
+other repos still converge.
+
+## Orphans
+
+A repo you drop from the blueprint stays on the box. The orphans step reports it
+(`orphans left in place under <root>: a, b`, or `no orphans under <root>`) and
+never deletes it. Only a directory holding a `repo.git` counts, so a directory
+you made under the workspace root yourself is never reported.
+
 ## What it reports, and what it refuses
 
 Each step reports as it finishes, with the commands' own output streaming live,
@@ -141,8 +183,13 @@ followed by a summary:
 
 ```
   packages    installed ripgrep, jq
-workspace: 1 step converged
+  orphans     no orphans under /home/smith/workspace
+workspace: 2 steps converged
 ```
+
+The count is one per unit: each placement, each repo and each toolchain file is
+a unit of its own. A run with failures ends `workspace: N steps converged, M
+failed` and restates each failed line, so it is the last thing on screen.
 
 The stage **never deletes**. A step it cannot converge is reported and the run
 exits non-zero, having left what the box already holds exactly where it was.

@@ -68,7 +68,8 @@ smith blueprint check personal
 `smith init` creates `~/.smith/` and writes two **starters** — a commented
 `preferences.yaml` and a blueprint `blueprints/personal.yaml` — filling in your
 git identity from your global git config when one is set. Both are valid as
-written and resolve to built-in defaults until you uncomment something; `smith
+written and resolve to built-in defaults, apart from the git identity init
+filled in, until you uncomment something; `smith
 blueprint check personal` shows what they resolve to. It never overwrites a file
 that already exists, so it is safe to re-run. When you are ready,
 `smith machine setup <login>@<host> --blueprint personal` provisions a box from

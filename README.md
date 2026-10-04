@@ -80,8 +80,10 @@ works, so a half-ready ACL never locks you out.
 
 **Blueprints.** A blueprint (`~/.smith/blueprints/`) declares what kind of box
 smith builds; preferences (`~/.smith/preferences.yaml`) hold what belongs to you
-across every box. Both are optional — every field also has a flag and a default,
-resolved **flag → blueprint → preference → default**. `smith blueprint check`
+across every box. Both are optional — every field has a default, and `access`
+also has a flag, resolved **flag → blueprint → preference → default**. Not every
+resolved field reaches the box yet: see [what setup applies
+today](docs/blueprints.md#what-setup-applies-today). `smith blueprint check`
 validates them offline and prints the resolved configuration with the source of
 each value.
 `smith init` writes commented starters for both.
@@ -90,8 +92,9 @@ each value.
 [preferences](docs/examples/preferences.yaml)
 
 **Making the box too.** Describe your provider's own CLI as data in a `provider`
-block and `smith machine create dev --blueprint acme` creates the box before
-provisioning it. Optional — without it you bring the box yourself.
+block and `smith machine create dev --blueprint acme` creates the box and waits
+until SSH answers, then prints the `smith machine setup` line that provisions
+it. Optional — without it you bring the box yourself.
 → [docs/providers.md](docs/providers.md)
 
 **Boxes by name.** A successful setup registers the address it proved in
@@ -135,8 +138,9 @@ dev` converges the box to *your* version — including backwards.
 **The loop.** `smith loop run <spec>` works a spec's tasks with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model and effort the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
 → [docs/loop.md](docs/loop.md)
 
-> **smith knows no service by name.** It places files and exports environment
-> variables; it knows nothing about GitHub or npm. A blueprint declaring
+> **smith provisions no service's credentials.** It places files and exports
+> environment variables. (The loop reads GitHub Issues through your own
+> authenticated `gh`, and holds no credential of its own.) A blueprint declaring
 > `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git
 > needs a credential helper for that, and smith will not notice. Clone over SSH
 > and place the key, or place the helper's config yourself.

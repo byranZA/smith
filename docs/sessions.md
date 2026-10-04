@@ -30,6 +30,10 @@ box smith@203.0.113.10 has no smith installed: `smith machine setup smith@203.0.
 installs it, along with the rest of what the box is missing
 ```
 
+Sessions need `tmux` and `git` on the box. smith does not install either. Stock
+Ubuntu server images ship both, but a minimal image may not: list them under
+the blueprint's `packages` if so.
+
 ## Names are derived, never chosen
 
 The session name is `<repo>-<branch>`, sanitized to one path segment: every
@@ -195,7 +199,8 @@ does not partition operators, and it must not be relied on as though it did.
 ### Nothing is exposed
 
 Attaching adds **no listener, no port, no tunnel and no new credential**. It
-rides the SSH door bootstrap already built:
+rides the SSH door bootstrap already built. In outline (the real command adds
+a guard for a box with no smith, and a version check before it):
 
 ```
 ssh -t <box> /usr/local/bin/smith --relayed-from <version> session attach <name> [--interact]
@@ -362,8 +367,9 @@ answer.
 
 ## What is not here in v1
 
-- **`--driver agent`**, or anything that launches an agent. Sessions are
-  human-driven; the delegation loop is the AFK map's.
+- **`--driver agent`**, or anything that launches an agent into a session.
+  Sessions are human-driven. Agents run through [the loop](./loop.md), which
+  works in the repo it is invoked from.
 - **Keystrokes.** Everything smith does to a session it does by starting or
   stopping it. There is no `send-keys`.
 - **Outcomes.** Liveness only — smith reports that a session is running, never

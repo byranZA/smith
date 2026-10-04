@@ -26,8 +26,8 @@ floating ones.
 
 > **Skipping the tools does not fail the gate — it hides it.** `make lint` and
 > `make vuln` print a note and succeed when their tool is absent. A machine
-> without them runs `make check`, prints two skips, and **reports green having
-> linted nothing**; CI then fails on lint errors your local gate never looked
+> without them runs `make check`, prints a skip for lint, and **reports green
+> having linted nothing**; CI then fails on lint errors your local gate never looked
 > for. That is not hypothetical — it is how a `wrapcheck` failure reached CI on
 > [#92](https://github.com/byranZA/smith/issues/92) (PR
 > [#174](https://github.com/byranZA/smith/pull/174)). If you genuinely cannot

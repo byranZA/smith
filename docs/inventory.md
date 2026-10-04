@@ -16,8 +16,8 @@ verb that takes a box.
 ```
 
 That is the whole file. An entry is a name and one opaque SSH target — nothing
-else. Access mode, completed phases, the blueprint the box was built from and
-the provider destroy reference all live on the box's marker
+else. Access mode, completed phases, the box's name and the blueprint it was
+built from all live on the box's marker
 (`/etc/smith/bootstrap.json`), one copy each. There is no TTL, no refresh pass
 and no `last_seen`, because nothing here can silently go stale: a wrong address
 fails loudly the moment you connect.
