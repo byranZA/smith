@@ -3,9 +3,11 @@
 //
 // Config carries a reference, never the value: a scheme:arg string such as
 // env:VAR or file:/path. The reference is split on the first colon only, so a
-// Windows path (file:C:\keys\ts) survives, and the resolved value is
-// whitespace-trimmed. A file: path under ~/ is read from the operator's home
-// directory. A bare literal with no scheme is a hard error — env: is
+// Windows path (file:C:\keys\ts) survives. A file: path under ~/ is read from
+// the operator's home directory. Read returns the referenced bytes exactly as
+// they are, which is what a whole file such as a private key needs; Resolve
+// whitespace-trims them, which is what a single value such as a token needs. A
+// bare literal with no scheme is a hard error — env: is
 // the documented escape hatch — so a raw secret is never accepted on argv.
 //
 // When the reference is omitted, Acquire prompts an interactive terminal
@@ -52,11 +54,21 @@ func Split(ref string) (scheme, arg string, ok bool) {
 	return strings.Cut(ref, ":")
 }
 
-// Resolve turns a scheme:arg reference into its secret value. It splits on the
-// first colon only, so file:C:\keys\ts keeps its Windows drive letter, dispatches
-// on the scheme (env: reads an environment variable, file: reads a file), and
-// whitespace-trims the result. A reference with no scheme is ErrBareLiteral.
+// Resolve turns a scheme:arg reference into its secret value: what Read
+// returns, whitespace-trimmed, so a token file ending in a newline yields the
+// token alone.
 func Resolve(ref string) (string, error) {
+	value, err := Read(ref)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
+// Read turns an env: or file: reference into the bytes it names, untrimmed, so
+// a private key keeps its final newline. It refuses what Resolve refuses, with
+// the same errors.
+func Read(ref string) (string, error) {
 	scheme, arg, ok := Split(ref)
 	if !ok {
 		return "", fmt.Errorf("resolve %q: %w", ref, ErrBareLiteral)
@@ -67,29 +79,29 @@ func Resolve(ref string) (string, error) {
 
 	switch scheme {
 	case "env":
-		return resolveEnv(arg)
+		return readEnv(arg)
 	case "file":
-		return resolveFile(arg)
+		return readFile(arg)
 	default:
 		return "", fmt.Errorf("resolve %q: %q: %w", ref, scheme, ErrUnknownScheme)
 	}
 }
 
-// resolveEnv reads the named environment variable. An unset variable is
+// readEnv reads the named environment variable. An unset variable is
 // ErrNotFound; note env: is a scheme, not a SMITH_* per-flag fallback, so only
 // the exact name is consulted.
-func resolveEnv(name string) (string, error) {
+func readEnv(name string) (string, error) {
 	value, ok := os.LookupEnv(name)
 	if !ok {
 		return "", fmt.Errorf("environment variable %q: %w", name, ErrNotFound)
 	}
-	return strings.TrimSpace(value), nil
+	return value, nil
 }
 
-// resolveFile reads the file at path, after expanding a leading ~ against the
+// readFile reads the file at path, after expanding a leading ~ against the
 // operator's home directory. A missing file wraps the os error so callers can
 // errors.Is it against os.ErrNotExist.
-func resolveFile(path string) (string, error) {
+func readFile(path string) (string, error) {
 	expanded, err := expandHome(path)
 	if err != nil {
 		return "", fmt.Errorf("read secret file %q: %w", path, err)
@@ -98,7 +110,7 @@ func resolveFile(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read secret file %q: %w", path, err)
 	}
-	return strings.TrimSpace(string(data)), nil
+	return string(data), nil
 }
 
 // expandHome rewrites a bare ~ or a ~/ prefix to the operator's home directory

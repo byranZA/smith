@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
-	"github.com/byranZA/smith/internal/secret"
 )
 
 // fakeBox stands in for a box reached over ssh — the system boundary Converge
@@ -266,7 +265,7 @@ func TestConvergeStagesABoxPlacementsBytesUnderItsKey(t *testing.T) {
 	const credential = "s3cr3t-token"
 	t.Setenv("NPM_TOKEN", credential)
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc", Perms: "0640"}}}
-	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), secret.Resolve, blueprint.Value)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), blueprint.Source, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -290,7 +289,7 @@ func TestConvergeDeliversPlacementBytesOverStdinNotArgv(t *testing.T) {
 	const credential = "s3cr3t-token"
 	t.Setenv("NPM_TOKEN", credential)
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "/home/smith/.npmrc"}}}
-	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), secret.Resolve, blueprint.Value)
+	tree, err := Resolve(Plan([]byte("access: public\n"), b, Resolution{}), blueprint.Source, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}

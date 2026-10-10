@@ -1,6 +1,8 @@
 package blueprint_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -199,5 +201,80 @@ func TestValueRefusesWhatIsNotAReference(t *testing.T) {
 func TestValueRefusesAnEmptyLiteral(t *testing.T) {
 	if got, err := blueprint.Value("literal:"); err == nil {
 		t.Errorf("blueprint.Value(%q) = %q, want a refusal", "literal:", got)
+	}
+}
+
+func TestSourceResolvesToTheReferencedBytesUntrimmed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "npmrc")
+	if err := os.WriteFile(path, []byte("registry=https://npm.example\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("SMITH_TEST_SOURCE", "  padded body \n")
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "a file keeps its final newline", ref: "file:" + path, want: "registry=https://npm.example\n"},
+		{name: "an env variable keeps its whitespace", ref: "env:SMITH_TEST_SOURCE", want: "  padded body \n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := blueprint.Source(tt.ref)
+			if err != nil {
+				t.Fatalf("blueprint.Source(%q) error = %v, want nil", tt.ref, err)
+			}
+			if got != tt.want {
+				t.Errorf("blueprint.Source(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSourceRefusesWhatIsNotASourceReference(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{name: "a bare string", ref: "ghp_abc"},
+		{name: "an unknown scheme", ref: "vault:token"},
+		{name: "a literal a value would accept", ref: "literal:inline"},
+		{name: "an unset variable", ref: "env:SMITH_TEST_UNSET_SOURCE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := blueprint.Source(tt.ref); err == nil {
+				t.Errorf("blueprint.Source(%q) = %q, want a refusal", tt.ref, got)
+			}
+		})
+	}
+}
+
+func TestValueTrimsWhatAnEnvOrFileReferenceNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("ghp_fromafile\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("SMITH_TEST_PADDED", "  ghp_padded \n")
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "a file loses its final newline", ref: "file:" + path, want: "ghp_fromafile"},
+		{name: "an env variable loses its whitespace", ref: "env:SMITH_TEST_PADDED", want: "ghp_padded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := blueprint.Value(tt.ref)
+			if err != nil {
+				t.Fatalf("blueprint.Value(%q) error = %v, want nil", tt.ref, err)
+			}
+			if got != tt.want {
+				t.Errorf("blueprint.Value(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
 	}
 }

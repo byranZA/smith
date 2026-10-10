@@ -33,7 +33,8 @@ var (
 
 // Value resolves what a blueprint value declares into the value itself: the
 // schemes a value may name, which are the ones a placement source may name
-// plus literal:.
+// plus literal:. What an env: or file: reference names is whitespace-trimmed,
+// so a token file ending in a newline exports the token alone.
 //
 // literal: is resolved here rather than in internal/secret because it is not a
 // secret reference at all — it is a plain value the operator declared on
@@ -51,6 +52,17 @@ func Value(ref string) (string, error) {
 	value, err := secret.Resolve(ref)
 	if err != nil {
 		return "", fmt.Errorf("read what this blueprint value names: %w", err)
+	}
+	return value, nil
+}
+
+// Source resolves a placement's env: or file: source reference into the bytes
+// it names, never trimmed, so a private key keeps its final newline. Any other
+// reference, literal: included, is refused.
+func Source(ref string) (string, error) {
+	value, err := secret.Read(ref)
+	if err != nil {
+		return "", fmt.Errorf("read what this placement source names: %w", err)
 	}
 	return value, nil
 }
