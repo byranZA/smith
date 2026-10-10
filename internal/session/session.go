@@ -14,6 +14,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -276,7 +277,11 @@ func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool)
 				return err
 			}
 		}
-		args = []string{"-C", s.bare, "worktree", "add", "--no-track", "-b", s.branch, dir, remoteBase(ctx, env.Git, s.bare, base)}
+		from, err := remoteBase(ctx, env.Git, s.bare, base)
+		if err != nil {
+			return err
+		}
+		args = []string{"-C", s.bare, "worktree", "add", "--no-track", "-b", s.branch, dir, from}
 	}
 	if _, err := run(ctx, env.Git, "git", args...); err != nil {
 		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", s.branch, s.repo.Name, dir, err)
@@ -294,16 +299,27 @@ func fetch(ctx context.Context, git Runner, bare, repo string) error {
 	return nil
 }
 
+// absentStatus is the status `git show-ref --verify` exits with for a ref the
+// repo does not hold.
+const absentStatus = 1
+
 // remoteBase is the ref a branch cut from base starts at: origin's copy of it
 // when the fetch brought one down, since the clone's own branch of that name
-// is copied once and never moves, and base as given otherwise — a local-only
-// branch, a tag or a commit.
-func remoteBase(ctx context.Context, git Runner, bare, base string) string {
+// is copied once and never moves, and base as given when origin has none — a
+// local-only branch, a tag or a commit. A lookup that fails for any other
+// reason is an error rather than a quiet fall back to a possibly stale base.
+func remoteBase(ctx context.Context, git Runner, bare, base string) (string, error) {
 	tracking := "refs/remotes/origin/" + base
-	if _, err := run(ctx, git, "git", "-C", bare, "rev-parse", "--verify", "--quiet", tracking); err != nil {
-		return base
+	_, err := run(ctx, git, "git", "-C", bare, "show-ref", "--verify", "--quiet", tracking)
+	var exit interface{ ExitCode() int }
+	switch {
+	case err == nil:
+		return tracking, nil
+	case errors.As(err, &exit) && exit.ExitCode() == absentStatus:
+		return base, nil
+	default:
+		return "", fmt.Errorf("look for %s in the repo at %s: %w", tracking, bare, err)
 	}
-	return tracking
 }
 
 // branchExists reports whether the bare repo already holds that branch. It

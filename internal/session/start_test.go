@@ -2,10 +2,12 @@ package session_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -346,6 +348,37 @@ func TestStartCutsTheBranchFromTheFetchedRemoteBase(t *testing.T) {
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
 	if got := gitOut(t, dir, "rev-parse", "HEAD"); got != tip {
 		t.Errorf("worktree is at %s, want the remote's tip %s", got, tip)
+	}
+}
+
+// lookupFails runs git for real except the lookup of a remote-tracking ref,
+// which fails the way a git that cannot be executed does.
+type lookupFails struct{}
+
+func (lookupFails) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "refs/remotes/origin/") }) {
+		return errors.New("fork/exec git: resource temporarily unavailable")
+	}
+	return connection.System().Run(ctx, name, args, stdin, stdout, stderr)
+}
+
+func TestStartStandsNothingUpWhenTheRemoteBaseLookupFails(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	writeBareRepoWithRemote(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	tmux := &tmuxServer{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       lookupFails{},
+		Tmux:      tmux,
+	}
+
+	_, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
+
+	if err == nil || worktreeCount(t, bare) != 0 || len(tmux.calls) != 0 {
+		t.Errorf("Start() err = %v with %d worktrees and tmux calls %v, want an error and nothing stood up", err, worktreeCount(t, bare), tmux.calls)
 	}
 }
 
