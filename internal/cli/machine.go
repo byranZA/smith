@@ -397,8 +397,7 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				if !errors.Is(err, connection.ErrConnect) {
 					return fmt.Errorf("probe box: %w", err)
 				}
-				return refuseAdd(cmd, bootstrap.OutcomeConnectFailed,
-					fmt.Errorf("could not connect to %s: register it once smith can reach it: %w", target, err))
+				return refuseAdd(cmd, bootstrap.OutcomeConnectFailed, err)
 			}
 
 			box, present, err := status.ReadMarker(ctx, conn)

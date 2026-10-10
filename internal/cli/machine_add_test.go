@@ -221,22 +221,41 @@ func TestMachineAddRefusesToWriteAnInventoryANewerSmithOwns(t *testing.T) {
 	}
 }
 
-func TestMachineAddSaysTheBoxRefusedTheKey(t *testing.T) {
-	ssh := unconnectableSSH{stderr: "smith@198.51.100.7: Permission denied (publickey).\n"}
-	cmd := newMachineCmd(
-		func() (config.Home, error) { return config.NewHome(t.TempDir()), nil },
-		ssh, &fakeDialer{}, provider.SystemClock(),
-	)
-	cmd.SetArgs([]string{"add", "smith@198.51.100.7"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SilenceUsage, cmd.SilenceErrors = true, true
-
-	if code := codeFromError(cmd.Execute()); code != 3 {
-		t.Errorf("exit code = %d, want 3 for a connect failure", code)
+func TestMachineAddSaysOnceWhyItCouldNotConnect(t *testing.T) {
+	tests := []struct {
+		name   string
+		stderr string
+		want   string
+	}{
+		{
+			"key refused", "smith@198.51.100.7: Permission denied (publickey).\n",
+			"add refused: ssh smith@198.51.100.7: could not connect to box: the box answered but refused the key; " +
+				"check the key is loaded in ssh-agent or set by a Host entry in ~/.ssh/config (a passphrase key must be agent-loaded), and that the login is right\n",
+		},
+		{
+			"no answer", "ssh: connect to host 198.51.100.7 port 22: Connection timed out\n",
+			"add refused: ssh smith@198.51.100.7: could not connect to box: the box did not answer; " +
+				"check the address, that sshd is listening on port 22, and the provider's firewall\n",
+		},
 	}
-	if !strings.Contains(out.String(), "refused the key") {
-		t.Errorf("output = %q, want it to say the box refused the key", out.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMachineCmd(
+				func() (config.Home, error) { return config.NewHome(t.TempDir()), nil },
+				unconnectableSSH{stderr: tt.stderr}, &fakeDialer{}, provider.SystemClock(),
+			)
+			cmd.SetArgs([]string{"add", "smith@198.51.100.7"})
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+
+			if code := codeFromError(cmd.Execute()); code != 3 {
+				t.Errorf("exit code = %d, want 3 for a connect failure", code)
+			}
+			if out.String() != tt.want {
+				t.Errorf("output = %q, want %q", out.String(), tt.want)
+			}
+		})
 	}
 }
