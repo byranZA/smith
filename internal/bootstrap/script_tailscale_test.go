@@ -197,7 +197,7 @@ func TestScriptEnrollAndClosePublicSSHRecordsAccess(t *testing.T) {
 	if m.SmithVersion != "9.9.9-test" {
 		t.Errorf("marker SmithVersion = %q, want 9.9.9-test preserved", m.SmithVersion)
 	}
-	const wantFull = "packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
+	const wantFull = "swap,packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
 	if got := strings.Join(m.CompletedPhases, ","); got != wantFull {
 		t.Errorf("marker CompletedPhases = %q, want the full tailscale set %q", got, wantFull)
 	}

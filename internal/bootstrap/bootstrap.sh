@@ -25,7 +25,7 @@
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# The ordered phases are: packages, smith-user, smith-keys, firewall,
+# The ordered phases are: swap, packages, smith-user, smith-keys, firewall,
 # ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries the on-box
 # self-reverting self-test (the base layer's only lock-out gate). In public mode
 # the access phase is a no-op; in tailscale mode the access layer is driven from
@@ -47,7 +47,18 @@ MEMINFO="${SMITH_MEMINFO:-/proc/meminfo}"
 # The ordered mutating phases. The names are load-bearing: they are the marker's
 # completed_phases values. This is the full base-layer sequence; the access phase
 # is where the tailscale mode's behavior lands, not a new phase.
-PHASES=(packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
+PHASES=(swap packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
+
+# The swap phase's system paths: the kernel's active swap list, the fstab that
+# brings swap back after a reboot, and the swapfile smith creates. SMITH_SWAPS,
+# SMITH_FSTAB and SMITH_SWAPFILE override them for tests; production always uses
+# the defaults.
+SWAPS="${SMITH_SWAPS:-/proc/swaps}"
+FSTAB="${SMITH_FSTAB:-/etc/fstab}"
+SWAPFILE="${SMITH_SWAPFILE:-/swapfile}"
+
+# SWAP_SIZE_MB is the size of the swapfile smith gives a box without swap.
+SWAP_SIZE_MB=2048
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -339,6 +350,39 @@ ensure_tailscale_repo() {
     as_root mkdir -p "$(dirname "$SMITH_TS_LIST")"
     curl -fsSL "${base}/${codename}.tailscale-keyring.list" | as_root tee "$SMITH_TS_LIST" >/dev/null
   fi
+}
+
+# swap_active reports whether the box has any active swap: the kernel's swap list
+# carries an entry below its header line.
+swap_active() {
+  [ "$(tail -n +2 "$SWAPS" 2>/dev/null | grep -c .)" -gt 0 ]
+}
+
+# ensure_swap_fstab_entry adds the swapfile's reboot entry to fstab, unless an
+# entry for the swapfile is already there.
+ensure_swap_fstab_entry() {
+  if as_root awk -v f="$SWAPFILE" '$1 == f { found = 1 } END { exit !found }' "$FSTAB" 2>/dev/null; then
+    return 0
+  fi
+  printf '%s none swap sw 0 0\n' "$SWAPFILE" | as_root tee -a "$FSTAB" >/dev/null
+}
+
+# phase_swap gives a box without swap a root-only swapfile, formatted, enabled and
+# set to come back after a reboot, so memory pressure slows the box rather than
+# freezing it. It is check-before-change: any active swap makes it a no-op that
+# reports already-satisfied.
+phase_swap() {
+  if swap_active; then
+    printf '  swap already present\n'
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  as_root fallocate -l "${SWAP_SIZE_MB}M" "$SWAPFILE"
+  as_root chmod 0600 "$SWAPFILE"
+  as_root mkswap "$SWAPFILE"
+  as_root swapon "$SWAPFILE"
+  ensure_swap_fstab_entry
 }
 
 # phase_packages ensures the base package set is installed, plus tailscale (from

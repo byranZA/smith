@@ -30,7 +30,7 @@ func cleanPublicMarker() marker.Marker {
 		SchemaVersion:   marker.SchemaVersion,
 		SmithVersion:    "1.0.0",
 		AccessMode:      "public",
-		CompletedPhases: []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"},
+		CompletedPhases: []string{"swap", "packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"},
 	}
 }
 
@@ -140,7 +140,7 @@ func TestReconcileNeverBootstrapped(t *testing.T) {
 
 func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 	m := cleanPublicMarker()
-	m.CompletedPhases = []string{"packages", "smith-user", "smith-keys", "firewall"} // stopped partway
+	m.CompletedPhases = []string{"swap", "packages", "smith-user", "smith-keys", "firewall"} // stopped partway
 	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
 	if r.Verdict != VerdictPartial {
 		t.Fatalf("Verdict = %v, want Partial", r.Verdict)
@@ -151,6 +151,18 @@ func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 	out := r.String()
 	if !strings.Contains(out, "ssh-hardening") {
 		t.Errorf("String() should list a missing phase; got:\n%s", out)
+	}
+}
+
+func TestReconcileBoxSetUpBeforeTheSwapPhaseIsPartialMissingSwap(t *testing.T) {
+	m := cleanPublicMarker()
+	m.CompletedPhases = []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"}
+	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
+	if r.Verdict != VerdictPartial {
+		t.Fatalf("Reconcile(marker without swap) Verdict = %v, want Partial", r.Verdict)
+	}
+	if got, want := strings.Join(r.MissingPhases, ","), "swap"; got != want {
+		t.Errorf("Reconcile(marker without swap) MissingPhases = %q, want %q", got, want)
 	}
 }
 

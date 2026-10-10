@@ -157,7 +157,7 @@ func TestGatherRunsTheProbeSubcommand(t *testing.T) {
 
 func TestGatherProbesTailnetReachInTailscaleMode(t *testing.T) {
 	script := probing(`marker-begin
-{"schema_version":1,"smith_version":"1.0.0","access_mode":"tailscale","completed_phases":["packages","smith-user","smith-keys","firewall","ssh-hardening","fail2ban","auto-updates","access"]}
+{"schema_version":1,"smith_version":"1.0.0","access_mode":"tailscale","completed_phases":["swap","packages","smith-user","smith-keys","firewall","ssh-hardening","fail2ban","auto-updates","access"]}
 marker-end
 smith-user-exists=yes
 passwordless-sudo=yes

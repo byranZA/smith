@@ -66,12 +66,12 @@ exit 0
 	if err != nil {
 		t.Fatalf("first setup run failed: %v\n%s", err, out1)
 	}
-	for _, phase := range []string{"▶ packages", "▶ smith-user", "▶ smith-keys", "▶ firewall", "▶ ssh-hardening", "▶ fail2ban", "▶ auto-updates", "▶ access"} {
+	for _, phase := range []string{"▶ swap", "▶ packages", "▶ smith-user", "▶ smith-keys", "▶ firewall", "▶ ssh-hardening", "▶ fail2ban", "▶ auto-updates", "▶ access"} {
 		if !strings.Contains(out1, phase) {
 			t.Errorf("first run missing live phase progress %q:\n%s", phase, out1)
 		}
 	}
-	for _, phase := range []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates"} {
+	for _, phase := range []string{"swap", "packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates"} {
 		if strings.Contains(out1, "✓ "+phase+" (already-satisfied)") {
 			t.Errorf("clean run: phase %q reported already-satisfied, want changed:\n%s", phase, out1)
 		}
@@ -102,7 +102,7 @@ exit 0
 	if m.SmithVersion != "9.9.9-test" {
 		t.Errorf("marker SmithVersion = %q, want %q", m.SmithVersion, "9.9.9-test")
 	}
-	const wantPhases = "packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
+	const wantPhases = "swap,packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
 	if got := strings.Join(m.CompletedPhases, ","); got != wantPhases {
 		t.Errorf("marker CompletedPhases = %q, want %q", got, wantPhases)
 	}
@@ -187,6 +187,7 @@ exit 0
 		t.Fatalf("second setup run failed: %v\n%s", err, out2)
 	}
 	for _, phase := range []string{
+		"✓ swap (already-satisfied)",
 		"✓ packages (already-satisfied)",
 		"✓ smith-user (already-satisfied)",
 		"✓ smith-keys (already-satisfied)",
@@ -288,8 +289,8 @@ exit 255
 		t.Fatalf("decode marker: %v\n%s", err, data)
 	}
 	got := strings.Join(m.CompletedPhases, ",")
-	if got != "packages,smith-user,smith-keys,firewall" {
-		t.Errorf("marker CompletedPhases = %q, want the phases before ssh-hardening (packages,smith-user,smith-keys,firewall)", got)
+	if got != "swap,packages,smith-user,smith-keys,firewall" {
+		t.Errorf("marker CompletedPhases = %q, want the phases before ssh-hardening (swap,packages,smith-user,smith-keys,firewall)", got)
 	}
 	for _, unwanted := range []string{"ssh-hardening", "access"} {
 		if strings.Contains(got, unwanted) {
@@ -414,7 +415,7 @@ exit 255
 	if err != nil {
 		t.Fatalf("decode marker after partial run: %v", err)
 	}
-	if got := strings.Join(m1.CompletedPhases, ","); got != "packages,smith-user,smith-keys,firewall" {
+	if got := strings.Join(m1.CompletedPhases, ","); got != "swap,packages,smith-user,smith-keys,firewall" {
 		t.Fatalf("partial marker CompletedPhases = %q, want the phases before ssh-hardening", got)
 	}
 
@@ -429,6 +430,7 @@ exit 0
 
 	// The phases that completed before the failure are no-ops on the re-run.
 	for _, phase := range []string{
+		"✓ swap (already-satisfied)",
 		"✓ packages (already-satisfied)",
 		"✓ smith-user (already-satisfied)",
 		"✓ smith-keys (already-satisfied)",
@@ -444,7 +446,7 @@ exit 0
 		t.Errorf("re-run should complete ssh-hardening as a change, not a no-op; got:\n%s", out2)
 	}
 
-	const wantPhases = "packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
+	const wantPhases = "swap,packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
 	m2, _, err := decodeMarker(t, markerPath)
 	if err != nil {
 		t.Fatalf("decode marker after resumed run: %v", err)
@@ -600,6 +602,9 @@ func bootstrapTestEnv(t *testing.T, dir, binDir string) []string {
 		[]byte("ssh-ed25519 AAAAC3NzaC1lZDI1 operator@laptop\n"), 0o600); err != nil {
 		t.Fatalf("write login authorized_keys: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "swaps"), []byte(procSwapsHeader), 0o644); err != nil {
+		t.Fatalf("write active swap list: %v", err)
+	}
 	return append(os.Environ()[:0:0],
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HOME="+loginHome,
@@ -610,6 +615,9 @@ func bootstrapTestEnv(t *testing.T, dir, binDir string) []string {
 		"SMITH_SSHD_DROPIN="+filepath.Join(dir, "sshd_config.d", "01-smith-hardening.conf"),
 		"SMITH_TS_KEYRING="+filepath.Join(dir, "keyrings", "tailscale-archive-keyring.gpg"),
 		"SMITH_TS_LIST="+filepath.Join(dir, "sources.list.d", "tailscale.list"),
+		"SMITH_SWAPS="+filepath.Join(dir, "swaps"),
+		"SMITH_FSTAB="+filepath.Join(dir, "fstab"),
+		"SMITH_SWAPFILE="+filepath.Join(dir, "swapfile"),
 		"APT_STATE="+filepath.Join(dir, "apt.installed"),
 		"APT_INSTALL_LOG="+filepath.Join(dir, "apt.install.log"),
 		"USER_STATE="+filepath.Join(dir, "user.created"),
@@ -761,6 +769,7 @@ exit 0
 	// the box. Parse -f <path> and -C <comment>, then write a stand-in private key
 	// and a PROBE_MARKER-tagged public key so the self-test's append/strip and the
 	// loopback probe run without real crypto.
+	writeSwapFakeBins(t, binDir)
 	writeFakeBin(t, binDir, "ssh-keygen", `#!/usr/bin/env bash
 out=""; comment="probe"
 while [ $# -gt 0 ]; do
@@ -774,6 +783,26 @@ printf 'FAKE PROBE PRIVATE KEY\n' >"$out"
 chmod 600 "$out"
 printf 'ssh-ed25519 AAAAFAKEPROBEKEY %s\n' "$comment" >"$out.pub"
 exit 0
+`)
+}
+
+// procSwapsHeader is the active swap list of a box with no swap: the header line alone.
+const procSwapsHeader = "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n"
+
+// writeSwapFakeBins installs fake swap tools: fallocate creates a sparse file of the
+// requested size, mkswap formats nothing, and swapon lists the file as active swap.
+func writeSwapFakeBins(t *testing.T, binDir string) {
+	t.Helper()
+	writeFakeBin(t, binDir, "fallocate", `#!/usr/bin/env bash
+[ "$1" = "-l" ] || exit 64
+mib="${2%M}"
+dd if=/dev/zero of="$3" bs=1048576 seek="$mib" count=0 2>/dev/null
+`)
+	writeFakeBin(t, binDir, "mkswap", `#!/usr/bin/env bash
+exit 0
+`)
+	writeFakeBin(t, binDir, "swapon", `#!/usr/bin/env bash
+printf '%s\tfile\t\t2097148\t\t0\t\t-2\n' "$1" >>"$SMITH_SWAPS"
 `)
 }
 
