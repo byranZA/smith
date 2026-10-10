@@ -64,12 +64,10 @@ func Name(n Naming) (string, Origin) {
 	return "", OriginNone
 }
 
-// HostNamed reports whether the name a box resolves to is its host: the last
-// resort smith fell back on because nothing the operator chose named the box.
-// That holds on a first run with no other name, and on a re-run whose marker
-// recorded the host fallback an earlier run stamped on it. A host the operator
-// passed with --name is a name they chose, and is not one.
+// HostNamed reports whether a box answers to its host because nothing the
+// operator chose named it, on a first run or by a marker an earlier run stamped
+// with the host.
 func HostNamed(n Naming) bool {
-	name, _ := Name(n)
-	return n.Flag == "" && name != "" && name == n.Host
+	name, origin := Name(n)
+	return origin == OriginHost || (origin == OriginMarker && name == n.Host)
 }

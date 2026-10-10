@@ -742,3 +742,17 @@ func TestSetupWithNoBlueprintStillRefusesABoxBuiltFromOne(t *testing.T) {
 		t.Errorf("stderr = %q, want the refusal to name the blueprint to pass", stderr)
 	}
 }
+
+func TestSetupOfABoxItsBlueprintNamedLikeItsHostSuggestsNoName(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: public\n")
+
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--blueprint", "acme", "root@acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if strings.Contains(stdout, "--name") {
+		t.Errorf("stdout = %q, want no --name suggested for a box its blueprint named", stdout)
+	}
+}

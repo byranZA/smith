@@ -97,6 +97,11 @@ func TestHostNamedReportsABoxThatAnswersToItsHost(t *testing.T) {
 			naming: Naming{Blueprint: "acme", Host: "203.0.113.10"},
 			want:   false,
 		},
+		{
+			name:   "a blueprint named like the host names the box",
+			naming: Naming{Blueprint: "acme", Host: "acme"},
+			want:   false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
