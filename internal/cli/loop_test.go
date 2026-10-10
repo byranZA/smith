@@ -727,6 +727,7 @@ func TestRepoInitAndTheLoopLeaveAnEjectedPromptByteForByteUnchanged(t *testing.T
 }
 
 func TestLoopListReportsThePushSettingWithItsOrigin(t *testing.T) {
+	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "CLOSED", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &idleAgent{}, "push: false\n")
 
@@ -738,6 +739,7 @@ func TestLoopListReportsThePushSettingWithItsOrigin(t *testing.T) {
 }
 
 func TestLoopRunPushesFromTheRepoAfterEachClosedTaskByDefault(t *testing.T) {
+	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
 	origin := &fakeOrigin{}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "")
@@ -752,6 +754,7 @@ func TestLoopRunPushesFromTheRepoAfterEachClosedTaskByDefault(t *testing.T) {
 }
 
 func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		repoFile string
 		flags    []string
@@ -762,6 +765,7 @@ func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
 		"by --no-push with no repo setting": {"", []string{"--no-push"}, "push:   off (flag)\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 			origin := &fakeOrigin{}
 			w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, tc.repoFile)
@@ -777,6 +781,7 @@ func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
 }
 
 func TestLoopRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
+	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
 	claude := &fakeAgent{gh: gh}
 	w, _ := repoWith(t, gh, claude, "")

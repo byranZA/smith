@@ -38,9 +38,10 @@ func pushingLoop(t *testing.T, j *journal) loop.Loop {
 }
 
 func TestRunPushesEachClosedTaskBeforeHandingOutTheNext(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}}
 
-	if _, err := pushingLoop(t, j).Run(context.Background(), 42); err != nil {
+	if _, err := pushingLoop(t, j).Run(t.Context(), 42); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -50,9 +51,10 @@ func TestRunPushesEachClosedTaskBeforeHandingOutTheNext(t *testing.T) {
 }
 
 func TestRunPushesNothingForATaskLeftOpen(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}}
 
-	if _, err := pushingLoop(t, j).Run(context.Background(), 42); err != nil {
+	if _, err := pushingLoop(t, j).Run(t.Context(), 42); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -62,10 +64,11 @@ func TestRunPushesNothingForATaskLeftOpen(t *testing.T) {
 }
 
 func TestRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
 	j := &journal{board: b, err: errors.New("remote rejected")}
 
-	_, err := pushingLoop(t, j).Run(context.Background(), 42)
+	_, err := pushingLoop(t, j).Run(t.Context(), 42)
 
 	if err == nil || err.Error() != "push the work on #43: remote rejected" || !slices.Equal(b.handed(), []string{"43"}) || b.tasks[0].Open {
 		t.Errorf("Run() error = %v, handed %v, #43 open %v; want the push error naming #43, #44 never handed and #43 left closed", err, b.handed(), b.tasks[0].Open)
@@ -73,12 +76,13 @@ func TestRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
 }
 
 func TestRunSaysSoWhenItSkipsThePushOnTheDefaultBranch(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}, pushed: loop.Pushed{Branch: "main", Skipped: true}}
 	var progress strings.Builder
 	l := pushingLoop(t, j)
 	l.Progress = &progress
 
-	if _, err := l.Run(context.Background(), 42); err != nil {
+	if _, err := l.Run(t.Context(), 42); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -88,12 +92,13 @@ func TestRunSaysSoWhenItSkipsThePushOnTheDefaultBranch(t *testing.T) {
 }
 
 func TestRunNamesThePushedBranch(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}, pushed: loop.Pushed{Branch: "feat/42"}}
 	var progress strings.Builder
 	l := pushingLoop(t, j)
 	l.Progress = &progress
 
-	if _, err := l.Run(context.Background(), 42); err != nil {
+	if _, err := l.Run(t.Context(), 42); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -103,9 +108,10 @@ func TestRunNamesThePushedBranch(t *testing.T) {
 }
 
 func TestRunInteractivePushesTheTaskItClosed(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}}
 
-	if _, err := pushingLoop(t, j).RunInteractive(context.Background(), 42); err != nil {
+	if _, err := pushingLoop(t, j).RunInteractive(t.Context(), 42); err != nil {
 		t.Fatalf("RunInteractive() error = %v", err)
 	}
 

@@ -41,7 +41,7 @@ func cloned(t *testing.T) (clone, remote string) {
 
 func push(t *testing.T, dir string) (loop.Pushed, error) {
 	t.Helper()
-	return loop.Origin{Git: connection.System(), Dir: dir}.Push(context.Background())
+	return loop.Origin{Git: connection.System(), Dir: dir}.Push(t.Context())
 }
 
 func TestOriginPushSetsTheBranchUpstreamSoABareGitPushFollows(t *testing.T) {
@@ -179,7 +179,7 @@ func TestOriginPushesWithoutForceToTheBranchOfTheSameName(t *testing.T) {
 	t.Parallel()
 	scripted := &scriptedGit{}
 
-	if _, err := (loop.Origin{Git: scripted, Dir: "/work"}).Push(context.Background()); err != nil {
+	if _, err := (loop.Origin{Git: scripted, Dir: "/work"}).Push(t.Context()); err != nil {
 		t.Fatalf("Push() error = %v", err)
 	}
 

@@ -65,6 +65,7 @@ func TestTheUneditedStarterSetsNothing(t *testing.T) {
 }
 
 func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 	scaffold(t, repo, repofile.File{})
 	data, err := os.ReadFile(repo.Path())
