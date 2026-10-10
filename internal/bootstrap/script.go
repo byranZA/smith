@@ -33,11 +33,9 @@ var scriptOrder = []string{
 // embedded parts under script/ joined in scriptOrder.
 var Script = mustJoinScriptParts(scriptParts, scriptOrder)
 
-// mustJoinScriptParts joins the .sh parts under script/ in parts in the given
-// order, a blank line apart, and panics unless the order lists each part on
-// disk exactly once. The parts are compiled into the binary, so a mismatch is
-// a build that cannot be correct rather than a runtime condition, and a panic
-// surfaces it at package initialization.
+// mustJoinScriptParts returns the .sh parts under script/ joined in order, a
+// blank line apart. It panics, naming the part, unless order lists each part
+// on disk exactly once.
 func mustJoinScriptParts(parts fs.FS, order []string) string {
 	script, err := joinScriptParts(parts, order)
 	if err != nil {
@@ -46,7 +44,9 @@ func mustJoinScriptParts(parts fs.FS, order []string) string {
 	return script
 }
 
-// joinScriptParts is mustJoinScriptParts returning its error.
+// joinScriptParts returns the .sh parts under script/ joined in order, a blank
+// line apart, or an error naming the first part that order does not list
+// exactly once.
 func joinScriptParts(parts fs.FS, order []string) (string, error) {
 	onDisk, err := fs.Glob(parts, "script/*.sh")
 	if err != nil {
