@@ -6,7 +6,6 @@ package bootstrap
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -17,11 +16,6 @@ import (
 	"github.com/byranZA/smith/internal/osgate"
 	"github.com/byranZA/smith/internal/shipped"
 )
-
-// Script is the embedded bootstrap.sh, scp'd to the box and run there.
-//
-//go:embed bootstrap.sh
-var Script string
 
 // ShippedScript is the shipped bootstrap.sh a Runner drives by subcommand:
 // preflight runs as an ordinary subcommand and setup as the final one, which

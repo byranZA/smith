@@ -11,7 +11,7 @@ import (
 var phasesLine = regexp.MustCompile(`(?m)^PHASES=\(([^)]*)\)`)
 
 // Phases is the ordered mutating phase sequence bootstrap.sh runs, parsed once
-// from the embedded script's PHASES array so the Go side and the box share a
+// from the assembled Script's PHASES array so the Go side and the box share a
 // single definition instead of re-declaring the list. The names are the marker's
 // completed_phases values; status derives its expected phase set from this rather
 // than keeping a parallel copy that could drift out of order.
@@ -22,7 +22,7 @@ var Phases = mustParsePhases(Script)
 // close-public-ssh). It is always the last element of Phases.
 const AccessPhase = "access"
 
-// mustParsePhases parses the PHASES array out of the embedded script and panics
+// mustParsePhases parses the PHASES array out of the assembled script and panics
 // on failure. The script is compiled into the binary, so a parse failure is a
 // build-time programming error — a malformed or missing PHASES line — never a
 // runtime condition, and a panic surfaces it at package initialization.
