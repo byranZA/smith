@@ -523,13 +523,11 @@ type setupConclusion struct {
 func concludeSetup(ctx context.Context, exec connection.Exec, home config.Home, c setupConclusion, stdout, stderr io.Writer) error {
 	name, _ := inventory.Name(c.names)
 	target, err := provenTarget(ctx, exec, c)
+	if errors.Is(err, connection.ErrConnect) {
+		return reportUnregistered(stderr, smithTarget(c.names.Host), c.names.Flag, err)
+	}
 	if err != nil {
 		return err
-	}
-	if target == "" {
-		unproved := smithTarget(c.names.Host)
-		return reportUnregistered(stderr, unproved, c.names.Flag,
-			fmt.Errorf("smith could not reach the box as %s", unproved))
 	}
 	moved, err := registerBox(home, registration{
 		recorded:  c.names.Marker,
@@ -552,10 +550,10 @@ func concludeSetup(ctx context.Context, exec connection.Exec, home config.Home, 
 // address the lock-out-safety probe came in over; a public run opens the
 // connection that decides whether there is anything to register at all.
 //
-// A box that did not answer is ("", nil), the convention connection.Reachable
-// already uses: an unreachable box is a fact about the box, not a failure of
-// the probe, and the caller has a partial outcome to report rather than an
-// error to raise.
+// A box smith could not connect to returns the classified error wrapping
+// connection.ErrConnect: an unreachable box is a fact about the box, not a
+// failure of the probe, and the caller has a partial outcome to report, with
+// the reason, rather than an error to raise.
 func provenTarget(ctx context.Context, exec connection.Exec, c setupConclusion) (string, error) {
 	if c.target != "" {
 		return c.target, nil
@@ -564,12 +562,11 @@ func provenTarget(ctx context.Context, exec connection.Exec, c setupConclusion) 
 		return smithTarget(c.tailnetIP), nil
 	}
 	target := smithTarget(c.names.Host)
-	reachable, err := connection.Reachable(ctx, connection.New(target, exec))
-	if err != nil {
+	if err := connection.New(target, exec).Run(ctx, "true", io.Discard, io.Discard); err != nil {
+		if errors.Is(err, connection.ErrConnect) {
+			return "", fmt.Errorf("smith could not reach the box as %s: %w", target, err)
+		}
 		return "", fmt.Errorf("probe %s: %w", target, err)
-	}
-	if !reachable {
-		return "", nil
 	}
 	return target, nil
 }
