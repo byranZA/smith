@@ -580,18 +580,10 @@ func provenTarget(ctx context.Context, exec connection.Exec, c setupConclusion) 
 // smithTarget is the ongoing ssh target for a box reachable at host.
 func smithTarget(host string) string { return smithLogin + "@" + host }
 
-// registeredReport renders what a successful setup's registration tells the
-// operator: the rename, when the registration moved the box's entry off the
-// name it was registered under before; the name the box answers to from now on; the target it
-// resolves to; and the commands to type instead of an address — which is the
-// whole point of writing the target down.
-//
-// The re-run it suggests carries only what this run went without. A run that
-// named no blueprint staged nothing, so the re-run names the flag that stages
-// one rather than repeating the run that left the box bare. A blueprint-less
-// re-run of a box that records one never gets here: the pointer rule refuses it
-// first. A box named after its host is one nothing the operator chose named, so
-// the re-run shows the flag that gives it a name of its own.
+// registeredReport renders a successful setup's registration: the rename when
+// the entry moved, the name and target the box answers to, and the commands to
+// reach it by. Its re-run line adds --blueprint when none was staged and --name
+// when the box is named after its host.
 func registeredReport(names inventory.Naming, target, moved string) string {
 	name, _ := inventory.Name(names)
 	setup := "smith machine setup " + name
