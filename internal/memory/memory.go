@@ -63,8 +63,8 @@ func (t Total) Advisory() string {
 	return line
 }
 
-// Swap is a box's total swap as its kernel reports it. Unlike Total, zero swap
-// is a known figure: the box has none. The zero Swap is unknown swap.
+// Swap is a box's total swap as its kernel reports it, where zero is a box
+// without swap. The zero Swap is unknown swap.
 type Swap struct {
 	kiB   uint64
 	known bool

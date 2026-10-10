@@ -115,7 +115,8 @@ func TestScriptSwapIsAQuarterOfFreeDiskOnASmallDisk(t *testing.T) {
 		t.Skip("bash not available")
 	}
 	dir, scriptPath, env := scriptFixture(t)
-	env = append(env, "FREE_DISK_KB=2097152") // 2 GB free
+	const twoGBFree = "FREE_DISK_KB=2097152"
+	env = append(env, twoGBFree)
 
 	out, err := runSetup(bash, scriptPath, env)
 	if err != nil {
@@ -138,7 +139,8 @@ func TestScriptSwapSkipsForLackOfDisk(t *testing.T) {
 		t.Skip("bash not available")
 	}
 	dir, scriptPath, env := scriptFixture(t)
-	env = append(env, "FREE_DISK_KB=819200") // 800 MB free
+	const eightHundredMBFree = "FREE_DISK_KB=819200"
+	env = append(env, eightHundredMBFree)
 
 	out, err := runSetup(bash, scriptPath, env)
 	if err != nil {
@@ -187,9 +189,9 @@ func TestScriptSwapRefusedLeavesNothingBehind(t *testing.T) {
 	}
 	dir, scriptPath, env := scriptFixture(t)
 	env = append(env, "SWAPON_REFUSED=1")
-	// A reboot entry left by an earlier attempt goes too; the rest of fstab stays.
 	const rootEntry = "UUID=abcd / ext4 defaults 0 1\n"
-	writeTestFile(t, filepath.Join(dir, "fstab"), rootEntry+filepath.Join(dir, "swapfile")+" none swap sw 0 0\n")
+	staleRebootEntry := filepath.Join(dir, "swapfile") + " none swap sw 0 0\n"
+	writeTestFile(t, filepath.Join(dir, "fstab"), rootEntry+staleRebootEntry)
 
 	out, err := runSetup(bash, scriptPath, env)
 	if err != nil {
@@ -206,9 +208,7 @@ func TestScriptSwapRefusedLeavesNothingBehind(t *testing.T) {
 	assertSwapCompleteAndPackagesFollow(t, dir, out)
 }
 
-// assertNoSwapfileOrRebootEntry fails the test when the swapfile exists or fstab
-// carries an entry for it. fstabMayBeMissing permits no fstab at all, for a run
-// that never reaches the step writing the reboot entry.
+// assertNoSwapfileOrRebootEntry fails the test when the swapfile or its fstab entry exists, or fstab is missing unless fstabMayBeMissing.
 func assertNoSwapfileOrRebootEntry(t *testing.T, dir string, fstabMayBeMissing bool) {
 	t.Helper()
 	swapfile := filepath.Join(dir, "swapfile")
@@ -220,8 +220,7 @@ func assertNoSwapfileOrRebootEntry(t *testing.T, dir string, fstabMayBeMissing b
 	}
 }
 
-// swapfileRebootEntryErr returns an error when the fstab at path carries a reboot
-// entry for swapfile, cannot be read, or is missing without missingOK.
+// swapfileRebootEntryErr returns an error when the fstab at path carries swapfile, cannot be read, or is missing without missingOK.
 func swapfileRebootEntryErr(path, swapfile string, missingOK bool) error {
 	fstab, err := os.ReadFile(path)
 	if missingOK && errors.Is(err, fs.ErrNotExist) {
@@ -236,8 +235,7 @@ func swapfileRebootEntryErr(path, swapfile string, missingOK bool) error {
 	return nil
 }
 
-// assertSwapCompleteAndPackagesFollow fails the test unless the marker records swap
-// as complete and setup's output out shows it went on to the packages phase.
+// assertSwapCompleteAndPackagesFollow fails the test unless the marker and setup's output out show swap complete, then packages.
 func assertSwapCompleteAndPackagesFollow(t *testing.T, dir, out string) {
 	t.Helper()
 	m, _, err := decodeMarker(t, filepath.Join(dir, "bootstrap.json"))
@@ -268,9 +266,8 @@ func TestScriptSwapRetryAfterAFailedRebootEntryWriteLeavesSwapPersistent(t *test
 	dir, scriptPath, env := scriptFixture(t)
 	swapfile := filepath.Join(dir, "swapfile")
 	fstabPath := filepath.Join(dir, "fstab")
-	// An fstab that is a directory cannot be written, so the first attempt fails.
 	if err := os.Mkdir(fstabPath, 0o755); err != nil {
-		t.Fatalf("mkdir fstab: %v", err)
+		t.Fatalf("make fstab an unwritable directory: %v", err)
 	}
 
 	if out, err := runSetup(bash, scriptPath, env); err == nil {

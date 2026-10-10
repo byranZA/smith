@@ -789,10 +789,7 @@ exit 0
 // procSwapsHeader is the active swap list of a box with no swap: the header line alone.
 const procSwapsHeader = "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n"
 
-// writeSwapFakeBins installs fake swap tools: df reports FREE_DISK_KB of free disk
-// (8 GB unless set), fallocate creates a sparse file of the requested size, mkswap
-// formats nothing, and swapon lists the file as active swap, or is refused when
-// SWAPON_REFUSED is set.
+// writeSwapFakeBins installs fake df, fallocate, mkswap and swapon, steered by FREE_DISK_KB (8 GB unless set) and SWAPON_REFUSED.
 func writeSwapFakeBins(t *testing.T, binDir string) {
 	t.Helper()
 	writeFakeBin(t, binDir, "df", `#!/usr/bin/env bash

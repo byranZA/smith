@@ -240,8 +240,6 @@ func truncate(out []byte) string {
 	return string(out[:max]) + "\n… truncated"
 }
 
-// TestScriptProbePrintsTotalMemoryAndSwap proves probe reports MemTotal and
-// SwapTotal from meminfo, and empty figures when meminfo cannot be read.
 func TestScriptProbePrintsTotalMemoryAndSwap(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {

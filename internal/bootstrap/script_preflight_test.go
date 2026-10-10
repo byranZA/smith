@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// TestScriptPreflightPrintsTotalMemory proves preflight reports MemTotal from
-// meminfo, and an empty figure when meminfo cannot be read. Preflight's exit
-// status is not under test: it reads the host's /etc/os-release.
 func TestScriptPreflightPrintsTotalMemory(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
