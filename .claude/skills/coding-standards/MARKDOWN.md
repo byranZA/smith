@@ -10,7 +10,7 @@ Start each heading, list, table, and fenced block on its own line with a blank l
 
 Every prompt sent to an agent or LLM lives in its own `.md` file, never as a string literal in code. A prompt in a file is easy to find, reads as prose, and its history shows in `git log` on that file alone.
 
-- Put the prompt file beside the code that sends it and name it for its job (`ralph/ralph-prompt.md`).
+- Put the prompt file beside the code that sends it and name it for its job (`internal/loop/prompt.md`).
 - Mark runtime values with `{{NAME}}` placeholders that the code fills in; the code only reads the file and fills in placeholders.
 - In Go, load the file with `//go:embed` so the binary stays self-contained, as `internal/onbox` does with `install.sh`.
 - A fragment appended only in some cases (a mode note, a retry hint) is a prompt too, and gets its own file.

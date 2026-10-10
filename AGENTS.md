@@ -24,7 +24,7 @@ These hold for every agent working a task here, in the smith loop or not.
 
 - **Checks:** `make check` before handing work back, and `make race` for anything concurrent. A green `make check` can hide a skipped lint: the `coding-standards` skill's `GO.md` says how to read it.
 - **Commits:** Conventional Commits that reference the issue, such as `feat: <summary> (#123)`.
-- **Guardrails:** `.claude/` (settings and skills), `ralph/` (the earlier loop driver) and `.smith/` (below) change only in a task that names them.
+- **Guardrails:** `.claude/` (settings and skills) and `.smith/` (below) change only in a task that names them.
 
 ## `.smith/` is production
 
