@@ -789,10 +789,16 @@ exit 0
 // procSwapsHeader is the active swap list of a box with no swap: the header line alone.
 const procSwapsHeader = "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n"
 
-// writeSwapFakeBins installs fake swap tools: fallocate creates a sparse file of the
-// requested size, mkswap formats nothing, and swapon lists the file as active swap.
+// writeSwapFakeBins installs fake swap tools: df reports FREE_DISK_KB of free disk
+// (8 GB unless set), fallocate creates a sparse file of the requested size, mkswap
+// formats nothing, and swapon lists the file as active swap, or is refused when
+// SWAPON_REFUSED is set.
 func writeSwapFakeBins(t *testing.T, binDir string) {
 	t.Helper()
+	writeFakeBin(t, binDir, "df", `#!/usr/bin/env bash
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/vda1 26000000 1000 %s 1%% /\n' "${FREE_DISK_KB:-8388608}"
+`)
 	writeFakeBin(t, binDir, "fallocate", `#!/usr/bin/env bash
 [ "$1" = "-l" ] || exit 64
 mib="${2%M}"
@@ -802,6 +808,10 @@ dd if=/dev/zero of="$3" bs=1048576 seek="$mib" count=0 2>/dev/null
 exit 0
 `)
 	writeFakeBin(t, binDir, "swapon", `#!/usr/bin/env bash
+if [ -n "${SWAPON_REFUSED:-}" ]; then
+  echo "swapon: $1: swapon failed: Operation not permitted" >&2
+  exit 255
+fi
 printf '%s\tfile\t\t2097148\t\t0\t\t-2\n' "$1" >>"$SMITH_SWAPS"
 `)
 }

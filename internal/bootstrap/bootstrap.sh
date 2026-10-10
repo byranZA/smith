@@ -58,8 +58,10 @@ SWAPS="${SMITH_SWAPS:-/proc/swaps}"
 FSTAB="${SMITH_FSTAB:-/etc/fstab}"
 SWAPFILE="${SMITH_SWAPFILE:-/swapfile}"
 
-# SWAP_SIZE_MB is the size of the swapfile smith gives a box without swap.
-SWAP_SIZE_MB=2048
+# The swapfile is the smaller of SWAP_MAX_MB and a quarter of the free disk on its
+# filesystem; under SWAP_MIN_MB it is too small to be worth having, so none is made.
+SWAP_MAX_MB=2048
+SWAP_MIN_MB=256
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -369,10 +371,32 @@ ensure_swap_fstab_entry() {
   printf '%s none swap sw 0 0\n' "$SWAPFILE" | as_root tee -a "$FSTAB" >/dev/null
 }
 
+# remove_swap_fstab_entry drops any reboot entry for the swapfile from fstab.
+remove_swap_fstab_entry() {
+  local kept
+  [ -f "$FSTAB" ] || return 0
+  kept="$(as_root awk -v f="$SWAPFILE" '$1 != f' "$FSTAB")"
+  printf '%s' "${kept:+$kept$'\n'}" | as_root tee "$FSTAB" >/dev/null
+}
+
+# swap_size_mb prints the swapfile's size in MB: the smaller of SWAP_MAX_MB and a
+# quarter of the free disk on the swapfile's filesystem.
+swap_size_mb() {
+  local free_kb size
+  free_kb="$(df -Pk "$(dirname "$SWAPFILE")" | awk 'NR == 2 { print $4 }')"
+  size=$(( free_kb / 1024 / 4 ))
+  if [ "$size" -gt "$SWAP_MAX_MB" ]; then
+    size="$SWAP_MAX_MB"
+  fi
+  printf '%s\n' "$size"
+}
+
 # phase_swap gives a box without swap a root-only swapfile, formatted, enabled and
 # set to come back after a reboot, so memory pressure slows the box rather than
-# freezing it. It is check-before-change: any active swap makes it a no-op that
-# reports already-satisfied.
+# freezing it. It adapts to the box rather than failing setup: any active swap,
+# smith's or not, makes it a no-op that reports already-satisfied; too little disk
+# skips it; and a box that refuses swap gets the partial swapfile and its reboot
+# entry removed, then skips it. Every skip prints a note line.
 phase_swap() {
   if swap_active; then
     printf '  swap already present\n'
@@ -380,10 +404,24 @@ phase_swap() {
     return 0
   fi
 
-  as_root fallocate -l "${SWAP_SIZE_MB}M" "$SWAPFILE"
+  local size
+  size="$(swap_size_mb)"
+  if [ "$size" -lt "$SWAP_MIN_MB" ]; then
+    printf '  swap skipped: not enough free disk (a %s MB swapfile is under the %s MB minimum)\n' "$size" "$SWAP_MIN_MB"
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  as_root fallocate -l "${size}M" "$SWAPFILE"
   as_root chmod 0600 "$SWAPFILE"
   as_root mkswap "$SWAPFILE"
-  as_root swapon "$SWAPFILE"
+  if ! as_root swapon "$SWAPFILE"; then
+    as_root rm -f "$SWAPFILE"
+    remove_swap_fstab_entry
+    printf '  swap skipped: not supported on this box (enabling swap was refused)\n'
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
   ensure_swap_fstab_entry
 }
 

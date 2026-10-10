@@ -105,3 +105,137 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestScriptSwapIsAQuarterOfFreeDiskOnASmallDisk(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "FREE_DISK_KB=2097152") // 2 GB free
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	fi, err := os.Stat(filepath.Join(dir, "swapfile"))
+	if err != nil {
+		t.Fatalf("stat swapfile: %v", err)
+	}
+	if got, want := fi.Size(), int64(512<<20); got != want {
+		t.Errorf("swapfile size = %d, want %d (512 MB, a quarter of 2 GB free)", got, want)
+	}
+	assertSwapCompleteAndPackagesFollow(t, dir, out)
+}
+
+func TestScriptSwapSkipsForLackOfDisk(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "FREE_DISK_KB=819200") // 800 MB free
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	assertNoSwapfileOrRebootEntry(t, dir)
+	if !strings.Contains(out, "swap skipped: not enough free disk") {
+		t.Errorf("setup output does not report swap skipped for lack of disk:\n%s", out)
+	}
+	assertSwapCompleteAndPackagesFollow(t, dir, out)
+}
+
+func TestScriptSwapLeavesExistingSwapUntouched(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	swaps := procSwapsHeader + "/dev/zram0\tpartition\t1048572\t\t0\t\t100\n"
+	fstab := "UUID=abcd / ext4 defaults 0 1\n"
+	writeTestFile(t, filepath.Join(dir, "swaps"), swaps)
+	writeTestFile(t, filepath.Join(dir, "fstab"), fstab)
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "swapfile")); !os.IsNotExist(err) {
+		t.Errorf("a swapfile was added beside existing swap (stat err = %v)", err)
+	}
+	if got := readFile(t, filepath.Join(dir, "swaps")); got != swaps {
+		t.Errorf("active swap list changed:\ngot  %q\nwant %q", got, swaps)
+	}
+	if got := readFile(t, filepath.Join(dir, "fstab")); got != fstab {
+		t.Errorf("fstab changed:\ngot  %q\nwant %q", got, fstab)
+	}
+	assertSwapCompleteAndPackagesFollow(t, dir, out)
+}
+
+func TestScriptSwapRefusedLeavesNothingBehind(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "SWAPON_REFUSED=1")
+	// A reboot entry left by an earlier attempt goes too; the rest of fstab stays.
+	const rootEntry = "UUID=abcd / ext4 defaults 0 1\n"
+	writeTestFile(t, filepath.Join(dir, "fstab"), rootEntry+filepath.Join(dir, "swapfile")+" none swap sw 0 0\n")
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	assertNoSwapfileOrRebootEntry(t, dir)
+	if got := readFile(t, filepath.Join(dir, "fstab")); got != rootEntry {
+		t.Errorf("fstab = %q, want only the entries smith did not add, %q", got, rootEntry)
+	}
+	if !strings.Contains(out, "swap skipped: not supported on this box") {
+		t.Errorf("setup output does not report swap as unsupported:\n%s", out)
+	}
+	assertSwapCompleteAndPackagesFollow(t, dir, out)
+}
+
+// assertNoSwapfileOrRebootEntry fails the test when the swapfile exists or fstab
+// carries an entry for it.
+func assertNoSwapfileOrRebootEntry(t *testing.T, dir string) {
+	t.Helper()
+	swapfile := filepath.Join(dir, "swapfile")
+	if _, err := os.Stat(swapfile); !os.IsNotExist(err) {
+		t.Errorf("swapfile left behind (stat err = %v)", err)
+	}
+	if fstab, err := os.ReadFile(filepath.Join(dir, "fstab")); err == nil && strings.Contains(string(fstab), swapfile) {
+		t.Errorf("fstab carries a reboot entry for the swapfile:\n%s", fstab)
+	}
+}
+
+// assertSwapCompleteAndPackagesFollow fails the test unless the marker records swap
+// as complete and setup's output out shows it went on to the packages phase.
+func assertSwapCompleteAndPackagesFollow(t *testing.T, dir, out string) {
+	t.Helper()
+	m, _, err := decodeMarker(t, filepath.Join(dir, "bootstrap.json"))
+	if err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if len(m.CompletedPhases) < 2 || m.CompletedPhases[0] != "swap" || m.CompletedPhases[1] != "packages" {
+		t.Errorf("marker CompletedPhases = %v, want swap complete then packages", m.CompletedPhases)
+	}
+	if !strings.Contains(out, "▶ packages") {
+		t.Errorf("setup did not go on to packages:\n%s", out)
+	}
+}
+
+// writeTestFile writes contents to path, failing the test when it cannot.
+func writeTestFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
