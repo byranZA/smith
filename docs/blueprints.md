@@ -138,6 +138,7 @@ from:
 ```
 $ smith blueprint check acme
 blueprint "acme" is valid (/home/ada/.smith/blueprints/acme.yaml)
+every reference it declares resolves on this machine
 
 resolved configuration:
 access:     tailscale (blueprint)
@@ -177,6 +178,18 @@ placements:
   file:~/.secrets/acme/id_forge -> ~/.ssh/id_forge (converge, 0600)
   file:~/.config/acme/agent-instructions.md -> ~/.config/acme/agent-instructions.md (once, 0644)
 ```
+
+check also resolves every `env:` and `file:` reference the blueprint declares — each placement source and env value, at the box and in each repo — exactly as `machine setup` will, and says whether they all resolve on this machine. When some don't, it lists each one with its scope and the reason, as setup's refusal would, and prints no value:
+
+```text
+$ smith blueprint check acme
+blueprint "acme" is valid (/home/ada/.smith/blueprints/acme.yaml), but `smith machine setup` from here would refuse it:
+2 reference(s) will not resolve on this machine:
+  ~/.ssh/id_forge from file:~/.secrets/acme/id_forge: read what this placement source names: read secret file "~/.secrets/acme/id_forge": open /home/ada/.secrets/acme/id_forge: no such file or directory
+  GITHUB_TOKEN from env:GH_TOKEN: read what this blueprint value names: environment variable "GH_TOKEN": secret reference resolved to nothing
+```
+
+An unresolved reference still exits 0: a blueprint is also checked where no box will be set up from it, such as CI or a teammate's machine, and there `file:~/.secrets/…` never resolves. `literal:` values are not references and are never listed among them; an empty one, `literal:` with nothing after it, is listed under its own heading, `literal value(s) declare nothing`, since setup refuses it too.
 
 Fixed-key fields carry the origin of their value; the collections are
 blueprint-only, so they are printed as the blueprint declared them. A repo

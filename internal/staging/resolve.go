@@ -65,8 +65,18 @@ type UnresolvedError struct {
 // Error names every unresolvable reference and what declared it, one per line,
 // and says plainly that the box was left untouched.
 func (e *UnresolvedError) Error() string {
+	return fmt.Sprintf("%d reference(s) will not resolve, so nothing was staged:%s", e.Count(), e.List())
+}
+
+// Count is how many references did not resolve.
+func (e *UnresolvedError) Count() int {
+	return len(e.Sources) + len(e.Values)
+}
+
+// List is every unresolvable reference on an indented line of its own, each
+// preceded by a newline, naming its scope, reference and reason but never a value.
+func (e *UnresolvedError) List() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d reference(s) will not resolve, so nothing was staged:", len(e.Sources)+len(e.Values))
 	for _, s := range e.Sources {
 		fmt.Fprintf(&b, "\n  %s from %s: %v", s.scope(), s.From, s.Err)
 	}

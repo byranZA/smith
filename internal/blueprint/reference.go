@@ -31,6 +31,13 @@ var (
 	sourceSchemes = []string{"env", "file"}
 )
 
+// IsLiteral reports whether a blueprint value declares a literal: rather than a
+// reference to resolve.
+func IsLiteral(value string) bool {
+	scheme, _, ok := secret.Split(value)
+	return ok && scheme == "literal"
+}
+
 // Value resolves what a blueprint value declares into the value itself: the
 // schemes a value may name, which are the ones a placement source may name
 // plus literal:. What an env: or file: reference names is whitespace-trimmed,
@@ -111,7 +118,7 @@ func envFindings(path string, env map[string]string) []Finding {
 // content, and being told the scheme does not exist would send them looking
 // for a typo.
 func source(path, from string) []Finding {
-	if scheme, _, ok := secret.Split(from); ok && scheme == "literal" {
+	if IsLiteral(from) {
 		return []Finding{{Path: path, Message: fmt.Sprintf(
 			"%q is not valid as a placement source: a source resolves to a whole file's bytes, so point at one with %q or %q",
 			"literal:", "file:", "env:")}}

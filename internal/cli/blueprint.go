@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // homeResolver locates the operator's config home. It is passed into the
@@ -36,21 +38,11 @@ func newBlueprintCmd(resolve homeResolver) *cobra.Command {
 	return cmd
 }
 
-// newCheckCmd builds `smith blueprint check [<name-or-path>] [--access <mode>]`.
-// With a bare name it reads that blueprint out of the config home; with a path
-// it reads that file verbatim; with no argument it reports on the operator's
-// preferences alone. The preferences are validated either way, since they are
-// part of what smith would use.
-//
-// Its success case is the resolved configuration — every field smith would
-// actually use, with where each value came from — because the question an
-// operator runs it to answer is "what would setup do?", not "is the document
-// shaped right?". --access overrides both the blueprint and the preferences,
-// which is what makes the top of the precedence chain observable.
-//
-// check writes nothing, touches no box, and needs no network, so it answers
-// that question before any box exists. Exit 0 valid, 1 invalid or not found,
-// with the resolved configuration on stdout and any refusal on stderr.
+// newCheckCmd builds `smith blueprint check [<name-or-path>] [--access <mode>]`,
+// which prints the configuration setup would use and whether its references
+// resolve on this machine, without writing anything. It exits 0 for a valid
+// blueprint whether or not its references resolve, and 1 for an invalid or
+// missing one.
 func newCheckCmd(resolve homeResolver) *cobra.Command {
 	var accessMode string
 	cmd := &cobra.Command{
@@ -80,25 +72,73 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 				return writeResolved(cmd, config.Resolve(overrides, nil, &prefs))
 			}
 			name := args[0]
-			b, path, err := config.Load(home, name)
+			doc, err := config.LoadDocument(home, name)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
 			// The resolved picture is what setup would act on, and a
 			// preference-declared field can disagree with a blueprint one, so
 			// it is checked before anything is reported as valid.
-			resolved := config.Resolve(overrides, &b, &prefs)
+			resolved := config.Resolve(overrides, &doc.Blueprint, &prefs)
 			if err := resolved.Conflicts(); err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "blueprint %q is valid (%s)\n", name, path); err != nil {
-				return fmt.Errorf("write report: %w", err)
+			if err := writeValid(cmd, name, doc, resolutionToStage(resolved)); err != nil {
+				return err
 			}
 			return writeResolved(cmd, resolved)
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "", "override how the box is reached: public or tailscale")
 	return cmd
+}
+
+// writeValid reports a valid blueprint and whether `machine setup` would
+// resolve everything it declares, listing what it would not by scope and reason
+// but never by value.
+func writeValid(cmd *cobra.Command, name string, doc config.Document, resolution staging.Resolution) error {
+	report := fmt.Sprintf("blueprint %q is valid (%s)", name, doc.Path)
+	var unresolved *staging.UnresolvedError
+	_, err := resolveBlueprint(doc, resolution)
+	switch {
+	case errors.As(err, &unresolved):
+		references, literals := splitLiterals(unresolved)
+		report += ", but `smith machine setup` from here would refuse it:\n" +
+			section(references, "reference(s) will not resolve on this machine") +
+			section(literals, "literal value(s) declare nothing")
+	case err != nil:
+		return err
+	default:
+		report += "\nevery reference it declares resolves on this machine\n"
+	}
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return nil
+}
+
+// splitLiterals separates the env values unresolved names that declare an
+// empty literal: from the references that did not resolve.
+func splitLiterals(unresolved *staging.UnresolvedError) (references, literals *staging.UnresolvedError) {
+	references = &staging.UnresolvedError{Sources: unresolved.Sources}
+	literals = &staging.UnresolvedError{}
+	for _, v := range unresolved.Values {
+		if blueprint.IsLiteral(v.Ref) {
+			literals.Values = append(literals.Values, v)
+			continue
+		}
+		references.Values = append(references.Values, v)
+	}
+	return references, literals
+}
+
+// section lists unresolved under a heading that counts it, or is empty when
+// there is nothing to list.
+func section(unresolved *staging.UnresolvedError, heading string) string {
+	if unresolved.Count() == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d %s:%s\n", unresolved.Count(), heading, unresolved.List())
 }
 
 // writeResolved prints the configuration smith would use, one field per line
