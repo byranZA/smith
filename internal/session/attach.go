@@ -43,14 +43,15 @@ type Execer interface {
 func Attach(ctx context.Context, env Env, name string, mode Mode) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("no session named: want the name `session list` reports")
+		return nameless(env)
 	}
 	found, err := find(ctx, env, name)
 	if err != nil {
 		return err
 	}
 	if !isLive(ctx, env.Tmux, name) {
-		return fmt.Errorf("session %q is not running: resume it with `smith session start --repo %s --branch %s`", name, found.repo.Name, found.wt.branch)
+		resume := env.Hint.Command("session start", "--repo", found.repo.Name, "--branch", found.wt.branch)
+		return fmt.Errorf("session %q is not running: resume it with `%s`", name, resume)
 	}
 	args := []string{"attach-session", "-t", TmuxSession(name)}
 	if mode == Observe {

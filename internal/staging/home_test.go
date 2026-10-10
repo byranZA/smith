@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/secret"
 )
 
@@ -36,7 +37,7 @@ func TestResolveStagesAnEnvValueReadThroughAHomeRelativePath(t *testing.T) {
 	}
 	stageEnv(t, root, tree)
 
-	got, err := ReadValue(root, "", "GITHUB_TOKEN")
+	got, err := ReadValue(root, "", "GITHUB_TOKEN", hint.Invocation{})
 	if err != nil {
 		t.Fatalf("ReadValue() error = %v", err)
 	}

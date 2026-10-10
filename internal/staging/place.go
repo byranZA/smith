@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // onceMode is the placement mode that writes only if the destination is
@@ -38,12 +39,12 @@ const dirMode = 0o750
 //
 // The bytes land on a temporary path beside the destination and are moved into
 // place, so a destination never exists holding partial content or a wider mode
-// than the placement declares.
-func Place(root, repo, worktree string, placements []blueprint.Placement) (Result, error) {
+// than the placement declares. A refusal spells its suggested command for inv.
+func Place(root, repo, worktree string, placements []blueprint.Placement, inv hint.Invocation) (Result, error) {
 	var result Result
 	for _, p := range placements {
 		destination := filepath.Join(worktree, p.To)
-		change, err := place(root, repo, p, destination)
+		change, err := place(root, repo, p, destination, inv)
 		if err != nil {
 			return Result{}, err
 		}
@@ -53,7 +54,7 @@ func Place(root, repo, worktree string, placements []blueprint.Placement) (Resul
 }
 
 // place materializes one placement at destination and reports what it did.
-func place(root, repo string, p blueprint.Placement, destination string) (Change, error) {
+func place(root, repo string, p blueprint.Placement, destination string, inv hint.Invocation) (Change, error) {
 	current, exists, err := held(destination)
 	if err != nil {
 		return Unchanged, err
@@ -61,7 +62,7 @@ func place(root, repo string, p blueprint.Placement, destination string) (Change
 	if exists && p.Mode == onceMode {
 		return Unchanged, nil
 	}
-	staged, err := ReadPlacement(root, repo, p.To)
+	staged, err := ReadPlacement(root, repo, p.To, inv)
 	if err != nil {
 		return Unchanged, fmt.Errorf("place the file for repo %q at %s: %w", repo, destination, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/session"
 )
 
@@ -12,7 +13,7 @@ import (
 func TestReadoutCarriesTheFourColumnsAndNoOther(t *testing.T) {
 	out := session.Readout([]session.Session{
 		{Name: "smith-main", Repo: "smith", Branch: "main", Live: true},
-	})
+	}, hint.Invocation{})
 
 	header := strings.Fields(strings.SplitN(out, "\n", 2)[0])
 	want := []string{"NAME", "STATE", "DIRTY", "UNPUSHED"}
@@ -27,7 +28,7 @@ func TestReadoutCarriesTheFourColumnsAndNoOther(t *testing.T) {
 func TestReadoutNamesTheSessionTheOtherVerbsTake(t *testing.T) {
 	out := session.Readout([]session.Session{
 		{Name: session.DeriveName("smith", "smith/spec-42"), Repo: "smith", Branch: "smith/spec-42"},
-	})
+	}, hint.Invocation{})
 
 	if !strings.Contains(out, "smith-smith-spec-42") {
 		t.Errorf("Readout() = %q, want it to name the session", out)
@@ -43,7 +44,7 @@ func TestReadoutStatesWhetherEachSessionIsRunning(t *testing.T) {
 	out := session.Readout([]session.Session{
 		{Name: "smith-spec-42", Repo: "smith", Branch: "spec-42", Live: true},
 		{Name: "web-hotfix", Repo: "web", Branch: "hotfix"},
-	})
+	}, hint.Invocation{})
 
 	rows := strings.Split(strings.TrimSpace(out), "\n")
 	if len(rows) < 3 {
@@ -72,7 +73,7 @@ func TestReadoutAlwaysPrintsTheSummary(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := session.Readout(tt.sessions)
+			out := session.Readout(tt.sessions, hint.Invocation{})
 			if !strings.Contains(out, tt.want) {
 				t.Errorf("Readout() = %q, want a summary reading %q", out, tt.want)
 			}
@@ -96,7 +97,7 @@ func TestReadoutRendersTheWorkState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			row := strings.Fields(strings.Split(session.Readout([]session.Session{tt.session}), "\n")[1])
+			row := strings.Fields(strings.Split(session.Readout([]session.Session{tt.session}, hint.Invocation{}), "\n")[1])
 
 			if len(row) != 4 {
 				t.Fatalf("Readout() row = %v, want four columns", row)
@@ -143,7 +144,7 @@ func TestReadoutSummarizesTheWorkState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := strings.TrimSpace(session.Readout(tt.sessions)); !strings.HasSuffix(got, tt.want) {
+			if got := strings.TrimSpace(session.Readout(tt.sessions, hint.Invocation{})); !strings.HasSuffix(got, tt.want) {
 				t.Errorf("Readout() = %q, want a summary reading %q", got, tt.want)
 			}
 		})

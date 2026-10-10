@@ -28,7 +28,7 @@ import (
 func Stop(ctx context.Context, env Env, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("no session named: want the name `session list` reports")
+		return nameless(env)
 	}
 	if !isLive(ctx, env.Tmux, name) {
 		_, err := find(ctx, env, name)

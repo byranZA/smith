@@ -116,7 +116,7 @@ func find(ctx context.Context, env Env, name string) (placed, error) {
 	}
 	found, ok := lookup(worktrees, name)
 	if !ok {
-		return placed{}, unknownSession(name)
+		return placed{}, unknownSession(env, name)
 	}
 	return found, nil
 }
@@ -146,8 +146,14 @@ func listedName(repo string, wt worktree) string {
 
 // unknownSession is the refusal for a name no session holds. It is one string
 // wherever a name is resolved, so a typo reads the same at every verb.
-func unknownSession(name string) error {
-	return fmt.Errorf("no session named %q exists on this box: `smith session list` reports the sessions there are", name)
+func unknownSession(env Env, name string) error {
+	return fmt.Errorf("no session named %q exists on this box: `%s` reports the sessions there are", name, env.Hint.Command("session list"))
+}
+
+// nameless is the refusal for a verb handed a blank name, pointing at the
+// listing whose names it takes.
+func nameless(env Env) error {
+	return fmt.Errorf("no session named: want the name `%s` reports", env.Hint.Command("session list"))
 }
 
 // isLive probes whether a session's tmux session is running. It is asked on

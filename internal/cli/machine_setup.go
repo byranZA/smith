@@ -377,7 +377,8 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // installs runtimes onto the box and so has to run there (docs/adr/0008). The
 // relay travels as the smith user, the login the box is reached by from now
 // on: the bootstrap-in login is dead by this point, since hardening has closed
-// it.
+// it. box is the box as the operator named it, which the commands the box
+// suggests back are spelled with.
 //
 // A run naming no blueprint converges nothing. There is nothing staged for the
 // box to read, and refusing on its absence would break the flag-only path that
@@ -387,11 +388,11 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // completed and the box is provisioned, secured and configured, so what the
 // operator is owed is the pipeline's own partial report — and the box has
 // already said what went wrong on their terminal.
-func convergeWorkspace(ctx context.Context, exec connection.Exec, target, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
+func convergeWorkspace(ctx context.Context, exec connection.Exec, target, box, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
 	if staged == nil {
 		return nil
 	}
-	verb := relay.Verb{Target: target, Version: version, Args: []string{"workspace", "converge"}}
+	verb := relay.Verb{Target: target, Box: box, Version: version, Args: []string{"workspace", "converge"}}
 	local := func() error {
 		return errors.New("the workspace stage runs on the box, and setup always names one")
 	}

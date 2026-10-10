@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/session"
 )
 
@@ -248,8 +249,8 @@ func TestListReportsADetachedWorktree(t *testing.T) {
 	if got[0].Branch != "" {
 		t.Errorf("List() branch = %q, want a detached worktree to carry no branch", got[0].Branch)
 	}
-	if !strings.Contains(session.Readout(got), "-") {
-		t.Errorf("Readout() = %q, want the unpushed count shown as not applicable", session.Readout(got))
+	if !strings.Contains(session.Readout(got, hint.Invocation{}), "-") {
+		t.Errorf("Readout() = %q, want the unpushed count shown as not applicable", session.Readout(got, hint.Invocation{}))
 	}
 }
 

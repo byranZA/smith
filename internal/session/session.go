@@ -19,6 +19,8 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // bareDir is the bare repo's directory name inside a repo's workspace
@@ -87,6 +89,9 @@ type Env struct {
 	// Placer places nothing, which is what a caller with no staged tree behind
 	// it has.
 	Placer Placer
+	// Hint is the command the verb answers, which every command a refusal or
+	// a listing suggests is spelled for.
+	Hint hint.Invocation
 }
 
 // Session is one tmux session in one git worktree — the canonical record every

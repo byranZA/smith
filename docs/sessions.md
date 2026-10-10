@@ -205,7 +205,7 @@ rides the SSH door bootstrap already built. In outline (the real command adds
 a guard for a box with no smith, and a version check before it):
 
 ```
-ssh -t <box> /usr/local/bin/smith --relayed-from <version> session attach <name> [--interact]
+ssh -t <box> /usr/local/bin/smith --relayed-from <version> --relayed-box <box> session attach <name> [--interact]
 ```
 
 This is byte-identical under `--access=public` and `--access=tailscale`. The

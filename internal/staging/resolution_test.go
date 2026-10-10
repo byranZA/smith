@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // adasResolution is a resolution carrying every fixed-key field it stages.
@@ -94,7 +95,7 @@ func TestLoadResolutionReadsBackWhatWasStaged(t *testing.T) {
 	}
 	root := stageResolution(t, tree.Resolution.File.Bytes)
 
-	got, err := LoadResolution(root)
+	got, err := LoadResolution(root, hint.Invocation{})
 	if err != nil {
 		t.Fatalf("LoadResolution() error = %v", err)
 	}
@@ -106,7 +107,7 @@ func TestLoadResolutionReadsBackWhatWasStaged(t *testing.T) {
 func TestLoadResolutionRefusesAnAbsentResolutionAsAbsent(t *testing.T) {
 	root := t.TempDir()
 
-	_, err := LoadResolution(root)
+	_, err := LoadResolution(root, hint.Invocation{})
 	var absent *AbsentError
 	if !errors.As(err, &absent) {
 		t.Fatalf("LoadResolution() err = %v, want an *AbsentError", err)
@@ -121,7 +122,7 @@ func TestLoadResolutionRefusesAnAbsentResolutionAsAbsent(t *testing.T) {
 func TestLoadResolutionRefusesInvalidJSONAsMalformed(t *testing.T) {
 	root := stageResolution(t, []byte(`{"workspace": "~/co`))
 
-	_, err := LoadResolution(root)
+	_, err := LoadResolution(root, hint.Invocation{})
 	var malformed *MalformedError
 	if !errors.As(err, &malformed) {
 		t.Fatalf("LoadResolution() err = %v, want a *MalformedError", err)
@@ -207,7 +208,7 @@ func TestLoadResolutionRefusesAnIncompleteOrInvalidResolutionAsMalformed(t *test
 		t.Run(tt.name, func(t *testing.T) {
 			root := stageResolution(t, []byte(tt.data))
 
-			_, err := LoadResolution(root)
+			_, err := LoadResolution(root, hint.Invocation{})
 			var malformed *MalformedError
 			if !errors.As(err, &malformed) {
 				t.Fatalf("LoadResolution() err = %v, want a *MalformedError", err)
@@ -235,7 +236,7 @@ func TestLoadResolutionAcceptsAnOmittedOrPartialIdentity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := stageResolution(t, []byte(tt.data))
 
-			got, err := LoadResolution(root)
+			got, err := LoadResolution(root, hint.Invocation{})
 			if err != nil {
 				t.Fatalf("LoadResolution() error = %v", err)
 			}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // documentFile is the staged document's name inside the box state directory.
@@ -13,10 +14,18 @@ import (
 // disagree about where the document sits.
 const documentFile = "blueprint.yaml"
 
-// restage is what both refusals tell the operator to do. Neither refusal
-// migrates anything and neither fetches anything: `machine setup` is the sole
-// writer of the staged config, so it is the only fix for either.
-const restage = "run `smith machine setup` from the operator's machine"
+// restage is what every staged-config refusal tells the operator to do, spelled
+// for the command that met it: relayed, it names the box the operator relayed
+// to, and typed on the box it cannot, because the box does not know the name
+// its operator gave it. None of the refusals migrates or fetches anything:
+// `machine setup` is the sole writer of the staged config, so it is the only fix.
+func restage(inv hint.Invocation) string {
+	setup := "run `" + inv.Command("machine setup") + "`"
+	if inv.Box != "" {
+		return setup
+	}
+	return setup + " from the operator's machine"
+}
 
 // AbsentError reports that a file on-box smith needs — the staged blueprint or
 // the staged resolution — is not staged on this box. It is a provisioning gap
@@ -26,11 +35,21 @@ const restage = "run `smith machine setup` from the operator's machine"
 type AbsentError struct {
 	// Path is where the staged file was looked for.
 	Path string
+	// Hint is the command that met the refusal, which the commands it
+	// suggests are spelled for.
+	Hint hint.Invocation
 }
 
-// Error implements error.
+// Error implements error. Typed rather than relayed, the refusal may have been
+// met on the operator's own machine by a command that left out its box, so it
+// also names the command with one; nothing guesses which machine this is,
+// because a machine may be its own box.
 func (e *AbsentError) Error() string {
-	return fmt.Sprintf("no %s is staged on this box at %s: %s to stage one", artifact(e.Path), e.Path, restage)
+	refusal := fmt.Sprintf("no %s is staged on this box at %s: %s to stage one", artifact(e.Path), e.Path, restage(e.Hint))
+	if e.Hint.Box != "" || e.Hint.Verb == "" {
+		return refusal
+	}
+	return refusal + "\nif this is the operator's machine, name the box the command is for: `" + e.Hint.Rerun() + "`"
 }
 
 // MalformedError reports that a staged file cannot be trusted: a blueprint
@@ -43,11 +62,14 @@ type MalformedError struct {
 	Path string
 	// Err is the parse refusal, naming every problem and its line.
 	Err error
+	// Hint is the command that met the refusal, which the command it
+	// suggests is spelled for.
+	Hint hint.Invocation
 }
 
 // Error implements error.
 func (e *MalformedError) Error() string {
-	return fmt.Sprintf("the staged %s at %s is malformed: %v\n%s to re-stage it", artifact(e.Path), e.Path, e.Err, restage)
+	return fmt.Sprintf("the staged %s at %s is malformed: %v\n%s to re-stage it", artifact(e.Path), e.Path, e.Err, restage(e.Hint))
 }
 
 // artifact names the staged file at path the way the operator knows it, so a
@@ -70,35 +92,22 @@ func DocumentPathIn(root string) string {
 	return filepath.Join(root, documentFile)
 }
 
-// Load reads the blueprint staged under root — /etc/smith on a real box — and
-// validates it through the same strict pass as the operator-side load: an
-// unknown key is an error with the line it appears on, exactly as it would have
-// been on the operator's machine.
-//
-// This is not schema skew reintroduced. Version skew is refused before any verb
-// runs, so the two passes are the same parser; what a second pass catches is a
-// document edited or truncated after it was staged.
-//
-// The two refusals are types callers branch on and are deliberately worded
-// apart: *AbsentError is a provisioning gap, *MalformedError a document that
-// cannot be trusted. Both name `machine setup`, which is the only writer of
-// either, and neither migrates anything.
-//
-// No source reference in the document is resolved here. Every `from:` in a
-// staged blueprint points at the operator's laptop and is opaque provenance on
-// the box; a placement's bytes come from the staged tree instead.
-func Load(root string) (blueprint.Blueprint, error) {
+// Load reads the blueprint staged under root — /etc/smith on a real box —
+// through the operator-side strict parser, resolving no source reference in it.
+// It refuses with *AbsentError or *MalformedError, each naming `machine setup`
+// spelled for inv, the command the blueprint is read for.
+func Load(root string, inv hint.Invocation) (blueprint.Blueprint, error) {
 	path := DocumentPathIn(root)
 	data, err := os.ReadFile(path) // #nosec G304 -- the staged document sits at a path smith derives itself.
 	if err != nil {
 		if os.IsNotExist(err) {
-			return blueprint.Blueprint{}, &AbsentError{Path: path}
+			return blueprint.Blueprint{}, &AbsentError{Path: path, Hint: inv}
 		}
 		return blueprint.Blueprint{}, fmt.Errorf("read staged blueprint %s: %w", path, err)
 	}
 	b, err := blueprint.Parse(data)
 	if err != nil {
-		return blueprint.Blueprint{}, &MalformedError{Path: path, Err: err}
+		return blueprint.Blueprint{}, &MalformedError{Path: path, Err: err, Hint: inv}
 	}
 	return b, nil
 }
@@ -117,12 +126,15 @@ type MissingPlacementError struct {
 	Destination string
 	// Path is the staged path its bytes were looked for at.
 	Path string
+	// Hint is the command that met the refusal, which the command it
+	// suggests is spelled for.
+	Hint hint.Invocation
 }
 
 // Error implements error.
 func (e *MissingPlacementError) Error() string {
 	return fmt.Sprintf("the placement to %s%s has no staged bytes at %s: %s to stage them",
-		e.scope(), e.Destination, e.Path, restage)
+		e.scope(), e.Destination, e.Path, restage(e.Hint))
 }
 
 // scope names the repo a placement is scoped to, so the refusal reads as the
@@ -150,8 +162,9 @@ func (e *MissingPlacementError) scope() string {
 // else there — so it is opaque provenance and the staged bytes are the only
 // truth. A declared placement with no staged bytes is refused as a
 // *MissingPlacementError naming the destination rather than falling back to a
-// reference that would resolve to the wrong thing.
-func ReadPlacement(root, repo, destination string) ([]byte, error) {
+// reference that would resolve to the wrong thing, its suggested command
+// spelled for inv.
+func ReadPlacement(root, repo, destination string, inv hint.Invocation) ([]byte, error) {
 	path := BoxPlacementPathIn(root, destination)
 	if repo != "" {
 		path = RepoPlacementPathIn(root, repo, destination)
@@ -159,7 +172,7 @@ func ReadPlacement(root, repo, destination string) ([]byte, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- the staged path is one smith derives itself from the scope and destination.
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, &MissingPlacementError{Repo: repo, Destination: destination, Path: path}
+			return nil, &MissingPlacementError{Repo: repo, Destination: destination, Path: path, Hint: inv}
 		}
 		return nil, fmt.Errorf("read the staged bytes of the placement to %s at %s: %w", destination, path, err)
 	}

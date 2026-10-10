@@ -26,6 +26,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -135,6 +136,9 @@ type Env struct {
 	// blueprint, its placement bytes and its resolved env under — /etc/smith
 	// on a real box.
 	StateRoot string
+	// Hint is the command the run answers, which a refusal's suggested
+	// command is spelled for.
+	Hint hint.Invocation
 }
 
 // owner is the account a run claims placed files for: the one the caller

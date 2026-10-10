@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // stageBox stages a blueprint, and a resolution when not nil, under a fresh box state directory.
@@ -27,7 +28,7 @@ func stageBox(t *testing.T, document string, resolution []byte) string {
 
 // stagedIn reads the box configuration staged under root.
 func stagedIn(root string) boxResolver {
-	return func() (boxConfig, error) { return stagedBoxConfigIn(root) }
+	return func(inv hint.Invocation) (boxConfig, error) { return stagedBoxConfigIn(root, inv) }
 }
 
 func TestSessionStartCreatesTheWorktreeUnderAPreferenceOnlyWorkspace(t *testing.T) {

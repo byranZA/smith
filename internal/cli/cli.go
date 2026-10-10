@@ -105,6 +105,10 @@ func newRootCmd() *cobra.Command {
 		// not a runtime condition but a build that cannot be correct.
 		panic(fmt.Sprintf("hide --relayed-from: %v", err))
 	}
+	root.PersistentFlags().String(relayedBoxFlag, "", "the box as the operator relaying this command named it")
+	if err := root.PersistentFlags().MarkHidden(relayedBoxFlag); err != nil {
+		panic(fmt.Sprintf("hide --%s: %v", relayedBoxFlag, err))
+	}
 	// Every verb inherits the check, before any of them run: a command line
 	// this smith may not mean the same thing by is refused rather than
 	// half-understood.

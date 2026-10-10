@@ -96,6 +96,8 @@ that actually knows what it can parse.
 and refuse. Absent → no check at all, because that is the human who SSHed in and ran a verb by
 hand; they are not relaying and have nothing to compare against.
 
+`--relayed-box <name>` rides beside it, hidden and optional for the same reasons. It carries the box as the operator named it (an inventory name, or the literal `login@host` they wrote), so every command an on-box message suggests names the box and runs as printed where the operator reads it. Typed on the box, a suggested command names no box. A box whose smith predates the flag cannot parse it, and the relay reads its "unknown flag" answer as the version mismatch it is.
+
 ### Install and upgrade are one code path
 
 Probe the installed version → no-op if it matches → otherwise download to a temp path → verify →

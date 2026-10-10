@@ -62,6 +62,51 @@ func TestRunRelaysAVerbToTheBox(t *testing.T) {
 	}
 }
 
+func TestSendTellsTheBoxTheNameTheOperatorUsedForIt(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		verb Verb
+		want string
+	}{
+		{"a box named from the inventory", Verb{Target: "smith@100.92.14.7", Box: "smith-dev", Version: "0.2.0", Args: []string{"session", "list"}}, "/usr/local/bin/smith --relayed-from '0.2.0' --relayed-box 'smith-dev' 'session' 'list'"},
+		{"a literal target", Verb{Target: "smith@10.0.0.4", Version: "0.2.0", Args: []string{"session", "list"}}, "/usr/local/bin/smith --relayed-from '0.2.0' --relayed-box 'smith@10.0.0.4' 'session' 'list'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			conn := &fakeConn{}
+			if err := Send(t.Context(), conn, tt.verb, io.Discard, io.Discard); err != nil {
+				t.Fatalf("Send(%+v) err = %v", tt.verb, err)
+			}
+			if len(conn.commands) != 1 || conn.commands[0] != tt.want {
+				t.Errorf("Send(%+v) ran %q, want [%q]", tt.verb, conn.commands, tt.want)
+			}
+		})
+	}
+}
+
+func TestConnectTellsTheBoxTheNameTheOperatorUsedForIt(t *testing.T) {
+	t.Parallel()
+	execer := &fakeExecer{}
+	err := Connect(t.Context(), &fakeSSH{}, execer, Verb{
+		Target:  "smith@100.92.14.7",
+		Box:     "smith-dev",
+		Version: "0.2.0",
+		Args:    []string{"session", "attach", "smith-main"},
+	}, func() error { return nil }, io.Discard)
+	if err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	if len(execer.calls) != 1 {
+		t.Fatalf("exec called %d times, want 1: %v", len(execer.calls), execer.calls)
+	}
+	line := strings.Join(execer.calls[0], " ")
+	if !strings.Contains(line, "--relayed-box 'smith-dev' 'session' 'attach'") {
+		t.Errorf("terminal argv = %q, want it to name the box as the operator did", line)
+	}
+}
+
 // TestRunWithNoTargetRunsTheVerbLocally checks the other half of the one rule:
 // the operator who has SSHed in gets the verb here, with no connection opened.
 func TestRunWithNoTargetRunsTheVerbLocally(t *testing.T) {
@@ -145,6 +190,30 @@ func TestRunCarriesTheBoxsRefusalBack(t *testing.T) {
 	}
 	if got := errOut.String(); !strings.Contains(got, "0.2.0") || !strings.Contains(got, "0.1.0") {
 		t.Errorf("stderr = %q, want the box's refusal naming both versions", got)
+	}
+}
+
+func TestRunReadsABoxThatPredatesTheRelayedBoxFlagAsAMismatch(t *testing.T) {
+	t.Parallel()
+	ssh := &fakeSSH{
+		stderr: "smith: unknown flag: --relayed-box\n",
+		err:    exitStatus(1),
+	}
+
+	err := Run(t.Context(), ssh, Verb{
+		Target:  "smith@box",
+		Box:     "dev",
+		Version: "0.2.0",
+		Args:    []string{"session", "list"},
+	}, func() error { return nil }, io.Discard, io.Discard)
+
+	var mismatch *MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Run() err = %v, want a MismatchError", err)
+	}
+	want := MismatchError{Target: "smith@box", Local: "0.2.0"}
+	if *mismatch != want {
+		t.Errorf("Run() err = %+v, want %+v", *mismatch, want)
 	}
 }
 

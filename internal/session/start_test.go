@@ -13,6 +13,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 )
@@ -700,7 +701,7 @@ type placer struct {
 }
 
 func (p *placer) Place(repo, worktree string) error {
-	if _, err := staging.Place(p.root, repo, worktree, p.placements); err != nil {
+	if _, err := staging.Place(p.root, repo, worktree, p.placements, hint.Invocation{}); err != nil {
 		return fmt.Errorf("place into %s: %w", worktree, err)
 	}
 	return nil

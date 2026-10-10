@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // Removal is what Remove reclaimed: the session it addressed, the branch that
@@ -44,6 +46,9 @@ type RemovalRefusedError struct {
 	// Unpushed counts the commits no remote has. It is carried as
 	// information and is never itself a refusal.
 	Unpushed int
+	// Hint is the command that met the refusal, which the commands it
+	// suggests are spelled for.
+	Hint hint.Invocation
 }
 
 // Error implements error, rendering one refusal per line — the form the
@@ -51,11 +56,11 @@ type RemovalRefusedError struct {
 func (e *RemovalRefusedError) Error() string {
 	var refusals []string
 	if e.Live {
-		refusals = append(refusals, fmt.Sprintf("session `%s` is running — `smith session stop %s` first", TmuxSession(e.Name), e.Name))
+		refusals = append(refusals, fmt.Sprintf("session `%s` is running — `%s` first", TmuxSession(e.Name), e.Hint.Command("session stop", e.Name)))
 	}
 	if e.Dirty() {
-		refusals = append(refusals, fmt.Sprintf("worktree of session %q holds uncommitted work: %d modified, %d staged, %d untracked%s; reclaim it and lose that work with `smith session rm %s --force`",
-			e.Name, e.Modified, e.Staged, e.Untracked, kept(e.Unpushed), e.Name))
+		refusals = append(refusals, fmt.Sprintf("worktree of session %q holds uncommitted work: %d modified, %d staged, %d untracked%s; reclaim it and lose that work with `%s`",
+			e.Name, e.Modified, e.Staged, e.Untracked, kept(e.Unpushed), e.Hint.Command("session rm", e.Name, "--force")))
 	}
 	return strings.Join(refusals, "\n")
 }
@@ -139,7 +144,7 @@ func (e *BatchRefusedError) Unwrap() []error { return e.Refusals }
 // once here rather than defined a second time: two answers to "is this
 // worktree dirty" would let list say clean while rm refuses.
 func Remove(ctx context.Context, env Env, names []string, force bool) ([]Removal, error) {
-	names, err := named(names)
+	names, err := named(env, names)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +166,7 @@ func Remove(ctx context.Context, env Env, names []string, force bool) ([]Removal
 // removed twice either: the second pass would fail against a worktree the
 // first already reclaimed, which is the partial state the batch exists to
 // avoid.
-func named(names []string) ([]string, error) {
+func named(env Env, names []string) ([]string, error) {
 	var kept []string
 	seen := map[string]bool{}
 	for _, name := range names {
@@ -173,7 +178,7 @@ func named(names []string) ([]string, error) {
 		kept = append(kept, name)
 	}
 	if len(kept) == 0 {
-		return nil, fmt.Errorf("no session named: want the names `smith session list` reports")
+		return nil, fmt.Errorf("no session named: want the names `%s` reports", env.Hint.Command("session list"))
 	}
 	return kept, nil
 }
@@ -201,7 +206,7 @@ func gate(ctx context.Context, env Env, names []string, force bool) ([]admitted,
 	for _, name := range names {
 		found, ok := lookup(worktrees, name)
 		if !ok {
-			refusals = append(refusals, unknownSession(name))
+			refusals = append(refusals, unknownSession(env, name))
 			continue
 		}
 		live := isLive(ctx, env.Tmux, name)
@@ -217,6 +222,7 @@ func gate(ctx context.Context, env Env, names []string, force bool) ([]admitted,
 				Staged:    dirty.staged,
 				Untracked: dirty.untracked,
 				Unpushed:  unpushed,
+				Hint:      env.Hint,
 			})
 			continue
 		}
