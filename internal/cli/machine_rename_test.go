@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -212,31 +213,85 @@ func TestMachineRenameRefusesABoxCarryingNoMarker(t *testing.T) {
 	}
 }
 
-func TestMachineRenameNamesTheDisagreementWhenTheInventoryWriteFails(t *testing.T) {
-	dir := t.TempDir()
-	writeInventory(t, dir, registeredA)
+// lockInventory makes the inventory under dir unwritable until the returned
+// func restores it.
+func lockInventory(t *testing.T, dir string) (unlock func()) {
+	t.Helper()
 	cache := config.NewHome(dir).CachePath()
 	if err := os.Chmod(cache, 0o500); err != nil {
 		t.Fatalf("Chmod(%s): %v", cache, err)
 	}
-	t.Cleanup(func() {
+	unlock = func() {
 		if err := os.Chmod(cache, 0o700); err != nil {
 			t.Errorf("Chmod(%s): %v", cache, err)
 		}
-	})
+	}
+	t.Cleanup(unlock)
+	return unlock
+}
+
+func TestMachineRenameNamesTheDisagreementWhenTheInventoryWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, registeredA)
+	lockInventory(t, dir)
 
 	_, stderr, code := runRename(t, dir, &markedBox{marker: namedA}, "a", "b")
 
 	if code == 0 {
 		t.Fatal("exit code = 0, want non-zero for an inventory smith could not write")
 	}
-	for _, want := range []string{
-		`the box's marker records the name "b", but the inventory still registers it as "a"`,
-		"Reconcile them by running the rename again once the inventory can be written:\n  smith machine rename a b\n",
-	} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr = %q, want it to say %q", stderr, want)
-		}
+	const want = `the box's marker records the name "b", but the inventory still registers it as "a"`
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want it to say %q", stderr, want)
+	}
+}
+
+func TestMachineRenameGivesAReconcileCommandThatKeepsEachNameOneArgument(t *testing.T) {
+	tests := []struct {
+		name     string
+		from, to string
+		want     string
+	}{
+		{"plain names", "a", "b", "smith machine rename -- a b"},
+		{"spaces", "old box", "new box", "smith machine rename -- 'old box' 'new box'"},
+		{"a quote", "it's", "b", `smith machine rename -- 'it'\''s' b`},
+		{"shell metacharacters", "a", "$(reboot);b", "smith machine rename -- a '$(reboot);b'"},
+		{"leading dashes", "-a", "--b", "smith machine rename -- -a --b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeInventory(t, dir, fmt.Sprintf(`{"schema_version":1,"boxes":{%q:{"target":"smith@100.92.14.7"}}}`, tt.from))
+			lockInventory(t, dir)
+
+			_, stderr, _ := runRename(t, dir, &markedBox{marker: namedA}, "--", tt.from, tt.to)
+
+			if want := "\n  " + tt.want + "\n"; !strings.Contains(stderr, want) {
+				t.Errorf("rename %q %q stderr = %q, want it to give %q", tt.from, tt.to, stderr, tt.want)
+			}
+		})
+	}
+}
+
+func TestMachineRenameRunAgainReconcilesAPartialRename(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, registeredA)
+	box := &markedBox{marker: namedA}
+	unlock := lockInventory(t, dir)
+	if _, stderr, code := runRename(t, dir, box, "--", "a", "b"); code == 0 {
+		t.Fatalf("first rename exit code = 0, want a partial rename (stderr: %s)", stderr)
+	}
+	unlock()
+
+	_, stderr, code := runRename(t, dir, box, "--", "a", "b")
+
+	listed, _, _ := runList(t, dir)
+	const wantListed = "NAME   TARGET\n" +
+		"b      smith@100.92.14.7\n" +
+		"other  smith@100.92.14.8\n" +
+		"\n2 boxes\n"
+	if code != 0 || listed != wantListed {
+		t.Errorf("rename again exit code = %d, machine list = %q, want 0 and %q (stderr: %s)", code, listed, wantListed, stderr)
 	}
 }
 

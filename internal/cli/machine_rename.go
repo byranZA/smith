@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -92,8 +93,8 @@ func reportRename(cmd *cobra.Command, c boxname.Change, cause error) error {
 		report = fmt.Sprintf(`%v
 
 Reconcile them by running the rename again once the inventory can be written:
-  smith machine rename %s %s
-`, cause, c.From, c.To)
+  smith machine rename -- %s %s
+`, cause, shellWord(c.From), shellWord(c.To))
 	default:
 		return cause
 	}
@@ -102,3 +103,15 @@ Reconcile them by running the rename again once the inventory can be written:
 	}
 	return &exitError{code: code}
 }
+
+// shellWord returns s as one shell word: unchanged when every byte is one a
+// shell reads literally, single-quoted otherwise.
+func shellWord(s string) string {
+	if s != "" && strings.Trim(s, shellSafe) == "" {
+		return s
+	}
+	return connection.ShellArg(s)
+}
+
+// shellSafe holds the bytes a POSIX shell reads literally in an unquoted word.
+const shellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
