@@ -19,6 +19,8 @@ profile.cov
 
 # Build output
 /bin/
+# Per-checkout tool caches (golangci-lint)
+/.cache/
 # GoReleaser cross-compiles every target here
 /dist/
 
