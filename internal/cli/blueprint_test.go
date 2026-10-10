@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // runCheck runs `blueprint check` against a config home rooted at dir and
@@ -425,5 +427,176 @@ func TestBlueprintCheckAcceptsAGitconfigPlacementWithNoIdentityAnywhere(t *testi
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 for a gitconfig placement with no identity (stderr: %s)", code, stderr)
+	}
+}
+
+// unsetEnv clears name for the test, restoring whatever it held afterwards, so
+// an env: reference to it is one that will not resolve.
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+	t.Setenv(name, "")
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unset %s: %v", name, err)
+	}
+}
+
+func TestBlueprintCheckReportsEachReferenceThatWillNotResolveAndStillExitsZero(t *testing.T) {
+	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "absent-key")
+	writeBlueprint(t, dir, "acme", `placements:
+  - from: file:`+missing+`
+    to: ~/.ssh/id_ed25519
+repos:
+  - name: api
+    url: git@github.com:acme/api.git
+    env:
+      GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN
+`)
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a valid blueprint whose references do not resolve (stderr: %s)", code, stderr)
+	}
+	for _, want := range []string{
+		"2 reference(s) will not resolve on this machine",
+		"\n  ~/.ssh/id_ed25519 from file:" + missing + ": ",
+		"no such file or directory",
+		"\n  api GH_TOKEN from env:SMITH_TEST_UNSET_TOKEN: ",
+		`environment variable "SMITH_TEST_UNSET_TOKEN": secret reference resolved to nothing`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", stdout, want)
+		}
+	}
+}
+
+// referenceReport is the part of check's stdout ahead of the resolved
+// configuration: the verdict on the blueprint and on its references. The
+// resolved configuration echoes every reference the blueprint declares, so a
+// test about the report reads the report alone.
+func referenceReport(t *testing.T, stdout string) string {
+	t.Helper()
+	report, _, ok := strings.Cut(stdout, "\nresolved configuration:")
+	if !ok {
+		t.Fatalf("stdout = %q, want a resolved configuration after the report", stdout)
+	}
+	return report
+}
+
+func TestBlueprintCheckSaysSoWhenEveryReferenceResolves(t *testing.T) {
+	t.Setenv("SMITH_TEST_TOKEN", "tok")
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key")
+	if err := os.WriteFile(key, []byte("key\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", key, err)
+	}
+	writeBlueprint(t, dir, "acme", "env:\n  GH_TOKEN: env:SMITH_TEST_TOKEN\nplacements:\n  - from: file:"+key+"\n    to: ~/.ssh/id_ed25519\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := "blueprint \"acme\" is valid (" + filepath.Join(dir, "blueprints", "acme.yaml") + ")\nevery reference it declares resolves on this machine\n"
+	if got := referenceReport(t, stdout); got != want {
+		t.Errorf("report = %q, want %q", got, want)
+	}
+}
+
+func TestBlueprintCheckAndSetupAgreeOnWhichReferencesWillNotResolve(t *testing.T) {
+	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
+	t.Setenv("SMITH_TEST_TOKEN", "tok")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", `env:
+  GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN
+  REGION: literal:eu-central
+  NPM_TOKEN: env:SMITH_TEST_TOKEN
+placements:
+  - from: file:`+filepath.Join(dir, "absent-key")+`
+    to: ~/.ssh/id_ed25519
+repos:
+  - name: api
+    url: git@github.com:acme/api.git
+    placements:
+      - from: env:SMITH_TEST_UNSET_TOKEN
+        to: .env
+`)
+	var setupErr bytes.Buffer
+	if _, err := resolveStagedConfig(documentOrFatal(t, dir, "acme"), staging.Resolution{}, &setupErr); err == nil {
+		t.Fatal("resolveStagedConfig() err = nil, want setup to refuse the blueprint")
+	}
+
+	stdout, _, _ := runCheck(t, dir, "check", "acme")
+
+	if got, want := listedReferences(referenceReport(t, stdout)), listedReferences(setupErr.String()); !slices.Equal(got, want) {
+		t.Errorf("check lists %q, want the references setup refuses, %q", got, want)
+	}
+}
+
+// listedReferences is the indented lines of a report, one per reference that
+// would not resolve.
+func listedReferences(report string) []string {
+	var lines []string
+	for line := range strings.Lines(report) {
+		if strings.HasPrefix(line, "  ") {
+			lines = append(lines, strings.TrimSuffix(line, "\n"))
+		}
+	}
+	return lines
+}
+
+func TestBlueprintCheckNeverPrintsAResolvedValue(t *testing.T) {
+	const envValue, fileValue = "s3cr3t-from-env", "s3cr3t-from-file"
+	t.Setenv("SMITH_TEST_TOKEN", envValue)
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key")
+	if err := os.WriteFile(key, []byte(fileValue+"\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", key, err)
+	}
+	writeBlueprint(t, dir, "acme", `env:
+  GH_TOKEN: env:SMITH_TEST_TOKEN
+  NPM_TOKEN: file:`+key+`
+placements:
+  - from: env:SMITH_TEST_TOKEN
+    to: ~/.npmrc
+  - from: file:`+key+`
+    to: ~/.ssh/id_ed25519
+`)
+
+	stdout, stderr, _ := runCheck(t, dir, "check", "acme")
+
+	for _, value := range []string{envValue, fileValue} {
+		if strings.Contains(stdout+stderr, value) {
+			t.Errorf("output = %q, want no resolved value %q in it", stdout+stderr, value)
+		}
+	}
+}
+
+func TestBlueprintCheckLeavesLiteralValuesOutOfTheReferenceReport(t *testing.T) {
+	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "env:\n  GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN\n  REGION: literal:eu-central\n")
+
+	stdout, _, _ := runCheck(t, dir, "check", "acme")
+
+	if report := referenceReport(t, stdout); strings.Contains(report, "literal:") || strings.Contains(report, "REGION") {
+		t.Errorf("report = %q, want the literal REGION left out of it", report)
+	}
+}
+
+func TestBlueprintCheckRefusesAnInvalidBlueprintBeforeResolvingAReference(t *testing.T) {
+	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "terminals: tmux\nenv:\n  GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 for an invalid blueprint", code)
+	}
+	if strings.Contains(stdout+stderr, "SMITH_TEST_UNSET_TOKEN") {
+		t.Errorf("output = %q, want no reference resolved for an invalid blueprint", stdout+stderr)
 	}
 }

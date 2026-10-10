@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // homeResolver locates the operator's config home. It is passed into the
@@ -48,9 +50,15 @@ func newBlueprintCmd(resolve homeResolver) *cobra.Command {
 // shaped right?". --access overrides both the blueprint and the preferences,
 // which is what makes the top of the precedence chain observable.
 //
+// A valid blueprint's references are then resolved as setup resolves them,
+// and any that will not resolve on this machine are listed, never their
+// values. They do not change the exit status, since a blueprint is also
+// checked where no box will be set up from it.
+//
 // check writes nothing, touches no box, and needs no network, so it answers
 // that question before any box exists. Exit 0 valid, 1 invalid or not found,
-// with the resolved configuration on stdout and any refusal on stderr.
+// with the report and resolved configuration on stdout and any refusal on
+// stderr.
 func newCheckCmd(resolve homeResolver) *cobra.Command {
 	var accessMode string
 	cmd := &cobra.Command{
@@ -80,25 +88,48 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 				return writeResolved(cmd, config.Resolve(overrides, nil, &prefs))
 			}
 			name := args[0]
-			b, path, err := config.Load(home, name)
+			doc, err := config.LoadDocument(home, name)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
 			// The resolved picture is what setup would act on, and a
 			// preference-declared field can disagree with a blueprint one, so
 			// it is checked before anything is reported as valid.
-			resolved := config.Resolve(overrides, &b, &prefs)
+			resolved := config.Resolve(overrides, &doc.Blueprint, &prefs)
 			if err := resolved.Conflicts(); err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "blueprint %q is valid (%s)\n", name, path); err != nil {
-				return fmt.Errorf("write report: %w", err)
+			if err := writeValid(cmd, name, doc, resolutionToStage(resolved)); err != nil {
+				return err
 			}
 			return writeResolved(cmd, resolved)
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "", "override how the box is reached: public or tailscale")
 	return cmd
+}
+
+// writeValid reports a blueprint whose shape is valid, and whether every
+// reference it declares resolves on this machine, through the resolution
+// `machine setup` runs. One that does not resolve is listed as setup's refusal
+// would list it, by scope, reference and reason, and never by value.
+//
+// An unresolved reference is reported, not refused: a blueprint is checked on
+// machines that will never set a box up from it, such as CI or a teammate's,
+// and there a file:~/.secrets reference never resolves.
+func writeValid(cmd *cobra.Command, name string, doc config.Document, resolution staging.Resolution) error {
+	report := fmt.Sprintf("blueprint %q is valid (%s)\nevery reference it declares resolves on this machine\n", name, doc.Path)
+	var unresolved *staging.UnresolvedError
+	if _, err := resolveBlueprint(doc, resolution); errors.As(err, &unresolved) {
+		report = fmt.Sprintf("blueprint %q is valid (%s), but %d reference(s) will not resolve on this machine, so `smith machine setup` from here would refuse it:%s\n",
+			name, doc.Path, unresolved.Count(), unresolved.List())
+	} else if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return nil
 }
 
 // writeResolved prints the configuration smith would use, one field per line

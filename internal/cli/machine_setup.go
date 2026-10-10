@@ -326,11 +326,27 @@ func resolveStagedConfig(doc *config.Document, resolution staging.Resolution, st
 	if doc == nil {
 		return nil, nil
 	}
-	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), blueprint.Source, blueprint.Value)
+	tree, err := resolveBlueprint(*doc, resolution)
 	if err != nil {
-		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
+		return nil, refuseSetup(stderr, err)
 	}
 	return &stagedConfig{tree: tree, path: doc.Path}, nil
+}
+
+// resolveBlueprint resolves every reference doc declares on this machine: each
+// placement's source and the value of every env variable, at the box scope and
+// inside each repo. An unresolvable reference is a *staging.UnresolvedError
+// naming every one of them, wrapped with the blueprint it came from.
+//
+// It is the one resolution both `machine setup` and `blueprint check` run, so
+// check cannot call a reference resolvable that setup would refuse, or the
+// other way round.
+func resolveBlueprint(doc config.Document, resolution staging.Resolution) (staging.Tree, error) {
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), blueprint.Source, blueprint.Value)
+	if err != nil {
+		return staging.Tree{}, fmt.Errorf("stage blueprint %s: %w", doc.Path, err)
+	}
+	return tree, nil
 }
 
 // refuseSetup reports a setup refusal that mutated nothing and exits as a gate
