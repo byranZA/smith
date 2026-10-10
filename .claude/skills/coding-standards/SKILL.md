@@ -5,73 +5,56 @@ description: Coding standards for the smith Go CLI. Use when writing, modifying,
 
 # Coding Standards
 
-## Design Philosophy
+The rules that hold for all work here. Read the companion for what you are touching:
 
-**Deep modules** (Ousterhout, _A Philosophy of Software Design_): small interface, deep implementation. A few methods with simple parameters hiding complex logic behind them. When designing, ask: can I reduce the number of methods? Can I simplify the parameters? Can I hide more complexity inside?
+- **Go code and tests**: [GO.md](GO.md)
+- **Markdown, docs and agent prompts**: [MARKDOWN.md](MARKDOWN.md)
 
-**Accept dependencies, don't create them** — pass external dependencies in rather than constructing them internally. **Return results, don't produce side effects** — a function that returns a value is easier to test than one that mutates state.
+## Design
+
+**Deep modules** (Ousterhout, _A Philosophy of Software Design_): small interface, deep implementation. A few functions with simple parameters hiding complex logic behind them. When designing, ask: can I reduce the number of functions? Can I simplify the parameters? Can I hide more complexity inside?
+
+**Accept dependencies, don't construct them.** Pass collaborators (a `*sql.DB`, an `io.Writer`, a narrow interface) into constructors and functions. This is what makes code testable without mocking.
+
+**Return results, don't produce side effects.** A function that returns a value is easier to test than one that writes a file. Where the side effect is the point, split it: a pure computation (`Render`) plus a thin writer (`WriteFile`).
 
 ## Testing
 
-Tests verify **behavior through public interfaces**, not implementation details. Code can change entirely; tests shouldn't break unless behavior changed.
+Tests verify **behaviour through the public interface**. Code can change entirely; a test breaks only when behaviour changed.
 
-### Good tests
+- **Every test can go red.** The expected value is a literal worked out by hand from the spec, so a wrong implementation fails the test. One logical assertion per test.
+- **Name the behaviour.** The test name says _what_ the system does (`TestLoadMissingFileYieldsZeroConfig`), not how.
+- **Mock only at system boundaries**: the OS, the network, time, randomness. Prefer a real temp dir or temp DB. Your own packages are never mocked; when one seems to need it, redesign its interface so a real or fake collaborator can be passed in.
 
-- Exercise real code paths through public APIs
-- Describe _what_ the system does, not _how_
-- Survive internal refactors
-- One logical assertion per test
-- Can go _red_: the expected value is a literal worked out by hand from the spec, so a wrong implementation fails the test
+A **tautological** test passes by construction and can never go red. Review every test for these shapes:
 
-### Bad tests (red flags)
+- recomputing the expected value with the code under test's own logic
+- asserting a fake returns what it was told to
+- asserting a constant equals its literal
+- asserting a constructor stored its arguments
 
-- **Tautological** tests — they pass by construction: recomputing the expected value with the code under test's own logic, asserting a fake returns what it was told to, asserting a constant equals its literal, asserting a constructor stored its arguments
-- Mocking internal collaborators (your own classes/modules)
-- Testing private methods or asserting on call counts/order
-- Verifying through external means (e.g. querying a DB) instead of the interface
-- Test name describes HOW not WHAT
+Also reject tests that assert on private functions, call counts or call order, or that verify through a side channel (querying the DB) instead of the interface.
 
-### Mocking
+## TDD
 
-Mock at **system boundaries** only: external APIs, time/randomness, the OS/file system when a real instance isn't practical. **Never mock your own packages.** If something is hard to test without mocking internals, redesign the interface — in Go, accept a narrow interface so a real or fake collaborator can be passed in. Prefer a real temp dir / temp DB over a mock where practical.
+Every new or modified function containing calculation, transformation, or business logic is driven by red-green-refactor, one **vertical slice** at a time:
 
-## TDD Workflow
-
-All new or modified functions containing calculation, transformation, or business logic **must** have tests driven by red-green-refactor.
-
-Work in **vertical slices** — complete one thin feature end-to-end (test + implementation) before starting the next:
-
-```
+```text
 RED->GREEN: test1->impl1
 RED->GREEN: test2->impl2
 RED->GREEN: test3->impl3
 ```
 
-Each test responds to what you learned from the previous cycle. **Never write all tests first.** Never refactor while RED — get to GREEN first.
+Each test responds to what the previous cycle taught you, so write one test at a time and watch it go red before writing the code. Refactor only on green.
 
-### Extract, test, then wire
+**Extract, test, then wire.** Put the logic in a domain package under `internal/`, test it there with inputs and outputs, and only then call it from the cobra command in `internal/cli`. A `RunE` parses flags, calls the package, and formats the result.
 
-1. **Extract** logic into a pure, testable module (service, reducer, utility)
-2. **Test** it directly — given inputs, assert on outputs
-3. **Wire** into the framework layer (view, component) only after tests are green
+## Completion checklist (blocking)
 
-The framework layer should be thin — call the tested function, return/render results.
+Work is complete when every item holds:
 
-## Completion Checklist (BLOCKING)
-
-Do NOT consider work complete until every item passes:
-
-- [ ] **Formatting** — `gofmt -l .` reports nothing on changed files (use `goimports`)
-- [ ] **Comments** — every package and non-test function has a one-or-two-sentence doc comment; function bodies carry no comments (see [GO.md](GO.md#doc-comments))
-- [ ] **Errors handled** — no discarded errors (`_`); failures wrapped with `%w` and context
-- [ ] **Tests** — every logic function has corresponding tests and they pass (`go test ./...`); `-race` for concurrent code
-- [ ] **Vet** — `go vet ./...` is clean on changed packages
-- [ ] **Full suite** — `go build ./...` and `go test ./...` all pass
-- [ ] **Prompts** — every agent or LLM prompt lives in its own `.md` file, none inline in code (see [MARKDOWN.md](MARKDOWN.md#prompts))
-
-Fix failures before marking done. This checklist is a hard gate, not a suggestion.
-
-## Language-Specific Standards
-
-- **Go**: See [GO.md](GO.md)
-- **Markdown and prompts**: See [MARKDOWN.md](MARKDOWN.md)
+- [ ] **Gate**: `make check` passes with lint actually running (see [GO.md](GO.md#gate)), plus `make race` for concurrent code
+- [ ] **Comments**: doc comments only, shaped as [GO.md](GO.md#doc-comments) says
+- [ ] **Errors**: every error handled or returned, wrapped with `%w` and context
+- [ ] **Tests**: every logic function has tests that went red first
+- [ ] **Prompts**: every agent or LLM prompt lives in its own `.md` file (see [MARKDOWN.md](MARKDOWN.md#prompts))

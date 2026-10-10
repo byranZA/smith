@@ -1,62 +1,40 @@
 # Go Standards
 
-## Stack
+`go.mod` holds the Go version and dependencies. The binary is cgo-free, which is why persistence uses `modernc.org/sqlite`; keep new dependencies pure Go.
 
-Go 1.26, module `github.com/byranZA/smith`. CLI built on cobra (`github.com/spf13/cobra`). Blueprints and preferences are YAML, parsed via `go.yaml.in/yaml/v3`. Persistence via `modernc.org/sqlite` (pure-Go, cgo-free). IDs via `github.com/google/uuid`. Tests use the standard `testing` package only — no third-party assertion or mocking frameworks.
+## Layout
 
-## Project Structure
-
-Idiomatic Go layout — shallow hierarchies, packages by domain (not by technical layer), `internal/` for everything not meant for external import. Illustrative shape:
-
-```
-smith/
-├── cmd/smith/          # main package — minimal, wires Execute() and exits
-├── internal/           # all application code (compiler-enforced private)
-│   ├── cli/            # cobra command surface (thin — parse flags, call packages)
-│   ├── config/         # config read/write
-│   └── ...             # one package per domain concept
-├── go.mod
-└── Makefile
-```
-
-- **`main` stays tiny.** `cmd/smith/main.go` only calls `cli.Execute()`. All logic lives in `internal/` packages it imports.
-- **`internal/` over `pkg/`.** This is an application, not a library; nothing is meant for external import, so the compiler-enforced `internal/` boundary is correct.
-- **Package per domain concept.** Each `internal/` package owns one concept and is named for it. Group by what it *is*, not by layer (no `handlers/`, `services/`, `repositories/`).
-- **Shallow nesting.** One or two levels under `internal/`. Deep trees increase cognitive load and ugly imports.
-- **No excessive nesting; no premature splitting.** Add a package when a concept earns its own boundary, not speculatively.
+- **`main` stays tiny.** `cmd/smith/main.go` only calls `cli.Execute()`; everything else lives under `internal/`.
+- **One package per domain concept**, named for what it _is_ (`blueprint`, `workspace`), never for a layer (`handlers`, `services`). Use the terms in `CONTEXT.md`.
+- **Shallow and earned.** One or two levels under `internal/`; add a package when a concept earns its own boundary.
 
 ## Naming
 
-Go favors brevity (the conventions here follow Effective Go and the Google Go style guide).
+- **No stutter.** The package name is part of every call site: `config.Load`, not `config.LoadConfig`.
+- **Initialisms keep one case**: `ID`, `URL`, `HTTP`, so `projectID`.
+- **Short locals and receivers**: `i`, `err`, `b` for a `strings.Builder`, one-letter receivers (`func (m Mount) ...`) used consistently across a type's methods.
+- **Interfaces are small and named for behaviour**, often `-er` (`Runner`).
+- **Errors**: sentinels are `ErrXxx` (`errXxx` unexported); error types are `XxxError`.
 
-- **Packages**: short, lowercase, single-word, no underscores or plurals (`gitmount`, not `git_mounts`). The package name is part of every call site (`config.Default`), so don't stutter — `config.Config` is fine but avoid `config.ConfigDefault`.
-- **Exported identifiers**: `PascalCase`. Unexported: `camelCase`.
-- **Acronyms** keep a consistent case: `ID`, `URL`, `HTTP` — `projectID`, not `projectId`.
-- **Short locals**: `i` for index, `err` for errors, `b` for a `strings.Builder`, single-letter receivers (`func (m Mount) ...`). Don't invent `errorMessage` or `indexValue`.
-- **Interfaces**: name for behavior, often `-er` (`Reader`, `Runner`). Keep them small — accept interfaces, return concrete types.
-- **Match the domain language.** Domain types use the project's canonical terms so the code reads in its ubiquitous language.
+## Doc comments
 
-## Doc Comments
+Doc comments are the only comments in this codebase. This is a house rule, stricter than Go's doc comment spec, which allows "why" comments in function bodies. When a line needs explaining, extract a function or variable whose name carries the explanation.
 
-Doc comments are the only comments in this codebase. Each is **one or two sentences** that begins with the identifier's name and says what it does — the contract a caller relies on, not the type signature or the implementation.
-
-- **Every package**: a package comment on one file — `// Package config reads and writes the smith config.`
-- **Every function and method**, exported or not, and every exported type, const, and var:
+- **Every package** has a package comment on one file: `// Package config reads and writes the smith config.`
+- **Every function and method**, exported or not, and every exported type, const and var, has a doc comment of **one or two sentences**. It starts with the identifier's name, ends with a period, and states the contract a caller relies on: what it returns or does, not how. A boolean function "reports whether".
 
 ```go
 // Load reads the config at path. A missing file yields the zero Config and no error.
 func Load(path string) (Config, error) {
 ```
 
-- **Function bodies are comment-free.** Make the code carry its own explanation: when a line needs one, extract a well-named function or variable instead. Machine directives (`//go:build`, `//go:embed`, `//nolint:`) are not comments and stay — but only for a tool the build or `make check` runs; a directive nothing reads is a comment.
-- **Tests need no doc comment.** The test name carries the explanation — `TestLoadMissingFileYieldsZeroConfig`, subtest names like `"sibling path is outside parent"`. Any declaration in a `_test.go` file — test, helper, fake, const — takes at most a one-line doc comment, and only when its name cannot say it. Test bodies are comment-free like any other.
+- **Tests carry their explanation in their names**: `TestLoadMissingFileYieldsZeroConfig`, subtests like `"sibling path is outside parent"`. A test function has no doc comment. Any other declaration in a `_test.go` file (helper, fake, const) gets a **one-line** doc comment, and only when its name cannot say it.
+- **Directives are not comments.** `//go:build`, `//go:embed` and `//nolint:` stay, but only for a tool that the build or `make check` runs. A `//nolint` names its linter and says why: `//nolint:errcheck // removal is best effort`.
 
 ## Errors
 
-Errors are values — handle them, don't suppress them.
-
-- **Never discard an error** with `_`. Check every returned `error`: handle it, return it, or (only in `main`/truly-unrecoverable cases) `log.Fatal`/`panic`.
-- **Wrap with context** using `fmt.Errorf("...: %w", err)` so callers can `errors.Is`/`errors.As` and the chain reads top-down:
+- **Handle every error**: return it, handle it, or (only in `main` or a truly unrecoverable case) exit. Never assign one to `_`, and use the two-value form of a type assertion.
+- **Wrap with context** using `%w` so callers can `errors.Is`/`errors.As` and the chain reads top-down:
 
 ```go
 fi, err := os.Stat(path)
@@ -65,43 +43,31 @@ if err != nil {
 }
 ```
 
-- **Error strings** are lowercase, no trailing punctuation (they get wrapped): `"malformed config %s: %q"`, not `"Malformed config."`.
-- **Sentinel errors** (`var ErrNotFound = errors.New(...)`) for conditions callers branch on; check with `errors.Is`. Custom error types when callers need structured fields; check with `errors.As`.
-- **`panic` is for programmer bugs only** (impossible states), never for ordinary failures like bad input or missing files.
-- **Return early.** Handle the error and `return` rather than nesting the happy path inside an `else`.
+- **Error strings** are lowercase with no trailing punctuation, because they get wrapped: `"malformed config %s: %q"`.
+- **Sentinel errors** for conditions callers branch on; **error types** when callers need structured fields.
+- **`panic` is for programmer bugs only** (impossible states), never for bad input or missing files.
 
-## Code Style
+## Code style
 
-- **`gofmt` is non-negotiable.** All code is `gofmt`-formatted; use `goimports` to also manage import grouping (stdlib, then third-party/local with a blank line between). Never hand-format.
-- **Accept interfaces, return structs.** Take the narrowest interface you need as a parameter; return concrete types so callers aren't boxed in.
-- **Zero values should be useful.** Design structs so the zero value is a valid starting state where practical.
-- **Composition over inheritance** — embed, don't reach for type hierarchies.
-- **Keep functions small and flat.** Early returns over nested `if`/`else`; guard clauses at the top.
-- **Constructors**: `New...` returning the concrete type (and `error` if construction can fail).
-- **No `init()` magic** unless genuinely required; prefer explicit wiring.
+- **Formatting**: `gofmt`, with `goimports` grouping imports as stdlib, then everything else.
+- **Accept interfaces, return concrete types.** Define the narrow interface in the package that consumes it, not beside the implementation.
+- **Early returns.** Guard clauses at the top; the happy path stays unindented, with no `else` after a `return`.
+- **Constructors** are `NewXxx`, returning the concrete type (and an `error` if construction can fail). Make the zero value a valid starting state where practical.
+- **Explicit wiring.** Reach for `init()` only when nothing else works.
+- **A `switch` over a smith enum** lists every value or has a `default`, so a new value cannot fall through unnoticed.
 
 ## Concurrency
 
-Only reach for goroutines when there is real concurrent work — don't add them speculatively.
+Use goroutines only for real concurrent work.
 
-- **"Share memory by communicating."** Use channels to coordinate goroutines; use a `sync.Mutex` to protect shared state. Pick one per situation, don't mix them on the same data.
-- **The creator owns the goroutine's lifecycle** — know how every goroutine exits. Propagate cancellation with `context.Context`, passed as the first parameter (`ctx context.Context`).
-- **Run tests with `-race`** for any package that uses goroutines.
-
-## Dependencies (design)
-
-Mirror the project-wide principles in Go terms:
-
-- **Accept dependencies, don't construct them.** Pass collaborators (a `*sql.DB`, an `io.Writer`) into constructors/functions rather than newing them up inside. This is what makes a function testable without mocking.
-- **Return results, don't mutate.** A function that returns a value is easier to test than one that writes a file as a side effect. Where a side effect is the point, split it: a pure computation (`Render`) plus a thin writer (`WriteFile`).
+- **One coordination tool per piece of data**: channels to coordinate goroutines, a `sync.Mutex` to guard shared state.
+- **The creator owns the goroutine's lifecycle.** Know how every goroutine exits, and propagate cancellation with `ctx context.Context` as the first parameter.
 
 ## Testing
 
-Standard `testing` package, no frameworks. Test files are `_test.go` beside the code, in the **same package** for white-box tests (or `package foo_test` to enforce testing through the public API only).
+Use the standard `testing` package only: no assertion, mocking or diff libraries. Test files sit beside the code, in the same package for white-box tests or `package foo_test` to hold a test to the public API.
 
-### Table-driven tests + subtests
-
-The idiomatic default: cases as data, one `t.Run` per case for isolation and named output.
+Table-driven tests with one `t.Run` per case are the default:
 
 ```go
 func TestWithin(t *testing.T) {
@@ -124,40 +90,17 @@ func TestWithin(t *testing.T) {
 }
 ```
 
-### Conventions
+- **Every case runs the same assertions.** When cases need different checks (a `wantCall bool`, a per-case check func), split the table.
+- **Failures identify the function and its input, then got before want**: `t.Errorf("Load(%q) = %+v, want %+v", path, got, want)`. A reader diagnoses the failure without opening the test. `t.Fatalf` when continuing makes no sense, `t.Errorf` otherwise.
+- **Compare whole values.** Build the expected struct and compare with `reflect.DeepEqual`, rather than checking field by field.
+- **Check error kinds with `errors.Is`/`errors.As`.** Match `err.Error()` text only when the message itself is the behaviour, as in user-facing CLI output.
+- **Use the `testing` helpers**: `t.Helper()` first in every helper, `t.TempDir()`, `t.Setenv()`, `t.Chdir()`, and `t.Context()` for a context.
+- **`t.Parallel()`** for independent tests, in the parent and its subtests alike.
 
-- **`t.Helper()`** in every test helper so failures point at the caller, not the helper.
-- **`t.TempDir()`** for filesystem tests — auto-cleaned, no manual teardown.
-- **Failure messages state got vs want**: `t.Errorf("Load() = %v, want %v", got, want)`. Use `t.Fatalf` when continuing makes no sense, `t.Errorf` to report and keep going.
-- **`t.Parallel()`** where tests are independent; capture the loop variable first.
-- **Test behavior through the public API.** Don't assert on call order or reach past the interface. Mock only at real boundaries (the OS, the network, time) — and prefer a real temp DB / temp dir over a mock when practical.
-- **`-race`** for concurrent code; table-driven benchmarks via `b.Run` when measuring.
+## Gate
 
-### Extract, test, then wire (Go shape)
+[docs/development.md](../../../docs/development.md) owns machine setup, the tool pins and the gate. Read it once on a fresh checkout.
 
-The project-wide "extract → test → wire" maps directly: pure logic in a domain package, tested in isolation, then the `cli` command is the thin wiring layer that calls it. Keep cobra `RunE` functions thin — parse flags, call the package, format the result.
+**`make lint` and `make vuln` skip with a note and exit zero when their tool is absent**, so `make check` can report green having linted nothing. Read the output for the skip note; `make tools-install` fixes it.
 
-## Commands
-
-Run from the module root. Machine setup, the tool pins, and the gate are owned
-by [docs/development.md](../../../docs/development.md) — read it once on a fresh
-checkout; the list is not repeated here so the two cannot drift.
-
-The short version: `make tools-install` then `make check` before you hand work
-back, `make race` for anything concurrent. **`make lint` and `make vuln` skip
-with a note when their tool is absent and still exit zero**, so `make check` on
-a machine without them reports green having linted nothing — docs/development.md
-explains the failure that follows.
-
-Targeted `go` invocations, for narrowing a run while you work:
-
-```bash
-go test ./internal/config/     # single package
-go test -run TestWithin ./...  # single test by name
-gofmt -l .                     # list files needing formatting (must be empty)
-go vet ./...                   # report suspicious constructs
-```
-
-Linting uses `golangci-lint` v2, configured in `.golangci.yml`: `revive`
-enforces doc comments and naming, `wrapcheck`/`errorlint` enforce the
-error-handling rules above.
+Lint (`.golangci.yml`) checks exported doc comments, error strings and error wrapping. Comments in function bodies, doc comment length and test quality are not checked by any tool: they are on you and on review.
