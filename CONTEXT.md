@@ -269,16 +269,7 @@ own auth and holds no credential (ADR-0012).
 _Avoid_: provider-agnostic (reserved for the provider adapter), integration.
 
 **Box inventory**:
-`~/.smith/cache/boxes.json` — a name → proven-target address book and nothing else. An entry is an
-operator-chosen name plus the opaque SSH target smith **proved** works. Identity only: access mode,
-phases, blueprint pointer and destroy reference all stay marker-side, so there is nothing in it
-that can silently go stale — hence no TTL and no `last_seen`. Written by a successful `machine
-setup` and by `machine add`, which is read-only towards the box; `machine list` is instant and
-offline (`--probe` reports reach without storing it); only `machine forget` removes. **Rebuildable,
-not self-rebuilding**: a deleted file loses nothing unique, but v1 has no discovery path, so it is
-rebuilt by hand, one `machine add` per box
-([ADR-0011](./docs/adr/0011-the-box-inventory-is-identity-only.md),
-[docs/inventory.md](./docs/inventory.md)).
+`~/.smith/cache/boxes.json` — a name → proven-target address book and nothing else. An entry is an operator-chosen name plus the opaque SSH target smith **proved** works. Identity only: access mode, phases, blueprint pointer and destroy reference all stay marker-side, so there is nothing in it that can silently go stale — hence no TTL and no `last_seen`. Written by a successful `machine setup` and by `machine add`, which is read-only towards the box; `machine rename` moves an entry and the name on the box's marker together; `machine list` is instant and offline (`--probe` reports reach without storing it); only `machine forget` removes. **Rebuildable, not self-rebuilding**: a deleted file loses nothing unique, but v1 has no discovery path, so it is rebuilt by hand, one `machine add` per box ([ADR-0011](./docs/adr/0011-the-box-inventory-is-identity-only.md), [docs/inventory.md](./docs/inventory.md)).
 _Avoid_: registry, database, state store.
 
 **The "@" decides**:

@@ -5,6 +5,9 @@ import (
 	"fmt"
 )
 
+// ErrNoName reports a registration or rename under the empty name.
+var ErrNoName = errors.New("no box name: a box is registered under a name, not an empty string")
+
 // NameCollisionError reports a registration refused because the name is
 // already held by a different box. It carries both sides, because what the
 // operator has to decide between is the box they are registering and the one
@@ -50,7 +53,7 @@ func Register(inv Inventory, name, target string) (Inventory, error) {
 // operator's choice.
 func validate(name, target string) error {
 	if name == "" {
-		return errors.New("no box name: a box is registered under a name, not an empty string")
+		return ErrNoName
 	}
 	if target == "" {
 		return fmt.Errorf("no target for box %q: a box is registered by the address smith reaches it over", name)

@@ -1,5 +1,13 @@
 package inventory
 
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrAlreadyNamed reports a rename to the name the box already has.
+var ErrAlreadyNamed = errors.New("the box is already named")
+
 // Rename returns a copy of inv with the box at target registered as to and no
 // longer registered as from. It is what an operator means by passing a --name
 // that differs from the name the box already records: the entry moves, rather
@@ -79,4 +87,26 @@ func PreviousName(inv Inventory, recorded, addressed, target string) string {
 		return ""
 	}
 	return recorded
+}
+
+// RenameTarget returns the target of the box registered as from, or the reason
+// renaming it to to is refused: no box by that name, a new name that is empty,
+// unchanged or held by a different box, or an inventory a newer smith wrote. It
+// decides through Rename, the path a registration takes, so the refusal is the
+// one setup gives.
+func RenameTarget(inv Inventory, skew Skew, from, to string) (string, error) {
+	if skew == SkewNewer {
+		return "", fmt.Errorf("cannot rename %q: %w", from, ErrSkewNewer)
+	}
+	target, ok := Lookup(inv, from)
+	if !ok {
+		return "", fmt.Errorf("cannot rename %q: %w", from, &UnknownBoxError{Name: from})
+	}
+	if from == to {
+		return "", fmt.Errorf("cannot rename %q: %w %q", from, ErrAlreadyNamed, to)
+	}
+	if _, err := Rename(inv, from, to, target); err != nil {
+		return "", fmt.Errorf("cannot rename %q: %w", from, err)
+	}
+	return target, nil
 }
