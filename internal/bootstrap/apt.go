@@ -18,7 +18,7 @@ var (
 // shell to do it.
 const aptLockTimeoutRef = "${APT_LOCK_TIMEOUT}"
 
-// aptLockArgs is the base layer's lock-wait, parsed once from the embedded
+// aptLockArgs is the base layer's lock-wait, parsed once from the assembled
 // script so a change to the budget or the option carrying it moves both the
 // box-side phase and the Go-side stage together.
 var aptLockArgs = mustAptLockArgsFor(Script)
@@ -37,7 +37,7 @@ func AptLockArgs() []string {
 	return append([]string(nil), aptLockArgs...)
 }
 
-// mustAptLockArgsFor reads the lock-wait out of the embedded script and panics
+// mustAptLockArgsFor reads the lock-wait out of the assembled script and panics
 // on failure. The script is compiled into the binary, so a failure here is a
 // build that cannot be correct rather than a runtime condition, and a panic
 // surfaces it at package initialization.
