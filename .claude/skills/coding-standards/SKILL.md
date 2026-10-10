@@ -18,6 +18,8 @@ The rules that hold for all work here. Read the companion for what you are touch
 
 **Return results, don't produce side effects.** A function that returns a value is easier to test than one that writes a file. Where the side effect is the point, split it: a pure computation (`Render`) plus a thin writer (`WriteFile`).
 
+**Keep each source file under 1,000 lines.** Crossing it is a presumptive blocker in review: split along the file's concerns, or justify the exception in the change. The limit measures the files you edit, not what the build assembles from them: a shipped script joined from embedded parts can be any length, while each part stays under the limit.
+
 ## Testing
 
 Tests verify **behaviour through the public interface**. Code can change entirely; a test breaks only when behaviour changed.
