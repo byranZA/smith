@@ -7,8 +7,9 @@
 #
 # Subcommands:
 #   preflight — a non-recorded, read-only gate. It reports the box's privilege
-#               level and raw /etc/os-release so the Go OS support gate can
-#               decide, and mutates nothing.
+#               level, total memory and raw /etc/os-release so the Go OS support
+#               gate can decide and the memory advisory can warn, and mutates
+#               nothing.
 #   setup     — writes the marker early, then runs the ordered mutating phases.
 #               Each phase is check-before-change and appends itself to the
 #               marker only on success; progress streams live to the operator.
@@ -38,6 +39,10 @@ SMITH_BOOTSTRAP_VERSION=2
 # point at a writable location without root); production always uses the default.
 MARKER="${SMITH_MARKER:-/etc/smith/bootstrap.json}"
 MARKER_DIR="$(dirname "$MARKER")"
+
+# MEMINFO is where preflight reads the box's total memory. SMITH_MEMINFO overrides
+# it for tests; production always uses the default.
+MEMINFO="${SMITH_MEMINFO:-/proc/meminfo}"
 
 # The ordered mutating phases. The names are load-bearing: they are the marker's
 # completed_phases values. This is the full base-layer sequence; the access phase
@@ -160,11 +165,18 @@ detect_privilege() {
   fi
 }
 
-# preflight emits the facts the Go side needs to gate the box. It is a
-# read-only probe: it changes nothing.
+# mem_total_kb prints the box's MemTotal in kB, or nothing when meminfo cannot be
+# read. It never fails: unknown memory is the Go side's to report.
+mem_total_kb() {
+  awk '/^MemTotal:/ { print $2; exit }' "$MEMINFO" 2>/dev/null || true
+}
+
+# preflight emits the facts the Go side needs to gate the box and to give the
+# memory advisory. It is a read-only probe: it changes nothing.
 preflight() {
   echo "smith-preflight version=${SMITH_BOOTSTRAP_VERSION}"
   echo "privilege=$(detect_privilege)"
+  echo "mem-total-kb=$(mem_total_kb)"
   echo "os-release-begin"
   cat /etc/os-release
   echo "os-release-end"

@@ -57,6 +57,8 @@ type setupSSH struct {
 
 	// public is the host the run first reached the box at: its public host.
 	public string
+	// memLine is the total-memory line preflight prints; none when empty.
+	memLine string
 	// hardened is set once the setup subcommand has run, after which sshd
 	// refuses root logins as ssh-hardening leaves it.
 	hardened bool
@@ -147,7 +149,7 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, stdin io.R
 		_, err := io.WriteString(stdout, out)
 		return err
 	case isSubcommand(remoteCmd, "preflight"):
-		_, err := io.WriteString(stdout, supportedRelease)
+		_, err := io.WriteString(stdout, supportedRelease+s.memLine)
 		return err
 	case strings.Contains(remoteCmd, "$SSH_CONNECTION"):
 		_, err := io.WriteString(stdout, sshConnection(target))
@@ -313,6 +315,24 @@ func TestSetupProvesTheSmithUserFromTheOperatorsMachineBeforeRegistering(t *test
 	}
 	if !strings.Contains(stdout, "registered") {
 		t.Errorf("stdout = %q, want the box reported as registered", stdout)
+	}
+}
+
+func TestSetupOfASmallBoxWarnsAndCarriesOn(t *testing.T) {
+	dir := t.TempDir()
+	ssh := &setupSSH{memLine: "mem-total-kb=469000\n"}
+
+	stdout, stderr, code := runSetup(t, dir, ssh, "root@203.0.113.10")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 as on a larger box (stderr: %s)", code, stderr)
+	}
+	if !ssh.ranSubcommandAs("root@203.0.113.10", "setup") {
+		t.Errorf("commands = %v, want the phases run on a small box", ssh.commands)
+	}
+	want := "memory: 458 MB\nwarning: under the recommended 2 GB of memory to run an agent\n"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout = %q, want the memory advisory %q", stdout, want)
 	}
 }
 

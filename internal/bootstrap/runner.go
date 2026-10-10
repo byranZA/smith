@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/memory"
 	"github.com/byranZA/smith/internal/osgate"
 	"github.com/byranZA/smith/internal/shipped"
 )
@@ -65,19 +67,22 @@ func (o Outcome) ExitCode() int {
 }
 
 // Result is what a preflight run reports: its outcome, a human-readable reason
-// when the box was rejected or unreachable, and the probed facts.
+// when the box was rejected or unreachable, and the probed facts. Memory never
+// changes the Outcome.
 type Result struct {
 	Outcome   Outcome
 	Reason    string
 	Privilege string
 	Release   osgate.Release
+	Memory    memory.Total
 }
 
-// Report renders a human-readable summary of the preflight result.
+// Report renders a human-readable summary of the preflight result: a pass
+// carries the box's memory advisory.
 func (r Result) Report() string {
 	switch r.Outcome {
 	case OutcomePassed:
-		return "preflight passed\n"
+		return "preflight passed\n" + r.Memory.Advisory() + "\n"
 	case OutcomeConnectFailed:
 		return fmt.Sprintf("connect failed: %s\n", r.Reason)
 	default:
@@ -221,10 +226,12 @@ func (r *Runner) SSHConnection(ctx context.Context) (string, error) {
 type preflightFacts struct {
 	privilege string
 	release   osgate.Release
+	memory    memory.Total
 }
 
-// parsePreflight extracts the privilege level and /etc/os-release block from
-// the preflight output.
+// parsePreflight extracts the privilege level, total memory and /etc/os-release
+// block from the preflight output. A missing or unreadable memory figure is
+// unknown memory, not an error.
 func parsePreflight(output string) (preflightFacts, error) {
 	var facts preflightFacts
 	var osRelease strings.Builder
@@ -243,6 +250,9 @@ func parsePreflight(output string) (preflightFacts, error) {
 			if v, ok := strings.CutPrefix(line, "privilege="); ok {
 				facts.privilege = strings.TrimSpace(v)
 			}
+			if v, ok := strings.CutPrefix(line, "mem-total-kb="); ok {
+				facts.memory = parseMemTotal(v)
+			}
 		}
 	}
 
@@ -251,6 +261,16 @@ func parsePreflight(output string) (preflightFacts, error) {
 	}
 	facts.release = osgate.Parse(osRelease.String())
 	return facts, nil
+}
+
+// parseMemTotal reads preflight's MemTotal figure in kB, yielding unknown
+// memory for a figure that is empty or not a number.
+func parseMemTotal(v string) memory.Total {
+	kiB, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return memory.Total{}
+	}
+	return memory.FromKiB(kiB)
 }
 
 // decide turns probed facts into a Result. Privilege is checked before the OS
@@ -262,6 +282,7 @@ func decide(facts preflightFacts) Result {
 			Reason:    "passwordless sudo is required on a non-root bootstrap login",
 			Privilege: facts.privilege,
 			Release:   facts.release,
+			Memory:    facts.memory,
 		}
 	}
 	if d := osgate.Evaluate(facts.release); !d.Supported {
@@ -270,7 +291,8 @@ func decide(facts preflightFacts) Result {
 			Reason:    fmt.Sprintf("unsupported OS: %s", d.Reason),
 			Privilege: facts.privilege,
 			Release:   facts.release,
+			Memory:    facts.memory,
 		}
 	}
-	return Result{Outcome: OutcomePassed, Privilege: facts.privilege, Release: facts.release}
+	return Result{Outcome: OutcomePassed, Privilege: facts.privilege, Release: facts.release, Memory: facts.memory}
 }
