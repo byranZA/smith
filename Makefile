@@ -37,11 +37,22 @@ fmt-check: ## fail if any file needs formatting
 vet: ## report suspicious constructs
 	go vet $(PKG)
 
+# golangci-lint caches results by package content under absolute paths, and
+# worktrees of this repo share the default cache, so one checkout can be handed
+# another's stale findings. Each checkout keeps its own cache.
 lint: ## golangci-lint run (skipped with a note if not installed)
-	@command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed; skipping (run 'make tools' for install hint)"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		GOLANGCI_LINT_CACHE="$(CURDIR)/.cache/golangci-lint" golangci-lint run; \
+	else \
+		echo "golangci-lint not installed; skipping (run 'make tools' for install hint)"; \
+	fi
 
 vuln: ## govulncheck (skipped with a note if not installed) — CI runs this as a gate
-	@command -v govulncheck >/dev/null 2>&1 && govulncheck $(PKG) || echo "govulncheck not installed; skipping (run 'make tools' for install hint)"
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck $(PKG); \
+	else \
+		echo "govulncheck not installed; skipping (run 'make tools' for install hint)"; \
+	fi
 
 snapshot: ## build all release targets locally, no publish (local twin of CI's build job)
 	goreleaser build --snapshot --clean
