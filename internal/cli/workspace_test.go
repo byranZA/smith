@@ -13,7 +13,6 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
-	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -344,7 +343,7 @@ func TestWorkspaceConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 // the box, and read back there by name.
 func stageEnvFor(t *testing.T, root string, b blueprint.Blueprint) {
 	t.Helper()
-	tree, err := staging.Resolve(staging.Plan(nil, b, staging.Resolution{}), secret.Resolve, blueprint.Value)
+	tree, err := staging.Resolve(staging.Plan(nil, b, staging.Resolution{}), blueprint.Source, blueprint.Value)
 	if err != nil {
 		t.Fatalf("resolve the blueprint's env on the operator's machine: %v", err)
 	}

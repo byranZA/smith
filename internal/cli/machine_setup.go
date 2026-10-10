@@ -321,7 +321,7 @@ func resolveStagedConfig(doc *config.Document, resolution staging.Resolution, st
 	if doc == nil {
 		return nil, nil
 	}
-	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), secret.Resolve, blueprint.Value)
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), blueprint.Source, blueprint.Value)
 	if err != nil {
 		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
 	}

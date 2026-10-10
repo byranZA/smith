@@ -375,6 +375,8 @@ _Avoid_: stale repo, dangling repo.
 
 **Placement**:
 The primitive that puts a file on the box: `source-reference → dest-path [converge|once]`.
+The source resolves to the referenced bytes exactly as they are, never trimmed, unlike an `env`
+value, which always is.
 `converge` (default) whole-file replaces on every pass; `once` writes only if absent, and the
 worktree owns it thereafter. Scope is set by declaration site — under a `repos[]` entry it is
 worktree-relative and materializes on session start, at top level it is an absolute box path and

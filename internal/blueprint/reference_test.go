@@ -1,6 +1,8 @@
 package blueprint_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -199,5 +201,74 @@ func TestValueRefusesWhatIsNotAReference(t *testing.T) {
 func TestValueRefusesAnEmptyLiteral(t *testing.T) {
 	if got, err := blueprint.Value("literal:"); err == nil {
 		t.Errorf("blueprint.Value(%q) = %q, want a refusal", "literal:", got)
+	}
+}
+
+// TestSourceResolvesToTheReferencedBytesUnchanged proves a placement source is
+// never trimmed: it is a whole file, and a private key without its final
+// newline is one OpenSSH refuses.
+func TestSourceResolvesToTheReferencedBytesUnchanged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "npmrc")
+	if err := os.WriteFile(path, []byte("registry=https://npm.example\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("SMITH_TEST_SOURCE", "  padded body \n")
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "a file keeps its final newline", ref: "file:" + path, want: "registry=https://npm.example\n"},
+		{name: "an env variable keeps its whitespace", ref: "env:SMITH_TEST_SOURCE", want: "  padded body \n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := blueprint.Source(tt.ref)
+			if err != nil {
+				t.Fatalf("blueprint.Source(%q) error = %v, want nil", tt.ref, err)
+			}
+			if got != tt.want {
+				t.Errorf("blueprint.Source(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSourceRefusesWhatIsNotASourceReference proves a source refuses a bare
+// string, an unknown scheme and the literal: a value accepts.
+func TestSourceRefusesWhatIsNotASourceReference(t *testing.T) {
+	for _, ref := range []string{"ghp_abc", "vault:token", "literal:inline", "env:SMITH_TEST_UNSET_SOURCE"} {
+		if got, err := blueprint.Source(ref); err == nil {
+			t.Errorf("blueprint.Source(%q) = %q, want a refusal", ref, got)
+		}
+	}
+}
+
+// TestValueTrimsWhatAReferenceNames proves a value is always trimmed, so a
+// token file ending in a newline exports the token alone.
+func TestValueTrimsWhatAReferenceNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("ghp_fromafile\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("SMITH_TEST_PADDED", "  ghp_padded \n")
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "a file loses its final newline", ref: "file:" + path, want: "ghp_fromafile"},
+		{name: "an env variable loses its whitespace", ref: "env:SMITH_TEST_PADDED", want: "ghp_padded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := blueprint.Value(tt.ref)
+			if err != nil {
+				t.Fatalf("blueprint.Value(%q) error = %v, want nil", tt.ref, err)
+			}
+			if got != tt.want {
+				t.Errorf("blueprint.Value(%q) = %q, want %q", tt.ref, got, tt.want)
+			}
+		})
 	}
 }

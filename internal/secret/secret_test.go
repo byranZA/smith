@@ -152,3 +152,53 @@ func TestSplitCutsOnTheFirstColonOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestReadKeepsTheReferencedBytesAsTheyAre(t *testing.T) {
+	t.Run("env value keeps its whitespace", func(t *testing.T) {
+		t.Setenv("NPMRC", "  //registry/:_authToken=padded \n")
+		got, err := Read("env:NPMRC")
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		if got != "  //registry/:_authToken=padded \n" {
+			t.Errorf("Read = %q, want %q", got, "  //registry/:_authToken=padded \n")
+		}
+	})
+
+	t.Run("file value keeps its final newline", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "id_ed25519")
+		if err := os.WriteFile(path, []byte("\tkey body\r\n"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		got, err := Read("file:" + path)
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		if got != "\tkey body\r\n" {
+			t.Errorf("Read = %q, want %q", got, "\tkey body\r\n")
+		}
+	})
+}
+
+func TestReadRefusesWhatResolveRefuses(t *testing.T) {
+	tests := []struct {
+		name    string
+		ref     string
+		wantErr error
+	}{
+		{"bare literal", "tskey-abc123", ErrBareLiteral},
+		{"unknown scheme", "literal:value", ErrUnknownScheme},
+		{"unset variable", "env:DEFINITELY_UNSET_TS_KEY", ErrNotFound},
+		{"empty argument", "file:", ErrEmptyArg},
+		{"missing file", "file:/definitely/not/here", os.ErrNotExist},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := Read(tt.ref); !errors.Is(err, tt.wantErr) {
+				t.Errorf("Read(%q) error = %v, want %v", tt.ref, err, tt.wantErr)
+			}
+		})
+	}
+}

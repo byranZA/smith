@@ -1,12 +1,14 @@
 package staging
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
-	"github.com/byranZA/smith/internal/secret"
 )
 
 func TestBoxPlacementPathFlattensTheDestination(t *testing.T) {
@@ -100,7 +102,7 @@ func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 	t.Setenv("NPM_TOKEN", "//registry.npmjs.org/:_authToken=s3cr3t")
 	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN", To: "~/.npmrc"}}}, Resolution{})
 
-	resolved, err := Resolve(tree, secret.Resolve, blueprint.Value)
+	resolved, err := Resolve(tree, blueprint.Source, blueprint.Value)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -112,10 +114,46 @@ func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 	}
 }
 
+// TestResolveStagesAPrivateKeyByteForByte places an OpenSSH private key through
+// the source resolver machine setup uses. OpenSSH refuses a key without its
+// final newline, so a source that lost it would stage a key nothing can use.
+func TestResolveStagesAPrivateKeyByteForByte(t *testing.T) {
+	fixture, err := filepath.Abs(filepath.Join("testdata", "id_ed25519"))
+	if err != nil {
+		t.Fatalf("locate fixture: %v", err)
+	}
+	want, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:" + fixture, To: "~/.ssh/id_ed25519"}}}, Resolution{})
+
+	resolved, err := Resolve(tree, blueprint.Source, blueprint.Value)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got := resolved.Placements[0].File.Bytes; !bytes.Equal(got, want) {
+		t.Errorf("staged bytes = %q, want the key file exactly as it is, %q", got, want)
+	}
+}
+
+func TestResolveStagesAnEnvSourceWithItsWhitespace(t *testing.T) {
+	t.Setenv("NPMRC", "  registry=https://npm.example\n")
+	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPMRC", To: "~/.npmrc"}}}, Resolution{})
+
+	resolved, err := Resolve(tree, blueprint.Source, blueprint.Value)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got := string(resolved.Placements[0].File.Bytes); got != "  registry=https://npm.example\n" {
+		t.Errorf("staged bytes = %q, want %q", got, "  registry=https://npm.example\n")
+	}
+}
+
 func TestResolveNamesAReferenceItCannotResolve(t *testing.T) {
 	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "file:/home/op/.missing", To: "/home/smith/.npmrc"}}}, Resolution{})
 
-	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
+	_, err := Resolve(tree, blueprint.Source, blueprint.Value)
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want the unresolvable reference refused")
 	}
@@ -232,7 +270,7 @@ func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
 		}},
 	}, Resolution{})
 
-	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
+	_, err := Resolve(tree, blueprint.Source, blueprint.Value)
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want both unresolvable references refused")
 	}
@@ -253,7 +291,7 @@ func TestResolveEnumeratesEveryReferenceItCannotResolve(t *testing.T) {
 func TestResolveNamesAnUnsetEnvironmentVariable(t *testing.T) {
 	tree := Plan(nil, blueprint.Blueprint{Placements: []blueprint.Placement{{From: "env:NPM_TOKEN_UNSET", To: "~/.npmrc"}}}, Resolution{})
 
-	_, err := Resolve(tree, secret.Resolve, blueprint.Value)
+	_, err := Resolve(tree, blueprint.Source, blueprint.Value)
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want the unset variable refused")
 	}

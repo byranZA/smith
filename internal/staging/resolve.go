@@ -120,8 +120,8 @@ func (v UnresolvedValue) scope() string {
 // nothing.
 //
 // The two resolvers are the two grammars: source for a placement's from:, which
-// resolves to a whole file's bytes, and value for an env entry, which also
-// accepts the literal: a source refuses.
+// resolves to a whole file's bytes exactly as they are, and value for an env
+// entry, which is trimmed and also accepts the literal: a source refuses.
 //
 // It is resolve-all-then-write: every reference is tried before Converge writes
 // a byte, and one that does not resolve refuses the whole run with the box
