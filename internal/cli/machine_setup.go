@@ -382,7 +382,9 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 //
 // A run naming no blueprint converges nothing. There is nothing staged for the
 // box to read, and refusing on its absence would break the flag-only path that
-// never had a blueprint to begin with.
+// never had a blueprint to begin with. It says so, though: a bare box is a
+// legitimate result, but one the operator should not find out about by reading
+// the marker.
 //
 // A stage the box refused is a failed stage, not a failed setup: every phase
 // completed and the box is provisioned, secured and configured, so what the
@@ -390,6 +392,9 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // already said what went wrong on their terminal.
 func convergeWorkspace(ctx context.Context, exec connection.Exec, target, box, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
 	if staged == nil {
+		if _, err := fmt.Fprintln(stdout, "no blueprint was staged, so the workspace had nothing to converge: no repos, tools, env or placements"); err != nil {
+			return fmt.Errorf("write workspace report: %w", err)
+		}
 		return nil
 	}
 	verb := relay.Verb{Target: target, Box: box, Version: version, Args: []string{"workspace", "converge"}}
@@ -539,7 +544,7 @@ func concludeSetup(ctx context.Context, exec connection.Exec, home config.Home, 
 	if err != nil {
 		return reportUnnamed(stderr, target, err)
 	}
-	if _, err := fmt.Fprint(stdout, registeredReport(name, target, moved)); err != nil {
+	if _, err := fmt.Fprint(stdout, registeredReport(c.names, target, moved)); err != nil {
 		return fmt.Errorf("write registration: %w", err)
 	}
 	return nil
@@ -580,7 +585,22 @@ func smithTarget(host string) string { return smithLogin + "@" + host }
 // name it was registered under before; the name the box answers to from now on; the target it
 // resolves to; and the commands to type instead of an address — which is the
 // whole point of writing the target down.
-func registeredReport(name, target, moved string) string {
+//
+// The re-run it suggests carries only what this run went without. A run that
+// named no blueprint staged nothing, so the re-run names the flag that stages
+// one rather than repeating the run that left the box bare. A blueprint-less
+// re-run of a box that records one never gets here: the pointer rule refuses it
+// first. A box named after its host is one nothing the operator chose named, so
+// the re-run shows the flag that gives it a name of its own.
+func registeredReport(names inventory.Naming, target, moved string) string {
+	name, _ := inventory.Name(names)
+	setup := "smith machine setup " + name
+	if names.Blueprint == "" {
+		setup += " --blueprint <blueprint>"
+	}
+	if inventory.HostNamed(names) {
+		setup += " --name <name>"
+	}
 	var b strings.Builder
 	if moved != "" {
 		fmt.Fprintf(&b, "renamed %q to %q\n", moved, name)
@@ -589,8 +609,8 @@ func registeredReport(name, target, moved string) string {
 
 Reach it by name from now on:
   smith machine status %s
-  smith machine setup %s
-`, target, name, name, name)
+  %s
+`, target, name, name, setup)
 	return b.String()
 }
 

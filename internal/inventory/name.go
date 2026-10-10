@@ -63,3 +63,13 @@ func Name(n Naming) (string, Origin) {
 	}
 	return "", OriginNone
 }
+
+// HostNamed reports whether the name a box resolves to is its host: the last
+// resort smith fell back on because nothing the operator chose named the box.
+// That holds on a first run with no other name, and on a re-run whose marker
+// recorded the host fallback an earlier run stamped on it. A host the operator
+// passed with --name is a name they chose, and is not one.
+func HostNamed(n Naming) bool {
+	name, _ := Name(n)
+	return n.Flag == "" && name != "" && name == n.Host
+}
