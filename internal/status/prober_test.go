@@ -157,6 +157,7 @@ func TestGatherRunsTheProbeSubcommand(t *testing.T) {
 }
 
 func TestGatherReportsMemoryAndSwap(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		lines      string
@@ -171,6 +172,7 @@ func TestGatherReportsMemoryAndSwap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			g, err := NewProber(&scriptedConn{}, probing(publicProbe+tt.lines), &fakeAdmin{}).Gather(context.Background())
 			if err != nil {
 				t.Fatalf("Gather() error = %v", err)

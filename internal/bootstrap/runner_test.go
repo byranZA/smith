@@ -154,6 +154,7 @@ func passingPreflightWithMemory(memLine string) string {
 }
 
 func TestPreflightParsesTotalMemory(t *testing.T) {
+	t.Parallel()
 	script := scriptReplying("preflight", shipped.Reply{Stdout: passingPreflightWithMemory("mem-total-kb=2014000")})
 	res, err := NewRunner(reachConn{}, script).Preflight(context.Background())
 	if err != nil {
@@ -165,6 +166,7 @@ func TestPreflightParsesTotalMemory(t *testing.T) {
 }
 
 func TestPreflightReportShowsMemory(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		memLine string
@@ -181,6 +183,7 @@ func TestPreflightReportShowsMemory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			script := scriptReplying("preflight", shipped.Reply{Stdout: passingPreflightWithMemory(tt.memLine)})
 			res, err := NewRunner(reachConn{}, script).Preflight(context.Background())
 			if err != nil {

@@ -319,6 +319,7 @@ func TestSetupProvesTheSmithUserFromTheOperatorsMachineBeforeRegistering(t *test
 }
 
 func TestSetupOfASmallBoxWarnsAndCarriesOn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ssh := &setupSSH{memLine: "mem-total-kb=469000\n"}
 

@@ -12,6 +12,7 @@ import (
 )
 
 func TestScriptSwapGivesABoxWithoutSwapA2GBSwapfile(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -44,6 +45,7 @@ func TestScriptSwapGivesABoxWithoutSwapA2GBSwapfile(t *testing.T) {
 }
 
 func TestScriptSwapRunsBeforePackages(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -63,6 +65,7 @@ func TestScriptSwapRunsBeforePackages(t *testing.T) {
 }
 
 func TestScriptSwapRerunReportsSwapPresentWithoutDuplicating(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -110,6 +113,7 @@ func readFile(t *testing.T, path string) string {
 }
 
 func TestScriptSwapIsAQuarterOfFreeDiskOnASmallDisk(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -134,6 +138,7 @@ func TestScriptSwapIsAQuarterOfFreeDiskOnASmallDisk(t *testing.T) {
 }
 
 func TestScriptSwapSkipsForLackOfDisk(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -155,6 +160,7 @@ func TestScriptSwapSkipsForLackOfDisk(t *testing.T) {
 }
 
 func TestScriptSwapLeavesExistingSwapUntouched(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -183,6 +189,7 @@ func TestScriptSwapLeavesExistingSwapUntouched(t *testing.T) {
 }
 
 func TestScriptSwapRefusedLeavesNothingBehind(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -259,6 +266,7 @@ func writeTestFile(t *testing.T, path, contents string) {
 }
 
 func TestScriptSwapRetryAfterAFailedRebootEntryWriteLeavesSwapPersistent(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -290,6 +298,7 @@ func TestScriptSwapRetryAfterAFailedRebootEntryWriteLeavesSwapPersistent(t *test
 }
 
 func TestScriptSwapRerunRepairsAMissingRebootEntryForSmithsSwapfile(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")

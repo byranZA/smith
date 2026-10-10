@@ -241,6 +241,7 @@ func truncate(out []byte) string {
 }
 
 func TestScriptProbePrintsTotalMemoryAndSwap(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -256,6 +257,7 @@ func TestScriptProbePrintsTotalMemoryAndSwap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			scriptPath := filepath.Join(dir, "bootstrap.sh")
 			if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {

@@ -140,6 +140,7 @@ func smallBox(f Facts) Facts {
 }
 
 func TestReconcileMatchingSmallBoxKeepsTheMatchesVerdict(t *testing.T) {
+	t.Parallel()
 	r := Reconcile(cleanPublicMarker(), marker.SkewNone, true, smallBox(cleanPublicFacts()))
 	if r.Verdict != VerdictMatches || r.ExitCode() != 0 {
 		t.Errorf("Reconcile(small matching box) = %v exit %d, want Matches exit 0", r.Verdict, r.ExitCode())
@@ -147,6 +148,7 @@ func TestReconcileMatchingSmallBoxKeepsTheMatchesVerdict(t *testing.T) {
 }
 
 func TestReconcileMatchingSmallBoxNotesMemoryUnderTheAdvisory(t *testing.T) {
+	t.Parallel()
 	out := Reconcile(cleanPublicMarker(), marker.SkewNone, true, smallBox(cleanPublicFacts())).String()
 	want := "✓ matches: the box matches what setup established" + smallBoxNote
 	if !strings.HasPrefix(out, want) {
@@ -155,6 +157,7 @@ func TestReconcileMatchingSmallBoxNotesMemoryUnderTheAdvisory(t *testing.T) {
 }
 
 func TestReconcileDriftedSmallBoxShowsTheFindingsAndTheMemoryNote(t *testing.T) {
+	t.Parallel()
 	facts := smallBox(cleanPublicFacts())
 	facts.PasswordAuth = known("yes")
 	r := Reconcile(cleanPublicMarker(), marker.SkewNone, true, facts)
@@ -173,6 +176,7 @@ func TestReconcileDriftedSmallBoxShowsTheFindingsAndTheMemoryNote(t *testing.T) 
 }
 
 func TestReconcileNotesMemoryAndSwapWithoutAWarningAboveTheAdvisory(t *testing.T) {
+	t.Parallel()
 	facts := cleanPublicFacts()
 	facts.Memory = memory.FromKiB(2014000)
 	facts.Swap = memory.SwapFromKiB(0)
@@ -184,6 +188,7 @@ func TestReconcileNotesMemoryAndSwapWithoutAWarningAboveTheAdvisory(t *testing.T
 }
 
 func TestReconcileNotesMemoryOnAPartialBox(t *testing.T) {
+	t.Parallel()
 	m := cleanPublicMarker()
 	m.CompletedPhases = []string{"swap", "packages"}
 	out := Reconcile(m, marker.SkewNone, true, smallBox(cleanPublicFacts())).String()
@@ -220,6 +225,7 @@ func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 }
 
 func TestReconcileBoxSetUpBeforeTheSwapPhaseIsPartialMissingSwap(t *testing.T) {
+	t.Parallel()
 	m := cleanPublicMarker()
 	m.CompletedPhases = []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"}
 	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())

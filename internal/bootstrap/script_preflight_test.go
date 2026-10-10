@@ -9,6 +9,7 @@ import (
 )
 
 func TestScriptPreflightPrintsTotalMemory(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -23,6 +24,7 @@ func TestScriptPreflightPrintsTotalMemory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			dir, scriptPath, env := scriptFixture(t)
 			meminfo := filepath.Join(dir, "meminfo")
 			if tt.meminfo != "" {
