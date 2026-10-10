@@ -33,6 +33,7 @@ func runSessionAs(t *testing.T, w sessionWiring, box string, args ...string) (st
 }
 
 func TestAttachToAStoppedSessionNamesTheBoxTheOperatorTyped(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		box  string
@@ -44,6 +45,7 @@ func TestAttachToAStoppedSessionNamesTheBoxTheOperatorTyped(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			workspace := t.TempDir()
 			writeBareRepo(t, workspace, "smith")
 			resolve := resolvedBox(workspace, "smith")
@@ -61,6 +63,7 @@ func TestAttachToAStoppedSessionNamesTheBoxTheOperatorTyped(t *testing.T) {
 }
 
 func TestATypedVerbOnAnUnstagedMachineSaysToNameTheBox(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	w := onBox(t, stagedIn(root), root, connection.System(), &fakeTmux{}, &fakeExec{})
 
@@ -73,6 +76,7 @@ func TestATypedVerbOnAnUnstagedMachineSaysToNameTheBox(t *testing.T) {
 }
 
 func TestARelayedVerbOnAnUnstagedBoxNamesTheBoxToSetUp(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	w := onBox(t, stagedIn(root), root, connection.System(), &fakeTmux{}, &fakeExec{})
 
@@ -85,6 +89,7 @@ func TestARelayedVerbOnAnUnstagedBoxNamesTheBoxToSetUp(t *testing.T) {
 }
 
 func TestRelayedBoxIsHiddenFromHelp(t *testing.T) {
+	t.Parallel()
 	root := newRootCmd()
 	root.SetArgs([]string{"--help"})
 	var out bytes.Buffer
@@ -100,6 +105,7 @@ func TestRelayedBoxIsHiddenFromHelp(t *testing.T) {
 }
 
 func TestSetupRelaysTheWorkspaceStageNamingTheBoxAsTyped(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "packages:\n  - ripgrep\n")
 	ssh := &setupSSH{}

@@ -246,13 +246,14 @@ func TestConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 }
 
 func TestConvergeRelayedNamesTheBoxInTheRestageCommand(t *testing.T) {
+	t.Parallel()
 	root, home := t.TempDir(), t.TempDir()
 	b := blueprint.Blueprint{Placements: []blueprint.Placement{
 		{From: "file:~/npmrc", To: "~/.npmrc", Mode: "converge"},
 	}}
 	env := Env{Command: box(), StateRoot: root, Hint: hint.Invocation{Box: "smith-dev", Verb: "workspace converge"}}
 
-	result, err := Converge(context.Background(), env, Plan(b, resolved, home), io.Discard)
+	result, err := Converge(t.Context(), env, Plan(b, resolved, home), io.Discard)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}

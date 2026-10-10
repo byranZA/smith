@@ -63,6 +63,7 @@ func TestRunRelaysAVerbToTheBox(t *testing.T) {
 }
 
 func TestSendTellsTheBoxTheNameTheOperatorUsedForIt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		verb Verb
@@ -73,8 +74,9 @@ func TestSendTellsTheBoxTheNameTheOperatorUsedForIt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			conn := &fakeConn{}
-			if err := Send(context.Background(), conn, tt.verb, io.Discard, io.Discard); err != nil {
+			if err := Send(t.Context(), conn, tt.verb, io.Discard, io.Discard); err != nil {
 				t.Fatalf("Send(%+v) err = %v", tt.verb, err)
 			}
 			if len(conn.commands) != 1 || conn.commands[0] != tt.want {
@@ -85,8 +87,9 @@ func TestSendTellsTheBoxTheNameTheOperatorUsedForIt(t *testing.T) {
 }
 
 func TestConnectTellsTheBoxTheNameTheOperatorUsedForIt(t *testing.T) {
+	t.Parallel()
 	execer := &fakeExecer{}
-	err := Connect(context.Background(), &fakeSSH{}, execer, Verb{
+	err := Connect(t.Context(), &fakeSSH{}, execer, Verb{
 		Target:  "smith@100.92.14.7",
 		Box:     "smith-dev",
 		Version: "0.2.0",
@@ -191,12 +194,13 @@ func TestRunCarriesTheBoxsRefusalBack(t *testing.T) {
 }
 
 func TestRunReadsABoxThatPredatesTheRelayedBoxFlagAsAMismatch(t *testing.T) {
+	t.Parallel()
 	ssh := &fakeSSH{
 		stderr: "smith: unknown flag: --relayed-box\n",
 		err:    exitStatus(1),
 	}
 
-	err := Run(context.Background(), ssh, Verb{
+	err := Run(t.Context(), ssh, Verb{
 		Target:  "smith@box",
 		Box:     "dev",
 		Version: "0.2.0",

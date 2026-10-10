@@ -29,13 +29,14 @@ func hintedEnv(t *testing.T, inv hint.Invocation) (session.Env, *tmuxServer) {
 		Exec:      &fakeExec{},
 		Hint:      inv,
 	}
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 	return env, tmux
 }
 
 func TestAttachToAStoppedSessionNamesTheStartThatResumesIt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		inv  hint.Invocation
@@ -47,11 +48,12 @@ func TestAttachToAStoppedSessionNamesTheStartThatResumesIt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			env, _ := hintedEnv(t, tt.inv)
-			if err := session.Stop(context.Background(), env, "smith-spec-42"); err != nil {
+			if err := session.Stop(t.Context(), env, "smith-spec-42"); err != nil {
 				t.Fatalf("Stop() err = %v", err)
 			}
-			err := session.Attach(context.Background(), env, "smith-spec-42", session.Observe)
+			err := session.Attach(t.Context(), env, "smith-spec-42", session.Observe)
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("Attach(smith-spec-42) err = %v, want %q", err, tt.want)
 			}
@@ -60,37 +62,39 @@ func TestAttachToAStoppedSessionNamesTheStartThatResumesIt(t *testing.T) {
 }
 
 func TestANamelessSessionVerbNamesTheListing(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		inv  hint.Invocation
-		verb func(session.Env) error
+		verb func(context.Context, session.Env) error
 		want string
 	}{
-		{"attach, relayed", relayed, func(env session.Env) error {
-			return session.Attach(context.Background(), env, " ", session.Observe)
+		{"attach, relayed", relayed, func(ctx context.Context, env session.Env) error {
+			return session.Attach(ctx, env, " ", session.Observe)
 		}, "no session named: want the name `smith session list smith-dev` reports"},
-		{"attach, typed on the box", hint.Invocation{}, func(env session.Env) error {
-			return session.Attach(context.Background(), env, " ", session.Observe)
+		{"attach, typed on the box", hint.Invocation{}, func(ctx context.Context, env session.Env) error {
+			return session.Attach(ctx, env, " ", session.Observe)
 		}, "no session named: want the name `smith session list` reports"},
-		{"stop, relayed", relayed, func(env session.Env) error {
-			return session.Stop(context.Background(), env, "")
+		{"stop, relayed", relayed, func(ctx context.Context, env session.Env) error {
+			return session.Stop(ctx, env, "")
 		}, "no session named: want the name `smith session list smith-dev` reports"},
-		{"stop, typed on the box", hint.Invocation{}, func(env session.Env) error {
-			return session.Stop(context.Background(), env, "")
+		{"stop, typed on the box", hint.Invocation{}, func(ctx context.Context, env session.Env) error {
+			return session.Stop(ctx, env, "")
 		}, "no session named: want the name `smith session list` reports"},
-		{"rm, relayed", relayed, func(env session.Env) error {
-			_, err := session.Remove(context.Background(), env, []string{" "}, false)
+		{"rm, relayed", relayed, func(ctx context.Context, env session.Env) error {
+			_, err := session.Remove(ctx, env, []string{" "}, false)
 			return err
 		}, "no session named: want the names `smith session list smith-dev` reports"},
-		{"rm, typed on the box", hint.Invocation{}, func(env session.Env) error {
-			_, err := session.Remove(context.Background(), env, []string{" "}, false)
+		{"rm, typed on the box", hint.Invocation{}, func(ctx context.Context, env session.Env) error {
+			_, err := session.Remove(ctx, env, []string{" "}, false)
 			return err
 		}, "no session named: want the names `smith session list` reports"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			env := session.Env{Hint: tt.inv}
-			if err := tt.verb(env); err == nil || err.Error() != tt.want {
+			if err := tt.verb(t.Context(), env); err == nil || err.Error() != tt.want {
 				t.Errorf("err = %v, want %q", err, tt.want)
 			}
 		})
@@ -98,6 +102,7 @@ func TestANamelessSessionVerbNamesTheListing(t *testing.T) {
 }
 
 func TestAnUnknownSessionNamesTheListing(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		inv  hint.Invocation
@@ -108,8 +113,9 @@ func TestAnUnknownSessionNamesTheListing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			env, _ := hintedEnv(t, tt.inv)
-			err := session.Stop(context.Background(), env, "smith-spec-43")
+			err := session.Stop(t.Context(), env, "smith-spec-43")
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("Stop(smith-spec-43) err = %v, want %q", err, tt.want)
 			}
@@ -156,9 +162,10 @@ func TestRemovalRefusalsNameTheCommandsThatClearThem(t *testing.T) {
 }
 
 func TestRemoveRelayedRefusesALiveSessionNamingTheBox(t *testing.T) {
+	t.Parallel()
 	env, _ := hintedEnv(t, relayed)
 
-	_, err := session.Remove(context.Background(), env, []string{"smith-spec-42"}, false)
+	_, err := session.Remove(t.Context(), env, []string{"smith-spec-42"}, false)
 
 	want := "session `smith/smith-spec-42` is running — `smith session stop smith-dev smith-spec-42` first"
 	if err == nil || err.Error() != want {
@@ -167,6 +174,7 @@ func TestRemoveRelayedRefusesALiveSessionNamingTheBox(t *testing.T) {
 }
 
 func TestAStoppedSessionsResumeHintKeepsABranchTheShellWouldRewrite(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		inv  hint.Invocation
@@ -177,15 +185,16 @@ func TestAStoppedSessionsResumeHintKeepsABranchTheShellWouldRewrite(t *testing.T
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			env, _ := hintedEnv(t, tt.inv)
-			started, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "feature/$HOME;x"})
+			started, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "feature/$HOME;x"})
 			if err != nil {
 				t.Fatalf("Start() err = %v", err)
 			}
-			if err := session.Stop(context.Background(), env, started.Name); err != nil {
+			if err := session.Stop(t.Context(), env, started.Name); err != nil {
 				t.Fatalf("Stop() err = %v", err)
 			}
-			err = session.Attach(context.Background(), env, started.Name, session.Observe)
+			err = session.Attach(t.Context(), env, started.Name, session.Observe)
 			if err == nil || !strings.HasSuffix(err.Error(), tt.want) {
 				t.Errorf("Attach(%q) err = %v, want it to end %q", started.Name, err, tt.want)
 			}
