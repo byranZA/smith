@@ -69,7 +69,7 @@ _Avoid_: rollback, failsafe.
 ### State on the box
 
 **Phase**:
-One named, ordered, mutating step of the base-layer bootstrap sequence — `packages`,
+One named, ordered, mutating step of the base-layer bootstrap sequence — `swap`, `packages`,
 `smith-user`, `smith-keys`, `firewall`, `ssh-hardening`, `fail2ban`, `auto-updates`, `access`
 (preceded by a non-recorded `preflight` gate). The names *are* the marker's `completed_phases`
 values, so they are load-bearing. A phase appends itself to the marker only on success; the
@@ -195,6 +195,10 @@ How smith decides a box is supported: an LTS *floor* (`ID=ubuntu`, an `LTS` rele
 (apt, systemd, packages) — never a hardcoded enumeration of releases. Future LTS releases pass
 automatically; an unmet need fails loudly at the step, not pre-emptively at the gate.
 _Avoid_: version allowlist, supported-OS list.
+
+**Memory advisory**:
+The recommended minimum memory for a box to run an agent: 2 GB, one figure whatever the repos' toolchains. A box under it gets a warning, never a refusal, because a bare hardened box is still a valid result. Unlike the *floor*, it gates nothing.
+_Avoid_: memory floor, minimum memory requirement.
 
 ### Declaring and creating a box
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/memory"
 	"github.com/byranZA/smith/internal/tailscale"
 )
 
@@ -151,8 +152,8 @@ func parseProbe(output string) (facts Facts, markerRaw []byte, present bool, tai
 }
 
 // assign sets the fact named key from its probed value. Booleans read "yes"; the
-// remaining facts read into a Fact where "?" is undeterminable; tailnet-ip is
-// written through to the caller's tailnetIP.
+// remaining facts read into a Fact where "?" is undeterminable, apart from memory
+// and swap; tailnet-ip is written through to the caller's tailnetIP.
 func (f *Facts) assign(key, value string, tailnetIP *string) {
 	switch key {
 	case "smith-user-exists":
@@ -177,6 +178,10 @@ func (f *Facts) assign(key, value string, tailnetIP *string) {
 		f.TailscaleRunning = fact(value)
 	case "tailnet-ip":
 		*tailnetIP = value
+	case "mem-total-kb":
+		f.Memory = memory.Parse(value)
+	case "swap-total-kb":
+		f.Swap = memory.ParseSwap(value)
 	}
 }
 

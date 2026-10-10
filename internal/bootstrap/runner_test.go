@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/memory"
 	"github.com/byranZA/smith/internal/shipped"
 )
 
@@ -144,6 +145,57 @@ func TestReportMentionsReason(t *testing.T) {
 	}
 	if !strings.Contains(res.Report(), res.Reason) {
 		t.Errorf("Report() = %q, want it to contain the reason %q", res.Report(), res.Reason)
+	}
+}
+
+// passingPreflightWithMemory is a passing preflight's output carrying memLine.
+func passingPreflightWithMemory(memLine string) string {
+	return preflightOutput("root", "ubuntu", "24.04.1 LTS (Noble)", "24.04") + memLine + "\n"
+}
+
+func TestPreflightParsesTotalMemory(t *testing.T) {
+	t.Parallel()
+	script := scriptReplying("preflight", shipped.Reply{Stdout: passingPreflightWithMemory("mem-total-kb=2014000")})
+	res, err := NewRunner(reachConn{}, script).Preflight(context.Background())
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	if want := memory.FromKiB(2014000); res.Memory != want {
+		t.Errorf("Memory = %+v, want %+v", res.Memory, want)
+	}
+}
+
+func TestPreflightReportShowsMemory(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		memLine string
+		want    string
+	}{
+		{"nominal 2 GB box", "mem-total-kb=2014000", "preflight passed\nmemory: 1.9 GB\n"},
+		{
+			"small box warns", "mem-total-kb=469000",
+			"preflight passed\nmemory: 458 MB\nwarning: under the recommended 2 GB of memory to run an agent\n",
+		},
+		{"empty memory figure is unknown", "mem-total-kb=", "preflight passed\nmemory: unknown\n"},
+		{"missing memory line is unknown", "", "preflight passed\nmemory: unknown\n"},
+		{"unparseable memory figure is unknown", "mem-total-kb=lots", "preflight passed\nmemory: unknown\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			script := scriptReplying("preflight", shipped.Reply{Stdout: passingPreflightWithMemory(tt.memLine)})
+			res, err := NewRunner(reachConn{}, script).Preflight(context.Background())
+			if err != nil {
+				t.Fatalf("Preflight() error = %v", err)
+			}
+			if res.Outcome != OutcomePassed {
+				t.Errorf("Outcome = %v, want Passed whatever the memory (reason %q)", res.Outcome, res.Reason)
+			}
+			if got := res.Report(); got != tt.want {
+				t.Errorf("Report() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

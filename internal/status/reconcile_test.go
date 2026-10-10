@@ -7,6 +7,7 @@ import (
 
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/memory"
 )
 
 // TestExpectedPhasesTracksBootstrapPhases proves status derives its expected
@@ -30,7 +31,7 @@ func cleanPublicMarker() marker.Marker {
 		SchemaVersion:   marker.SchemaVersion,
 		SmithVersion:    "1.0.0",
 		AccessMode:      "public",
-		CompletedPhases: []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"},
+		CompletedPhases: []string{"swap", "packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"},
 	}
 }
 
@@ -128,6 +129,75 @@ func TestReconcileLostSudoIsDriftAndBlocksDependentProbes(t *testing.T) {
 	}
 }
 
+// smallBoxNote is the memory note for a nominal 1 GB box with a 2 GB swapfile.
+const smallBoxNote = "\n  memory: 980 MB\n  warning: under the recommended 2 GB of memory to run an agent\n  swap: 2.0 GB\n"
+
+// smallBox gives facts the RAM and swap of a nominal 1 GB box with a 2 GB swapfile.
+func smallBox(f Facts) Facts {
+	f.Memory = memory.FromKiB(1004000)
+	f.Swap = memory.SwapFromKiB(2097148)
+	return f
+}
+
+func TestReconcileMatchingSmallBoxKeepsTheMatchesVerdict(t *testing.T) {
+	t.Parallel()
+	r := Reconcile(cleanPublicMarker(), marker.SkewNone, true, smallBox(cleanPublicFacts()))
+	if r.Verdict != VerdictMatches || r.ExitCode() != 0 {
+		t.Errorf("Reconcile(small matching box) = %v exit %d, want Matches exit 0", r.Verdict, r.ExitCode())
+	}
+}
+
+func TestReconcileMatchingSmallBoxNotesMemoryUnderTheAdvisory(t *testing.T) {
+	t.Parallel()
+	out := Reconcile(cleanPublicMarker(), marker.SkewNone, true, smallBox(cleanPublicFacts())).String()
+	want := "✓ matches: the box matches what setup established" + smallBoxNote
+	if !strings.HasPrefix(out, want) {
+		t.Errorf("String() = %q, want it to open with %q", out, want)
+	}
+}
+
+func TestReconcileDriftedSmallBoxShowsTheFindingsAndTheMemoryNote(t *testing.T) {
+	t.Parallel()
+	facts := smallBox(cleanPublicFacts())
+	facts.PasswordAuth = known("yes")
+	r := Reconcile(cleanPublicMarker(), marker.SkewNone, true, facts)
+	if r.Verdict != VerdictDrifted || r.ExitCode() != 1 {
+		t.Errorf("Reconcile(small drifted box) = %v exit %d, want Drifted exit 1", r.Verdict, r.ExitCode())
+	}
+	out := r.String()
+	for _, want := range []string{
+		"✗ drifted: the box no longer matches what setup established" + smallBoxNote,
+		"✗ PasswordAuthentication: expected no, actual yes\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("String() = %q, want it to carry %q", out, want)
+		}
+	}
+}
+
+func TestReconcileNotesMemoryAndSwapWithoutAWarningAboveTheAdvisory(t *testing.T) {
+	t.Parallel()
+	facts := cleanPublicFacts()
+	facts.Memory = memory.FromKiB(2014000)
+	facts.Swap = memory.SwapFromKiB(0)
+	out := Reconcile(cleanPublicMarker(), marker.SkewNone, true, facts).String()
+	want := "✓ matches: the box matches what setup established\n  memory: 1.9 GB\n  swap: none\n\nsmith-user\n"
+	if !strings.HasPrefix(out, want) {
+		t.Errorf("String() = %q, want it to open with %q", out, want)
+	}
+}
+
+func TestReconcileNotesMemoryOnAPartialBox(t *testing.T) {
+	t.Parallel()
+	m := cleanPublicMarker()
+	m.CompletedPhases = []string{"swap", "packages"}
+	out := Reconcile(m, marker.SkewNone, true, smallBox(cleanPublicFacts())).String()
+	want := "✗ partially provisioned: setup did not complete" + smallBoxNote
+	if !strings.HasPrefix(out, want) {
+		t.Errorf("String() = %q, want it to open with %q", out, want)
+	}
+}
+
 func TestReconcileNeverBootstrapped(t *testing.T) {
 	r := Reconcile(marker.Marker{}, marker.SkewNone, false, Facts{})
 	if r.Verdict != VerdictNeverBootstrapped {
@@ -140,7 +210,7 @@ func TestReconcileNeverBootstrapped(t *testing.T) {
 
 func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 	m := cleanPublicMarker()
-	m.CompletedPhases = []string{"packages", "smith-user", "smith-keys", "firewall"} // stopped partway
+	m.CompletedPhases = []string{"swap", "packages", "smith-user", "smith-keys", "firewall"} // stopped partway
 	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
 	if r.Verdict != VerdictPartial {
 		t.Fatalf("Verdict = %v, want Partial", r.Verdict)
@@ -151,6 +221,19 @@ func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 	out := r.String()
 	if !strings.Contains(out, "ssh-hardening") {
 		t.Errorf("String() should list a missing phase; got:\n%s", out)
+	}
+}
+
+func TestReconcileBoxSetUpBeforeTheSwapPhaseIsPartialMissingSwap(t *testing.T) {
+	t.Parallel()
+	m := cleanPublicMarker()
+	m.CompletedPhases = []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"}
+	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
+	if r.Verdict != VerdictPartial {
+		t.Fatalf("Reconcile(marker without swap) Verdict = %v, want Partial", r.Verdict)
+	}
+	if got, want := strings.Join(r.MissingPhases, ","), "swap"; got != want {
+		t.Errorf("Reconcile(marker without swap) MissingPhases = %q, want %q", got, want)
 	}
 }
 

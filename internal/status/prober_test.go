@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/memory"
 	"github.com/byranZA/smith/internal/shipped"
 	"github.com/byranZA/smith/internal/tailscale"
 )
@@ -155,9 +156,37 @@ func TestGatherRunsTheProbeSubcommand(t *testing.T) {
 	}
 }
 
+func TestGatherReportsMemoryAndSwap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		lines      string
+		wantMemory memory.Total
+		wantSwap   memory.Swap
+	}{
+		{"reported figures", "mem-total-kb=4026532\nswap-total-kb=2097148\n", memory.FromKiB(4026532), memory.SwapFromKiB(2097148)},
+		{"zero swap", "mem-total-kb=4026532\nswap-total-kb=0\n", memory.FromKiB(4026532), memory.SwapFromKiB(0)},
+		{"missing lines", "", memory.Total{}, memory.Swap{}},
+		{"empty values", "mem-total-kb=\nswap-total-kb=\n", memory.Total{}, memory.Swap{}},
+		{"non-numeric values", "mem-total-kb=?\nswap-total-kb=lots\n", memory.Total{}, memory.Swap{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			g, err := NewProber(&scriptedConn{}, probing(publicProbe+tt.lines), &fakeAdmin{}).Gather(context.Background())
+			if err != nil {
+				t.Fatalf("Gather() error = %v", err)
+			}
+			if g.Facts.Memory != tt.wantMemory || g.Facts.Swap != tt.wantSwap {
+				t.Errorf("Gather() memory/swap = %v/%v, want %v/%v", g.Facts.Memory, g.Facts.Swap, tt.wantMemory, tt.wantSwap)
+			}
+		})
+	}
+}
+
 func TestGatherProbesTailnetReachInTailscaleMode(t *testing.T) {
 	script := probing(`marker-begin
-{"schema_version":1,"smith_version":"1.0.0","access_mode":"tailscale","completed_phases":["packages","smith-user","smith-keys","firewall","ssh-hardening","fail2ban","auto-updates","access"]}
+{"schema_version":1,"smith_version":"1.0.0","access_mode":"tailscale","completed_phases":["swap","packages","smith-user","smith-keys","firewall","ssh-hardening","fail2ban","auto-updates","access"]}
 marker-end
 smith-user-exists=yes
 passwordless-sudo=yes

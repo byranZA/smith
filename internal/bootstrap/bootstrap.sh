@@ -7,8 +7,9 @@
 #
 # Subcommands:
 #   preflight — a non-recorded, read-only gate. It reports the box's privilege
-#               level and raw /etc/os-release so the Go OS support gate can
-#               decide, and mutates nothing.
+#               level, total memory and raw /etc/os-release so the Go OS support
+#               gate can decide and the memory advisory can warn, and mutates
+#               nothing.
 #   setup     — writes the marker early, then runs the ordered mutating phases.
 #               Each phase is check-before-change and appends itself to the
 #               marker only on success; progress streams live to the operator.
@@ -24,7 +25,7 @@
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# The ordered phases are: packages, smith-user, smith-keys, firewall,
+# The ordered phases are: swap, packages, smith-user, smith-keys, firewall,
 # ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries the on-box
 # self-reverting self-test (the base layer's only lock-out gate). In public mode
 # the access phase is a no-op; in tailscale mode the access layer is driven from
@@ -39,10 +40,28 @@ SMITH_BOOTSTRAP_VERSION=2
 MARKER="${SMITH_MARKER:-/etc/smith/bootstrap.json}"
 MARKER_DIR="$(dirname "$MARKER")"
 
+# MEMINFO is where preflight and probe read the box's total memory, and probe its
+# total swap. SMITH_MEMINFO overrides it for tests; production always uses the
+# default.
+MEMINFO="${SMITH_MEMINFO:-/proc/meminfo}"
+
 # The ordered mutating phases. The names are load-bearing: they are the marker's
 # completed_phases values. This is the full base-layer sequence; the access phase
 # is where the tailscale mode's behavior lands, not a new phase.
-PHASES=(packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
+PHASES=(swap packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
+
+# The swap phase's system paths: the kernel's active swap list, the fstab that
+# brings swap back after a reboot, and the swapfile smith creates. SMITH_SWAPS,
+# SMITH_FSTAB and SMITH_SWAPFILE override them for tests; production always uses
+# the defaults.
+SWAPS="${SMITH_SWAPS:-/proc/swaps}"
+FSTAB="${SMITH_FSTAB:-/etc/fstab}"
+SWAPFILE="${SMITH_SWAPFILE:-/swapfile}"
+
+# The swapfile is the smaller of SWAP_MAX_MB and a quarter of the free disk on its
+# filesystem; under SWAP_MIN_MB it is too small to be worth having, so none is made.
+SWAP_MAX_MB=2048
+SWAP_MIN_MB=256
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -160,11 +179,19 @@ detect_privilege() {
   fi
 }
 
-# preflight emits the facts the Go side needs to gate the box. It is a
-# read-only probe: it changes nothing.
+# meminfo_kb prints meminfo's figure for the field named $1 (MemTotal, SwapTotal)
+# in kB, or nothing when meminfo cannot be read. It never fails: an unknown
+# figure is the Go side's to report.
+meminfo_kb() {
+  awk -v field="$1:" '$1 == field { print $2; exit }' "$MEMINFO" 2>/dev/null || true
+}
+
+# preflight emits the facts the Go side needs to gate the box and to give the
+# memory advisory. It is a read-only probe: it changes nothing.
 preflight() {
   echo "smith-preflight version=${SMITH_BOOTSTRAP_VERSION}"
   echo "privilege=$(detect_privilege)"
+  echo "mem-total-kb=$(meminfo_kb MemTotal)"
   echo "os-release-begin"
   cat /etc/os-release
   echo "os-release-end"
@@ -326,6 +353,93 @@ ensure_tailscale_repo() {
   if [ ! -s "$SMITH_TS_LIST" ]; then
     as_root mkdir -p "$(dirname "$SMITH_TS_LIST")"
     curl -fsSL "${base}/${codename}.tailscale-keyring.list" | as_root tee "$SMITH_TS_LIST" >/dev/null
+  fi
+}
+
+# swap_active reports whether the box has any active swap: the kernel's swap list
+# carries an entry below its header line.
+swap_active() {
+  [ "$(tail -n +2 "$SWAPS" 2>/dev/null | grep -c .)" -gt 0 ]
+}
+
+# swapfile_active reports whether smith's swapfile is in the kernel's swap list.
+swapfile_active() {
+  tail -n +2 "$SWAPS" 2>/dev/null | awk -v f="$SWAPFILE" '$1 == f { found = 1 } END { exit !found }'
+}
+
+# swap_fstab_entry_present reports whether fstab carries a reboot entry for the
+# swapfile.
+swap_fstab_entry_present() {
+  as_root awk -v f="$SWAPFILE" '$1 == f { found = 1 } END { exit !found }' "$FSTAB" 2>/dev/null
+}
+
+# ensure_swap_fstab_entry adds the swapfile's reboot entry to fstab, unless an
+# entry for the swapfile is already there.
+ensure_swap_fstab_entry() {
+  if swap_fstab_entry_present; then
+    return 0
+  fi
+  printf '%s none swap sw 0 0\n' "$SWAPFILE" | as_root tee -a "$FSTAB" >/dev/null
+}
+
+# remove_swap_fstab_entry drops any reboot entry for the swapfile from fstab.
+remove_swap_fstab_entry() {
+  local kept
+  [ -f "$FSTAB" ] || return 0
+  kept="$(as_root awk -v f="$SWAPFILE" '$1 != f' "$FSTAB")"
+  printf '%s' "${kept:+$kept$'\n'}" | as_root tee "$FSTAB" >/dev/null
+}
+
+# swap_size_mb prints the swapfile's size in MB: the smaller of SWAP_MAX_MB and a
+# quarter of the free disk on the swapfile's filesystem.
+swap_size_mb() {
+  local free_kb size
+  free_kb="$(df -Pk "$(dirname "$SWAPFILE")" | awk 'NR == 2 { print $4 }')"
+  size=$(( free_kb / 1024 / 4 ))
+  if [ "$size" -gt "$SWAP_MAX_MB" ]; then
+    size="$SWAP_MAX_MB"
+  fi
+  printf '%s\n' "$size"
+}
+
+# phase_swap gives a box without swap a root-only swapfile, formatted, enabled and
+# set to come back after a reboot, so memory pressure slows the box rather than
+# freezing it. It adapts to the box rather than failing setup: any active swap,
+# smith's or not, makes it a no-op that reports already-satisfied; too little disk
+# skips it; and a box that refuses swap gets the partial swapfile and its reboot
+# entry removed, then skips it. Every skip prints a note line. The reboot entry is
+# written before the swapfile is enabled, so a failed write leaves no active swap
+# and a retry runs the phase again; an active swapfile of smith's own that has lost
+# its reboot entry gets it back.
+phase_swap() {
+  if swap_active; then
+    printf '  swap already present\n'
+    PHASE_STATUS="satisfied"
+    if swapfile_active && ! swap_fstab_entry_present; then
+      ensure_swap_fstab_entry
+      PHASE_STATUS="changed"
+    fi
+    return 0
+  fi
+
+  local size
+  size="$(swap_size_mb)"
+  if [ "$size" -lt "$SWAP_MIN_MB" ]; then
+    printf '  swap skipped: not enough free disk (a %s MB swapfile is under the %s MB minimum)\n' "$size" "$SWAP_MIN_MB"
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  as_root fallocate -l "${size}M" "$SWAPFILE"
+  as_root chmod 0600 "$SWAPFILE"
+  as_root mkswap "$SWAPFILE"
+  ensure_swap_fstab_entry
+  if ! as_root swapon "$SWAPFILE"; then
+    as_root rm -f "$SWAPFILE"
+    remove_swap_fstab_entry
+    printf '  swap skipped: not supported on this box (enabling swap was refused)\n'
+    PHASE_STATUS="satisfied"
+    return 0
   fi
 }
 
@@ -937,7 +1051,8 @@ probe_access() {
 }
 
 # probe emits the box's live, read-only facts for the drift reconciler: the
-# marker (in a delimited block), whether the smith user exists and still holds
+# marker (in a delimited block), the total memory and swap the status report
+# notes without reconciling, whether the smith user exists and still holds
 # passwordless sudo, and — only when sudo is available — the firewall, sshd,
 # fail2ban, and auto-updates facts. When passwordless sudo is lost, only
 # passwordless-sudo=no is emitted; the reconciler's lost-sudo branch owns the
@@ -947,6 +1062,9 @@ probe() {
   echo "marker-begin"
   cat "$MARKER" 2>/dev/null || true
   echo "marker-end"
+
+  echo "mem-total-kb=$(meminfo_kb MemTotal)"
+  echo "swap-total-kb=$(meminfo_kb SwapTotal)"
 
   if getent passwd "$SMITH_USER" >/dev/null 2>&1; then
     echo "smith-user-exists=yes"

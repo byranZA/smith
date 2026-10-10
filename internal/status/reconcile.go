@@ -21,6 +21,7 @@ import (
 
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/memory"
 )
 
 // expectedPhases is the full base-layer phase set a fully-provisioned box
@@ -45,7 +46,8 @@ type Fact struct {
 // SmithUserExists and PasswordlessSudo are always determinable (no root needed);
 // the remaining facts need root, so when PasswordlessSudo is false the reconciler
 // marks them unverifiable rather than trusting a `?`. The tailscale-mode access
-// facts are ignored in public mode.
+// facts are ignored in public mode. Memory and swap need no root and are always
+// probed.
 type Facts struct {
 	// SmithUserExists reports whether the smith user is present on the box.
 	SmithUserExists bool
@@ -73,6 +75,11 @@ type Facts struct {
 	// TailnetReach is the admin-side live ssh-over-tailnet probe result
 	// ("reachable"/"denied"), probed in tailscale mode.
 	TailnetReach Fact
+	// Memory is the box's total RAM. It is a note, never reconciled.
+	Memory memory.Total
+	// Swap is the box's total swap. It is a note, never reconciled: no swap is a
+	// valid result of the swap phase.
+	Swap memory.Swap
 }
 
 // Verdict is one of the five ordered status outcomes, from most to least severe
@@ -149,7 +156,8 @@ type Group struct {
 
 // Report is the outcome of reconciling a box: the verdict, any marker schema
 // note, and — for matches/drifted — the per-phase findings, or — for partial —
-// the phases still missing.
+// the phases still missing. Every reachable box's report notes its memory and
+// swap, which never change the verdict.
 type Report struct {
 	// Verdict is the reconciled outcome.
 	Verdict Verdict
@@ -166,6 +174,10 @@ type Report struct {
 	Groups []Group
 	// MissingPhases are the unrecorded phases for a partial verdict.
 	MissingPhases []string
+	// Memory is the box's total RAM, noted for every reachable verdict.
+	Memory memory.Total
+	// Swap is the box's total swap, noted for every reachable verdict.
+	Swap memory.Swap
 }
 
 // ExitCode is the process exit code for the report's verdict.
@@ -186,16 +198,22 @@ func Unreachable(host string, connectErr error) Report {
 // ordered verdicts: a missing marker is never-bootstrapped; an incomplete phase
 // set is partial (kept separate from drift); otherwise it reconciles each fact
 // under its owning phase and is drifted if any fact drifted, was undeterminable,
-// or was unverifiable, else matches. It never mutates anything.
+// or was unverifiable, else matches. Memory and swap are carried as a note, not
+// reconciled. It never mutates anything.
 func Reconcile(m marker.Marker, skew marker.Skew, present bool, facts Facts) Report {
+	r := Report{Skew: skew, Memory: facts.Memory, Swap: facts.Swap}
 	if !present {
-		return Report{Verdict: VerdictNeverBootstrapped, Skew: skew}
+		r.Verdict = VerdictNeverBootstrapped
+		return r
 	}
+	r.AccessMode = m.AccessMode
 	if missing := missingPhases(m.CompletedPhases); len(missing) > 0 {
-		return Report{Verdict: VerdictPartial, Skew: skew, AccessMode: m.AccessMode, MissingPhases: missing}
+		r.Verdict, r.MissingPhases = VerdictPartial, missing
+		return r
 	}
-	groups := reconcileFacts(m.AccessMode, facts)
-	return Report{Verdict: verdictFromGroups(groups), Skew: skew, AccessMode: m.AccessMode, Groups: groups}
+	r.Groups = reconcileFacts(m.AccessMode, facts)
+	r.Verdict = verdictFromGroups(r.Groups)
+	return r
 }
 
 // missingPhases returns the expected base-layer phases absent from completed, in
@@ -304,7 +322,7 @@ func verdictFromGroups(groups []Group) Verdict {
 }
 
 // String renders the human-readable status report: a verdict headline, any
-// marker schema note, the per-phase findings (or missing phases), and — for a
+// marker schema note, the memory note, the per-phase findings (or missing phases), and — for a
 // non-clean verdict — the re-run remedy. It is the query-only counterpart to the
 // setup failure report.
 func (r Report) String() string {
@@ -320,11 +338,13 @@ func (r Report) String() string {
 	case VerdictNeverBootstrapped:
 		b.WriteString("✗ never provisioned: no smith marker on the box\n")
 		writeNote(&b, r.Skew)
+		r.writeMemory(&b)
 		b.WriteString("\n  Run `smith machine setup <login>@<host>` to provision it.\n")
 		return b.String()
 	case VerdictPartial:
 		b.WriteString("✗ partially provisioned: setup did not complete\n")
 		writeNote(&b, r.Skew)
+		r.writeMemory(&b)
 		fmt.Fprintf(&b, "\n  missing phases: %s\n", strings.Join(r.MissingPhases, ", "))
 		b.WriteString("\n  Re-run `smith machine setup <login>@<host>` to finish — the re-run resumes.\n")
 		return b.String()
@@ -334,6 +354,7 @@ func (r Report) String() string {
 		b.WriteString("✗ drifted: the box no longer matches what setup established\n")
 	}
 	writeNote(&b, r.Skew)
+	r.writeMemory(&b)
 
 	for _, g := range r.Groups {
 		fmt.Fprintf(&b, "\n%s\n", g.Phase)
@@ -369,4 +390,13 @@ func writeNote(b *strings.Builder, skew marker.Skew) {
 	if note := skew.Note(); note != "" {
 		fmt.Fprintf(b, "  note: %s\n", note)
 	}
+}
+
+// writeMemory appends the memory note: the box's memory with the memory
+// advisory's warning when it is under it, then its swap.
+func (r Report) writeMemory(b *strings.Builder) {
+	for _, line := range strings.Split(r.Memory.Advisory(), "\n") {
+		fmt.Fprintf(b, "  %s\n", line)
+	}
+	fmt.Fprintf(b, "  swap: %s\n", r.Swap)
 }
