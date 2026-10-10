@@ -646,6 +646,7 @@ func TestSetupTellsAKeyRefusalApartFromAnUnreachableBox(t *testing.T) {
 }
 
 func TestSetupWithNoBlueprintSaysTheWorkspaceHadNothingToConverge(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--name", "dev", "root@203.0.113.10")
@@ -660,6 +661,7 @@ func TestSetupWithNoBlueprintSaysTheWorkspaceHadNothingToConverge(t *testing.T) 
 }
 
 func TestSetupWithNoBlueprintSuggestsARunThatNamesOne(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--name", "dev", "root@203.0.113.10")
@@ -674,6 +676,7 @@ func TestSetupWithNoBlueprintSuggestsARunThatNamesOne(t *testing.T) {
 }
 
 func TestSetupOfABoxNamedAfterItsHostSuggestsNamingIt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		marker string
@@ -694,6 +697,7 @@ func TestSetupOfABoxNamedAfterItsHostSuggestsNamingIt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			writeBlueprint(t, dir, "acme", "access: public\n")
 
@@ -710,6 +714,7 @@ func TestSetupOfABoxNamedAfterItsHostSuggestsNamingIt(t *testing.T) {
 }
 
 func TestSetupWithABlueprintAndANameReportsTheRegistrationAsBefore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: public\n")
 
@@ -730,6 +735,7 @@ Reach it by name from now on:
 }
 
 func TestSetupWithNoBlueprintStillRefusesABoxBuiltFromOne(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ssh := &setupSSH{marker: `{"schema_version":2,"access_mode":"public","name":"dev","blueprint":"acme"}`}
 
@@ -744,6 +750,7 @@ func TestSetupWithNoBlueprintStillRefusesABoxBuiltFromOne(t *testing.T) {
 }
 
 func TestSetupOfABoxItsBlueprintNamedLikeItsHostSuggestsNoName(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: public\n")
 
