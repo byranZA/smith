@@ -1,6 +1,7 @@
 package marker
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -119,5 +120,14 @@ func TestRenameKeepsEveryByteButTheName(t *testing.T) {
 				t.Errorf("Rename(%q, %q) = %q, want %q", tt.data, "b", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRenameKeepsTheDecoderErrorForDataThatIsNotJSON(t *testing.T) {
+	t.Parallel()
+	_, err := Rename([]byte("nope"), "b")
+	var syntax *json.SyntaxError
+	if !errors.As(err, &syntax) || !errors.Is(err, ErrMalformed) {
+		t.Errorf("Rename(%q, %q) err = %v, want ErrMalformed wrapping a *json.SyntaxError", "nope", "b", err)
 	}
 }

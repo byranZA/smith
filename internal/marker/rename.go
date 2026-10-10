@@ -43,7 +43,11 @@ func Rename(data []byte, name string) ([]byte, error) {
 // a marker with two would decode as a name other than the one rewritten.
 func nameSpan(data []byte) (start, end int, found bool, err error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+	tok, err := dec.Token()
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("%w: %w", ErrMalformed, err)
+	}
+	if tok != json.Delim('{') {
 		return 0, 0, false, fmt.Errorf("%w: not a JSON object", ErrMalformed)
 	}
 	if !dec.More() {
