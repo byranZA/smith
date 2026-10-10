@@ -70,7 +70,7 @@ _Avoid_: rollback, failsafe.
 
 **Phase**:
 One named, ordered, mutating step of the base-layer bootstrap sequence — `swap`, `packages`,
-`smith-user`, `smith-keys`, `firewall`, `ssh-hardening`, `fail2ban`, `auto-updates`, `access`
+`tmux-oom-policy`, `smith-user`, `smith-keys`, `firewall`, `ssh-hardening`, `fail2ban`, `auto-updates`, `access`
 (preceded by a non-recorded `preflight` gate). The names *are* the marker's `completed_phases`
 values, so they are load-bearing. A phase appends itself to the marker only on success; the
 reachability-affecting phases (`firewall`, `ssh-hardening`, `access`) carry the lock-out gates,

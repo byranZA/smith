@@ -191,6 +191,16 @@ A box provisioned by an older smith has a marker that records every phase except
 
 Re-run `smith machine setup <name>` to finish it. The re-run adds swap where the box allows it and records the phase, and status then reports the box as it would any other.
 
+### The tmux OOM policy phase
+
+tmux runs each pane in its own systemd scope. By default, when the kernel kills one process in a scope for running out of memory, systemd stops the whole scope, which kills the pane's shell and ends the tmux session. An agent killed this way would take its whole session with it.
+
+`tmux-oom-policy` runs after `packages`. It writes `OOMPolicy=continue` into `/etc/systemd/user/tmux-spawn-.scope.d/50-smith-oom-policy.conf`, a drop-in for every tmux pane scope on the box, whether smith or a person started the session. An out-of-memory kill then takes out only the process the kernel chose, and the shell and the session survive. The phase signals every running user manager to reload, so sessions started after setup get the policy without a reboot or a fresh login, and the file in `/etc` keeps it across a reboot. A re-run finds the drop-in in place and changes nothing.
+
+systemd honours `OOMPolicy=` on a scope from version 253; Ubuntu 24.04 ships 255. On an older systemd the phase writes nothing, prints `tmux-oom-policy skipped: systemd <version> does not support OOMPolicy= on scopes`, is recorded as complete, and setup goes on.
+
+A box set up before this phase reports it as missing in `machine status`, the same way as `swap` above. Re-run `smith machine setup <name>` to add it.
+
 ## What runs after the bootstrap
 
 `machine setup` ends with an ordered pipeline of named stages:

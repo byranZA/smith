@@ -66,12 +66,12 @@ exit 0
 	if err != nil {
 		t.Fatalf("first setup run failed: %v\n%s", err, out1)
 	}
-	for _, phase := range []string{"▶ swap", "▶ packages", "▶ smith-user", "▶ smith-keys", "▶ firewall", "▶ ssh-hardening", "▶ fail2ban", "▶ auto-updates", "▶ access"} {
+	for _, phase := range []string{"▶ swap", "▶ packages", "▶ tmux-oom-policy", "▶ smith-user", "▶ smith-keys", "▶ firewall", "▶ ssh-hardening", "▶ fail2ban", "▶ auto-updates", "▶ access"} {
 		if !strings.Contains(out1, phase) {
 			t.Errorf("first run missing live phase progress %q:\n%s", phase, out1)
 		}
 	}
-	for _, phase := range []string{"swap", "packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates"} {
+	for _, phase := range []string{"swap", "packages", "tmux-oom-policy", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates"} {
 		if strings.Contains(out1, "✓ "+phase+" (already-satisfied)") {
 			t.Errorf("clean run: phase %q reported already-satisfied, want changed:\n%s", phase, out1)
 		}
@@ -102,7 +102,7 @@ exit 0
 	if m.SmithVersion != "9.9.9-test" {
 		t.Errorf("marker SmithVersion = %q, want %q", m.SmithVersion, "9.9.9-test")
 	}
-	const wantPhases = "swap,packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
+	const wantPhases = "swap,packages,tmux-oom-policy,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
 	if got := strings.Join(m.CompletedPhases, ","); got != wantPhases {
 		t.Errorf("marker CompletedPhases = %q, want %q", got, wantPhases)
 	}
@@ -189,6 +189,7 @@ exit 0
 	for _, phase := range []string{
 		"✓ swap (already-satisfied)",
 		"✓ packages (already-satisfied)",
+		"✓ tmux-oom-policy (already-satisfied)",
 		"✓ smith-user (already-satisfied)",
 		"✓ smith-keys (already-satisfied)",
 		"✓ firewall (already-satisfied)",
@@ -289,8 +290,8 @@ exit 255
 		t.Fatalf("decode marker: %v\n%s", err, data)
 	}
 	got := strings.Join(m.CompletedPhases, ",")
-	if got != "swap,packages,smith-user,smith-keys,firewall" {
-		t.Errorf("marker CompletedPhases = %q, want the phases before ssh-hardening (swap,packages,smith-user,smith-keys,firewall)", got)
+	if got != "swap,packages,tmux-oom-policy,smith-user,smith-keys,firewall" {
+		t.Errorf("marker CompletedPhases = %q, want the phases before ssh-hardening (swap,packages,tmux-oom-policy,smith-user,smith-keys,firewall)", got)
 	}
 	for _, unwanted := range []string{"ssh-hardening", "access"} {
 		if strings.Contains(got, unwanted) {
@@ -415,7 +416,7 @@ exit 255
 	if err != nil {
 		t.Fatalf("decode marker after partial run: %v", err)
 	}
-	if got := strings.Join(m1.CompletedPhases, ","); got != "swap,packages,smith-user,smith-keys,firewall" {
+	if got := strings.Join(m1.CompletedPhases, ","); got != "swap,packages,tmux-oom-policy,smith-user,smith-keys,firewall" {
 		t.Fatalf("partial marker CompletedPhases = %q, want the phases before ssh-hardening", got)
 	}
 
@@ -432,6 +433,7 @@ exit 0
 	for _, phase := range []string{
 		"✓ swap (already-satisfied)",
 		"✓ packages (already-satisfied)",
+		"✓ tmux-oom-policy (already-satisfied)",
 		"✓ smith-user (already-satisfied)",
 		"✓ smith-keys (already-satisfied)",
 		"✓ firewall (already-satisfied)",
@@ -446,7 +448,7 @@ exit 0
 		t.Errorf("re-run should complete ssh-hardening as a change, not a no-op; got:\n%s", out2)
 	}
 
-	const wantPhases = "swap,packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
+	const wantPhases = "swap,packages,tmux-oom-policy,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates,access"
 	m2, _, err := decodeMarker(t, markerPath)
 	if err != nil {
 		t.Fatalf("decode marker after resumed run: %v", err)
@@ -618,6 +620,8 @@ func bootstrapTestEnv(t *testing.T, dir, binDir string) []string {
 		"SMITH_SWAPS="+filepath.Join(dir, "swaps"),
 		"SMITH_FSTAB="+filepath.Join(dir, "fstab"),
 		"SMITH_SWAPFILE="+filepath.Join(dir, "swapfile"),
+		"SMITH_TMUX_SCOPE_DROPIN="+filepath.Join(dir, "systemd-user", "tmux-spawn-.scope.d", "50-smith-oom-policy.conf"),
+		"SYSTEMCTL_KILL_LOG="+filepath.Join(dir, "systemctl.kill.log"),
 		"APT_STATE="+filepath.Join(dir, "apt.installed"),
 		"APT_INSTALL_LOG="+filepath.Join(dir, "apt.install.log"),
 		"USER_STATE="+filepath.Join(dir, "user.created"),
@@ -738,8 +742,24 @@ exit 0
 	// is-active/is-enabled fail until `enable --now` stamps the state, so the
 	// fail2ban phase transitions from starting the service to already-satisfied.
 	// A `reload` (used by ssh-hardening to apply the drop-in) always succeeds.
+	// `--version` reports SYSTEMD_VERSION (255, Ubuntu 24.04's, unless set),
+	// `list-units` lists the running user managers named in USER_MANAGERS, and
+	// each `kill` is recorded in SYSTEMCTL_KILL_LOG.
 	writeFakeBin(t, binDir, "systemctl", `#!/usr/bin/env bash
 case "$1" in
+  --version)
+    echo "systemd ${SYSTEMD_VERSION:-255} (${SYSTEMD_VERSION:-255}.4-1ubuntu8)"
+    echo "+PAM +AUDIT +SELINUX +APPARMOR"
+    ;;
+  list-units)
+    for unit in ${USER_MANAGERS:-}; do
+      echo "${unit} loaded active running User Manager for UID ${unit//[!0-9]/}"
+    done
+    ;;
+  kill)
+    shift
+    printf '%s\n' "$*" >>"$SYSTEMCTL_KILL_LOG"
+    ;;
   is-active|is-enabled)
     [ -f "$FAIL2BAN_STATE" ] && exit 0 || exit 3
     ;;

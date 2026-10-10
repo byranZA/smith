@@ -31,7 +31,7 @@ func cleanPublicMarker() marker.Marker {
 		SchemaVersion:   marker.SchemaVersion,
 		SmithVersion:    "1.0.0",
 		AccessMode:      "public",
-		CompletedPhases: []string{"swap", "packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"},
+		CompletedPhases: []string{"swap", "packages", "tmux-oom-policy", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"},
 	}
 }
 
@@ -210,7 +210,7 @@ func TestReconcileNeverBootstrapped(t *testing.T) {
 
 func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 	m := cleanPublicMarker()
-	m.CompletedPhases = []string{"swap", "packages", "smith-user", "smith-keys", "firewall"} // stopped partway
+	m.CompletedPhases = []string{"swap", "packages", "tmux-oom-policy", "smith-user", "smith-keys", "firewall"} // stopped partway
 	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
 	if r.Verdict != VerdictPartial {
 		t.Fatalf("Verdict = %v, want Partial", r.Verdict)
@@ -227,7 +227,7 @@ func TestReconcilePartialIsKeptSeparateFromDrift(t *testing.T) {
 func TestReconcileBoxSetUpBeforeTheSwapPhaseIsPartialMissingSwap(t *testing.T) {
 	t.Parallel()
 	m := cleanPublicMarker()
-	m.CompletedPhases = []string{"packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"}
+	m.CompletedPhases = []string{"packages", "tmux-oom-policy", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"}
 	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
 	if r.Verdict != VerdictPartial {
 		t.Fatalf("Reconcile(marker without swap) Verdict = %v, want Partial", r.Verdict)
@@ -336,5 +336,18 @@ func TestUnreachableReportSaysWhyTheConnectionFailed(t *testing.T) {
 	want := "✗ unreachable: could not connect to root@box\n\n  ssh root@box: the box did not answer; check the address\n"
 	if out != want {
 		t.Errorf("String() = %q, want %q", out, want)
+	}
+}
+
+func TestReconcileBoxSetUpBeforeTheTmuxOOMPolicyPhaseIsPartialMissingIt(t *testing.T) {
+	t.Parallel()
+	m := cleanPublicMarker()
+	m.CompletedPhases = []string{"swap", "packages", "smith-user", "smith-keys", "firewall", "ssh-hardening", "fail2ban", "auto-updates", "access"}
+	r := Reconcile(m, marker.SkewNone, true, cleanPublicFacts())
+	if r.Verdict != VerdictPartial {
+		t.Fatalf("Reconcile(marker without tmux-oom-policy) Verdict = %v, want Partial", r.Verdict)
+	}
+	if got, want := strings.Join(r.MissingPhases, ","), "tmux-oom-policy"; got != want {
+		t.Errorf("Reconcile(marker without tmux-oom-policy) MissingPhases = %q, want %q", got, want)
 	}
 }

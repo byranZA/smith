@@ -25,8 +25,8 @@
 # The marker (/etc/smith/bootstrap.json) is a ledger, not a gate: every setup
 # run executes all phases, and check-before-change makes satisfied ones no-ops.
 #
-# The ordered phases are: swap, packages, smith-user, smith-keys, firewall,
-# ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries the on-box
+# The ordered phases are: swap, packages, tmux-oom-policy, smith-user, smith-keys,
+# firewall, ssh-hardening, fail2ban, auto-updates, access. ssh-hardening carries the on-box
 # self-reverting self-test (the base layer's only lock-out gate). In public mode
 # the access phase is a no-op; in tailscale mode the access layer is driven from
 # the admin side (enroll + probe-gated close-public-ssh) rather than as a
@@ -48,7 +48,7 @@ MEMINFO="${SMITH_MEMINFO:-/proc/meminfo}"
 # The ordered mutating phases. The names are load-bearing: they are the marker's
 # completed_phases values. This is the full base-layer sequence; the access phase
 # is where the tailscale mode's behavior lands, not a new phase.
-PHASES=(swap packages smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
+PHASES=(swap packages tmux-oom-policy smith-user smith-keys firewall ssh-hardening fail2ban auto-updates access)
 
 # The swap phase's system paths: the kernel's active swap list, the fstab that
 # brings swap back after a reboot, and the swapfile smith creates. SMITH_SWAPS,
@@ -62,6 +62,16 @@ SWAPFILE="${SMITH_SWAPFILE:-/swapfile}"
 # filesystem; under SWAP_MIN_MB it is too small to be worth having, so none is made.
 SWAP_MAX_MB=2048
 SWAP_MIN_MB=256
+
+# The tmux-oom-policy phase's drop-in for tmux's pane scopes. tmux 3.4 runs each
+# pane in a transient tmux-spawn-<id>.scope of the user's systemd manager, so the
+# drop-in lives in the user-unit tree; its tmux-spawn- prefix makes it apply to
+# those scopes alone. SMITH_TMUX_SCOPE_DROPIN overrides it for tests; production
+# always uses the default.
+SMITH_TMUX_SCOPE_DROPIN="${SMITH_TMUX_SCOPE_DROPIN:-/etc/systemd/user/tmux-spawn-.scope.d/50-smith-oom-policy.conf}"
+# SCOPE_OOM_POLICY_MIN_SYSTEMD is the first systemd release that honours OOMPolicy=
+# on a scope unit; an older one ignores the drop-in.
+SCOPE_OOM_POLICY_MIN_SYSTEMD=253
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -474,6 +484,56 @@ phase_packages() {
   else
     PHASE_STATUS="changed"
   fi
+}
+
+# phase_tmux_oom_policy keeps a tmux pane's scope running when the kernel
+# OOM-kills one of its processes, so the kill takes out only that process and
+# not the pane's shell and with it the whole tmux session. It writes
+# OOMPolicy=continue into a drop-in for every tmux pane scope on the box. It is
+# check-before-change: a drop-in that already matches is left untouched and the
+# phase reports already-satisfied. It adapts to the box rather than failing setup:
+# a systemd that cannot honour OOMPolicy= on a scope skips it with a note.
+phase_tmux_oom_policy() {
+  local want='[Scope]
+OOMPolicy=continue'
+
+  local version
+  version="$(systemd_version)"
+  if ! [[ "$version" =~ ^[0-9]+$ ]] || [ "$version" -lt "$SCOPE_OOM_POLICY_MIN_SYSTEMD" ]; then
+    printf '  tmux-oom-policy skipped: systemd %s does not support OOMPolicy= on scopes (it needs %s or later)\n' "$version" "$SCOPE_OOM_POLICY_MIN_SYSTEMD"
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  if [ "$(as_root cat "$SMITH_TMUX_SCOPE_DROPIN" 2>/dev/null || true)" = "$want" ]; then
+    PHASE_STATUS="satisfied"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  printf '%s\n' "$want" >"$tmp"
+  as_root mkdir -p "$(dirname "$SMITH_TMUX_SCOPE_DROPIN")"
+  as_root install -m 0644 "$tmp" "$SMITH_TMUX_SCOPE_DROPIN"
+  rm -f "$tmp"
+  reload_user_managers
+}
+
+# systemd_version prints the box's systemd version number, such as 255, or
+# nothing when systemctl does not report one.
+systemd_version() {
+  systemctl --version 2>/dev/null | awk 'NR == 1 && $1 == "systemd" { print $2 }' || true
+}
+
+# reload_user_managers has every running user manager reload its configuration,
+# so tmux scopes started after setup pick up a new drop-in without a reboot or a
+# fresh login. A manager reloads on SIGHUP, which reaches it without its user's
+# D-Bus session.
+reload_user_managers() {
+  local unit
+  for unit in $(as_root systemctl list-units --type=service --state=running --plain --no-legend 'user@*.service' | awk '{ print $1 }'); do
+    as_root systemctl kill --kill-whom=main --signal=SIGHUP "$unit"
+  done
 }
 
 # phase_smith_user creates the smith user with its home directory and grants it
