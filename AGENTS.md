@@ -22,6 +22,7 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/
 
 These hold for every agent working a task here, in the smith loop or not.
 
+- **Standards:** load the `coding-standards` skill before your first edit to any code, Markdown or agent prompt.
 - **Checks:** `make check` before handing work back, and `make race` for anything concurrent. A green `make check` can hide a skipped lint: the `coding-standards` skill's `GO.md` says how to read it.
 - **Commits:** Conventional Commits that reference the issue, such as `feat: <summary> (#123)`.
 - **Guardrails:** `.claude/` (settings and skills) and `.smith/` (below) change only in a task that names them.
