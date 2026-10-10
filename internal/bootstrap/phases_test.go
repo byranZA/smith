@@ -10,7 +10,7 @@ import (
 // definition the Go side reads instead of re-listing.
 func TestPhasesParsedFromScript(t *testing.T) {
 	want := []string{
-		"swap", "packages", "smith-user", "smith-keys", "firewall",
+		"swap", "packages", "tmux-oom-policy", "smith-user", "smith-keys", "firewall",
 		"ssh-hardening", "fail2ban", "auto-updates", "access",
 	}
 	if got := strings.Join(Phases, ","); got != strings.Join(want, ",") {
@@ -48,7 +48,7 @@ func TestTailscalePhaseSequenceIsPhasesMinusAccess(t *testing.T) {
 	if Phases[len(Phases)-1] != AccessPhase {
 		t.Fatalf("Phases must end with %q for the derivation to hold", AccessPhase)
 	}
-	if got := strings.Join(want, ","); got != "swap,packages,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates" {
+	if got := strings.Join(want, ","); got != "swap,packages,tmux-oom-policy,smith-user,smith-keys,firewall,ssh-hardening,fail2ban,auto-updates" {
 		t.Errorf("tailscale-mode sequence = %q, unexpected", got)
 	}
 }
