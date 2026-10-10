@@ -15,8 +15,8 @@ import (
 // subject is how a report about the repo file names it.
 const subject = "repo file"
 
-// File is the repo file's contents. A field left empty is unset, and the loop
-// falls back to its built-in default for it.
+// File is the repo file's contents. A field left empty or nil is unset, and
+// the loop falls back to its built-in default for it.
 type File struct {
 	// Agent names the agent adapter the loop hands each task to.
 	Agent string `yaml:"agent"`
@@ -24,6 +24,9 @@ type File struct {
 	Model string `yaml:"model"`
 	// Effort is how hard the agent thinks, on smith's own scale.
 	Effort string `yaml:"effort"`
+	// Push says whether the loop pushes the branch after each task the agent
+	// closes. Nil is unset, which the loop takes as on.
+	Push *bool `yaml:"push"`
 }
 
 // Parse decodes a repo file strictly: any key it does not define is refused
