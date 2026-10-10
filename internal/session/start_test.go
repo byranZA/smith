@@ -70,9 +70,7 @@ func TestStartCreatesTheWorktreeAndTheTmuxSession(t *testing.T) {
 	}
 }
 
-// writeBareRepo stands up a bare repo in the workspace the way the workspace
-// stage does — <workspace>/<repo>/repo.git, cloned with the refspec that
-// tracks its origin — with one commit on defaultBranch.
+// writeBareRepo clones a one-commit repo to <workspace>/<repo>/repo.git the way converge does.
 func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 	t.Helper()
 	src := t.TempDir()
@@ -327,10 +325,8 @@ func TestStartFetchesBeforeCuttingABranch(t *testing.T) {
 	}
 }
 
-// TestStartCutsTheBranchFromTheFetchedRemoteBase locks in that a new branch
-// starts at the base as the remote has it, not at the local branch the clone
-// copied once and never moves.
 func TestStartCutsTheBranchFromTheFetchedRemoteBase(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	remote := writeBareRepoWithRemote(t, workspace, "smith", "main")
 	tip := pushToOrigin(t, remote, "main")
@@ -341,7 +337,7 @@ func TestStartCutsTheBranchFromTheFetchedRemoteBase(t *testing.T) {
 		Tmux:      &tmuxServer{},
 	}
 
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
@@ -351,8 +347,7 @@ func TestStartCutsTheBranchFromTheFetchedRemoteBase(t *testing.T) {
 	}
 }
 
-// lookupFails runs git for real except the lookup of a remote-tracking ref,
-// which fails the way a git that cannot be executed does.
+// lookupFails runs git for real but fails every lookup of a remote-tracking ref.
 type lookupFails struct{}
 
 func (lookupFails) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -382,9 +377,8 @@ func TestStartStandsNothingUpWhenTheRemoteBaseLookupFails(t *testing.T) {
 	}
 }
 
-// TestStartCutsTheBranchFromABaseTheRemoteDoesNotHave locks in that a base
-// with no remote-tracking ref — a tag here — is cut from as given.
 func TestStartCutsTheBranchFromABaseTheRemoteDoesNotHave(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepoWithRemote(t, workspace, "smith", "main")
 	bare := filepath.Join(workspace, "smith", "repo.git")
@@ -397,7 +391,7 @@ func TestStartCutsTheBranchFromABaseTheRemoteDoesNotHave(t *testing.T) {
 	}
 
 	req := session.StartRequest{Repo: "smith", Branch: "spec-42", Base: "v1"}
-	if _, err := session.Start(context.Background(), env, req); err != nil {
+	if _, err := session.Start(t.Context(), env, req); err != nil {
 		t.Fatalf("Start(%+v) err = %v", req, err)
 	}
 
@@ -407,9 +401,8 @@ func TestStartCutsTheBranchFromABaseTheRemoteDoesNotHave(t *testing.T) {
 	}
 }
 
-// TestStartCutsABranchWithNoUpstream locks in that a cut branch does not
-// track its base, so a pull or push in the session never targets the base.
 func TestStartCutsABranchWithNoUpstream(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepoWithRemote(t, workspace, "smith", "main")
 	bare := filepath.Join(workspace, "smith", "repo.git")
@@ -420,7 +413,7 @@ func TestStartCutsABranchWithNoUpstream(t *testing.T) {
 		Tmux:      &tmuxServer{},
 	}
 
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
@@ -429,9 +422,8 @@ func TestStartCutsABranchWithNoUpstream(t *testing.T) {
 	}
 }
 
-// TestListCountsNothingUnpushedOnAFreshlyCutBranch locks in that a branch
-// with no commits of its own reads as fully pushed.
 func TestListCountsNothingUnpushedOnAFreshlyCutBranch(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	remote := writeBareRepoWithRemote(t, workspace, "smith", "main")
 	pushToOrigin(t, remote, "main")
@@ -441,11 +433,11 @@ func TestListCountsNothingUnpushedOnAFreshlyCutBranch(t *testing.T) {
 		Git:       connection.System(),
 		Tmux:      &tmuxServer{},
 	}
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
-	got, err := session.List(context.Background(), env, session.Filter{})
+	got, err := session.List(t.Context(), env, session.Filter{})
 	if err != nil {
 		t.Fatalf("List() err = %v", err)
 	}

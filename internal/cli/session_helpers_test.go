@@ -135,9 +135,7 @@ func resolvedBox(workspace string, repos ...string) boxResolver {
 	}
 }
 
-// writeBareRepo stands up a bare repo in the workspace the way the workspace
-// stage does — <workspace>/<repo>/repo.git, cloned with the refspec that
-// tracks its origin — with one commit on main.
+// writeBareRepo clones a one-commit repo to <workspace>/<repo>/repo.git the way converge does.
 func writeBareRepo(t *testing.T, workspace, repo string) {
 	t.Helper()
 	src := t.TempDir()

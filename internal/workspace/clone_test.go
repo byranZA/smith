@@ -16,13 +16,9 @@ import (
 	"github.com/byranZA/smith/internal/workspace"
 )
 
-// trackingRefspec is the fetch refspec that keeps a bare clone's
-// refs/remotes/origin/* current.
 const trackingRefspec = "+refs/heads/*:refs/remotes/origin/*"
 
-// gitBox is a box whose mise is present and runs git for real, so a test sees
-// what converge leaves in an actual clone. Every other mise command succeeds
-// without doing anything.
+// gitBox is a box whose mise runs git for real and does nothing else.
 type gitBox struct{}
 
 func (gitBox) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -63,20 +59,19 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	var out, errOut strings.Builder
 	full := append([]string{"-C", dir, "-c", "user.email=smith@example.com", "-c", "user.name=smith"}, args...)
-	if err := connection.System().Run(context.Background(), "git", full, nil, &out, &errOut); err != nil {
+	if err := connection.System().Run(t.Context(), "git", full, nil, &out, &errOut); err != nil {
 		t.Fatalf("git %s: %v (%s)", strings.Join(args, " "), err, errOut.String())
 	}
 	return strings.TrimSpace(out.String())
 }
 
-// convergeRepo runs the stage for one repo cloned from url into home's
-// workspace, and answers with what the repos step said it did.
+// convergeRepo converges repo acme from url under home and returns the repos step's summary.
 func convergeRepo(t *testing.T, home, url string) string {
 	t.Helper()
 	b := blueprint.Blueprint{Repos: []blueprint.Repo{{Name: "acme", URL: url}}}
 	r := staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"}
 	env := workspace.Env{Command: gitBox{}, StateRoot: t.TempDir()}
-	result, err := workspace.Converge(context.Background(), env, workspace.Plan(b, r, home), io.Discard)
+	result, err := workspace.Converge(t.Context(), env, workspace.Plan(b, r, home), io.Discard)
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)
 	}
@@ -98,8 +93,7 @@ func bareAt(home string) string {
 	return filepath.Join(home, "workspace", "acme", "repo.git")
 }
 
-// cloneWithoutRefspec bare-clones url into home's workspace the way converge
-// did before it set a refspec, with no remote-tracking refs at all.
+// cloneWithoutRefspec bare-clones url under home the way converge did before it set a refspec.
 func cloneWithoutRefspec(t *testing.T, home, url string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(bareAt(home)), 0o700); err != nil {
@@ -183,7 +177,7 @@ func TestStartCutsFromTheRemoteTipConvergeFetched(t *testing.T) {
 		Tmux:      tmux{},
 	}
 
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "acme", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "acme", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
