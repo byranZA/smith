@@ -92,26 +92,10 @@ func DocumentPathIn(root string) string {
 	return filepath.Join(root, documentFile)
 }
 
-// Load reads the blueprint staged under root — /etc/smith on a real box — and
-// validates it through the same strict pass as the operator-side load: an
-// unknown key is an error with the line it appears on, exactly as it would have
-// been on the operator's machine.
-//
-// This is not schema skew reintroduced. Version skew is refused before any verb
-// runs, so the two passes are the same parser; what a second pass catches is a
-// document edited or truncated after it was staged.
-//
-// The two refusals are types callers branch on and are deliberately worded
-// apart: *AbsentError is a provisioning gap, *MalformedError a document that
-// cannot be trusted. Both name `machine setup`, which is the only writer of
-// either, and neither migrates anything.
-//
-// No source reference in the document is resolved here. Every `from:` in a
-// staged blueprint points at the operator's laptop and is opaque provenance on
-// the box; a placement's bytes come from the staged tree instead.
-//
-// inv is the command the blueprint is read for, which a refusal's suggested
-// commands are spelled for.
+// Load reads the blueprint staged under root — /etc/smith on a real box —
+// through the operator-side strict parser, resolving no source reference in it.
+// It refuses with *AbsentError or *MalformedError, each naming `machine setup`
+// spelled for inv, the command the blueprint is read for.
 func Load(root string, inv hint.Invocation) (blueprint.Blueprint, error) {
 	path := DocumentPathIn(root)
 	data, err := os.ReadFile(path) // #nosec G304 -- the staged document sits at a path smith derives itself.

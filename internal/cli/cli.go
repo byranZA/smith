@@ -105,9 +105,6 @@ func newRootCmd() *cobra.Command {
 		// not a runtime condition but a build that cannot be correct.
 		panic(fmt.Sprintf("hide --relayed-from: %v", err))
 	}
-	// --relayed-box rides beside it, hidden and optional for the same
-	// reasons: it names the box as the operator named it, so a command the
-	// box suggests back runs from where the operator reads it.
 	root.PersistentFlags().String(relayedBoxFlag, "", "the box as the operator relaying this command named it")
 	if err := root.PersistentFlags().MarkHidden(relayedBoxFlag); err != nil {
 		panic(fmt.Sprintf("hide --%s: %v", relayedBoxFlag, err))

@@ -13,9 +13,7 @@ import (
 // relayed is a command the operator relayed to the box they call smith-dev.
 var relayed = hint.Invocation{Box: "smith-dev"}
 
-// hintedEnv stands a session up on smith's spec-42 branch, in an env whose
-// suggested commands are spelled for inv, and answers with the env and the
-// tmux server the session runs on.
+// hintedEnv stands session smith-spec-42 up in an env whose suggested commands are spelled for inv.
 func hintedEnv(t *testing.T, inv hint.Invocation) (session.Env, *tmuxServer) {
 	t.Helper()
 	workspace := t.TempDir()

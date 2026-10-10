@@ -12,9 +12,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 )
 
-// runSessionAs runs a session verb under a root carrying the relay's box flag,
-// the way on-box smith is handed a command: relayed to box, or typed on the box
-// when box is empty. It returns stderr and the error the command ended with.
+// runSessionAs runs a session verb relayed to box, or typed on the box when box is empty, returning stderr and its error.
 func runSessionAs(t *testing.T, w sessionWiring, box string, args ...string) (string, error) {
 	t.Helper()
 	root := &cobra.Command{Use: "smith", SilenceUsage: true, SilenceErrors: true}
