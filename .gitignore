@@ -43,5 +43,3 @@ go.work.sum
 
 # Throwaway git worktrees coding agents check out into the repo
 .claude/worktrees/
-
-ralph.log
