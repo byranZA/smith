@@ -38,6 +38,7 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 		newListCmd(resolve, exec),
 		newAddCmd(resolve, exec),
 		newUpgradeCmd(resolve, exec),
+		newRenameCmd(resolve, exec),
 		newForgetCmd(resolve),
 	)
 	return cmd

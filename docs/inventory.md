@@ -73,7 +73,8 @@ uniqueness rule on targets.
 
 Passing a `--name` that differs from the name on the box's marker is a
 **rename**: the marker is rewritten, the old entry goes, the new one is
-written, and smith says so.
+written, and smith says so. `machine rename` does the same without re-running
+setup (see [Renaming a box](#renaming-a-box)).
 
 ```sh
 smith machine setup dev --name staging
@@ -238,6 +239,39 @@ Provision it first with:
 A box that will not answer is refused the same way. Re-adding a box already
 registered at the same target succeeds unchanged; adding under a name that
 reaches a different box is the same hard error setup gives.
+
+## Renaming a box
+
+`machine rename` renames a registered box and does nothing else. smith connects
+to the box over its registered target, rewrites the `name` its marker records
+(every other field stays as it was, and no phase or stage runs), then moves the
+inventory entry to the new name:
+
+```sh
+smith machine rename dev staging
+```
+
+```
+renamed "dev" to "staging"
+registered smith@203.0.113.10 as "staging"
+
+Reach it by name from now on:
+  smith machine status staging
+  smith machine setup staging
+```
+
+A new name that is empty, already held by a different box, or the box's current
+name is refused before anything changes. So is a name no box is registered
+under, and a box smith cannot reach: the rename never moves only the inventory
+side.
+
+If the marker is rewritten but the inventory write then fails, the two disagree
+until the same `machine rename` is run again, and smith says so with the command.
+
+**The provider-side marker is not renamed.** For an adapter whose marker is the
+box's own provider name, such as `doctl-name-marker`, the provider still holds
+the old name. Nothing reads provider markers back yet; the name on the box's
+own marker is the one smith goes by.
 
 ## Forgetting a box
 

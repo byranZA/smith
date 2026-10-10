@@ -228,7 +228,8 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd.Flags().StringVar(&blueprintName, "blueprint", "",
 		"the blueprint the box is built from, staged onto it; omitted, nothing is staged")
 	cmd.Flags().StringVar(&boxName, "name", "",
-		"the name the box is registered and recorded under; omitted, its marker, its blueprint or its host names it")
+		"the name the box is registered and recorded under; omitted, its marker, its blueprint or its host names it. "+
+			"A different name on a re-run renames the box; smith machine rename does that without re-running setup")
 	cmd.Flags().StringVar(&smithVersion, "smith-version", "",
 		"the released smith version the install stage puts on the box; omitted, the box is converged to the version local smith runs")
 	cmd.Flags().StringVar(&boxTarget, "target", "",

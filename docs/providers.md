@@ -149,6 +149,12 @@ provider-side box discovery are the readers, and neither has shipped. Both
 fields are accepted and validated so an adapter you write today stays correct
 when they do.
 
+**A rename does not reach the provider.** `smith machine rename` rewrites the
+name on the box's own marker and in the inventory, never the provider-side
+marker, so a box renamed under an adapter whose marker is the box's own name
+keeps the old name at the provider. When provider markers are read back, the
+on-box marker's name is the one to trust.
+
 **Consequence: two smith boxes cannot share a name at one provider.** The marker
 is the box name, and its only job is answering "did smith create this box".
 smith does not enforce this — nothing checks the provider for a name collision
