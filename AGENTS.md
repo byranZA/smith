@@ -2,7 +2,7 @@
 
 Smith turns a fresh VPS into a ready-to-use remote development machine and manages coding agents across the repositories on it. The user brings the machine; smith provisions it, then runs the delegation loop for the coding agents it manages.
 
-The `coding-standards` skill (`.claude/skills/coding-standards/`) covers *how* to write Go in this repo. This file is the *why* and the boundaries.
+The `coding-standards` skill (`.claude/skills/coding-standards/`) covers *how* to write code and docs in this repo. This file is the *why* and the boundaries.
 
 ## Agent skills
 
@@ -22,6 +22,7 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/
 
 These hold for every agent working a task here, in the smith loop or not.
 
+- **Standards:** load the `coding-standards` skill before your first edit to any code, Markdown or agent prompt.
 - **Checks:** `make check` before handing work back, and `make race` for anything concurrent. A green `make check` can hide a skipped lint: the `coding-standards` skill's `GO.md` says how to read it.
 - **Commits:** Conventional Commits that reference the issue, such as `feat: <summary> (#123)`.
 - **Guardrails:** `.claude/` (settings and skills) and `.smith/` (below) change only in a task that names them.
