@@ -528,10 +528,15 @@ systemd_version() {
 # reload_user_managers has every running user manager reload its configuration,
 # so tmux scopes started after setup pick up a new drop-in without a reboot or a
 # fresh login. A manager reloads on SIGHUP, which reaches it without its user's
-# D-Bus session.
+# D-Bus session. It fails when the running managers cannot be listed, since then
+# none of them is known to have reloaded.
 reload_user_managers() {
-  local unit
-  for unit in $(as_root systemctl list-units --type=service --state=running --plain --no-legend 'user@*.service' | awk '{ print $1 }'); do
+  local units unit
+  if ! units="$(as_root systemctl list-units --type=service --state=running --plain --no-legend 'user@*.service')"; then
+    echo "tmux-oom-policy: could not list the running user managers to reload them" >&2
+    return 1
+  fi
+  for unit in $(awk '{ print $1 }' <<<"$units"); do
     as_root systemctl kill --kill-whom=main --signal=SIGHUP "$unit"
   done
 }

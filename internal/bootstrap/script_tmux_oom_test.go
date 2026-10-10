@@ -131,3 +131,47 @@ func TestScriptTmuxOOMPolicyRunsAfterPackages(t *testing.T) {
 		t.Errorf("setup output: packages must complete before tmux-oom-policy starts:\n%s", out)
 	}
 }
+
+func TestScriptTmuxOOMPolicyFailsSetupWhenUserManagersCannotBeListed(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "LIST_UNITS_REFUSED=1")
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err == nil {
+		t.Fatalf("setup with an unlistable set of user managers succeeded, want it to fail:\n%s", out)
+	}
+
+	m, _, err := decodeMarker(t, filepath.Join(dir, "bootstrap.json"))
+	if err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if got, want := strings.Join(m.CompletedPhases, ","), "swap,packages"; got != want {
+		t.Errorf("marker CompletedPhases = %q, want %q (tmux-oom-policy not recorded)", got, want)
+	}
+}
+
+func TestScriptTmuxOOMPolicyCompletesOnABoxWithNoRunningUserManagers(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("setup with no running user managers failed: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "✓ tmux-oom-policy\n") {
+		t.Errorf("setup output does not report tmux-oom-policy changed:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "systemctl.kill.log")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("setup with no running user managers signalled one (%v), want no reload", err)
+	}
+}

@@ -749,6 +749,10 @@ case "$1" in
     echo "+PAM +AUDIT +SELINUX +APPARMOR"
     ;;
   list-units)
+    if [ -n "${LIST_UNITS_REFUSED:-}" ]; then
+      echo "Failed to connect to bus: No such file or directory" >&2
+      exit 1
+    fi
     for unit in ${USER_MANAGERS:-}; do
       echo "${unit} loaded active running User Manager for UID ${unit//[!0-9]/}"
     done
