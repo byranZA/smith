@@ -362,10 +362,21 @@ swap_active() {
   [ "$(tail -n +2 "$SWAPS" 2>/dev/null | grep -c .)" -gt 0 ]
 }
 
+# swapfile_active reports whether smith's swapfile is in the kernel's swap list.
+swapfile_active() {
+  tail -n +2 "$SWAPS" 2>/dev/null | awk -v f="$SWAPFILE" '$1 == f { found = 1 } END { exit !found }'
+}
+
+# swap_fstab_entry_present reports whether fstab carries a reboot entry for the
+# swapfile.
+swap_fstab_entry_present() {
+  as_root awk -v f="$SWAPFILE" '$1 == f { found = 1 } END { exit !found }' "$FSTAB" 2>/dev/null
+}
+
 # ensure_swap_fstab_entry adds the swapfile's reboot entry to fstab, unless an
 # entry for the swapfile is already there.
 ensure_swap_fstab_entry() {
-  if as_root awk -v f="$SWAPFILE" '$1 == f { found = 1 } END { exit !found }' "$FSTAB" 2>/dev/null; then
+  if swap_fstab_entry_present; then
     return 0
   fi
   printf '%s none swap sw 0 0\n' "$SWAPFILE" | as_root tee -a "$FSTAB" >/dev/null
@@ -396,11 +407,18 @@ swap_size_mb() {
 # freezing it. It adapts to the box rather than failing setup: any active swap,
 # smith's or not, makes it a no-op that reports already-satisfied; too little disk
 # skips it; and a box that refuses swap gets the partial swapfile and its reboot
-# entry removed, then skips it. Every skip prints a note line.
+# entry removed, then skips it. Every skip prints a note line. The reboot entry is
+# written before the swapfile is enabled, so a failed write leaves no active swap
+# and a retry runs the phase again; an active swapfile of smith's own that has lost
+# its reboot entry gets it back.
 phase_swap() {
   if swap_active; then
     printf '  swap already present\n'
     PHASE_STATUS="satisfied"
+    if swapfile_active && ! swap_fstab_entry_present; then
+      ensure_swap_fstab_entry
+      PHASE_STATUS="changed"
+    fi
     return 0
   fi
 
@@ -415,6 +433,7 @@ phase_swap() {
   as_root fallocate -l "${size}M" "$SWAPFILE"
   as_root chmod 0600 "$SWAPFILE"
   as_root mkswap "$SWAPFILE"
+  ensure_swap_fstab_entry
   if ! as_root swapon "$SWAPFILE"; then
     as_root rm -f "$SWAPFILE"
     remove_swap_fstab_entry
@@ -422,7 +441,6 @@ phase_swap() {
     PHASE_STATUS="satisfied"
     return 0
   fi
-  ensure_swap_fstab_entry
 }
 
 # phase_packages ensures the base package set is installed, plus tailscale (from

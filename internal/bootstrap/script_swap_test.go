@@ -239,3 +239,59 @@ func writeTestFile(t *testing.T, path, contents string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestScriptSwapRetryAfterAFailedRebootEntryWriteLeavesSwapPersistent(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	swapfile := filepath.Join(dir, "swapfile")
+	fstabPath := filepath.Join(dir, "fstab")
+	// An fstab that is a directory cannot be written, so the first attempt fails.
+	if err := os.Mkdir(fstabPath, 0o755); err != nil {
+		t.Fatalf("mkdir fstab: %v", err)
+	}
+
+	if out, err := runSetup(bash, scriptPath, env); err == nil {
+		t.Fatalf("setup run succeeded with an unwritable fstab:\n%s", out)
+	}
+	if err := os.Remove(fstabPath); err != nil {
+		t.Fatalf("remove fstab: %v", err)
+	}
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("retried setup run failed: %v\n%s", err, out)
+	}
+
+	if got := strings.Count(readFile(t, filepath.Join(dir, "swaps")), swapfile); got != 1 {
+		t.Errorf("active swap list carries the swapfile %d times after a retry, want 1", got)
+	}
+	if got, want := readFile(t, fstabPath), swapfile+" none swap sw 0 0\n"; got != want {
+		t.Errorf("fstab = %q, want exactly the reboot entry %q", got, want)
+	}
+}
+
+func TestScriptSwapRerunRepairsAMissingRebootEntryForSmithsSwapfile(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	swapfile := filepath.Join(dir, "swapfile")
+	const rootEntry = "UUID=abcd / ext4 defaults 0 1\n"
+	writeTestFile(t, filepath.Join(dir, "swaps"), procSwapsHeader+swapfile+"\tfile\t\t2097148\t\t0\t\t-2\n")
+	writeTestFile(t, filepath.Join(dir, "fstab"), rootEntry)
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("setup run failed: %v\n%s", err, out)
+	}
+
+	if got, want := readFile(t, filepath.Join(dir, "fstab")), rootEntry+swapfile+" none swap sw 0 0\n"; got != want {
+		t.Errorf("fstab = %q, want the reboot entry restored, %q", got, want)
+	}
+	if !strings.Contains(out, "✓ swap\n") {
+		t.Errorf("setup output does not report swap as changed after the repair:\n%s", out)
+	}
+}
