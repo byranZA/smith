@@ -282,7 +282,7 @@ func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return fmt.Errorf("probe box: %w", err)
 			}
 
-			report := status.Unreachable(target)
+			report := status.Unreachable(target, gathered.ConnectErr)
 			if gathered.Reachable {
 				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
 			}
