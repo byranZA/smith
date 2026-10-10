@@ -82,6 +82,7 @@ prints these personalized to your identity and stops so you can add them.)
 
 ```sh
 smith machine setup ubuntu@203.0.113.10 \
+  --name dev \
   --access tailscale \
   --tailscale-auth-key env:TS_AUTHKEY
 ```
@@ -95,13 +96,13 @@ A successful tailscale setup registers the **tailnet** address — the one the
 lock-out-safety probe came in over — and tells you the name to use from then
 on:
 
-```
+```text
 tailscale reach established over 100.92.14.7; public SSH closed.
 registered smith@100.92.14.7 as "dev"
 
 Reach it by name from now on:
   smith machine status dev
-  smith machine setup dev
+  smith machine setup dev --blueprint <blueprint>
 ```
 
 ### Tailscale notes
@@ -149,6 +150,28 @@ The design reasoning is in
 Every stage reaches the box as the `smith` user, because hardening has closed
 the bootstrap login by then. They are covered in [smith on the
 box](./on-box.md) and [the workspace stage](./workspace.md).
+
+### Without a blueprint
+
+A setup that names no `--blueprint` still succeeds: the box is provisioned, secured, given smith and registered, and the run exits 0. It is a bare box, with nothing staged in `/etc/smith/` beyond the bootstrap marker and no `~/workspace`. The workspace stage says so rather than leaving you to find out from the marker:
+
+```text
+▶ workspace
+no blueprint was staged, so the workspace had nothing to converge: no repos, tools, env or placements
+✓ workspace
+```
+
+The closing re-run line then carries the flags the run went without. It adds `--blueprint <blueprint>` when none was staged, and `--name <name>` when the box is named after its host because nothing else named it:
+
+```text
+registered smith@203.0.113.10 as "203.0.113.10"
+
+Reach it by name from now on:
+  smith machine status 203.0.113.10
+  smith machine setup 203.0.113.10 --blueprint <blueprint> --name <name>
+```
+
+A box set up with both `--blueprint` and `--name` ends with a plain `smith machine setup <name>`. A box that was built from a blueprint refuses a re-run without one, naming the blueprint to pass.
 
 ## Interrupting a run
 
