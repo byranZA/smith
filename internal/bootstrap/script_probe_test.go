@@ -239,3 +239,54 @@ func truncate(out []byte) string {
 	}
 	return string(out[:max]) + "\n… truncated"
 }
+
+// TestScriptProbePrintsTotalMemoryAndSwap proves probe reports MemTotal and
+// SwapTotal from meminfo, and empty figures when meminfo cannot be read.
+func TestScriptProbePrintsTotalMemoryAndSwap(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tests := []struct {
+		name    string
+		meminfo string
+		want    string
+	}{
+		{"readable meminfo", "MemTotal:        1004000 kB\nMemFree:           13000 kB\nSwapTotal:       2097148 kB\n", "mem-total-kb=1004000\nswap-total-kb=2097148\n"},
+		{"a box without swap", "MemTotal:        1004000 kB\nSwapTotal:             0 kB\n", "mem-total-kb=1004000\nswap-total-kb=0\n"},
+		{"missing meminfo", "", "mem-total-kb=\nswap-total-kb=\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			scriptPath := filepath.Join(dir, "bootstrap.sh")
+			if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+				t.Fatalf("write script: %v", err)
+			}
+			binDir := filepath.Join(dir, "bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatalf("mkdir bin: %v", err)
+			}
+			writeProbeFakeBins(t, binDir)
+			meminfo := filepath.Join(dir, "meminfo")
+			if tt.meminfo != "" {
+				if err := os.WriteFile(meminfo, []byte(tt.meminfo), 0o644); err != nil {
+					t.Fatalf("write meminfo: %v", err)
+				}
+			}
+			cmd := exec.Command(bash, scriptPath, "probe")
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"SMITH_MARKER="+filepath.Join(dir, "bootstrap.json"),
+				"SMITH_MEMINFO="+meminfo,
+			)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("probe run failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "\n"+tt.want) {
+				t.Errorf("probe output = %q, want it to carry %q", out, tt.want)
+			}
+		})
+	}
+}

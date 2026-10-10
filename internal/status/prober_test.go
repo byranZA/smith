@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/memory"
 	"github.com/byranZA/smith/internal/shipped"
 	"github.com/byranZA/smith/internal/tailscale"
 )
@@ -68,6 +69,29 @@ auto-updates=enabled
 	facts, _, _, _ := parseProbe(out)
 	if facts.PermitRootLogin.Known {
 		t.Errorf("PermitRootLogin.Known = true, want false for a `?` value")
+	}
+}
+
+func TestParseProbeReadsMemoryAndSwap(t *testing.T) {
+	tests := []struct {
+		name       string
+		lines      string
+		wantMemory memory.Total
+		wantSwap   memory.Swap
+	}{
+		{"both reported", "mem-total-kb=1004000\nswap-total-kb=2097148\n", memory.FromKiB(1004000), memory.SwapFromKiB(2097148)},
+		{"no swap", "mem-total-kb=1004000\nswap-total-kb=0\n", memory.FromKiB(1004000), memory.SwapFromKiB(0)},
+		{"unreadable meminfo", "mem-total-kb=\nswap-total-kb=\n", memory.Total{}, memory.Swap{}},
+		{"not reported", "", memory.Total{}, memory.Swap{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := "marker-begin\nmarker-end\n" + tt.lines + "smith-user-exists=no\npasswordless-sudo=no\n"
+			facts, _, _, _ := parseProbe(out)
+			if facts.Memory != tt.wantMemory || facts.Swap != tt.wantSwap {
+				t.Errorf("parseProbe(%q) memory/swap = %+v/%+v, want %+v/%+v", out, facts.Memory, facts.Swap, tt.wantMemory, tt.wantSwap)
+			}
+		})
 	}
 }
 

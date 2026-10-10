@@ -40,8 +40,9 @@ SMITH_BOOTSTRAP_VERSION=2
 MARKER="${SMITH_MARKER:-/etc/smith/bootstrap.json}"
 MARKER_DIR="$(dirname "$MARKER")"
 
-# MEMINFO is where preflight reads the box's total memory. SMITH_MEMINFO overrides
-# it for tests; production always uses the default.
+# MEMINFO is where preflight and probe read the box's total memory, and probe its
+# total swap. SMITH_MEMINFO overrides it for tests; production always uses the
+# default.
 MEMINFO="${SMITH_MEMINFO:-/proc/meminfo}"
 
 # The ordered mutating phases. The names are load-bearing: they are the marker's
@@ -176,10 +177,11 @@ detect_privilege() {
   fi
 }
 
-# mem_total_kb prints the box's MemTotal in kB, or nothing when meminfo cannot be
-# read. It never fails: unknown memory is the Go side's to report.
-mem_total_kb() {
-  awk '/^MemTotal:/ { print $2; exit }' "$MEMINFO" 2>/dev/null || true
+# meminfo_kb prints meminfo's figure for the field named $1 (MemTotal, SwapTotal)
+# in kB, or nothing when meminfo cannot be read. It never fails: an unknown
+# figure is the Go side's to report.
+meminfo_kb() {
+  awk -v field="$1:" '$1 == field { print $2; exit }' "$MEMINFO" 2>/dev/null || true
 }
 
 # preflight emits the facts the Go side needs to gate the box and to give the
@@ -187,7 +189,7 @@ mem_total_kb() {
 preflight() {
   echo "smith-preflight version=${SMITH_BOOTSTRAP_VERSION}"
   echo "privilege=$(detect_privilege)"
-  echo "mem-total-kb=$(mem_total_kb)"
+  echo "mem-total-kb=$(meminfo_kb MemTotal)"
   echo "os-release-begin"
   cat /etc/os-release
   echo "os-release-end"
@@ -993,7 +995,8 @@ probe_access() {
 }
 
 # probe emits the box's live, read-only facts for the drift reconciler: the
-# marker (in a delimited block), whether the smith user exists and still holds
+# marker (in a delimited block), the total memory and swap the status report
+# notes without reconciling, whether the smith user exists and still holds
 # passwordless sudo, and — only when sudo is available — the firewall, sshd,
 # fail2ban, and auto-updates facts. When passwordless sudo is lost, only
 # passwordless-sudo=no is emitted; the reconciler's lost-sudo branch owns the
@@ -1003,6 +1006,9 @@ probe() {
   echo "marker-begin"
   cat "$MARKER" 2>/dev/null || true
   echo "marker-end"
+
+  echo "mem-total-kb=$(meminfo_kb MemTotal)"
+  echo "swap-total-kb=$(meminfo_kb SwapTotal)"
 
   if getent passwd "$SMITH_USER" >/dev/null 2>&1; then
     echo "smith-user-exists=yes"

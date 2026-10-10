@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -251,7 +250,7 @@ func parsePreflight(output string) (preflightFacts, error) {
 				facts.privilege = strings.TrimSpace(v)
 			}
 			if v, ok := strings.CutPrefix(line, "mem-total-kb="); ok {
-				facts.memory = parseMemTotal(v)
+				facts.memory = memory.Parse(v)
 			}
 		}
 	}
@@ -261,16 +260,6 @@ func parsePreflight(output string) (preflightFacts, error) {
 	}
 	facts.release = osgate.Parse(osRelease.String())
 	return facts, nil
-}
-
-// parseMemTotal reads preflight's MemTotal figure in kB, yielding unknown
-// memory for a figure that is empty or not a number.
-func parseMemTotal(v string) memory.Total {
-	kiB, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
-	if err != nil {
-		return memory.Total{}
-	}
-	return memory.FromKiB(kiB)
 }
 
 // decide turns probed facts into a Result. Privilege is checked before the OS

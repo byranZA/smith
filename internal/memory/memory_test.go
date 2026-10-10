@@ -25,3 +25,69 @@ func TestAdvisory(t *testing.T) {
 		})
 	}
 }
+
+func TestSwapString(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		swap Swap
+		want string
+	}{
+		{"a 2 GB swapfile", SwapFromKiB(2097148), "2.0 GB"},
+		{"under 1 GB in MB", SwapFromKiB(524284), "511 MB"},
+		{"no swap", SwapFromKiB(0), "none"},
+		{"unknown swap", Swap{}, "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.swap.String(); got != tt.want {
+				t.Errorf("%+v.String() = %q, want %q", tt.swap, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		v    string
+		want Total
+	}{
+		{"a figure", "469000", FromKiB(469000)},
+		{"surrounding space", " 469000 ", FromKiB(469000)},
+		{"empty", "", Total{}},
+		{"not a number", "lots", Total{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Parse(tt.v); got != tt.want {
+				t.Errorf("Parse(%q) = %+v, want %+v", tt.v, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSwap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		v    string
+		want Swap
+	}{
+		{"a figure", "2097148", SwapFromKiB(2097148)},
+		{"no swap", "0", SwapFromKiB(0)},
+		{"empty", "", Swap{}},
+		{"not a number", "lots", Swap{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ParseSwap(tt.v); got != tt.want {
+				t.Errorf("ParseSwap(%q) = %+v, want %+v", tt.v, got, tt.want)
+			}
+		})
+	}
+}
