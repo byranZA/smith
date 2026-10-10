@@ -73,44 +73,50 @@ func (e *PartialError) Error() string {
 // Unwrap returns why the inventory entry did not move.
 func (e *PartialError) Unwrap() error { return e.Err }
 
-// Rename rewrites the name the box's marker records to c.To, then has register
-// move its inventory entry. Nothing is written to a box that is unreachable
-// (*UnreachableError) or carries no marker (ErrNoMarker), and a failed
-// registration after the marker write is a *PartialError.
-func Rename(ctx context.Context, conn Conn, c Change, register Register) error {
+// Rename rewrites the name the box's marker records to c.To, has register move
+// its inventory entry, and returns the marker as renamed. Nothing is written to
+// a box that is unreachable (*UnreachableError) or carries no marker
+// (ErrNoMarker), and a failed registration after the marker write is a
+// *PartialError.
+func Rename(ctx context.Context, conn Conn, c Change, register Register) (marker.Marker, error) {
 	if err := conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
-			return &UnreachableError{Err: err}
+			return marker.Marker{}, &UnreachableError{Err: err}
 		}
-		return fmt.Errorf("probe box: %w", err)
+		return marker.Marker{}, fmt.Errorf("probe box: %w", err)
 	}
-	if err := renameMarker(ctx, conn, c.To); err != nil {
-		return err
+	renamed, err := renameMarker(ctx, conn, c.To)
+	if err != nil {
+		return marker.Marker{}, err
 	}
 	if err := register(c); err != nil {
-		return &PartialError{Change: c, Err: err}
+		return marker.Marker{}, &PartialError{Change: c, Err: err}
 	}
-	return nil
+	return renamed, nil
 }
 
 // renameMarker rewrites the name the box's marker records to name, leaving
-// every other byte of the marker as it was.
-func renameMarker(ctx context.Context, conn Conn, name string) error {
+// every other byte of the marker as it was, and returns the marker as written.
+func renameMarker(ctx context.Context, conn Conn, name string) (marker.Marker, error) {
 	var raw bytes.Buffer
 	if err := conn.Run(ctx, fmt.Sprintf("cat %s 2>/dev/null || true", marker.Path), &raw, io.Discard); err != nil {
-		return fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
+		return marker.Marker{}, fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
 	}
 	if len(bytes.TrimSpace(raw.Bytes())) == 0 {
-		return ErrNoMarker
+		return marker.Marker{}, ErrNoMarker
 	}
-	renamed, err := marker.Rename(raw.Bytes(), name)
+	data, err := marker.Rename(raw.Bytes(), name)
 	if err != nil {
-		return fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
+		return marker.Marker{}, fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
 	}
-	if err := conn.RunWithInput(ctx, writeCommand(), bytes.NewReader(renamed), io.Discard, io.Discard); err != nil {
-		return fmt.Errorf("write the box's marker at %s: %w", marker.Path, err)
+	renamed, _, err := marker.Decode(data)
+	if err != nil {
+		return marker.Marker{}, fmt.Errorf("read the box's marker at %s: %w", marker.Path, err)
 	}
-	return nil
+	if err := conn.RunWithInput(ctx, writeCommand(), bytes.NewReader(data), io.Discard, io.Discard); err != nil {
+		return marker.Marker{}, fmt.Errorf("write the box's marker at %s: %w", marker.Path, err)
+	}
+	return renamed, nil
 }
 
 // writeCommand builds the remote write of the marker from stdin: into a

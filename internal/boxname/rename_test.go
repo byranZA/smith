@@ -11,6 +11,7 @@ import (
 
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/marker"
 )
 
 // fakeBox answers marker reads with its marker and replaces it on a tee write.
@@ -77,7 +78,7 @@ func TestRenameRewritesTheBoxsMarker(t *testing.T) {
 	t.Parallel()
 	box := &fakeBox{marker: namedA}
 
-	if err := Rename(t.Context(), box, aToB, newRegistry().register); err != nil {
+	if _, err := Rename(t.Context(), box, aToB, newRegistry().register); err != nil {
 		t.Fatalf("Rename(a, b) err = %v, want nil", err)
 	}
 	if box.marker != namedB {
@@ -85,11 +86,23 @@ func TestRenameRewritesTheBoxsMarker(t *testing.T) {
 	}
 }
 
+func TestRenameReturnsTheRenamedMarker(t *testing.T) {
+	t.Parallel()
+	got, err := Rename(t.Context(), &fakeBox{marker: namedA}, aToB, newRegistry().register)
+	if err != nil {
+		t.Fatalf("Rename(a, b) err = %v, want nil", err)
+	}
+	want := marker.Marker{SchemaVersion: 2, AccessMode: "public", Name: "b", CompletedPhases: []string{"packages"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Rename(a, b) = %+v, want %+v", got, want)
+	}
+}
+
 func TestRenameMovesTheRegistration(t *testing.T) {
 	t.Parallel()
 	reg := newRegistry()
 
-	if err := Rename(t.Context(), &fakeBox{marker: namedA}, aToB, reg.register); err != nil {
+	if _, err := Rename(t.Context(), &fakeBox{marker: namedA}, aToB, reg.register); err != nil {
 		t.Fatalf("Rename(a, b) err = %v, want nil", err)
 	}
 	want := map[string]inventory.Box{"b": {Target: "smith@100.92.14.7"}}
@@ -102,7 +115,7 @@ func TestRenameRefusesAnUnreachableBoxAndRegistersNothing(t *testing.T) {
 	t.Parallel()
 	reg := newRegistry()
 
-	err := Rename(t.Context(), &fakeBox{marker: namedA, unreachable: true}, aToB, reg.register)
+	_, err := Rename(t.Context(), &fakeBox{marker: namedA, unreachable: true}, aToB, reg.register)
 
 	var unreachable *UnreachableError
 	if !errors.As(err, &unreachable) || !errors.Is(err, connection.ErrConnect) {
@@ -117,7 +130,7 @@ func TestRenameRefusesABoxCarryingNoMarkerAndRegistersNothing(t *testing.T) {
 	t.Parallel()
 	reg := newRegistry()
 
-	err := Rename(t.Context(), &fakeBox{}, aToB, reg.register)
+	_, err := Rename(t.Context(), &fakeBox{}, aToB, reg.register)
 
 	if !errors.Is(err, ErrNoMarker) {
 		t.Fatalf("Rename(a, b) err = %v, want ErrNoMarker", err)
@@ -132,7 +145,7 @@ func TestRenameReportsAMarkerRenamedThatTheInventoryDidNotFollow(t *testing.T) {
 	cause := errors.New("disk full")
 	failing := func(Change) error { return cause }
 
-	err := Rename(t.Context(), &fakeBox{marker: namedA}, aToB, failing)
+	_, err := Rename(t.Context(), &fakeBox{marker: namedA}, aToB, failing)
 
 	var partial *PartialError
 	if !errors.As(err, &partial) || partial.Change != aToB || !errors.Is(err, cause) {

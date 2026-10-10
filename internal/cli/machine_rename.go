@@ -48,11 +48,12 @@ one smith goes by.`,
 				return reportInvalid(cmd, err)
 			}
 			change := boxname.Change{From: args[0], To: args[1], Target: target}
-			err = boxname.Rename(cmd.Context(), connection.New(target, exec), change, registerRename(home))
+			renamed, err := boxname.Rename(cmd.Context(), connection.New(target, exec), change, registerRename(home))
 			if err != nil {
 				return reportRename(cmd, change, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), registeredReport(change.To, target, change.From)); err != nil {
+			names := inventory.Naming{Flag: change.To, Blueprint: renamed.Blueprint}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), registeredReport(names, target, change.From)); err != nil {
 				return fmt.Errorf("write rename: %w", err)
 			}
 			return nil

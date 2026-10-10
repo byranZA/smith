@@ -158,6 +158,20 @@ Reach it by name from now on:
 	}
 }
 
+func TestMachineRenameHintsTheBlueprintToABoxBuiltFromNone(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeInventory(t, dir, registeredA)
+	const unbuilt = `{"schema_version": 2, "access_mode": "public", "name": "a", "completed_phases": []}`
+
+	stdout, stderr, code := runRename(t, dir, &markedBox{marker: unbuilt}, "a", "b")
+
+	const want = "\n  smith machine setup b --blueprint <blueprint>\n"
+	if code != 0 || !strings.HasSuffix(stdout, want) {
+		t.Errorf("rename a b = exit %d, stdout %q; want exit 0 ending %q (stderr: %s)", code, stdout, want, stderr)
+	}
+}
+
 // renameRefusals are renames refused before anything changes.
 var renameRefusals = []struct {
 	name        string
