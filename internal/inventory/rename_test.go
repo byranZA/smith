@@ -170,3 +170,62 @@ func TestPreviousNameIsEmptyWhenTheBoxRecordsNoName(t *testing.T) {
 		t.Errorf("PreviousName() = %q, want no entry to move when the box records no name", got)
 	}
 }
+
+// renameable registers box "a" and one other box.
+var renameable = Inventory{SchemaVersion: SchemaVersion, Boxes: map[string]Box{
+	"a":     {Target: "smith@100.92.14.7"},
+	"other": {Target: "smith@100.92.14.8"},
+}}
+
+func TestRenameTargetReturnsTheTargetOfTheBoxBeingRenamed(t *testing.T) {
+	t.Parallel()
+	got, err := RenameTarget(renameable, SkewNone, "a", "b")
+	if err != nil {
+		t.Fatalf("RenameTarget(a, b) err = %v, want nil", err)
+	}
+	if got != "smith@100.92.14.7" {
+		t.Errorf("RenameTarget(a, b) = %q, want %q", got, "smith@100.92.14.7")
+	}
+}
+
+func TestRenameTargetRefusesWhatRenamingCannotDo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		skew     Skew
+		from, to string
+		want     error
+	}{
+		{"an inventory a newer smith wrote", SkewNewer, "a", "b", ErrSkewNewer},
+		{"the current name", SkewNone, "a", "a", ErrAlreadyNamed},
+		{"an empty name", SkewNone, "a", "", ErrNoName},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := RenameTarget(renameable, tt.skew, tt.from, tt.to); !errors.Is(err, tt.want) {
+				t.Errorf("RenameTarget(%q, %q) err = %v, want %v", tt.from, tt.to, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenameTargetRefusesABoxThatIsNotRegistered(t *testing.T) {
+	t.Parallel()
+	for _, from := range []string{"staging", "smith@100.92.14.7"} {
+		_, err := RenameTarget(renameable, SkewNone, from, "b")
+		var unknown *UnknownBoxError
+		if !errors.As(err, &unknown) || unknown.Name != from {
+			t.Errorf("RenameTarget(%q, b) err = %v, want an UnknownBoxError naming %q", from, err, from)
+		}
+	}
+}
+
+func TestRenameTargetRefusesANameHeldByAnotherBox(t *testing.T) {
+	t.Parallel()
+	_, err := RenameTarget(renameable, SkewNone, "a", "other")
+	var collision *NameCollisionError
+	if !errors.As(err, &collision) || collision.Registered != "smith@100.92.14.8" {
+		t.Errorf("RenameTarget(a, other) err = %v, want a NameCollisionError naming smith@100.92.14.8", err)
+	}
+}
