@@ -23,8 +23,9 @@ provider:
     - "{{name}}"
     - --image
     - ubuntu-24-04-x64
+    # A 2 GB box: 2 GB is the recommended minimum to run an agent.
     - --size
-    - s-1vcpu-512mb-10gb
+    - s-1vcpu-2gb
     - --region
     - fra1
     - --ssh-keys
