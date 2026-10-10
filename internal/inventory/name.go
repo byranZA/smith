@@ -63,3 +63,11 @@ func Name(n Naming) (string, Origin) {
 	}
 	return "", OriginNone
 }
+
+// HostNamed reports whether a box answers to its host because nothing the
+// operator chose named it, on a first run or by a marker an earlier run stamped
+// with the host.
+func HostNamed(n Naming) bool {
+	name, origin := Name(n)
+	return origin == OriginHost || (origin == OriginMarker && name == n.Host)
+}

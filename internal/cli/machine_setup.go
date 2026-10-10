@@ -327,11 +327,22 @@ func resolveStagedConfig(doc *config.Document, resolution staging.Resolution, st
 	if doc == nil {
 		return nil, nil
 	}
-	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), blueprint.Source, blueprint.Value)
+	tree, err := resolveBlueprint(*doc, resolution)
 	if err != nil {
-		return nil, refuseSetup(stderr, fmt.Errorf("stage blueprint %s: %w", doc.Path, err))
+		return nil, refuseSetup(stderr, err)
 	}
 	return &stagedConfig{tree: tree, path: doc.Path}, nil
+}
+
+// resolveBlueprint resolves every placement source and env value doc declares
+// on this machine, the one resolution both `machine setup` and `blueprint check`
+// run. Any that will not resolve are a wrapped *staging.UnresolvedError.
+func resolveBlueprint(doc config.Document, resolution staging.Resolution) (staging.Tree, error) {
+	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), blueprint.Source, blueprint.Value)
+	if err != nil {
+		return staging.Tree{}, fmt.Errorf("stage blueprint %s: %w", doc.Path, err)
+	}
+	return tree, nil
 }
 
 // refuseSetup reports a setup refusal that mutated nothing and exits as a gate
@@ -383,7 +394,9 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 //
 // A run naming no blueprint converges nothing. There is nothing staged for the
 // box to read, and refusing on its absence would break the flag-only path that
-// never had a blueprint to begin with.
+// never had a blueprint to begin with. It says so, though: a bare box is a
+// legitimate result, but one the operator should not find out about by reading
+// the marker.
 //
 // A stage the box refused is a failed stage, not a failed setup: every phase
 // completed and the box is provisioned, secured and configured, so what the
@@ -391,6 +404,9 @@ func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, s
 // already said what went wrong on their terminal.
 func convergeWorkspace(ctx context.Context, exec connection.Exec, target, box, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
 	if staged == nil {
+		if _, err := fmt.Fprintln(stdout, "no blueprint was staged, so the workspace had nothing to converge: no repos, tools, env or placements"); err != nil {
+			return fmt.Errorf("write workspace report: %w", err)
+		}
 		return nil
 	}
 	verb := relay.Verb{Target: target, Box: box, Version: version, Args: []string{"workspace", "converge"}}
@@ -540,7 +556,7 @@ func concludeSetup(ctx context.Context, exec connection.Exec, home config.Home, 
 	if err != nil {
 		return reportUnnamed(stderr, target, err)
 	}
-	if _, err := fmt.Fprint(stdout, registeredReport(name, target, moved)); err != nil {
+	if _, err := fmt.Fprint(stdout, registeredReport(c.names, target, moved)); err != nil {
 		return fmt.Errorf("write registration: %w", err)
 	}
 	return nil
@@ -576,12 +592,19 @@ func provenTarget(ctx context.Context, exec connection.Exec, c setupConclusion) 
 // smithTarget is the ongoing ssh target for a box reachable at host.
 func smithTarget(host string) string { return smithLogin + "@" + host }
 
-// registeredReport renders what a successful setup's registration tells the
-// operator: the rename, when the registration moved the box's entry off the
-// name it was registered under before; the name the box answers to from now on; the target it
-// resolves to; and the commands to type instead of an address — which is the
-// whole point of writing the target down.
-func registeredReport(name, target, moved string) string {
+// registeredReport renders a successful setup's registration: the rename when
+// the entry moved, the name and target the box answers to, and the commands to
+// reach it by. Its re-run line adds --blueprint when none was staged and --name
+// when the box is named after its host.
+func registeredReport(names inventory.Naming, target, moved string) string {
+	name, _ := inventory.Name(names)
+	setup := "smith machine setup " + name
+	if names.Blueprint == "" {
+		setup += " --blueprint <blueprint>"
+	}
+	if inventory.HostNamed(names) {
+		setup += " --name <name>"
+	}
 	var b strings.Builder
 	if moved != "" {
 		fmt.Fprintf(&b, "renamed %q to %q\n", moved, name)
@@ -590,8 +613,8 @@ func registeredReport(name, target, moved string) string {
 
 Reach it by name from now on:
   smith machine status %s
-  smith machine setup %s
-`, target, name, name, name)
+  %s
+`, target, name, name, setup)
 	return b.String()
 }
 

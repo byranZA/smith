@@ -278,3 +278,25 @@ func TestValueTrimsWhatAnEnvOrFileReferenceNames(t *testing.T) {
 		})
 	}
 }
+
+func TestIsLiteralReportsWhetherAValueDeclaresALiteral(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		ref  string
+		want bool
+	}{
+		{"literal:eu-central", true},
+		{"literal:", true},
+		{"env:GH_TOKEN", false},
+		{"file:~/.secrets/literal:x", false},
+		{"literal", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			t.Parallel()
+			if got := blueprint.IsLiteral(tt.ref); got != tt.want {
+				t.Errorf("IsLiteral(%q) = %v, want %v", tt.ref, got, tt.want)
+			}
+		})
+	}
+}

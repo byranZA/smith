@@ -39,13 +39,15 @@ word.
 smith machine setup root@203.0.113.10 --name dev
 ```
 
-```
+```text
 registered smith@203.0.113.10 as "dev"
 
 Reach it by name from now on:
   smith machine status dev
-  smith machine setup dev
+  smith machine setup dev --blueprint <blueprint>
 ```
+
+The re-run line names only what the run went without: `--blueprint` here, because none was staged. A setup with both `--blueprint` and `--name` ends with a plain `smith machine setup dev`.
 
 Omit `--name` and smith takes the most specific name it has, in this order:
 
@@ -55,6 +57,8 @@ host part of the target.**
 The marker sitting above the blueprint is what makes re-setup idempotent: a box
 already registered as `dev` stays `dev` however you address it on the re-run,
 rather than growing a second entry named after its IP.
+
+A box named after its host, because nothing else named it on this run or the one that stamped its marker, gets `--name <name>` on its re-run line as the way to give it a name of its own.
 
 A name that already reaches a **different** box is a hard error — never a
 silent `dev-2`:
@@ -77,13 +81,13 @@ Passing a `--name` that differs from the name on the box's marker is a **rename*
 smith machine setup dev --name staging
 ```
 
-```
+```text
 renamed "dev" to "staging"
 registered smith@203.0.113.10 as "staging"
 
 Reach it by name from now on:
   smith machine status staging
-  smith machine setup staging
+  smith machine setup staging --blueprint <blueprint>
 ```
 
 ### `--target`: register an address of your own
