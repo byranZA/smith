@@ -16,10 +16,9 @@ var ErrMalformed = errors.New("malformed marker")
 const nameKey = "name"
 
 // Rename returns the marker data with the box's name set to name and every
-// other byte left as it was: no field, unknown field, schema version or
-// timestamp is touched, because renaming a box is not a setup run. A marker
-// that records no name gains one after its opening brace. Malformed JSON, or
-// anything but an object with fields, is an error.
+// other byte left as it was, adding the name after the opening brace when the
+// marker records none. Data that is not exactly one JSON object with fields and
+// at most one name is refused with ErrMalformed.
 func Rename(data []byte, name string) ([]byte, error) {
 	value, err := json.Marshal(name)
 	if err != nil {
