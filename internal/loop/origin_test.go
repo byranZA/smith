@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,6 +71,10 @@ func TestOriginSkipsOriginsDefaultBranch(t *testing.T) {
 		checkout func(t *testing.T, clone, remote string) string
 	}{
 		{"a clone on main", func(t *testing.T, clone, _ string) string { return clone }},
+		{"a clone on main with a tag also named main", func(t *testing.T, clone, _ string) string {
+			git(t, clone, "tag", "main")
+			return clone
+		}},
 		{"a worktree of a bare clone, which sets no origin/HEAD", func(t *testing.T, _, remote string) string {
 			root := t.TempDir()
 			bare, tree := filepath.Join(root, "repo.git"), filepath.Join(root, "main")
@@ -83,13 +88,51 @@ func TestOriginSkipsOriginsDefaultBranch(t *testing.T) {
 			t.Parallel()
 			clone, remote := cloned(t)
 			dir := tt.checkout(t, clone, remote)
-			before := git(t, remote, "rev-parse", "main")
+			before := git(t, remote, "rev-parse", "refs/heads/main")
 			git(t, dir, "commit", "--allow-empty", "-m", "task 43")
 
 			pushed, err := push(t, dir)
 
-			if err != nil || pushed != (loop.Pushed{Branch: "main", Skipped: true}) || git(t, remote, "rev-parse", "main") != before {
+			if err != nil || pushed != (loop.Pushed{Branch: "main", Skipped: true}) || git(t, remote, "rev-parse", "refs/heads/main") != before {
 				t.Errorf("Push() = %+v, %v; want main skipped and origin's main unchanged", pushed, err)
+			}
+		})
+	}
+}
+
+func TestOriginPushesTheBranchToItsOwnNameOnly(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, clone string)
+	}{
+		{"a plain feature branch", func(*testing.T, string) {}},
+		{"a feature branch with a tag also named feat/42", func(t *testing.T, clone string) {
+			git(t, clone, "tag", "feat/42")
+		}},
+		{"push config mapping the branch onto main", func(t *testing.T, clone string) {
+			git(t, clone, "config", "remote.origin.push", "refs/heads/feat/42:refs/heads/main")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			clone, remote := cloned(t)
+			main := git(t, remote, "rev-parse", "refs/heads/main")
+			git(t, clone, "switch", "--no-track", "-c", "feat/42", "origin/main")
+			git(t, clone, "commit", "--allow-empty", "-m", "task 43")
+			tt.setup(t, clone)
+
+			pushed, err := push(t, clone)
+
+			got := []string{
+				git(t, remote, "rev-parse", "refs/heads/main"),
+				git(t, remote, "for-each-ref", "--format=%(objectname)", "refs/heads/feat/42"),
+				git(t, clone, "for-each-ref", "--format=%(upstream)", "refs/heads/feat/42"),
+			}
+			want := []string{main, git(t, clone, "rev-parse", "refs/heads/feat/42"), "refs/remotes/origin/feat/42"}
+			if err != nil || pushed != (loop.Pushed{Branch: "feat/42"}) || !slices.Equal(got, want) {
+				t.Errorf("Push() = %+v, %v; origin's main, origin's feat/42 and the upstream = %q, want %q", pushed, err, got, want)
 			}
 		})
 	}
@@ -119,7 +162,7 @@ type scriptedGit struct {
 func (s *scriptedGit) Run(_ context.Context, _ string, args []string, _ io.Reader, stdout, _ io.Writer) error {
 	switch args[2] {
 	case "symbolic-ref":
-		_, err := io.WriteString(stdout, "feat/42\n")
+		_, err := io.WriteString(stdout, "refs/heads/feat/42\n")
 		return err
 	case "ls-remote":
 		_, err := io.WriteString(stdout, "ref: refs/heads/main\tHEAD\n0123abcd\tHEAD\n")
@@ -140,7 +183,7 @@ func TestOriginPushesWithoutForceToTheBranchOfTheSameName(t *testing.T) {
 		t.Fatalf("Push() error = %v", err)
 	}
 
-	want := [][]string{{"-C", "/work", "push", "--set-upstream", "origin", "feat/42"}}
+	want := [][]string{{"-C", "/work", "push", "--set-upstream", "origin", "refs/heads/feat/42:refs/heads/feat/42"}}
 	if !reflect.DeepEqual(scripted.pushes, want) {
 		t.Errorf("Push() ran git %q, want %q", scripted.pushes, want)
 	}

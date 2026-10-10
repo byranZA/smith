@@ -14,6 +14,9 @@ import (
 var errNoDefaultBranch = errors.New("origin names no default branch, so smith cannot tell whether this branch is it: " +
 	"give origin one (push its default branch, or point its HEAD at a branch), then check with `git ls-remote --symref origin HEAD`")
 
+// branchRefPrefix is the namespace every branch's full ref lives in.
+const branchRefPrefix = "refs/heads/"
+
 // Runner launches a command on the machine the loop runs on. It is the system
 // boundary git is reached through.
 type Runner interface {
@@ -31,11 +34,12 @@ type Origin struct {
 
 // Push pushes the current branch to origin under its own name, setting that
 // as its upstream and never forcing, or skips it when it is origin's default
-// branch.
+// branch. The refspec names both ends in full, so neither a tag of the same
+// name nor push config can send the branch anywhere else.
 func (o Origin) Push(ctx context.Context) (Pushed, error) {
-	branch, err := o.git(ctx, "symbolic-ref", "--short", "HEAD")
+	branch, err := o.currentBranch(ctx)
 	if err != nil {
-		return Pushed{}, fmt.Errorf("find the current branch: %w", err)
+		return Pushed{}, err
 	}
 	def, err := o.defaultBranch(ctx)
 	if err != nil {
@@ -44,10 +48,25 @@ func (o Origin) Push(ctx context.Context) (Pushed, error) {
 	if branch == def {
 		return Pushed{Branch: branch, Skipped: true}, nil
 	}
-	if _, err := o.git(ctx, "push", "--set-upstream", "origin", branch); err != nil {
+	ref := branchRefPrefix + branch
+	if _, err := o.git(ctx, "push", "--set-upstream", "origin", ref+":"+ref); err != nil {
 		return Pushed{}, fmt.Errorf("push %s to origin: %w", branch, err)
 	}
 	return Pushed{Branch: branch}, nil
+}
+
+// currentBranch returns the name of the branch checked out in Dir, read from
+// HEAD's full ref so a tag of the same name cannot disguise it.
+func (o Origin) currentBranch(ctx context.Context) (string, error) {
+	ref, err := o.git(ctx, "symbolic-ref", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("find the current branch: %w", err)
+	}
+	branch, ok := strings.CutPrefix(ref, branchRefPrefix)
+	if !ok || branch == "" {
+		return "", fmt.Errorf("find the current branch: HEAD names %s, which is not a branch", ref)
+	}
+	return branch, nil
 }
 
 // defaultBranch asks origin, over git alone, which branch its HEAD names. A
@@ -58,7 +77,7 @@ func (o Origin) defaultBranch(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("find origin's default branch: %w", err)
 	}
 	for line := range strings.Lines(out) {
-		ref, ok := strings.CutPrefix(strings.TrimSpace(line), "ref: refs/heads/")
+		ref, ok := strings.CutPrefix(strings.TrimSpace(line), "ref: "+branchRefPrefix)
 		if name, isHead := strings.CutSuffix(ref, "\tHEAD"); ok && isHead {
 			return name, nil
 		}
