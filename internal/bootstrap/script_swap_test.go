@@ -1,6 +1,9 @@
 package bootstrap
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,7 +145,7 @@ func TestScriptSwapSkipsForLackOfDisk(t *testing.T) {
 		t.Fatalf("setup run failed: %v\n%s", err, out)
 	}
 
-	assertNoSwapfileOrRebootEntry(t, dir)
+	assertNoSwapfileOrRebootEntry(t, dir, true)
 	if !strings.Contains(out, "swap skipped: not enough free disk") {
 		t.Errorf("setup output does not report swap skipped for lack of disk:\n%s", out)
 	}
@@ -193,7 +196,7 @@ func TestScriptSwapRefusedLeavesNothingBehind(t *testing.T) {
 		t.Fatalf("setup run failed: %v\n%s", err, out)
 	}
 
-	assertNoSwapfileOrRebootEntry(t, dir)
+	assertNoSwapfileOrRebootEntry(t, dir, false)
 	if got := readFile(t, filepath.Join(dir, "fstab")); got != rootEntry {
 		t.Errorf("fstab = %q, want only the entries smith did not add, %q", got, rootEntry)
 	}
@@ -204,16 +207,33 @@ func TestScriptSwapRefusedLeavesNothingBehind(t *testing.T) {
 }
 
 // assertNoSwapfileOrRebootEntry fails the test when the swapfile exists or fstab
-// carries an entry for it.
-func assertNoSwapfileOrRebootEntry(t *testing.T, dir string) {
+// carries an entry for it. fstabMayBeMissing permits no fstab at all, for a run
+// that never reaches the step writing the reboot entry.
+func assertNoSwapfileOrRebootEntry(t *testing.T, dir string, fstabMayBeMissing bool) {
 	t.Helper()
 	swapfile := filepath.Join(dir, "swapfile")
 	if _, err := os.Stat(swapfile); !os.IsNotExist(err) {
 		t.Errorf("swapfile left behind (stat err = %v)", err)
 	}
-	if fstab, err := os.ReadFile(filepath.Join(dir, "fstab")); err == nil && strings.Contains(string(fstab), swapfile) {
-		t.Errorf("fstab carries a reboot entry for the swapfile:\n%s", fstab)
+	if err := swapfileRebootEntryErr(filepath.Join(dir, "fstab"), swapfile, fstabMayBeMissing); err != nil {
+		t.Error(err)
 	}
+}
+
+// swapfileRebootEntryErr returns an error when the fstab at path carries a reboot
+// entry for swapfile, cannot be read, or is missing without missingOK.
+func swapfileRebootEntryErr(path, swapfile string, missingOK bool) error {
+	fstab, err := os.ReadFile(path)
+	if missingOK && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read fstab %s: %w", path, err)
+	}
+	if strings.Contains(string(fstab), swapfile) {
+		return fmt.Errorf("fstab %s carries a reboot entry for the swapfile:\n%s", path, fstab)
+	}
+	return nil
 }
 
 // assertSwapCompleteAndPackagesFollow fails the test unless the marker records swap
@@ -293,5 +313,45 @@ func TestScriptSwapRerunRepairsAMissingRebootEntryForSmithsSwapfile(t *testing.T
 	}
 	if !strings.Contains(out, "✓ swap\n") {
 		t.Errorf("setup output does not report swap as changed after the repair:\n%s", out)
+	}
+}
+
+func TestSwapfileRebootEntryErr(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	swapfile := filepath.Join(dir, "swapfile")
+	missing := filepath.Join(dir, "missing-fstab")
+	unreadable := filepath.Join(dir, "fstab-dir")
+	if err := os.Mkdir(unreadable, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", unreadable, err)
+	}
+	clean := filepath.Join(dir, "clean-fstab")
+	writeTestFile(t, clean, "UUID=abcd / ext4 defaults 0 1\n")
+	withEntry := filepath.Join(dir, "entry-fstab")
+	writeTestFile(t, withEntry, swapfile+" none swap sw 0 0\n")
+
+	tests := []struct {
+		name      string
+		fstab     string
+		missingOK bool
+		wantErr   bool
+	}{
+		{"missing fstab where the contract permits it", missing, true, false},
+		{"missing fstab where the contract requires one", missing, false, true},
+		{"fstab that cannot be read", unreadable, true, true},
+		{"readable fstab without the entry", clean, false, false},
+		{"readable fstab with the entry", withEntry, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := swapfileRebootEntryErr(tt.fstab, swapfile, tt.missingOK)
+			if gotErr := err != nil; gotErr != tt.wantErr {
+				t.Fatalf("swapfileRebootEntryErr(%q) = %v, want error %t", tt.fstab, err, tt.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), tt.fstab) {
+				t.Errorf("error %q does not name the fstab path %s", err, tt.fstab)
+			}
+		})
 	}
 }
