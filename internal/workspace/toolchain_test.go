@@ -10,13 +10,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/staging"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // TestPlanToolchain drives the pure derivation of the toolchain unit: what the
@@ -118,6 +118,7 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestGenerateQuotesKeysThatAreNotBareTOMLKeys(t *testing.T) {
+	t.Parallel()
 	got := Generate(
 		map[string]string{"npm:@scope/pkg": "1.2.3", "go:golang.org/x/vuln/cmd/govulncheck": "v1.6.0", "go": "1.23"},
 		map[string]string{"my.var": "x"},
@@ -171,6 +172,7 @@ func TestGenerateQuotesAValueThatWouldBreakTheDocument(t *testing.T) {
 }
 
 func TestGenerateEscapesControlCharactersInAValue(t *testing.T) {
+	t.Parallel()
 	got := string(Generate(nil, map[string]string{"AWKWARD": "a\nb\tc\rd\be\ff\x01g\x7fh\x1fi"}))
 
 	want := `AWKWARD = "a\nb\tc\rd\be\ff\u0001g\u007Fh\u001Fi"`
@@ -180,83 +182,28 @@ func TestGenerateEscapesControlCharactersInAValue(t *testing.T) {
 }
 
 func TestGenerateRoundTripsAwkwardKeysAndValues(t *testing.T) {
-	tools := map[string]string{"go": "1.23", "npm:@scope/pkg": "1.2.3"}
+	t.Parallel()
+	tools := map[string]string{"go": "1.23", "npm:@scope/pkg": "1.2.3", "go:golang.org/x/vuln/cmd/govulncheck": "v1.6.0"}
 	env := map[string]string{
-		"PLAIN":     "x",
-		"my.var":    "quote \" and backslash \\",
-		"MULTILINE": "line one\nline two\r\n\ttabbed\x01\x7f",
-		"":          "empty key",
+		"PLAIN":      "x",
+		"my.var":     "dotted",
+		`quote"key`:  "quoted",
+		`back\slash`: "backslashed",
+		"A = B":      "assignment",
+		"":           "empty key",
+		"QUOTED":     "quote \" and backslash \\",
+		"MULTILINE":  "line one\nline two\r\n\ttabbed\b\f\x01\x1f\x7f",
 	}
 
-	got := decodeFragment(t, Generate(tools, env))
+	var got map[string]map[string]string
+	if err := toml.Unmarshal(Generate(tools, env), &got); err != nil {
+		t.Fatalf("toml.Unmarshal(Generate()): %v", err)
+	}
 
 	want := map[string]map[string]string{"tools": tools, "env": env}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("decoded Generate() = %q, want %q", got, want)
 	}
-}
-
-// decodeFragment parses a fragment's tables of `key = "value"` lines, unquoting
-// with Go's string syntax, whose escapes are a superset of a TOML basic string's.
-func decodeFragment(t *testing.T, fragment []byte) map[string]map[string]string {
-	t.Helper()
-	tables := map[string]map[string]string{}
-	var table string
-	for line := range strings.Lines(string(fragment)) {
-		line = strings.TrimSuffix(line, "\n")
-		switch {
-		case line == "" || strings.HasPrefix(line, "#"):
-		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
-			table = strings.Trim(line, "[]")
-			tables[table] = map[string]string{}
-		default:
-			key, value := splitAssignment(t, line)
-			tables[table][key] = value
-		}
-	}
-	return tables
-}
-
-// splitAssignment splits one `key = "value"` line into its decoded key and value.
-func splitAssignment(t *testing.T, line string) (string, string) {
-	t.Helper()
-	keyEnd := strings.Index(line, " = ")
-	if strings.HasPrefix(line, `"`) {
-		keyEnd = closingQuote(line) + 1
-	}
-	rawValue, found := strings.CutPrefix(line[max(keyEnd, 0):], " = ")
-	if keyEnd < 0 || !found {
-		t.Fatalf("fragment line %q is not a key = value assignment", line)
-	}
-	key := line[:keyEnd]
-	if strings.HasPrefix(key, `"`) {
-		key = unquote(t, key)
-	}
-	return key, unquote(t, rawValue)
-}
-
-// closingQuote returns the index of the quote that closes the string opening
-// line, or the index of its last byte when nothing closes it.
-func closingQuote(line string) int {
-	for i := 1; i < len(line); i++ {
-		switch line[i] {
-		case '\\':
-			i++
-		case '"':
-			return i
-		}
-	}
-	return len(line) - 1
-}
-
-// unquote decodes one quoted string, failing the test when it is not one.
-func unquote(t *testing.T, quoted string) string {
-	t.Helper()
-	s, err := strconv.Unquote(quoted)
-	if err != nil {
-		t.Fatalf("strconv.Unquote(%q): %v", quoted, err)
-	}
-	return s
 }
 
 // convergeOnBox runs the stage over what a blueprint declares, against a box
