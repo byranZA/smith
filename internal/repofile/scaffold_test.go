@@ -1,7 +1,6 @@
 package repofile_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,9 +13,10 @@ import (
 
 func locate(t *testing.T, root string) repofile.Repo {
 	t.Helper()
-	repo, err := repofile.Locate(context.Background(), fakeGit{root: root}, root, config.NewHome(t.TempDir()))
+	home := t.TempDir()
+	repo, err := repofile.Locate(t.Context(), fakeGit{root: root}, root, config.NewHome(home))
 	if err != nil {
-		t.Fatalf("Locate() error = %v", err)
+		t.Fatalf("Locate(%q, home %q) error = %v", root, home, err)
 	}
 	return repo
 }
@@ -25,7 +25,7 @@ func scaffold(t *testing.T, repo repofile.Repo, values repofile.File) repofile.O
 	t.Helper()
 	outcome, err := repofile.Scaffold(repo, values)
 	if err != nil {
-		t.Fatalf("Scaffold() error = %v", err)
+		t.Fatalf("Scaffold(%q, %+v) error = %v", repo.Path(), values, err)
 	}
 	return outcome
 }
@@ -44,6 +44,7 @@ func readRepoFile(t *testing.T, repo repofile.Repo) repofile.File {
 }
 
 func TestScaffoldWritesTheStarterAtTheRepoRoot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	repo := locate(t, root)
 
@@ -51,11 +52,12 @@ func TestScaffoldWritesTheStarterAtTheRepoRoot(t *testing.T) {
 
 	want := repofile.Outcome{Path: filepath.Join(root, ".smith", "repo.yaml"), Created: true}
 	if outcome != want {
-		t.Errorf("Scaffold() = %+v, want %+v", outcome, want)
+		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.File{}, outcome, want)
 	}
 }
 
 func TestTheUneditedStarterSetsNothing(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 	scaffold(t, repo, repofile.File{})
 
@@ -84,6 +86,7 @@ func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 }
 
 func TestScaffoldFillsInTheValuesGiven(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 	scaffold(t, repo, repofile.File{Agent: "claude", Model: "opus", Effort: "high"})
 
@@ -94,6 +97,7 @@ func TestScaffoldFillsInTheValuesGiven(t *testing.T) {
 }
 
 func TestScaffoldFillsInOnlyTheValuesGiven(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 	scaffold(t, repo, repofile.File{Model: "anthropic/some: model"})
 
@@ -104,6 +108,7 @@ func TestScaffoldFillsInOnlyTheValuesGiven(t *testing.T) {
 }
 
 func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	repo := locate(t, root)
 	existing := "agent: codex\n"
@@ -116,8 +121,8 @@ func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
 
 	outcome := scaffold(t, repo, repofile.File{Agent: "claude"})
 
-	if outcome.Created {
-		t.Errorf("Scaffold() = %+v, want the existing file reported as left alone", outcome)
+	if want := (repofile.Outcome{Path: repo.Path(), Created: false}); outcome != want {
+		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.File{Agent: "claude"}, outcome, want)
 	}
 	if data, err := os.ReadFile(repo.Path()); err != nil || string(data) != existing {
 		t.Errorf("repo file = %q (%v), want it unchanged as %q", data, err, existing)
@@ -125,6 +130,7 @@ func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
 }
 
 func TestScaffoldWritesNoPrompt(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	scaffold(t, locate(t, root), repofile.File{})
 

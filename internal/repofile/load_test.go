@@ -1,25 +1,30 @@
 package repofile_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/repofile"
 )
 
 func TestLoadWithNoRepoFileSetsNothing(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 
 	got, err := repofile.Load(repo)
 
 	if err != nil || got != (repofile.File{}) {
-		t.Errorf("Load() = %+v, %v; want an empty File and no error", got, err)
+		t.Errorf("Load(%q) = %+v, %v; want an empty File and no error", repo.Path(), got, err)
 	}
 }
 
 func TestLoadReadsTheRepoFile(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 	writeRepoFile(t, repo, "agent: codex\nmodel: opus\n")
 
@@ -27,18 +32,24 @@ func TestLoadReadsTheRepoFile(t *testing.T) {
 
 	want := repofile.File{Agent: "codex", Model: "opus"}
 	if err != nil || got != want {
-		t.Errorf("Load() = %+v, %v; want %+v", got, err, want)
+		t.Errorf("Load(%q) = %+v, %v; want %+v", repo.Path(), got, err, want)
 	}
 }
 
 func TestLoadRefusesAnUnknownKeyNamingItsLineAndTheFile(t *testing.T) {
+	t.Parallel()
 	repo := locate(t, t.TempDir())
 	writeRepoFile(t, repo, "agent: claude\n\nmodle: opus\n")
 
 	_, err := repofile.Load(repo)
 
-	if err == nil || !strings.Contains(err.Error(), `line 3: unknown field "modle"`) || !strings.Contains(err.Error(), repo.Path()) {
-		t.Errorf("Load() error = %v, want it to name %s and \"modle\" on line 3", err, repo.Path())
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Load(%q) error = %v, want a *blueprint.ValidationError", repo.Path(), err)
+	}
+	want := []blueprint.Finding{{Line: 3, Message: `unknown field "modle"`}}
+	if !reflect.DeepEqual(verr.Findings, want) || !strings.Contains(err.Error(), repo.Path()) {
+		t.Errorf("Load(%q) error = %v, findings %+v; want it to name the file and findings %+v", repo.Path(), err, verr.Findings, want)
 	}
 }
 
