@@ -644,3 +644,122 @@ func TestSetupTellsAKeyRefusalApartFromAnUnreachableBox(t *testing.T) {
 		})
 	}
 }
+
+func TestSetupWithNoBlueprintSaysTheWorkspaceHadNothingToConverge(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--name", "dev", "root@203.0.113.10")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a bare box that is otherwise set up (stderr: %s)", code, stderr)
+	}
+	want := "no blueprint was staged, so the workspace had nothing to converge: no repos, tools, env or placements\n"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout = %q, want it to carry %q", stdout, want)
+	}
+}
+
+func TestSetupWithNoBlueprintSuggestsARunThatNamesOne(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--name", "dev", "root@203.0.113.10")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := "  smith machine setup dev --blueprint <blueprint>\n"
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout = %q, want the re-run line %q", stdout, want)
+	}
+}
+
+func TestSetupOfABoxNamedAfterItsHostSuggestsNamingIt(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		marker string
+		args   []string
+		want   string
+	}{
+		{
+			name: "a first run that nothing named",
+			args: []string{"root@203.0.113.10"},
+			want: "  smith machine setup 203.0.113.10 --blueprint <blueprint> --name <name>\n",
+		},
+		{
+			name:   "a re-run whose marker recorded the host",
+			marker: `{"schema_version":2,"access_mode":"public","name":"203.0.113.10"}`,
+			args:   []string{"--blueprint", "acme", "root@203.0.113.10"},
+			want:   "  smith machine setup 203.0.113.10 --name <name>\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeBlueprint(t, dir, "acme", "access: public\n")
+
+			stdout, stderr, code := runSetup(t, dir, &setupSSH{marker: tt.marker}, tt.args...)
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+			}
+			if !strings.Contains(stdout, tt.want) {
+				t.Errorf("stdout = %q, want the re-run line %q", stdout, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetupWithABlueprintAndANameReportsTheRegistrationAsBefore(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: public\n")
+
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--blueprint", "acme", "--name", "dev", "root@203.0.113.10")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := `registered smith@203.0.113.10 as "dev"
+
+Reach it by name from now on:
+  smith machine status dev
+  smith machine setup dev
+`
+	if !strings.HasSuffix(stdout, "✓ workspace\n"+want) {
+		t.Errorf("stdout = %q, want it to end with exactly %q", stdout, want)
+	}
+}
+
+func TestSetupWithNoBlueprintStillRefusesABoxBuiltFromOne(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ssh := &setupSSH{marker: `{"schema_version":2,"access_mode":"public","name":"dev","blueprint":"acme"}`}
+
+	_, stderr, code := runSetup(t, dir, ssh, "root@203.0.113.10")
+
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2, the pointer rule refusing a blueprint-less re-run (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stderr, "re-run with --blueprint acme") {
+		t.Errorf("stderr = %q, want the refusal to name the blueprint to pass", stderr)
+	}
+}
+
+func TestSetupOfABoxItsBlueprintNamedLikeItsHostSuggestsNoName(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "access: public\n")
+
+	stdout, stderr, code := runSetup(t, dir, &setupSSH{}, "--blueprint", "acme", "root@acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if strings.Contains(stdout, "--name") {
+		t.Errorf("stdout = %q, want no --name suggested for a box its blueprint named", stdout)
+	}
+}

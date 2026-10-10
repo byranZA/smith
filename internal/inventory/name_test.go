@@ -65,3 +65,51 @@ func TestNameNeverInventsASuffixedName(t *testing.T) {
 		t.Errorf("Name() = %q, want the blueprint's name exactly, never an invented one", name)
 	}
 }
+
+func TestHostNamedReportsABoxThatAnswersToItsHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		naming Naming
+		want   bool
+	}{
+		{
+			name:   "nothing but the host names a first run",
+			naming: Naming{Host: "203.0.113.10"},
+			want:   true,
+		},
+		{
+			name:   "the marker recorded the host fallback on an earlier run",
+			naming: Naming{Marker: "203.0.113.10", Host: "203.0.113.10"},
+			want:   true,
+		},
+		{
+			name:   "the operator passed the host as the name",
+			naming: Naming{Flag: "203.0.113.10", Host: "203.0.113.10"},
+			want:   false,
+		},
+		{
+			name:   "the marker records a chosen name",
+			naming: Naming{Marker: "dev", Host: "203.0.113.10"},
+			want:   false,
+		},
+		{
+			name:   "the blueprint names the box",
+			naming: Naming{Blueprint: "acme", Host: "203.0.113.10"},
+			want:   false,
+		},
+		{
+			name:   "a blueprint named like the host names the box",
+			naming: Naming{Blueprint: "acme", Host: "acme"},
+			want:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := HostNamed(tt.naming); got != tt.want {
+				t.Errorf("HostNamed(%+v) = %v, want %v", tt.naming, got, tt.want)
+			}
+		})
+	}
+}
