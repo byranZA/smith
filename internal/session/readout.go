@@ -12,7 +12,7 @@ import (
 // inv. A listing that only said "nothing here" would leave them to go and look
 // it up.
 func startHint(inv hint.Invocation) string {
-	return "Start one with:\n  " + inv.Command("session start", "--repo", "<name>", "--branch", "<name>")
+	return "Start one with:\n  " + inv.Usage("session start", "--repo <name> --branch <name>")
 }
 
 // notApplicable is what a column with nothing to report renders as: a worktree

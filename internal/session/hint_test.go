@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -162,6 +163,33 @@ func TestRemoveRelayedRefusesALiveSessionNamingTheBox(t *testing.T) {
 	want := "session `smith/smith-spec-42` is running — `smith session stop smith-dev smith-spec-42` first"
 	if err == nil || err.Error() != want {
 		t.Errorf("Remove(smith-spec-42) err = %v, want %q", err, want)
+	}
+}
+
+func TestAStoppedSessionsResumeHintKeepsABranchTheShellWouldRewrite(t *testing.T) {
+	tests := []struct {
+		name string
+		inv  hint.Invocation
+		want string
+	}{
+		{"relayed", relayed, "resume it with `smith session start smith-dev --repo smith --branch 'feature/$HOME;x'`"},
+		{"typed on the box", hint.Invocation{}, "resume it with `smith session start --repo smith --branch 'feature/$HOME;x'`"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, _ := hintedEnv(t, tt.inv)
+			started, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "feature/$HOME;x"})
+			if err != nil {
+				t.Fatalf("Start() err = %v", err)
+			}
+			if err := session.Stop(context.Background(), env, started.Name); err != nil {
+				t.Fatalf("Stop() err = %v", err)
+			}
+			err = session.Attach(context.Background(), env, started.Name, session.Observe)
+			if err == nil || !strings.HasSuffix(err.Error(), tt.want) {
+				t.Errorf("Attach(%q) err = %v, want it to end %q", started.Name, err, tt.want)
+			}
+		})
 	}
 }
 

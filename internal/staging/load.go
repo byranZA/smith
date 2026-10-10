@@ -49,7 +49,7 @@ func (e *AbsentError) Error() string {
 	if e.Hint.Box != "" || e.Hint.Verb == "" {
 		return refusal
 	}
-	return refusal + "\nif this is the operator's machine, name the box the command is for: `" + e.Hint.Rerun("<box>") + "`"
+	return refusal + "\nif this is the operator's machine, name the box the command is for: `" + e.Hint.Rerun() + "`"
 }
 
 // MalformedError reports that a staged file cannot be trusted: a blueprint
