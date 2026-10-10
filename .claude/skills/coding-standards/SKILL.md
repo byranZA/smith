@@ -22,9 +22,10 @@ The rules that hold for all work here. Read the companion for what you are touch
 
 Tests verify **behaviour through the public interface**. Code can change entirely; a test breaks only when behaviour changed.
 
-- **Every test can go red.** The expected value is a literal worked out by hand from the spec, so a wrong implementation fails the test. One logical assertion per test.
+- **Every test can go red.** The expected value is a literal worked out by hand from the spec, so a wrong implementation fails the test.
+- **One behaviour per test.** A test makes as many checks as it takes to observe the behaviour its name states. When the name needs "and" to join two outcomes that could break on their own, split it into two tests.
 - **Name the behaviour.** The test name says _what_ the system does (`TestLoadMissingFileYieldsZeroConfig`), not how.
-- **Mock only at system boundaries**: the OS, the network, time, randomness. Prefer a real temp dir or temp DB. Your own packages are never mocked; when one seems to need it, redesign its interface so a real or fake collaborator can be passed in.
+- **Mock only at system boundaries**: the OS, the network, time, randomness, external processes (agent launches, git). Prefer a real temp dir or temp DB. Your own packages are never mocked; when one seems to need it, redesign its interface so a real or fake collaborator can be passed in.
 
 A **tautological** test passes by construction and can never go red. Review every test for these shapes:
 
@@ -33,7 +34,9 @@ A **tautological** test passes by construction and can never go red. Review ever
 - asserting a constant equals its literal
 - asserting a constructor stored its arguments
 
-Also reject tests that assert on private functions, call counts or call order, or that verify through a side channel (querying the DB) instead of the interface.
+Also reject tests that assert on private functions, or that verify through a side channel (querying the DB) instead of the interface.
+
+**Calls are behaviour only at a boundary.** What a boundary fake received, how often, and in what order is the system's visible effect, so assert on it: the loop pushes the branch before handing out the next task, and launches one agent per task. Between your own packages, assert on what comes back, so a test survives the code being restructured.
 
 ## TDD
 
