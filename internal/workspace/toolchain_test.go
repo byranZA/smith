@@ -8,7 +8,9 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +117,21 @@ func TestGenerate(t *testing.T) {
 	}
 }
 
+func TestGenerateQuotesKeysThatAreNotBareTOMLKeys(t *testing.T) {
+	got := Generate(
+		map[string]string{"npm:@scope/pkg": "1.2.3", "go:golang.org/x/vuln/cmd/govulncheck": "v1.6.0", "go": "1.23"},
+		map[string]string{"my.var": "x"},
+	)
+
+	want, err := os.ReadFile(filepath.Join("testdata", "prefixed.toml"))
+	if err != nil {
+		t.Fatalf("read the golden fragment: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("Generate() =\n%s\nwant\n%s", got, want)
+	}
+}
+
 // TestGenerateOmitsAnUndeclaredSection proves a fragment declares only what the
 // blueprint did: an empty section would tell mise nothing and read as a tool
 // list smith had forgotten to fill in.
@@ -151,6 +168,95 @@ func TestGenerateQuotesAValueThatWouldBreakTheDocument(t *testing.T) {
 	if !strings.Contains(got, `AWKWARD = "a\"b\\c"`) {
 		t.Errorf("Generate() = %q, want the quote and backslash escaped", got)
 	}
+}
+
+func TestGenerateEscapesControlCharactersInAValue(t *testing.T) {
+	got := string(Generate(nil, map[string]string{"AWKWARD": "a\nb\tc\rd\be\ff\x01g\x7fh\x1fi"}))
+
+	want := `AWKWARD = "a\nb\tc\rd\be\ff\u0001g\u007Fh\u001Fi"`
+	if !strings.Contains(got, want+"\n") {
+		t.Errorf("Generate() = %q, want it to contain %q", got, want)
+	}
+}
+
+func TestGenerateRoundTripsAwkwardKeysAndValues(t *testing.T) {
+	tools := map[string]string{"go": "1.23", "npm:@scope/pkg": "1.2.3"}
+	env := map[string]string{
+		"PLAIN":     "x",
+		"my.var":    "quote \" and backslash \\",
+		"MULTILINE": "line one\nline two\r\n\ttabbed\x01\x7f",
+		"":          "empty key",
+	}
+
+	got := decodeFragment(t, Generate(tools, env))
+
+	want := map[string]map[string]string{"tools": tools, "env": env}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("decoded Generate() = %q, want %q", got, want)
+	}
+}
+
+// decodeFragment parses a fragment's tables of `key = "value"` lines, unquoting
+// with Go's string syntax, whose escapes are a superset of a TOML basic string's.
+func decodeFragment(t *testing.T, fragment []byte) map[string]map[string]string {
+	t.Helper()
+	tables := map[string]map[string]string{}
+	var table string
+	for line := range strings.Lines(string(fragment)) {
+		line = strings.TrimSuffix(line, "\n")
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+			table = strings.Trim(line, "[]")
+			tables[table] = map[string]string{}
+		default:
+			key, value := splitAssignment(t, line)
+			tables[table][key] = value
+		}
+	}
+	return tables
+}
+
+// splitAssignment splits one `key = "value"` line into its decoded key and value.
+func splitAssignment(t *testing.T, line string) (string, string) {
+	t.Helper()
+	keyEnd := strings.Index(line, " = ")
+	if strings.HasPrefix(line, `"`) {
+		keyEnd = closingQuote(line) + 1
+	}
+	rawValue, found := strings.CutPrefix(line[max(keyEnd, 0):], " = ")
+	if keyEnd < 0 || !found {
+		t.Fatalf("fragment line %q is not a key = value assignment", line)
+	}
+	key := line[:keyEnd]
+	if strings.HasPrefix(key, `"`) {
+		key = unquote(t, key)
+	}
+	return key, unquote(t, rawValue)
+}
+
+// closingQuote returns the index of the quote that closes the string opening
+// line, or the index of its last byte when nothing closes it.
+func closingQuote(line string) int {
+	for i := 1; i < len(line); i++ {
+		switch line[i] {
+		case '\\':
+			i++
+		case '"':
+			return i
+		}
+	}
+	return len(line) - 1
+}
+
+// unquote decodes one quoted string, failing the test when it is not one.
+func unquote(t *testing.T, quoted string) string {
+	t.Helper()
+	s, err := strconv.Unquote(quoted)
+	if err != nil {
+		t.Fatalf("strconv.Unquote(%q): %v", quoted, err)
+	}
+	return s
 }
 
 // convergeOnBox runs the stage over what a blueprint declares, against a box
