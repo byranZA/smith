@@ -72,29 +72,6 @@ auto-updates=enabled
 	}
 }
 
-func TestParseProbeReadsMemoryAndSwap(t *testing.T) {
-	tests := []struct {
-		name       string
-		lines      string
-		wantMemory memory.Total
-		wantSwap   memory.Swap
-	}{
-		{"both reported", "mem-total-kb=1004000\nswap-total-kb=2097148\n", memory.FromKiB(1004000), memory.SwapFromKiB(2097148)},
-		{"no swap", "mem-total-kb=1004000\nswap-total-kb=0\n", memory.FromKiB(1004000), memory.SwapFromKiB(0)},
-		{"unreadable meminfo", "mem-total-kb=\nswap-total-kb=\n", memory.Total{}, memory.Swap{}},
-		{"not reported", "", memory.Total{}, memory.Swap{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out := "marker-begin\nmarker-end\n" + tt.lines + "smith-user-exists=no\npasswordless-sudo=no\n"
-			facts, _, _, _ := parseProbe(out)
-			if facts.Memory != tt.wantMemory || facts.Swap != tt.wantSwap {
-				t.Errorf("parseProbe(%q) memory/swap = %+v/%+v, want %+v/%+v", out, facts.Memory, facts.Swap, tt.wantMemory, tt.wantSwap)
-			}
-		})
-	}
-}
-
 func TestParseProbeNoMarker(t *testing.T) {
 	out := `marker-begin
 marker-end
@@ -176,6 +153,32 @@ func TestGatherRunsTheProbeSubcommand(t *testing.T) {
 	}
 	if !g.Reachable || !g.MarkerPresent {
 		t.Errorf("Reachable/MarkerPresent = %v/%v, want true/true", g.Reachable, g.MarkerPresent)
+	}
+}
+
+func TestGatherReportsMemoryAndSwap(t *testing.T) {
+	tests := []struct {
+		name       string
+		lines      string
+		wantMemory memory.Total
+		wantSwap   memory.Swap
+	}{
+		{"reported figures", "mem-total-kb=4026532\nswap-total-kb=2097148\n", memory.FromKiB(4026532), memory.SwapFromKiB(2097148)},
+		{"zero swap", "mem-total-kb=4026532\nswap-total-kb=0\n", memory.FromKiB(4026532), memory.SwapFromKiB(0)},
+		{"missing lines", "", memory.Total{}, memory.Swap{}},
+		{"empty values", "mem-total-kb=\nswap-total-kb=\n", memory.Total{}, memory.Swap{}},
+		{"non-numeric values", "mem-total-kb=?\nswap-total-kb=lots\n", memory.Total{}, memory.Swap{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, err := NewProber(&scriptedConn{}, probing(publicProbe+tt.lines), &fakeAdmin{}).Gather(context.Background())
+			if err != nil {
+				t.Fatalf("Gather() error = %v", err)
+			}
+			if g.Facts.Memory != tt.wantMemory || g.Facts.Swap != tt.wantSwap {
+				t.Errorf("Gather() memory/swap = %v/%v, want %v/%v", g.Facts.Memory, g.Facts.Swap, tt.wantMemory, tt.wantSwap)
+			}
+		})
 	}
 }
 
