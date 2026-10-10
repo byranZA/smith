@@ -181,6 +181,11 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 					return fmt.Errorf("write failure report: %w", err)
 				}
 			}
+			if setupRes.Reason != "" {
+				if _, err := fmt.Fprintf(stderr, "connect failed: %s\n", setupRes.Reason); err != nil {
+					return fmt.Errorf("write connect failure: %w", err)
+				}
+			}
 			if setupRes.Outcome != bootstrap.OutcomePassed {
 				return &exitError{code: setupRes.Outcome.ExitCode()}
 			}

@@ -555,3 +555,47 @@ func answerVersionCheck(remoteCmd string, stdout io.Writer) (bool, error) {
 	}
 	return true, nil
 }
+
+// unconnectableSSH is a box ssh cannot connect to, writing stderr as ssh does.
+type unconnectableSSH struct{ stderr string }
+
+func (u unconnectableSSH) Run(_ context.Context, _ string, _ []string, _ io.Reader, _, stderr io.Writer) error {
+	if _, err := io.WriteString(stderr, u.stderr); err != nil {
+		return err
+	}
+	return refusedExit{}
+}
+
+func TestSetupTellsAKeyRefusalApartFromAnUnreachableBox(t *testing.T) {
+	tests := []struct {
+		name   string
+		stderr string
+		want   string
+		not    string
+	}{
+		{"key refused", "root@203.0.113.10: Permission denied (publickey).\n", "refused the key", "did not answer"},
+		{"no answer", "ssh: connect to host 203.0.113.10 port 22: Connection timed out\n", "did not answer", "refused the key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMachineCmd(
+				func() (config.Home, error) { return config.NewHome(t.TempDir()), nil },
+				unconnectableSSH{stderr: tt.stderr}, &fakeDialer{}, provider.SystemClock(),
+			)
+			cmd.SetArgs([]string{"setup", "--smith-version", "0.2.0", "root@203.0.113.10"})
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+
+			code := codeFromError(cmd.Execute())
+
+			if code != 3 {
+				t.Errorf("exit code = %d, want 3 for a connect failure", code)
+			}
+			if !strings.Contains(out.String(), tt.want) || strings.Contains(out.String(), tt.not) {
+				t.Errorf("output = %q, want it to say %q and not %q", out.String(), tt.want, tt.not)
+			}
+		})
+	}
+}

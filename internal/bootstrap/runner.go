@@ -105,12 +105,11 @@ func NewRunner(conn connection.Runner, script ShippedScript) *Runner {
 // a Go error is returned for a script that could not be shipped and for
 // unexpected infrastructure failures.
 func (r *Runner) Preflight(ctx context.Context) (Result, error) {
-	reachable, err := connection.Reachable(ctx, r.conn)
-	if err != nil {
+	if err := r.conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
+		if errors.Is(err, connection.ErrConnect) {
+			return Result{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
+		}
 		return Result{}, fmt.Errorf("probe reachability: %w", err)
-	}
-	if !reachable {
-		return Result{Outcome: OutcomeConnectFailed, Reason: connection.ErrConnect.Error()}, nil
 	}
 
 	var out bytes.Buffer
@@ -153,10 +152,12 @@ type SetupOptions struct {
 // SetupResult is the terminal result of a setup run: its Outcome (which maps to
 // the process exit code) and, when a phase failed mid-run, the FailureReport
 // telling the operator what happened and how to recover. Failure is non-nil only
-// when Outcome is OutcomePartial.
+// when Outcome is OutcomePartial, and Reason is set only when it is
+// OutcomeConnectFailed.
 type SetupResult struct {
 	Outcome Outcome
 	Failure *FailureReport
+	Reason  string
 }
 
 // Setup runs bootstrap.sh's setup as the final subcommand, streaming each
@@ -174,7 +175,7 @@ func (r *Runner) Setup(ctx context.Context, opts SetupOptions, stdout, stderr io
 	case err == nil:
 		return SetupResult{Outcome: OutcomePassed}, nil
 	case errors.Is(err, connection.ErrConnect):
-		return SetupResult{Outcome: OutcomeConnectFailed}, nil
+		return SetupResult{Outcome: OutcomeConnectFailed, Reason: err.Error()}, nil
 	case errors.Is(err, shipped.ErrNotShipped):
 		return SetupResult{}, fmt.Errorf("run setup: %w", err)
 	}

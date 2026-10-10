@@ -323,3 +323,26 @@ func TestOutcomeExitCode(t *testing.T) {
 
 // errRemote stands in for a remote command that ran and failed.
 var errRemote = errors.New("remote command failed")
+
+func TestPreflightConnectFailureCarriesWhatSSHSaid(t *testing.T) {
+	refused := fmt.Errorf("ssh root@box: %w; check ssh-agent", connection.ErrAuthRefused)
+	res, err := NewRunner(reachConn{err: refused}, &shipped.Fake{}).Preflight(context.Background())
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	if res.Reason != "ssh root@box: could not connect to box: the box answered but refused the key; check ssh-agent" {
+		t.Errorf("Reason = %q, want the classified connect failure", res.Reason)
+	}
+}
+
+func TestSetupConnectFailureCarriesWhatSSHSaid(t *testing.T) {
+	unreachable := fmt.Errorf("ssh root@box: %w", connection.ErrUnreachable)
+	script := scriptReplying("setup", shipped.Reply{Err: unreachable})
+	res, err := NewRunner(reachConn{}, script).Setup(context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if res.Reason != "ssh root@box: could not connect to box: the box did not answer" {
+		t.Errorf("Reason = %q, want the classified connect failure", res.Reason)
+	}
+}
