@@ -155,6 +155,8 @@ is what write-once means, and resume does not make an exception of it.
 - smith runs `git fetch` **before cutting**, and on no other path. A branch cut
   from a stale base is a merge-time failure that looks like anything but a
   session bug, and the fetch is also what keeps the unpushed count honest.
+- The base is cut from as **origin has it**: `origin/<base>` when the fetch brought that ref down, and `<base>` exactly as given otherwise, so a local-only branch, a tag or a commit still works as `--base`. The clone's own local branches are copied once and never moved, so they are not what a new branch starts from.
+- The new branch has **no upstream**, so `git pull` or `git push` in the session never targets the base it was cut from.
 - `--base` applies **only when cutting**. Against a branch that already exists
   it is a refusal, not a silent no-op:
 

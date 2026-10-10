@@ -166,7 +166,7 @@ Shims on `PATH` are the courtesy for a human who SSHes in.
 
 ## Repos
 
-A repo the box does not have yet is cloned bare into `<workspace>/<repo>/repo.git`. The workspace root is the one `machine setup` resolved on your machine and staged in `/etc/smith/resolved.json`, wherever along the chain you set it — flag, blueprint or preferences — and `~/workspace` when you set it nowhere. Each repo directory is `0700`. A repo the box already has is fetched (`git fetch origin`), never deleted and cloned again, because it may carry worktrees with work that is pushed nowhere.
+A repo the box does not have yet is cloned bare into `<workspace>/<repo>/repo.git`. The workspace root is the one `machine setup` resolved on your machine and staged in `/etc/smith/resolved.json`, wherever along the chain you set it — flag, blueprint or preferences — and `~/workspace` when you set it nowhere. Each repo directory is `0700`. The clone carries the fetch refspec `+refs/heads/*:refs/remotes/origin/*`, so every fetch keeps `refs/remotes/origin/*` current; a bare clone sets no refspec of its own. A repo the box already has is fetched (`git fetch origin`), never deleted and cloned again, because it may carry worktrees with work that is pushed nowhere. A clone an earlier smith made without the refspec has it added before the fetch, and the repo's line in the summary says so. Its local branches are left where they are.
 
 A clone whose `origin` differs from the blueprint's `url` is not repointed. That
 repo fails with `the clone at <path> is of <url>, not the <url> the blueprint
