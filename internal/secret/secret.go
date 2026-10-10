@@ -4,7 +4,8 @@
 // Config carries a reference, never the value: a scheme:arg string such as
 // env:VAR or file:/path. The reference is split on the first colon only, so a
 // Windows path (file:C:\keys\ts) survives, and the resolved value is
-// whitespace-trimmed. A bare literal with no scheme is a hard error — env: is
+// whitespace-trimmed. A file: path under ~/ is read from the operator's home
+// directory. A bare literal with no scheme is a hard error — env: is
 // the documented escape hatch — so a raw secret is never accepted on argv.
 //
 // When the reference is omitted, Acquire prompts an interactive terminal
@@ -36,6 +37,10 @@ var ErrEmptyArg = errors.New("secret reference has an empty argument")
 // ErrNotFound is returned when a referenced source holds no value, e.g. an
 // unset environment variable.
 var ErrNotFound = errors.New("secret reference resolved to nothing")
+
+// ErrUserHome is returned for a file: path naming another user's home, such
+// as ~other/token: only the operator's own ~ is expanded.
+var ErrUserHome = errors.New("~user paths are not supported; use ~/ or an absolute path")
 
 // Split separates a reference into its scheme and argument, on the first colon
 // only, so file:C:\keys\ts keeps its Windows drive letter. It reports whether
@@ -81,12 +86,34 @@ func resolveEnv(name string) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-// resolveFile reads the file at path. A missing file wraps the os error so
-// callers can errors.Is it against os.ErrNotExist.
+// resolveFile reads the file at path, after expanding a leading ~ against the
+// operator's home directory. A missing file wraps the os error so callers can
+// errors.Is it against os.ErrNotExist.
 func resolveFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	expanded, err := expandHome(path)
+	if err != nil {
+		return "", fmt.Errorf("read secret file %q: %w", path, err)
+	}
+	data, err := os.ReadFile(expanded)
 	if err != nil {
 		return "", fmt.Errorf("read secret file %q: %w", path, err)
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+// expandHome rewrites a bare ~ or a ~/ prefix to the operator's home directory
+// and returns any other path as written. A ~user prefix is ErrUserHome.
+func expandHome(path string) (string, error) {
+	rest, ok := strings.CutPrefix(path, "~")
+	if !ok {
+		return path, nil
+	}
+	if rest != "" && !strings.HasPrefix(rest, "/") {
+		return "", ErrUserHome
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find the home directory: %w", err)
+	}
+	return home + rest, nil
 }
