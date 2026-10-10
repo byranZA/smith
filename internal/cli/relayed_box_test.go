@@ -2,8 +2,8 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,30 +99,18 @@ func TestRelayedBoxIsHiddenFromHelp(t *testing.T) {
 	}
 }
 
-func TestSetupRelaysTheWorkspaceStageNamingTheBox(t *testing.T) {
+func TestSetupRelaysTheWorkspaceStageNamingTheBoxAsTyped(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "packages:\n  - ripgrep\n")
-	ssh := &fakeSSHRelay{}
-	run := &pipelineRun{
-		accessMode:   "public",
-		host:         "203.0.113.7",
-		exec:         ssh,
-		box:          "smith-dev",
-		localVersion: "0.2.0",
-		staged:       stagedOrFatal(t, dir, "acme"),
+	ssh := &setupSSH{}
+
+	_, stderr, code := runSetup(t, dir, ssh, "--blueprint", "acme", "root@203.0.113.10")
+	if code != 0 {
+		t.Fatalf("machine setup exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
 
-	var workspace func(context.Context) error
-	for _, stage := range run.stages(io.Discard, io.Discard) {
-		if stage.Name == "workspace" {
-			workspace = stage.Run
-		}
-	}
-	if err := workspace(context.Background()); err != nil {
-		t.Fatalf("workspace stage err = %v", err)
-	}
-
-	if line := ssh.line(t); !strings.Contains(line, "--relayed-box 'smith-dev' 'workspace' 'converge'") {
-		t.Errorf("ssh argv = %q, want the stage to name the box as the operator did", line)
+	want := "--relayed-box 'root@203.0.113.10' 'workspace' 'converge'"
+	if !slices.ContainsFunc(ssh.commands, func(c string) bool { return strings.Contains(c, want) }) {
+		t.Errorf("machine setup ran %q, want a workspace converge relayed with %q", ssh.commands, want)
 	}
 }
