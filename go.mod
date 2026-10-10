@@ -2,6 +2,8 @@ module github.com/byranZA/smith
 
 go 1.26
 
+toolchain go1.26.9
+
 require (
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.10.2
