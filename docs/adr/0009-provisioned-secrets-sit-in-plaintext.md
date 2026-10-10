@@ -136,10 +136,16 @@ The three box credentials and their slots:
 | **coding-agent API key** | Box-scoped `env:` — every coding agent reads its key from the environment |
 
 One collision this creates, resolved: git identity as blueprint fields means smith generates
-`~/.gitconfig`, and an operator placement to the same path gives two writers on one path. Writing
-git's XDG path instead is a trap, since git reads `~/.gitconfig` *or* `~/.config/git/config`,
-never both. So **declaring git identity fields and a placement to `~/.gitconfig` is a validation
-error** — mutually exclusive. The operator picks: smith manages it, or you do.
+`~/.gitconfig`, and an operator placement to the same path gives two writers on one path. So
+**declaring git identity fields and a placement to `~/.gitconfig` is a validation error** —
+mutually exclusive. The operator picks: smith manages it, or you do.
+
+> **Correction.** This section first said that writing git's XDG path was a trap because git
+> reads `~/.gitconfig` *or* `~/.config/git/config`, never both. That is wrong: git reads and
+> applies both (tested with `git config --list --show-origin`). The exclusion above still stands,
+> because a `converge` placement replaces the whole file. But an operator placement to
+> `~/.config/git/config` (a credential helper, say) sits beside smith's identity in `~/.gitconfig`
+> without conflict.
 
 ### Rotation and revocation
 
