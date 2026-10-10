@@ -2,7 +2,7 @@
 
 Smith turns a fresh VPS into a ready-to-use remote development machine and manages coding agents across the repositories on it. The user brings the machine; smith provisions it, then runs the delegation loop for the coding agents it manages.
 
-The `coding-standards` skill (`.claude/skills/coding-standards/`) covers *how* to write Go in this repo. This file is the *why* and the boundaries.
+The `coding-standards` skill (`.claude/skills/coding-standards/`) covers *how* to write code and docs in this repo. This file is the *why* and the boundaries.
 
 ## Agent skills
 
