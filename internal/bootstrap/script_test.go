@@ -742,9 +742,6 @@ exit 0
 	// is-active/is-enabled fail until `enable --now` stamps the state, so the
 	// fail2ban phase transitions from starting the service to already-satisfied.
 	// A `reload` (used by ssh-hardening to apply the drop-in) always succeeds.
-	// `--version` reports SYSTEMD_VERSION (255, Ubuntu 24.04's, unless set),
-	// `list-units` lists the running user managers named in USER_MANAGERS, and
-	// each `kill` is recorded in SYSTEMCTL_KILL_LOG.
 	writeFakeBin(t, binDir, "systemctl", `#!/usr/bin/env bash
 case "$1" in
   --version)
