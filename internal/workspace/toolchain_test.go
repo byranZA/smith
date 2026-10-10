@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/staging"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // TestPlanToolchain drives the pure derivation of the toolchain unit: what the
@@ -115,6 +117,22 @@ func TestGenerate(t *testing.T) {
 	}
 }
 
+func TestGenerateQuotesKeysThatAreNotBareTOMLKeys(t *testing.T) {
+	t.Parallel()
+	got := Generate(
+		map[string]string{"npm:@scope/pkg": "1.2.3", "go:golang.org/x/vuln/cmd/govulncheck": "v1.6.0", "go": "1.23"},
+		map[string]string{"my.var": "x"},
+	)
+
+	want, err := os.ReadFile(filepath.Join("testdata", "prefixed.toml"))
+	if err != nil {
+		t.Fatalf("read the golden fragment: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("Generate() =\n%s\nwant\n%s", got, want)
+	}
+}
+
 // TestGenerateOmitsAnUndeclaredSection proves a fragment declares only what the
 // blueprint did: an empty section would tell mise nothing and read as a tool
 // list smith had forgotten to fill in.
@@ -150,6 +168,41 @@ func TestGenerateQuotesAValueThatWouldBreakTheDocument(t *testing.T) {
 
 	if !strings.Contains(got, `AWKWARD = "a\"b\\c"`) {
 		t.Errorf("Generate() = %q, want the quote and backslash escaped", got)
+	}
+}
+
+func TestGenerateEscapesControlCharactersInAValue(t *testing.T) {
+	t.Parallel()
+	got := string(Generate(nil, map[string]string{"AWKWARD": "a\nb\tc\rd\be\ff\x01g\x7fh\x1fi"}))
+
+	want := `AWKWARD = "a\nb\tc\rd\be\ff\u0001g\u007Fh\u001Fi"`
+	if !strings.Contains(got, want+"\n") {
+		t.Errorf("Generate() = %q, want it to contain %q", got, want)
+	}
+}
+
+func TestGenerateRoundTripsAwkwardKeysAndValues(t *testing.T) {
+	t.Parallel()
+	tools := map[string]string{"go": "1.23", "npm:@scope/pkg": "1.2.3", "go:golang.org/x/vuln/cmd/govulncheck": "v1.6.0"}
+	env := map[string]string{
+		"PLAIN":      "x",
+		"my.var":     "dotted",
+		`quote"key`:  "quoted",
+		`back\slash`: "backslashed",
+		"A = B":      "assignment",
+		"":           "empty key",
+		"QUOTED":     "quote \" and backslash \\",
+		"MULTILINE":  "line one\nline two\r\n\ttabbed\b\f\x01\x1f\x7f",
+	}
+
+	var got map[string]map[string]string
+	if err := toml.Unmarshal(Generate(tools, env), &got); err != nil {
+		t.Fatalf("toml.Unmarshal(Generate()): %v", err)
+	}
+
+	want := map[string]map[string]string{"tools": tools, "env": env}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("decoded Generate() = %q, want %q", got, want)
 	}
 }
 

@@ -107,17 +107,62 @@ func section(b *strings.Builder, name string, values map[string]string) {
 	}
 	fmt.Fprintf(b, "\n[%s]\n", name)
 	for _, key := range slices.Sorted(maps.Keys(values)) {
-		fmt.Fprintf(b, "%s = %s\n", key, tomlString(values[key]))
+		fmt.Fprintf(b, "%s = %s\n", tomlKey(key), tomlString(values[key]))
 	}
 }
 
-// tomlString renders a value as a TOML basic string. A token or a path may
-// carry a quote or a backslash, and one written raw would truncate the
-// document into something mise reads as a different file entirely.
+// tomlKey renders a key as TOML: bare when it is a valid bare key, so a plain
+// registry name keeps the bytes it always had, and a quoted string otherwise.
+func tomlKey(key string) string {
+	if isBareKey(key) {
+		return key
+	}
+	return tomlString(key)
+}
+
+// isBareKey reports whether key is a non-empty run of the characters TOML
+// allows in a bare key.
+func isBareKey(key string) bool {
+	return key != "" && !strings.ContainsFunc(key, func(r rune) bool { return !isBareKeyRune(r) })
+}
+
+// isBareKeyRune reports whether r may appear in a bare TOML key: an ASCII
+// letter or digit, '_' or '-'.
+func isBareKeyRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-'
+}
+
+// tomlString renders a value as a TOML basic string that decodes back to
+// exactly value. A quote, a backslash or a raw control character — a token
+// with an escape in it, a multi-line value read from a file — would otherwise
+// end the string early or leave a document mise refuses to parse.
 func tomlString(value string) string {
-	escaped := strings.ReplaceAll(value, `\`, `\\`)
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-	return `"` + escaped + `"`
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range value {
+		if escape, ok := shortEscapes[r]; ok {
+			b.WriteString(escape)
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
+			fmt.Fprintf(&b, `\u%04X`, r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// shortEscapes maps each character TOML gives a short escape to that escape.
+var shortEscapes = map[rune]string{
+	'"':  `\"`,
+	'\\': `\\`,
+	'\n': `\n`,
+	'\t': `\t`,
+	'\r': `\r`,
+	'\b': `\b`,
+	'\f': `\f`,
 }
 
 // fragmentMode is the generated fragment's permissions. It exports the
