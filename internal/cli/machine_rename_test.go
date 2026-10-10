@@ -277,3 +277,22 @@ func TestMachineRenameRefusesAnInventoryANewerSmithOwnsBeforeTouchingTheBox(t *t
 		t.Errorf("marker = %q, want it unchanged at %q", box.marker, namedA)
 	}
 }
+
+func TestMachineRenameRefusesAMalformedMarkerWithoutChangingAnything(t *testing.T) {
+	dir := t.TempDir()
+	writeInventory(t, dir, registeredA)
+	const malformed = `{"name": "a", "name": "a"}`
+	box := &markedBox{marker: malformed}
+
+	_, stderr, code := runRename(t, dir, box, "a", "b")
+
+	if code != 1 || !strings.HasPrefix(stderr, "rename refused: ") {
+		t.Errorf("exit code = %d, stderr = %q, want 1 and a rename refusal", code, stderr)
+	}
+	if box.marker != malformed {
+		t.Errorf("marker = %q, want it unchanged at %q", box.marker, malformed)
+	}
+	if got := inventoryContent(t, dir); got != registeredA {
+		t.Errorf("inventory = %q, want it unchanged at %q", got, registeredA)
+	}
+}

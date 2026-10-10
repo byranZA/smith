@@ -11,6 +11,7 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/marker"
 )
 
 // newRenameCmd builds `smith machine rename <box> <new-name>`. It renames a
@@ -69,22 +70,26 @@ func registerRename(home config.Home) boxname.Register {
 
 // reportRename reports a rename that did not complete and exits with the code
 // it is owed: a box that never answered is a connect failure, one carrying no
-// marker a gate rejection, and a marker renamed that the inventory did not
-// follow is partial, reported with the command that reconciles the two.
+// marker a gate rejection, one whose marker smith cannot read a refusal, and a
+// marker renamed that the inventory did not follow is partial, reported with
+// the command that reconciles the two.
 func reportRename(cmd *cobra.Command, c boxname.Change, cause error) error {
 	var (
 		unreachable *boxname.UnreachableError
 		partial     *boxname.PartialError
-		outcome     bootstrap.Outcome
-		report      string
+		code        int
+		report      = fmt.Sprintf("rename refused: %v\n", cause)
 	)
 	switch {
 	case errors.As(cause, &unreachable):
-		outcome, report = bootstrap.OutcomeConnectFailed, fmt.Sprintf("rename refused: %v\n", cause)
+		code = bootstrap.OutcomeConnectFailed.ExitCode()
 	case errors.Is(cause, boxname.ErrNoMarker):
-		outcome, report = bootstrap.OutcomeRejected, fmt.Sprintf("rename refused: %v\n", cause)
+		code = bootstrap.OutcomeRejected.ExitCode()
+	case errors.Is(cause, marker.ErrMalformed):
+		code = 1
 	case errors.As(cause, &partial):
-		outcome, report = bootstrap.OutcomePartial, fmt.Sprintf(`%v
+		code = bootstrap.OutcomePartial.ExitCode()
+		report = fmt.Sprintf(`%v
 
 Reconcile them by running the rename again once the inventory can be written:
   smith machine rename %s %s
@@ -95,5 +100,5 @@ Reconcile them by running the rename again once the inventory can be written:
 	if _, err := fmt.Fprint(cmd.ErrOrStderr(), report); err != nil {
 		return fmt.Errorf("write rename failure: %w", err)
 	}
-	return &exitError{code: outcome.ExitCode()}
+	return &exitError{code: code}
 }

@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 )
+
+// ErrMalformed reports marker data that is not exactly one JSON object with
+// fields and at most one name, so Rename cannot say which name the box records.
+var ErrMalformed = errors.New("malformed marker")
 
 // nameKey is the marker field Rename rewrites.
 const nameKey = "name"
@@ -33,31 +38,51 @@ func Rename(data []byte, name string) ([]byte, error) {
 }
 
 // nameSpan returns the byte range of the name field's value in the top-level
-// object data holds, and whether the object has a name field at all. An
-// object with no fields is an error, since nothing smith writes is empty.
+// object data holds, and whether the object has a name field at all. The data
+// must be exactly one JSON object with fields and at most one name field, since
+// a marker with two would decode as a name other than the one rewritten.
 func nameSpan(data []byte) (start, end int, found bool, err error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return 0, 0, false, errors.New("decode marker: not a JSON object")
+		return 0, 0, false, fmt.Errorf("%w: not a JSON object", ErrMalformed)
 	}
 	if !dec.More() {
-		return 0, 0, false, errors.New("decode marker: the marker records nothing")
+		return 0, 0, false, fmt.Errorf("%w: it records nothing", ErrMalformed)
 	}
 	for dec.More() {
 		key, err := dec.Token()
 		if err != nil {
-			return 0, 0, false, fmt.Errorf("decode marker: %w", err)
+			return 0, 0, false, fmt.Errorf("%w: %w", ErrMalformed, err)
 		}
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return 0, 0, false, fmt.Errorf("decode marker: %w", err)
+			return 0, 0, false, fmt.Errorf("%w: %w", ErrMalformed, err)
 		}
-		if key == nameKey {
-			end := int(dec.InputOffset())
-			return end - len(raw), end, true, nil
+		if key != nameKey {
+			continue
 		}
+		if found {
+			return 0, 0, false, fmt.Errorf("%w: it records more than one name", ErrMalformed)
+		}
+		end = int(dec.InputOffset())
+		start, found = end-len(raw), true
 	}
-	return 0, 0, false, nil
+	if err := closeObject(dec); err != nil {
+		return 0, 0, false, err
+	}
+	return start, end, found, nil
+}
+
+// closeObject consumes the closing brace of the object dec is inside and
+// requires nothing but whitespace after it.
+func closeObject(dec *json.Decoder) error {
+	if _, err := dec.Token(); err != nil {
+		return fmt.Errorf("%w: %w", ErrMalformed, err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: data follows the marker", ErrMalformed)
+	}
+	return nil
 }
 
 // splice returns a copy of data with data[start:end] replaced by insert.
