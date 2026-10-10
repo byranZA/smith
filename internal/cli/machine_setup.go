@@ -333,14 +333,9 @@ func resolveStagedConfig(doc *config.Document, resolution staging.Resolution, st
 	return &stagedConfig{tree: tree, path: doc.Path}, nil
 }
 
-// resolveBlueprint resolves every reference doc declares on this machine: each
-// placement's source and the value of every env variable, at the box scope and
-// inside each repo. An unresolvable reference is a *staging.UnresolvedError
-// naming every one of them, wrapped with the blueprint it came from.
-//
-// It is the one resolution both `machine setup` and `blueprint check` run, so
-// check cannot call a reference resolvable that setup would refuse, or the
-// other way round.
+// resolveBlueprint resolves every placement source and env value doc declares
+// on this machine, the one resolution both `machine setup` and `blueprint check`
+// run. Any that will not resolve are a wrapped *staging.UnresolvedError.
 func resolveBlueprint(doc config.Document, resolution staging.Resolution) (staging.Tree, error) {
 	tree, err := staging.Resolve(staging.Plan(doc.Bytes, doc.Blueprint, resolution), blueprint.Source, blueprint.Value)
 	if err != nil {

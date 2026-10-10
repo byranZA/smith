@@ -73,10 +73,8 @@ func (e *UnresolvedError) Count() int {
 	return len(e.Sources) + len(e.Values)
 }
 
-// List names every unresolvable reference, one indented line each, as the
-// scope that declared it, the reference and why it did not resolve. Each line
-// starts with a newline, so it follows a heading of the caller's own. It names
-// references and never a value, so it is safe to print wherever the refusal is.
+// List is every unresolvable reference on an indented line of its own, each
+// preceded by a newline, naming its scope, reference and reason but never a value.
 func (e *UnresolvedError) List() string {
 	var b strings.Builder
 	for _, s := range e.Sources {

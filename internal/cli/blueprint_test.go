@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
-	"github.com/byranZA/smith/internal/staging"
 )
 
 // runCheck runs `blueprint check` against a config home rooted at dir and
@@ -430,8 +429,7 @@ func TestBlueprintCheckAcceptsAGitconfigPlacementWithNoIdentityAnywhere(t *testi
 	}
 }
 
-// unsetEnv clears name for the test, restoring whatever it held afterwards, so
-// an env: reference to it is one that will not resolve.
+// unsetEnv clears name for the test, restoring it afterwards.
 func unsetEnv(t *testing.T, name string) {
 	t.Helper()
 	t.Setenv(name, "")
@@ -472,10 +470,7 @@ repos:
 	}
 }
 
-// referenceReport is the part of check's stdout ahead of the resolved
-// configuration: the verdict on the blueprint and on its references. The
-// resolved configuration echoes every reference the blueprint declares, so a
-// test about the report reads the report alone.
+// referenceReport is check's stdout ahead of the resolved configuration, which echoes every reference.
 func referenceReport(t *testing.T, stdout string) string {
 	t.Helper()
 	report, _, ok := strings.Cut(stdout, "\nresolved configuration:")
@@ -509,12 +504,13 @@ func TestBlueprintCheckAndSetupAgreeOnWhichReferencesWillNotResolve(t *testing.T
 	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
 	t.Setenv("SMITH_TEST_TOKEN", "tok")
 	dir := t.TempDir()
+	missing := filepath.Join(dir, "absent-key")
 	writeBlueprint(t, dir, "acme", `env:
   GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN
   REGION: literal:eu-central
   NPM_TOKEN: env:SMITH_TEST_TOKEN
 placements:
-  - from: file:`+filepath.Join(dir, "absent-key")+`
+  - from: file:`+missing+`
     to: ~/.ssh/id_ed25519
 repos:
   - name: api
@@ -523,20 +519,26 @@ repos:
       - from: env:SMITH_TEST_UNSET_TOKEN
         to: .env
 `)
-	var setupErr bytes.Buffer
-	if _, err := resolveStagedConfig(documentOrFatal(t, dir, "acme"), staging.Resolution{}, &setupErr); err == nil {
-		t.Fatal("resolveStagedConfig() err = nil, want setup to refuse the blueprint")
+	want := []string{
+		"  ~/.ssh/id_ed25519 from file:" + missing + `: read what this placement source names: read secret file "` + missing + `": open ` + missing + ": no such file or directory",
+		`  api .env from env:SMITH_TEST_UNSET_TOKEN: read what this placement source names: environment variable "SMITH_TEST_UNSET_TOKEN": secret reference resolved to nothing`,
+		`  GH_TOKEN from env:SMITH_TEST_UNSET_TOKEN: read what this blueprint value names: environment variable "SMITH_TEST_UNSET_TOKEN": secret reference resolved to nothing`,
 	}
 
-	stdout, _, _ := runCheck(t, dir, "check", "acme")
+	checkOut, checkErr, checkCode := runCheck(t, dir, "check", "acme")
+	_, setupErr, setupCode := runSetup(t, dir, &setupSSH{}, "--blueprint", "acme", "root@203.0.113.10")
 
-	if got, want := listedReferences(referenceReport(t, stdout)), listedReferences(setupErr.String()); !slices.Equal(got, want) {
-		t.Errorf("check lists %q, want the references setup refuses, %q", got, want)
+	if checkCode != 0 || setupCode != 2 {
+		t.Fatalf("exit codes = check %d, setup %d, want check 0 and setup 2, a gate rejection (check stderr: %s, setup stderr: %s)", checkCode, setupCode, checkErr, setupErr)
+	}
+	for command, report := range map[string]string{"check": referenceReport(t, checkOut), "setup": setupErr} {
+		if got := listedReferences(report); !slices.Equal(got, want) {
+			t.Errorf("%s lists %q, want %q", command, got, want)
+		}
 	}
 }
 
-// listedReferences is the indented lines of a report, one per reference that
-// would not resolve.
+// listedReferences is the indented lines of a report, one per unresolved reference.
 func listedReferences(report string) []string {
 	var lines []string
 	for line := range strings.Lines(report) {
@@ -598,5 +600,25 @@ func TestBlueprintCheckRefusesAnInvalidBlueprintBeforeResolvingAReference(t *tes
 	}
 	if strings.Contains(stdout+stderr, "SMITH_TEST_UNSET_TOKEN") {
 		t.Errorf("output = %q, want no reference resolved for an invalid blueprint", stdout+stderr)
+	}
+}
+
+func TestBlueprintCheckReportsAnEmptyLiteralApartFromTheReferences(t *testing.T) {
+	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "env:\n  GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN\n  REGION: \"literal:\"\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 for a blueprint whose shape is valid (stderr: %s)", code, stderr)
+	}
+	want := "blueprint \"acme\" is valid (" + filepath.Join(dir, "blueprints", "acme.yaml") + "), but `smith machine setup` from here would refuse it:\n" +
+		"1 reference(s) will not resolve on this machine:\n" +
+		"  GH_TOKEN from env:SMITH_TEST_UNSET_TOKEN: read what this blueprint value names: environment variable \"SMITH_TEST_UNSET_TOKEN\": secret reference resolved to nothing\n" +
+		"1 literal value(s) declare nothing:\n" +
+		"  REGION from literal:: resolve \"literal:\": a literal declares a value, and this one declares none\n"
+	if got := referenceReport(t, stdout); got != want {
+		t.Errorf("report = %q, want %q", got, want)
 	}
 }
