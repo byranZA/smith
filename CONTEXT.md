@@ -197,9 +197,7 @@ automatically; an unmet need fails loudly at the step, not pre-emptively at the 
 _Avoid_: version allowlist, supported-OS list.
 
 **Memory advisory**:
-The recommended minimum memory for a box to run an agent: 2 GB, one figure whatever the repos'
-toolchains. A box under it gets a warning, never a refusal, because a bare hardened box is still a
-valid result. Unlike the *floor*, it gates nothing.
+The recommended minimum memory for a box to run an agent: 2 GB, one figure whatever the repos' toolchains. A box under it gets a warning, never a refusal, because a bare hardened box is still a valid result. Unlike the *floor*, it gates nothing.
 _Avoid_: memory floor, minimum memory requirement.
 
 ### Declaring and creating a box
