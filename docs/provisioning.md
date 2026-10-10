@@ -26,6 +26,8 @@ The box you're provisioning must be:
 - Running sshd on **port 22**. The firewall smith enables allows SSH on 22
   only, so other ports aren't supported yet.
 
+We recommend at least **2 GB of memory** to run an agent. A smaller box is still provisioned. See [Memory and swap](#memory-and-swap).
+
 If you'd rather smith created the box too, describe your provider's CLI as data
 in a `provider` block and run `smith machine create dev --blueprint acme` — see
 [providers](./providers.md).
@@ -136,6 +138,58 @@ Reach it by name from now on:
 The design reasoning is in
 [ADR-0001](./adr/0001-tailscale-ssh-keyless-tagged-node.md) and
 [ADR-0004](./adr/0004-lockout-gate-on-box-self-reverting-self-test.md).
+
+## Memory and swap
+
+An agent plus a typical build or test run needs well over 512 MB. On a box without swap, running out of memory freezes the box or gets the agent killed mid-task. Smith therefore recommends 2 GB of memory and gives a box without swap a swapfile.
+
+### The memory advisory
+
+Setup reads the box's memory before any phase runs and reports it with the preflight result. A box under the recommended 2 GB also gets a warning:
+
+```text
+preflight passed
+memory: 458 MB
+warning: under the recommended 2 GB of memory to run an agent
+```
+
+The advisory only warns. Setup still runs every phase and exits as it would on a larger box, because a bare hardened box is still a valid result. The advisory counts RAM, not swap. A nominal 2 GB box, whose kernel keeps some memory for itself and reports about 1.9 GB, gets no warning. If the box's memory can't be read, the report shows `memory: unknown` and gives no warning.
+
+`smith machine status` notes the box's memory and swap under its verdict, with the same warning on a box under 2 GB:
+
+```text
+  memory: 1.0 GB
+  warning: under the recommended 2 GB of memory to run an agent
+  swap: 2.0 GB
+```
+
+The note never changes the verdict or the exit code. A small box whose facts all match its marker still reports matches.
+
+### The swap phase
+
+`swap` is the first base-layer phase, before `packages`, so the rest of setup already runs with swap. On a box with no active swap it creates `/swapfile`, readable only by root, enables it, and adds an `/etc/fstab` entry so it comes back after a reboot. The swapfile is the smaller of 2 GB and a quarter of the free disk on its filesystem: 8 GB free gives 2 GB of swap, 2 GB free gives 512 MB.
+
+The phase adapts to the box rather than failing setup. In each of these cases it prints a note, is recorded as complete, and setup goes on to `packages`:
+
+- **The box already has swap.** Any active swap, whether smith made it or not, is left exactly as it is and no swapfile is added (`swap already present`). On a re-run this is how the phase sees the swapfile it made earlier; if that swapfile has lost its `/etc/fstab` entry, the phase puts the entry back.
+- **The disk is too small.** A swapfile under 256 MB isn't worth having, so with less than about 1 GB free the phase makes none (`swap skipped: not enough free disk`).
+- **The box refuses swap.** Some virtualized boxes don't allow swap. When enabling it is refused, the phase removes the swapfile and its `/etc/fstab` entry (`swap skipped: not supported on this box`).
+
+### Boxes set up before the swap phase
+
+A box provisioned by an older smith has a marker that records every phase except `swap`, so `machine status` reports it as partially provisioned, naming `swap` as missing:
+
+```text
+✗ partially provisioned: setup did not complete
+  memory: 3.8 GB
+  swap: none
+
+  missing phases: swap
+
+  Re-run `smith machine setup <login>@<host>` to finish — the re-run resumes.
+```
+
+Re-run `smith machine setup <name>` to finish it. The re-run adds swap where the box allows it and records the phase, and status then reports the box as it would any other.
 
 ## What runs after the bootstrap
 
