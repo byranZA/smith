@@ -422,11 +422,12 @@ _Avoid_: status, cleanliness.
 **Driver**:
 Who acts in a session — a human at a terminal, or a coding agent. Orthogonal to attach mode: an
 agent-driven session can be observed or, when it needs a hand, jumped into. The driver process is
-the tmux session's **root process**, so its exit ends the session and session-end *is* the
-completion signal; smith reports liveness only, never the driver's exit status, and never sends it
-keystrokes. **v1 creates human-driven sessions only.** The **loop** and its **agent adapters**
-exist, but run in the repo they are invoked from rather than as a session's root process, so
-`--driver agent` is still deferred.
+the tmux session's **root process** — the first process tmux starts in it, running as the smith
+user like everything else in the session; nothing to do with the root user — so its exit ends the
+session and session-end *is* the completion signal; smith reports liveness only, never the
+driver's exit status, and never sends it keystrokes. **v1 creates human-driven sessions only.**
+The **loop** and its **agent adapters** exist, but run in the repo they are invoked from rather
+than as a session's root process, so `--driver agent` is still deferred.
 _Avoid_: actor, runner, operator (reserved for the human running smith).
 
 **Attach mode**:
