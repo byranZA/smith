@@ -19,6 +19,8 @@ import (
 type Gathered struct {
 	// Reachable reports whether smith could connect to the box at all.
 	Reachable bool
+	// ConnectErr is the classified connect failure when the box was unreachable.
+	ConnectErr error
 	// MarkerPresent reports whether the box carried a marker.
 	MarkerPresent bool
 	// Marker is the decoded marker; the zero value when none was present.
@@ -55,22 +57,21 @@ func NewProber(conn Conn, script ShippedScript, admin tailscale.Admin) *Prober {
 // subcommand (closing the shipped script however Gather returns), decodes the
 // marker, and — in tailscale mode with a tailnet IP — probes tailnet reach from
 // the admin side. A connect failure is reported as an unreachable Gathered
-// rather than a Go error; a Go error is returned only for a script that could
-// not be shipped or run, or a malformed marker.
+// carrying the classified failure rather than a Go error; a Go error is returned
+// only for a script that could not be shipped or run, or a malformed marker.
 func (p *Prober) Gather(ctx context.Context) (Gathered, error) {
-	reachable, err := connection.Reachable(ctx, p.conn)
-	if err != nil {
+	if err := p.conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
+		if errors.Is(err, connection.ErrConnect) {
+			return Gathered{ConnectErr: err}, nil
+		}
 		return Gathered{}, fmt.Errorf("probe reachability: %w", err)
-	}
-	if !reachable {
-		return Gathered{Reachable: false}, nil
 	}
 
 	defer p.script.Close(ctx)
 	var out bytes.Buffer
 	if err := p.script.Run(ctx, &out, io.Discard, "probe"); err != nil {
 		if errors.Is(err, connection.ErrConnect) {
-			return Gathered{Reachable: false}, nil
+			return Gathered{ConnectErr: err}, nil
 		}
 		return Gathered{}, fmt.Errorf("run probe: %w", err)
 	}

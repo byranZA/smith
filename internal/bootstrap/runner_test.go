@@ -323,3 +323,67 @@ func TestOutcomeExitCode(t *testing.T) {
 
 // errRemote stands in for a remote command that ran and failed.
 var errRemote = errors.New("remote command failed")
+
+// sshBox is the box as the ssh and scp binaries see it: it makes the shipped
+// script's private directory and takes the copy, but fails any other ssh
+// command the way ssh fails to connect, exiting 255 with stderr.
+type sshBox struct {
+	stderr string
+}
+
+func (b sshBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
+	remote := args[len(args)-1]
+	switch {
+	case name == "scp":
+		return nil
+	case strings.HasPrefix(remote, "mktemp"):
+		_, err := io.WriteString(stdout, "/tmp/smith.abc123\n")
+		return err
+	}
+	if _, err := io.WriteString(stderr, b.stderr); err != nil {
+		return err
+	}
+	return sshExit{code: 255}
+}
+
+// sshExit is the process error of an ssh that exited with code.
+type sshExit struct {
+	code int
+}
+
+func (e sshExit) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e sshExit) ExitCode() int { return e.code }
+
+func TestPreflightConnectFailureCarriesWhatSSHSaid(t *testing.T) {
+	conn := connection.New("root@box", sshBox{stderr: "root@box: Permission denied (publickey).\n"})
+	res, err := NewRunner(conn, shipped.New(conn, "bootstrap.sh", Script)).Preflight(context.Background())
+	if err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+	if res.Outcome != OutcomeConnectFailed {
+		t.Fatalf("Outcome = %v, want ConnectFailed", res.Outcome)
+	}
+	want := "ssh root@box: could not connect to box: the box answered but refused the key; " +
+		"check the key is loaded in ssh-agent or set by a Host entry in ~/.ssh/config (a passphrase key must be agent-loaded), and that the login is right"
+	if res.Reason != want {
+		t.Errorf("Reason = %q, want %q", res.Reason, want)
+	}
+}
+
+func TestSetupConnectFailureCarriesWhatSSHSaid(t *testing.T) {
+	conn := connection.New("root@box", sshBox{stderr: "ssh: connect to host box port 22: Connection timed out\n"})
+	res, err := NewRunner(conn, shipped.New(conn, "bootstrap.sh", Script)).Setup(
+		context.Background(), SetupOptions{AccessMode: "public"}, io.Discard, io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if res.Outcome != OutcomeConnectFailed {
+		t.Fatalf("Outcome = %v, want ConnectFailed", res.Outcome)
+	}
+	want := "run bootstrap.sh setup: ssh root@box: could not connect to box: the box did not answer; " +
+		"check the address, that sshd is listening on port 22, and the provider's firewall"
+	if res.Reason != want {
+		t.Errorf("Reason = %q, want %q", res.Reason, want)
+	}
+}

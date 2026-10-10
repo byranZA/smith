@@ -159,6 +159,9 @@ type Report struct {
 	AccessMode string
 	// Host is the box smith could not reach; set only for an unreachable verdict.
 	Host string
+	// Reason is why the connection failed, with its hint; set only for an
+	// unreachable verdict.
+	Reason string
 	// Groups are the per-phase findings for a matches/drifted verdict.
 	Groups []Group
 	// MissingPhases are the unrecorded phases for a partial verdict.
@@ -168,9 +171,14 @@ type Report struct {
 // ExitCode is the process exit code for the report's verdict.
 func (r Report) ExitCode() int { return r.Verdict.ExitCode() }
 
-// Unreachable builds the report for a box smith could not connect to.
-func Unreachable(host string) Report {
-	return Report{Verdict: VerdictUnreachable, Host: host}
+// Unreachable builds the report for a box smith could not connect to, keeping
+// the classified connect failure so the operator is told why.
+func Unreachable(host string, connectErr error) Report {
+	r := Report{Verdict: VerdictUnreachable, Host: host}
+	if connectErr != nil {
+		r.Reason = connectErr.Error()
+	}
+	return r
 }
 
 // Reconcile compares a decoded marker (present reports whether the box carried
@@ -305,6 +313,9 @@ func (r Report) String() string {
 	switch r.Verdict {
 	case VerdictUnreachable:
 		fmt.Fprintf(&b, "✗ unreachable: could not connect to %s\n", r.Host)
+		if r.Reason != "" {
+			fmt.Fprintf(&b, "\n  %s\n", r.Reason)
+		}
 		return b.String()
 	case VerdictNeverBootstrapped:
 		b.WriteString("✗ never provisioned: no smith marker on the box\n")

@@ -184,3 +184,98 @@ func TestShellArg(t *testing.T) {
 		})
 	}
 }
+
+func TestRunReportsAnAuthRefusal(t *testing.T) {
+	t.Parallel()
+	for _, stderr := range []string{
+		"root@box: Permission denied (publickey).\n",
+		"Received disconnect from 203.0.113.7 port 22:2: Too many authentication failures\n",
+	} {
+		t.Run(stderr, func(t *testing.T) {
+			t.Parallel()
+			c := New("root@box", &recordingExec{exitCode: 255, replyStderr: stderr})
+
+			err := c.Run(context.Background(), "true", io.Discard, io.Discard)
+			if !errors.Is(err, ErrAuthRefused) || !errors.Is(err, ErrConnect) {
+				t.Fatalf("Run() error = %v, want wrapping ErrAuthRefused and ErrConnect", err)
+			}
+			for _, want := range []string{"refused the key", "ssh-agent", "Host entry in ~/.ssh/config", "login"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Run() error = %q, want it to mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunReportsAnUnreachableBox(t *testing.T) {
+	t.Parallel()
+	for _, stderr := range []string{
+		"ssh: connect to host box port 22: Connection timed out\n",
+		"ssh: connect to host box port 22: Connection refused\n",
+		"ssh: connect to host box port 22: No route to host\n",
+		"ssh: Could not resolve hostname box: Name or service not known\n",
+	} {
+		t.Run(stderr, func(t *testing.T) {
+			t.Parallel()
+			c := New("root@box", &recordingExec{exitCode: 255, replyStderr: stderr})
+
+			err := c.Run(context.Background(), "true", io.Discard, io.Discard)
+			if !errors.Is(err, ErrUnreachable) || !errors.Is(err, ErrConnect) {
+				t.Fatalf("Run() error = %v, want wrapping ErrUnreachable and ErrConnect", err)
+			}
+			for _, want := range []string{"did not answer", "address", "port 22", "firewall"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Run() error = %q, want it to mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunKeepsSSHsLastLineForAnUnrecognisedConnectFailure(t *testing.T) {
+	t.Parallel()
+	stderr := "Warning: something earlier\nkex_exchange_identification: read: Connection reset by peer\n"
+	c := New("root@box", &recordingExec{exitCode: 255, replyStderr: stderr})
+
+	err := c.Run(context.Background(), "true", io.Discard, io.Discard)
+	if !errors.Is(err, ErrConnect) || errors.Is(err, ErrAuthRefused) || errors.Is(err, ErrUnreachable) {
+		t.Fatalf("Run() error = %v, want a generic ErrConnect", err)
+	}
+	if !strings.Contains(err.Error(), "kex_exchange_identification: read: Connection reset by peer") {
+		t.Errorf("Run() error = %q, want it to carry ssh's last stderr line", err)
+	}
+}
+
+func TestRunStillStreamsStderrWhileClassifying(t *testing.T) {
+	t.Parallel()
+	c := New("root@box", &recordingExec{exitCode: 255, replyStderr: "ssh: connect to host box port 22: Connection refused\n"})
+
+	var stderr bytes.Buffer
+	if err := c.Run(context.Background(), "true", io.Discard, &stderr); err == nil {
+		t.Fatal("Run() error = nil, want a connect failure")
+	}
+	if stderr.String() != "ssh: connect to host box port 22: Connection refused\n" {
+		t.Errorf("streamed stderr = %q, want ssh's own stderr", stderr.String())
+	}
+}
+
+func TestRunLeavesARemoteCommandFailureAsItWas(t *testing.T) {
+	t.Parallel()
+	c := New("root@box", &recordingExec{exitCode: 1, replyStderr: "Permission denied (publickey)\n"})
+
+	err := c.Run(context.Background(), "false", io.Discard, io.Discard)
+	if err == nil || err.Error() != "ssh root@box: exit status" {
+		t.Errorf("Run() error = %v, want %q", err, "ssh root@box: exit status")
+	}
+}
+
+func TestCopyReportsAnAuthRefusal(t *testing.T) {
+	t.Parallel()
+	c := New("root@box", &recordingExec{exitCode: 255, replyStderr: "root@box: Permission denied (publickey).\nscp: Connection closed\n"})
+
+	err := c.Copy(context.Background(), "/tmp/local.sh", "/tmp/x/script.sh")
+	if !errors.Is(err, ErrAuthRefused) {
+		t.Errorf("Copy() error = %v, want wrapping ErrAuthRefused", err)
+	}
+}
