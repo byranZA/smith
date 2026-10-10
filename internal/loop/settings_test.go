@@ -10,6 +10,7 @@ import (
 )
 
 func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
+	on, off := true, false
 	tests := []struct {
 		name  string
 		flags repofile.File
@@ -22,25 +23,28 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 				Agent:  config.Value{Value: "claude", Origin: config.FromDefault},
 				Model:  config.Value{Origin: config.FromDefault},
 				Effort: config.Value{Origin: config.FromDefault},
+				Push:   config.Value{Value: "on", Origin: config.FromDefault},
 			},
 		},
 		{
 			name: "the repo file over the default",
-			file: repofile.File{Agent: "claude", Model: "opus", Effort: "high"},
+			file: repofile.File{Agent: "claude", Model: "opus", Effort: "high", Push: &off},
 			want: loop.Settings{
 				Agent:  config.Value{Value: "claude", Origin: config.FromRepoFile},
 				Model:  config.Value{Value: "opus", Origin: config.FromRepoFile},
 				Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
+				Push:   config.Value{Value: "off", Origin: config.FromRepoFile},
 			},
 		},
 		{
 			name:  "a flag over the repo file, field by field",
-			flags: repofile.File{Model: "sonnet"},
-			file:  repofile.File{Model: "opus", Effort: "high"},
+			flags: repofile.File{Model: "sonnet", Push: &off},
+			file:  repofile.File{Model: "opus", Effort: "high", Push: &on},
 			want: loop.Settings{
 				Agent:  config.Value{Value: "claude", Origin: config.FromDefault},
 				Model:  config.Value{Value: "sonnet", Origin: config.FromFlag},
 				Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
+				Push:   config.Value{Value: "off", Origin: config.FromFlag},
 			},
 		},
 		{
@@ -50,6 +54,7 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 				Agent:  config.Value{Value: "claude", Origin: config.FromFlag},
 				Model:  config.Value{Origin: config.FromDefault},
 				Effort: config.Value{Value: "low", Origin: config.FromFlag},
+				Push:   config.Value{Value: "on", Origin: config.FromDefault},
 			},
 		},
 	}

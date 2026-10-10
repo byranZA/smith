@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
@@ -59,6 +61,24 @@ func TestTheUneditedStarterSetsNothing(t *testing.T) {
 
 	if got := readRepoFile(t, repo); got != (repofile.File{}) {
 		t.Errorf("starter = %+v, want every field unset", got)
+	}
+}
+
+func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
+	repo := locate(t, t.TempDir())
+	scaffold(t, repo, repofile.File{})
+	data, err := os.ReadFile(repo.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	example := regexp.MustCompile(`(?m)^# ([a-z]+: )`).ReplaceAll(data, []byte("$1"))
+
+	got, err := repofile.Parse(example)
+
+	off := false
+	want := repofile.File{Agent: "claude", Model: "opus", Effort: "high", Push: &off}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse(starter with its examples uncommented) = %+v, %v; want %+v", got, err, want)
 	}
 }
 

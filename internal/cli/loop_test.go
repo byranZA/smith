@@ -78,13 +78,36 @@ func inRepo(t *testing.T, w loopWiring) loopWiring {
 		home := t.TempDir()
 		w.home = func() (config.Home, error) { return config.NewHome(home), nil }
 	}
+	if w.pusher == nil {
+		w.pusher = (&fakeOrigin{}).at
+	}
 	return w
+}
+
+// fakeOrigin stands in for origin, recording the directory each push was made from and failing each with err when set.
+type fakeOrigin struct {
+	pushedFrom []string
+	err        error
+}
+
+func (f *fakeOrigin) at(dir string) loop.Pusher { return originAt{origin: f, dir: dir} }
+
+// originAt is a push to a fakeOrigin from dir.
+type originAt struct {
+	origin *fakeOrigin
+	dir    string
+}
+
+func (o originAt) Push(context.Context) (loop.Pushed, error) {
+	o.origin.pushedFrom = append(o.origin.pushedFrom, o.dir)
+	return loop.Pushed{Branch: "feat/42"}, o.origin.err
 }
 
 // defaultSettings is the settings report of a run with no flag and no repo file.
 const defaultSettings = "agent:  claude (built-in default)\n" +
 	"model:  the agent's own default (built-in default)\n" +
-	"effort: the agent's own default (built-in default)\n"
+	"effort: the agent's own default (built-in default)\n" +
+	"push:   on (built-in default)\n"
 
 func runLoopList(t *testing.T, gh *fakeTracker, ref string) (stdout, stderr string, code int) {
 	t.Helper()
@@ -700,5 +723,68 @@ func TestRepoInitAndTheLoopLeaveAnEjectedPromptByteForByteUnchanged(t *testing.T
 	}
 	if string(after) != content {
 		t.Errorf("prompt file = %q, want it unchanged as %q", after, content)
+	}
+}
+
+func TestLoopListReportsThePushSettingWithItsOrigin(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "CLOSED", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &idleAgent{}, "push: false\n")
+
+	stdout, stderr, code := runLoopListIn(t, w, "42")
+
+	if code != 0 || !strings.Contains(stdout, "push:   off (repo file)\n") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and push off from the repo file", code, stdout, stderr)
+	}
+}
+
+func TestLoopRunPushesFromTheRepoAfterEachClosedTaskByDefault(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
+	origin := &fakeOrigin{}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "")
+	w.pusher = origin.at
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	root := rootOf(t, w)
+	if want := []string{root, root}; code != 0 || !slices.Equal(origin.pushedFrom, want) {
+		t.Errorf("exit %d, stderr %q, pushed from %q; want 0 and a push from %q after each of #43 and #44", code, stderr, origin.pushedFrom, root)
+	}
+}
+
+func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
+	for name, tc := range map[string]struct {
+		repoFile string
+		flags    []string
+		want     string
+	}{
+		"in the repo file":                  {"push: false\n", nil, "push:   off (repo file)\n"},
+		"by --no-push over the repo file":   {"push: true\n", []string{"--no-push"}, "push:   off (flag)\n"},
+		"by --no-push with no repo setting": {"", []string{"--no-push"}, "push:   off (flag)\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+			origin := &fakeOrigin{}
+			w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, tc.repoFile)
+			w.pusher = origin.at
+
+			stdout, stderr, code := runLoopRun(t, w, "42", tc.flags...)
+
+			if code != 0 || len(origin.pushedFrom) != 0 || !strings.Contains(stdout, tc.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q, pushed from %q; want 0, no push and %q", code, stdout, stderr, origin.pushedFrom, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoopRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
+	claude := &fakeAgent{gh: gh}
+	w, _ := repoWith(t, gh, claude, "")
+	w.pusher = (&fakeOrigin{err: errors.New("remote rejected")}).at
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || !strings.Contains(stderr, "push the work on #43: remote rejected") || !slices.Equal(claude.handed, []string{"43"}) {
+		t.Errorf("exit %d, stderr %q, handed %v; want non-zero naming #43 and the push error, with #44 never handed", code, stderr, claude.handed)
 	}
 }

@@ -1,6 +1,7 @@
 package repofile_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,13 +17,14 @@ func TestParseRefusesAnUnknownKeyNamingItsLine(t *testing.T) {
 }
 
 func TestParseReadsEveryField(t *testing.T) {
-	got, err := repofile.Parse([]byte("agent: codex\nmodel: gpt-5\neffort: low\n"))
+	got, err := repofile.Parse([]byte("agent: codex\nmodel: gpt-5\neffort: low\npush: false\n"))
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
-	want := repofile.File{Agent: "codex", Model: "gpt-5", Effort: "low"}
-	if got != want {
+	off := false
+	want := repofile.File{Agent: "codex", Model: "gpt-5", Effort: "low", Push: &off}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse() = %+v, want %+v", got, want)
 	}
 }

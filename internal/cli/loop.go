@@ -18,12 +18,13 @@ import (
 )
 
 // loopWiring is what the loop verbs reach the outside world through: gh for
-// the tracker, the launcher that starts an agent, the PATH search that finds
-// one, and git, the config home and the working directory that locate the
-// repo file.
+// the tracker, the launcher that starts an agent, the pusher that pushes its
+// work from a directory, the PATH search that finds an agent, and git, the
+// config home and the working directory that locate the repo file.
 type loopWiring struct {
 	gh       tracker.Runner
 	launcher loop.Launcher
+	pusher   func(dir string) loop.Pusher
 	lookPath func(name string) (string, error)
 	git      repofile.Runner
 	home     homeResolver
@@ -31,11 +32,13 @@ type loopWiring struct {
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
-// agents started as processes on smith's own terminal, and the real PATH.
+// agents started as processes on smith's own terminal, the real git pushing
+// to origin, and the real PATH.
 func systemLoop() loopWiring {
 	return loopWiring{
 		gh:       connection.System(),
 		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
+		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: exec.LookPath,
 		git:      connection.System(),
 		home:     userConfigHome,
@@ -106,6 +109,19 @@ func (w loopWiring) prompt(ctx context.Context) (loop.Prompt, error) {
 	return prompt, nil
 }
 
+// origin returns the pusher that pushes the branch checked out where smith is
+// run, or nil when settings turn pushing off.
+func (w loopWiring) origin(settings loop.Settings) (loop.Pusher, error) {
+	if !settings.Pushes() {
+		return nil, nil
+	}
+	dir, err := w.workdir()
+	if err != nil {
+		return nil, fmt.Errorf("find the branch to push: %w", err)
+	}
+	return w.pusher(dir), nil
+}
+
 // settingsReport renders each resolved setting with where it came from,
 // naming an unset model or effort as the agent's own default.
 func settingsReport(s loop.Settings) string {
@@ -117,6 +133,7 @@ func settingsReport(s loop.Settings) string {
 		{"agent", s.Agent},
 		{"model", s.Model},
 		{"effort", s.Effort},
+		{"push", s.Push},
 	} {
 		if setting.value.Value == "" {
 			setting.value.Value = "the agent's own default"
@@ -150,7 +167,7 @@ func newLoopPromptCmd() *cobra.Command {
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
-	var interactive bool
+	var interactive, noPush bool
 	cmd := &cobra.Command{
 		Use:   "run <spec>",
 		Short: "Work a spec's tasks to completion with a coding agent",
@@ -162,6 +179,10 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			}
 			if err := checkLimits(limits); err != nil {
 				return reportInvalid(cmd, err)
+			}
+			if noPush {
+				off := false
+				flags.Push = &off
 			}
 			settings, err := w.settings(cmd.Context(), flags)
 			if err != nil {
@@ -178,6 +199,10 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if _, err := w.lookPath(settings.Agent.Value); err != nil {
 				return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", settings.Agent.Value, err))
 			}
+			pusher, err := w.origin(settings)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
 			github := tracker.NewGitHub(w.gh)
 			number, err := github.Local(cmd.Context(), ref)
 			if err != nil {
@@ -189,6 +214,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			l := loop.Loop{
 				Tracker:  github,
 				Launcher: w.launcher,
+				Pusher:   pusher,
 				Agent:    adapter,
 				Options:  settings.Options(),
 				Prompt:   prompt,
@@ -214,6 +240,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
+	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
 	return cmd
 }
 

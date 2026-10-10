@@ -13,3 +13,8 @@
 # How hard the agent thinks: low, medium or high. Unset, the agent uses its
 # own default.
 # effort: high
+
+# Whether the loop pushes the branch to origin, under its own name, after each
+# task the agent closes. It never pushes origin's default branch. Unset, it
+# pushes; `smith loop run --no-push` turns it off for one run.
+# push: false

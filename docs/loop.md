@@ -5,12 +5,12 @@ The **loop** works a spec's tasks with a coding agent, one task per agent run. I
 ```text
 smith loop list <spec>
 smith loop run  <spec> [--agent <name>] [--model <name>] [--effort low|medium|high]
-                       [--max-iterations <n>] [--max-attempts <n>] [--interactive]
+                       [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push]
 smith loop prompt
 smith repo init [--agent <name>] [--model <name>] [--effort low|medium|high]
 ```
 
-Every verb runs in the repo it is invoked from: the loop works the current working tree on the current branch. It never commits, pushes or switches branch itself. The prompt asks the agent to commit, so a failed attempt's changes are still in the tree for the next attempt.
+Every verb runs in the repo it is invoked from: the loop works the current working tree on the current branch. It never commits or switches branch itself. The prompt asks the agent to commit, so a failed attempt's changes are still in the tree for the next attempt. After each task the agent closes, the loop pushes the branch to `origin` (see [Pushing](#pushing)), so closed work never exists on one machine only.
 
 ## What the loop reads from GitHub
 
@@ -31,6 +31,7 @@ Shows the settings a run would use, the next task, and what remains, without run
 agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
+push:   on (built-in default)
 spec #244 Spec: the loop — smith loop and the repo file
 next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
   blocked: #254 (by #253)
@@ -55,6 +56,15 @@ Two limits bound a run so it can be left alone:
 - **`--max-iterations`** (default 10): the most agent runs the whole loop makes.
 
 An agent that exits with a failure is reported and the loop carries on: whether the task is done is the tracker's call, not the exit code's. Ctrl-C stops the running agent and starts no further task.
+
+### Pushing
+
+After each task the agent closes, and before it chooses the next, the loop pushes the current branch to `origin` under the same name, setting that as the branch's upstream so a later bare `git push` works. It writes `smith: pushed #N on <branch> to origin` to stderr. The agent never pushes; the loop does. The loop never forces a push, and a task the agent closed without committing pushes nothing new, which is fine.
+
+- **Origin's default branch is never pushed.** On it, the loop writes `smith: not pushing #N: <branch> is origin's default branch` and carries on, so a run on `main` cannot push past review. The loop asks `origin` which branch is its default with `git ls-remote --symref origin HEAD`, so it works in a bare clone, which has no `origin/HEAD`. If `origin` names no default branch, the run stops naming the problem and pushes nothing.
+- **A failed push stops the run** (auth, a rejected push, the network), exiting non-zero and naming the task and git's error. The task stays closed, because its work is committed, and no further task starts, so unpushed work cannot pile up. Fix the cause and push by hand, or run the loop again.
+
+Pushing is on unless the repo file sets `push: false`; `--no-push` turns it off for one run. `--interactive` pushes the same way once its task is closed.
 
 ### `--interactive`
 
@@ -86,6 +96,7 @@ The model is passed to the agent verbatim. Effort is on smith's own scale (`low`
 agent: claude
 model: opus
 effort: high
+push: true
 ```
 
 `smith repo init` writes a commented starter, filling in any value you give as a flag, and reports `created <path>`. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`.
@@ -94,7 +105,7 @@ Each setting resolves on its own, most specific first:
 
 1. A flag on `smith loop run`, for that run only.
 2. The repo file.
-3. The built-in default: `claude`, and the agent's own model and effort.
+3. The built-in default: `claude`, the agent's own model and effort, and push on.
 
 The file is validated strictly: an unknown key is refused with its line. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
 

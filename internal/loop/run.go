@@ -22,14 +22,33 @@ type Launcher interface {
 	Launch(ctx context.Context, cmd agent.Command) error
 }
 
+// Pusher is the seam through which the loop pushes the work an agent committed.
+type Pusher interface {
+	// Push pushes the current branch to origin under its own name, or skips
+	// it when it is origin's default branch.
+	Push(ctx context.Context) (Pushed, error)
+}
+
+// Pushed is what a push did with the current branch.
+type Pushed struct {
+	// Branch is the current branch, pushed or not.
+	Branch string
+	// Skipped reports that Branch is origin's default branch, which the loop
+	// never pushes.
+	Skipped bool
+}
+
 // Loop works one spec's tasks with a coding agent, one task per agent run.
-// It never commits, pushes, switches branch or looks at the working tree:
-// that is the agent's work, asked for through the prompt, so a failed
-// attempt's changes are still there for the next.
+// It never commits, switches branch or looks at the working tree: that is the
+// agent's work, asked for through the prompt, so a failed attempt's changes
+// are still there for the next. After each task the agent closes, it pushes
+// the branch through Pusher, when one is set.
 type Loop struct {
 	Tracker  Tracker
 	Launcher Launcher
-	Agent    agent.Adapter
+	// Pusher pushes the branch after each closed task; nil turns pushing off.
+	Pusher Pusher
+	Agent  agent.Adapter
 	// Options are the model and effort every agent run asks for.
 	Options agent.Options
 	Prompt  Prompt
@@ -66,11 +85,11 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
 	runs := 0
+	current, err := l.Tracker.Spec(ctx, spec)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+	}
 	for {
-		current, err := l.Tracker.Spec(ctx, spec)
-		if err != nil {
-			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
-		}
 		remaining := Survey(current).Skip(skipped)
 		next, ok := remaining.Next()
 		if !ok {
@@ -85,6 +104,14 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		runs++
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
+		if current, err = l.Tracker.Spec(ctx, spec); err != nil {
+			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		}
+		if closedIn(current, next) {
+			if err := l.push(ctx, next); err != nil {
+				return Outcome{}, err
+			}
+		}
 	}
 }
 
@@ -132,6 +159,11 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if err != nil {
 		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
 	}
+	if closedIn(after, next) {
+		if err := l.push(ctx, next); err != nil {
+			return InteractiveOutcome{}, err
+		}
+	}
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after)}, nil
 }
 
@@ -150,6 +182,27 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) er
 		return l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
 	}
 	return nil
+}
+
+// push pushes the branch holding task's work, when the loop has a Pusher, and
+// reports what it did. A failed push is an error naming task.
+func (l Loop) push(ctx context.Context, task tracker.Task) error {
+	if l.Pusher == nil {
+		return nil
+	}
+	pushed, err := l.Pusher.Push(ctx)
+	if err != nil {
+		return fmt.Errorf("push the work on #%d: %w", task.Number, err)
+	}
+	if pushed.Skipped {
+		return l.report("smith: not pushing #%d: %s is origin's default branch\n", task.Number, pushed.Branch)
+	}
+	return l.report("smith: pushed #%d on %s to origin\n", task.Number, pushed.Branch)
+}
+
+// closedIn reports whether spec holds task as closed.
+func closedIn(spec tracker.Spec, task tracker.Task) bool {
+	return slices.ContainsFunc(spec.Tasks, func(t tracker.Task) bool { return t.Number == task.Number && !t.Open })
 }
 
 // report writes a progress line.
