@@ -72,6 +72,10 @@ SMITH_TMUX_SCOPE_DROPIN="${SMITH_TMUX_SCOPE_DROPIN:-/etc/systemd/user/tmux-spawn
 # SCOPE_OOM_POLICY_MIN_SYSTEMD is the first systemd release that honours OOMPolicy=
 # on a scope unit; an older one ignores the drop-in.
 SCOPE_OOM_POLICY_MIN_SYSTEMD=253
+# TMUX_OOM_RELOAD_PENDING stamps a tmux-oom-policy run whose drop-in may be in
+# place before every user manager has reloaded it; while it exists, a matching
+# drop-in does not make the phase satisfied.
+TMUX_OOM_RELOAD_PENDING="${MARKER_DIR}/tmux-oom-policy.reload-pending"
 
 # The base package set every box gets, regardless of access mode.
 BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
@@ -490,9 +494,11 @@ phase_packages() {
 # OOM-kills one of its processes, so the kill takes out only that process and
 # not the pane's shell and with it the whole tmux session. It writes
 # OOMPolicy=continue into a drop-in for every tmux pane scope on the box. It is
-# check-before-change: a drop-in that already matches is left untouched and the
-# phase reports already-satisfied. It adapts to the box rather than failing setup:
-# a systemd that cannot honour OOMPolicy= on a scope skips it with a note.
+# check-before-change: a drop-in that already matches, with no reload left
+# pending, is left untouched and the phase reports already-satisfied. A reload
+# that failed is retried on the next run. It adapts to the box rather than
+# failing setup: a systemd that cannot honour OOMPolicy= on a scope skips it with
+# a note.
 phase_tmux_oom_policy() {
   local want='[Scope]
 OOMPolicy=continue'
@@ -505,11 +511,13 @@ OOMPolicy=continue'
     return 0
   fi
 
-  if [ "$(as_root cat "$SMITH_TMUX_SCOPE_DROPIN" 2>/dev/null || true)" = "$want" ]; then
+  if [ "$(as_root cat "$SMITH_TMUX_SCOPE_DROPIN" 2>/dev/null || true)" = "$want" ] \
+    && ! as_root test -e "$TMUX_OOM_RELOAD_PENDING"; then
     PHASE_STATUS="satisfied"
     return 0
   fi
 
+  as_root touch "$TMUX_OOM_RELOAD_PENDING"
   local tmp
   tmp="$(mktemp)"
   printf '%s\n' "$want" >"$tmp"
@@ -517,6 +525,7 @@ OOMPolicy=continue'
   as_root install -m 0644 "$tmp" "$SMITH_TMUX_SCOPE_DROPIN"
   rm -f "$tmp"
   reload_user_managers
+  as_root rm -f "$TMUX_OOM_RELOAD_PENDING"
 }
 
 # systemd_version prints the box's systemd version number, such as 255, or
@@ -537,8 +546,22 @@ reload_user_managers() {
     return 1
   fi
   for unit in $(awk '{ print $1 }' <<<"$units"); do
-    as_root systemctl kill --kill-whom=main --signal=SIGHUP "$unit"
+    reload_user_manager "$unit"
   done
+}
+
+# reload_user_manager signals the user manager $1 to reload. A manager that has
+# exited since it was listed needs no reload and is skipped; one still running
+# that cannot be signalled fails it.
+reload_user_manager() {
+  local unit="$1"
+  if as_root systemctl kill --kill-whom=main --signal=SIGHUP "$unit"; then
+    return 0
+  fi
+  if as_root systemctl is-active --quiet "$unit"; then
+    echo "tmux-oom-policy: could not signal the running user manager ${unit} to reload" >&2
+    return 1
+  fi
 }
 
 # phase_smith_user creates the smith user with its home directory and grants it

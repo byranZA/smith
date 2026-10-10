@@ -175,3 +175,71 @@ func TestScriptTmuxOOMPolicyCompletesOnABoxWithNoRunningUserManagers(t *testing.
 		t.Errorf("setup with no running user managers signalled one (%v), want no reload", err)
 	}
 }
+
+func TestScriptTmuxOOMPolicyReloadsTheSurvivingManagersWhenOneExitsBeforeItsSignal(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "USER_MANAGERS=user@0.service user@1000.service", "USER_MANAGERS_GONE=user@0.service")
+
+	if out, err := runSetup(bash, scriptPath, env); err != nil {
+		t.Fatalf("setup with a user manager gone before its signal failed: %v\n%s", err, out)
+	}
+
+	want := "--kill-whom=main --signal=SIGHUP user@1000.service\n"
+	if got := readFile(t, filepath.Join(dir, "systemctl.kill.log")); got != want {
+		t.Errorf("systemctl kill calls = %q, want a reload signal to the surviving manager %q", got, want)
+	}
+}
+
+func TestScriptTmuxOOMPolicyFailsSetupWhenARunningManagerRefusesItsReload(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "USER_MANAGERS=user@1000.service", "RELOAD_REFUSED=1")
+
+	out, err := runSetup(bash, scriptPath, env)
+	if err == nil {
+		t.Fatalf("setup with a user manager refusing its reload succeeded, want it to fail:\n%s", out)
+	}
+
+	m, _, err := decodeMarker(t, filepath.Join(dir, "bootstrap.json"))
+	if err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if got, want := strings.Join(m.CompletedPhases, ","), "swap,packages"; got != want {
+		t.Errorf("marker CompletedPhases = %q, want %q (tmux-oom-policy not recorded)", got, want)
+	}
+}
+
+func TestScriptTmuxOOMPolicyRetriesTheReloadAfterAFailedOne(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir, scriptPath, env := scriptFixture(t)
+	env = append(env, "USER_MANAGERS=user@1000.service")
+
+	if out, err := runSetup(bash, scriptPath, append(env, "RELOAD_REFUSED=1")); err == nil {
+		t.Fatalf("first setup with a user manager refusing its reload succeeded, want it to fail:\n%s", out)
+	}
+	out, err := runSetup(bash, scriptPath, env)
+	if err != nil {
+		t.Fatalf("retry setup failed: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(out, "✓ tmux-oom-policy\n") {
+		t.Errorf("retry output does not report tmux-oom-policy changed:\n%s", out)
+	}
+	want := "--kill-whom=main --signal=SIGHUP user@1000.service\n"
+	if got := readFile(t, filepath.Join(dir, "systemctl.kill.log")); got != want {
+		t.Errorf("systemctl kill calls = %q, want the retry to reload the manager %q", got, want)
+	}
+}

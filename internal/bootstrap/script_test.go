@@ -759,9 +759,21 @@ case "$1" in
     ;;
   kill)
     shift
+    unit="${!#}"
+    if [[ " ${USER_MANAGERS_GONE:-} " == *" ${unit} "* ]]; then
+      echo "Failed to kill unit ${unit}: Unit ${unit} not loaded." >&2
+      exit 1
+    fi
+    if [ -n "${RELOAD_REFUSED:-}" ]; then
+      echo "Failed to kill unit ${unit}: Access denied" >&2
+      exit 1
+    fi
     printf '%s\n' "$*" >>"$SYSTEMCTL_KILL_LOG"
     ;;
   is-active|is-enabled)
+    if [[ "${!#}" == user@* ]]; then
+      [[ " ${USER_MANAGERS_GONE:-} " != *" ${!#} "* ]] && exit 0 || exit 3
+    fi
     [ -f "$FAIL2BAN_STATE" ] && exit 0 || exit 3
     ;;
   enable)
