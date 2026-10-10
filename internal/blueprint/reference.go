@@ -56,12 +56,9 @@ func Value(ref string) (string, error) {
 	return value, nil
 }
 
-// Source resolves a placement's source reference into the bytes it names,
-// exactly as they are. A source is never trimmed and a value always is: a
-// source is a whole file, and a private key that lost its final newline is one
-// OpenSSH refuses. It accepts the schemes a placement source may name, which
-// are the ones internal/secret reads, so literal: is refused as the unknown
-// scheme it is to that package.
+// Source resolves a placement's env: or file: source reference into the bytes
+// it names, never trimmed, so a private key keeps its final newline. Any other
+// reference, literal: included, is refused.
 func Source(ref string) (string, error) {
 	value, err := secret.Read(ref)
 	if err != nil {

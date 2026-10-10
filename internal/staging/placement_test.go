@@ -114,10 +114,8 @@ func TestResolveAttachesTheBytesEachPlacementSourceHolds(t *testing.T) {
 	}
 }
 
-// TestResolveStagesAPrivateKeyByteForByte places an OpenSSH private key through
-// the source resolver machine setup uses. OpenSSH refuses a key without its
-// final newline, so a source that lost it would stage a key nothing can use.
-func TestResolveStagesAPrivateKeyByteForByte(t *testing.T) {
+func TestResolveStagesAPrivateKeyWithItsFinalNewlineByteForByte(t *testing.T) {
+	t.Parallel()
 	fixture, err := filepath.Abs(filepath.Join("testdata", "id_ed25519"))
 	if err != nil {
 		t.Fatalf("locate fixture: %v", err)

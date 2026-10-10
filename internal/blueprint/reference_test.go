@@ -204,10 +204,7 @@ func TestValueRefusesAnEmptyLiteral(t *testing.T) {
 	}
 }
 
-// TestSourceResolvesToTheReferencedBytesUnchanged proves a placement source is
-// never trimmed: it is a whole file, and a private key without its final
-// newline is one OpenSSH refuses.
-func TestSourceResolvesToTheReferencedBytesUnchanged(t *testing.T) {
+func TestSourceResolvesToTheReferencedBytesUntrimmed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "npmrc")
 	if err := os.WriteFile(path, []byte("registry=https://npm.example\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -234,19 +231,28 @@ func TestSourceResolvesToTheReferencedBytesUnchanged(t *testing.T) {
 	}
 }
 
-// TestSourceRefusesWhatIsNotASourceReference proves a source refuses a bare
-// string, an unknown scheme and the literal: a value accepts.
 func TestSourceRefusesWhatIsNotASourceReference(t *testing.T) {
-	for _, ref := range []string{"ghp_abc", "vault:token", "literal:inline", "env:SMITH_TEST_UNSET_SOURCE"} {
-		if got, err := blueprint.Source(ref); err == nil {
-			t.Errorf("blueprint.Source(%q) = %q, want a refusal", ref, got)
-		}
+	t.Parallel()
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{name: "a bare string", ref: "ghp_abc"},
+		{name: "an unknown scheme", ref: "vault:token"},
+		{name: "a literal a value would accept", ref: "literal:inline"},
+		{name: "an unset variable", ref: "env:SMITH_TEST_UNSET_SOURCE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := blueprint.Source(tt.ref); err == nil {
+				t.Errorf("blueprint.Source(%q) = %q, want a refusal", tt.ref, got)
+			}
+		})
 	}
 }
 
-// TestValueTrimsWhatAReferenceNames proves a value is always trimmed, so a
-// token file ending in a newline exports the token alone.
-func TestValueTrimsWhatAReferenceNames(t *testing.T) {
+func TestValueTrimsWhatAnEnvOrFileReferenceNames(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(path, []byte("ghp_fromafile\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)

@@ -60,12 +60,9 @@ func Resolve(ref string) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-// Read turns a scheme:arg reference into the bytes it names, exactly as they
-// are: nothing is trimmed, so a private key keeps the final newline OpenSSH
-// requires. It splits on the first colon only, so file:C:\keys\ts keeps its
-// Windows drive letter, and dispatches on the scheme (env: reads an
-// environment variable, file: reads a file). A reference with no scheme is
-// ErrBareLiteral.
+// Read turns an env: or file: reference into the bytes it names, untrimmed, so
+// a private key keeps its final newline. It refuses what Resolve refuses, with
+// the same errors.
 func Read(ref string) (string, error) {
 	scheme, arg, ok := Split(ref)
 	if !ok {

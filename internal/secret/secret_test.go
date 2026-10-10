@@ -158,10 +158,10 @@ func TestReadKeepsTheReferencedBytesAsTheyAre(t *testing.T) {
 		t.Setenv("NPMRC", "  //registry/:_authToken=padded \n")
 		got, err := Read("env:NPMRC")
 		if err != nil {
-			t.Fatalf("Read: %v", err)
+			t.Fatalf("Read(%q) error = %v, want nil", "env:NPMRC", err)
 		}
 		if got != "  //registry/:_authToken=padded \n" {
-			t.Errorf("Read = %q, want %q", got, "  //registry/:_authToken=padded \n")
+			t.Errorf("Read(%q) = %q, want %q", "env:NPMRC", got, "  //registry/:_authToken=padded \n")
 		}
 	})
 
@@ -171,12 +171,13 @@ func TestReadKeepsTheReferencedBytesAsTheyAre(t *testing.T) {
 		if err := os.WriteFile(path, []byte("\tkey body\r\n"), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		got, err := Read("file:" + path)
+		ref := "file:" + path
+		got, err := Read(ref)
 		if err != nil {
-			t.Fatalf("Read: %v", err)
+			t.Fatalf("Read(%q) error = %v, want nil", ref, err)
 		}
 		if got != "\tkey body\r\n" {
-			t.Errorf("Read = %q, want %q", got, "\tkey body\r\n")
+			t.Errorf("Read(%q) = %q, want %q", ref, got, "\tkey body\r\n")
 		}
 	})
 }
