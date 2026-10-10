@@ -69,7 +69,8 @@ func TestStartCreatesTheWorktreeAndTheTmuxSession(t *testing.T) {
 }
 
 // writeBareRepo stands up a bare repo in the workspace the way the workspace
-// stage does — <workspace>/<repo>/repo.git — with one commit on defaultBranch.
+// stage does — <workspace>/<repo>/repo.git, cloned with the refspec that
+// tracks its origin — with one commit on defaultBranch.
 func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 	t.Helper()
 	src := t.TempDir()
@@ -83,7 +84,7 @@ func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 	if err := os.MkdirAll(filepath.Dir(bare), 0o755); err != nil {
 		t.Fatalf("make repo directory: %v", err)
 	}
-	git(t, src, "clone", "--bare", src, bare)
+	git(t, src, "clone", "--bare", "-c", "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*", src, bare)
 }
 
 // git runs a real git command in dir and fails the test if it does not.
@@ -321,6 +322,103 @@ func TestStartFetchesBeforeCuttingABranch(t *testing.T) {
 
 	if got := gitOut(t, bare, "rev-parse", "refs/remotes/origin/main"); got != tip {
 		t.Errorf("origin/main is at %s, want the tip the fetch should have brought down, %s", got, tip)
+	}
+}
+
+// TestStartCutsTheBranchFromTheFetchedRemoteBase locks in that a new branch
+// starts at the base as the remote has it, not at the local branch the clone
+// copied once and never moves.
+func TestStartCutsTheBranchFromTheFetchedRemoteBase(t *testing.T) {
+	workspace := t.TempDir()
+	remote := writeBareRepoWithRemote(t, workspace, "smith", "main")
+	tip := pushToOrigin(t, remote, "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if got := gitOut(t, dir, "rev-parse", "HEAD"); got != tip {
+		t.Errorf("worktree is at %s, want the remote's tip %s", got, tip)
+	}
+}
+
+// TestStartCutsTheBranchFromABaseTheRemoteDoesNotHave locks in that a base
+// with no remote-tracking ref — a tag here — is cut from as given.
+func TestStartCutsTheBranchFromABaseTheRemoteDoesNotHave(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepoWithRemote(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	git(t, bare, "tag", "v1", "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42", Base: "v1"}
+	if _, err := session.Start(context.Background(), env, req); err != nil {
+		t.Fatalf("Start(%+v) err = %v", req, err)
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	if got, want := gitOut(t, dir, "rev-parse", "HEAD"), gitOut(t, bare, "rev-parse", "v1^{commit}"); got != want {
+		t.Errorf("worktree is at %s, want the tag's commit %s", got, want)
+	}
+}
+
+// TestStartCutsABranchWithNoUpstream locks in that a cut branch does not
+// track its base, so a pull or push in the session never targets the base.
+func TestStartCutsABranchWithNoUpstream(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepoWithRemote(t, workspace, "smith", "main")
+	bare := filepath.Join(workspace, "smith", "repo.git")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	if err := gitFails(t, bare, "config", "--get", "branch.spec-42.merge"); err == nil {
+		t.Errorf("branch.spec-42.merge = %q, want it unset", gitOut(t, bare, "config", "--get", "branch.spec-42.merge"))
+	}
+}
+
+// TestListCountsNothingUnpushedOnAFreshlyCutBranch locks in that a branch
+// with no commits of its own reads as fully pushed.
+func TestListCountsNothingUnpushedOnAFreshlyCutBranch(t *testing.T) {
+	workspace := t.TempDir()
+	remote := writeBareRepoWithRemote(t, workspace, "smith", "main")
+	pushToOrigin(t, remote, "main")
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      &tmuxServer{},
+	}
+	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	got, err := session.List(context.Background(), env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	if len(got) != 1 || got[0].Unpushed != 0 {
+		t.Errorf("List() = %+v, want one session with 0 unpushed", got)
 	}
 }
 

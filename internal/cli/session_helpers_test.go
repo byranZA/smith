@@ -136,7 +136,8 @@ func resolvedBox(workspace string, repos ...string) boxResolver {
 }
 
 // writeBareRepo stands up a bare repo in the workspace the way the workspace
-// stage does — <workspace>/<repo>/repo.git — with one commit on main.
+// stage does — <workspace>/<repo>/repo.git, cloned with the refspec that
+// tracks its origin — with one commit on main.
 func writeBareRepo(t *testing.T, workspace, repo string) {
 	t.Helper()
 	src := t.TempDir()
@@ -155,7 +156,7 @@ func writeBareRepo(t *testing.T, workspace, repo string) {
 	if err := os.MkdirAll(filepath.Join(workspace, repo), 0o755); err != nil {
 		t.Fatalf("make repo directory: %v", err)
 	}
-	runGit(t, src, "clone", "--bare", src, filepath.Join(workspace, repo, "repo.git"))
+	runGit(t, src, "clone", "--bare", "-c", "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*", src, filepath.Join(workspace, repo, "repo.git"))
 }
 
 // runGit runs a real git command in dir and fails the test if it does not.

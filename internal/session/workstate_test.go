@@ -265,9 +265,6 @@ func writeBareRepoWithRemote(t *testing.T, workspace, repo, defaultBranch string
 	remote := filepath.Join(t.TempDir(), "origin.git")
 	git(t, bare, "clone", "--bare", bare, remote)
 	git(t, bare, "remote", "set-url", "origin", remote)
-	// A bare clone configures no fetch refspec, so the remote-tracking refs
-	// the count reads would never exist without one.
-	git(t, bare, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
 	git(t, bare, "fetch", "origin")
 	return remote
 }

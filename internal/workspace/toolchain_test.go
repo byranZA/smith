@@ -700,7 +700,8 @@ func TestConvergeRunsTheMiseTheBoxAlreadyHas(t *testing.T) {
 	if !box.ranExact(miseFile, "install") {
 		t.Errorf("the stage ran %v, want the pinned version installed by the mise on PATH", box.calls)
 	}
-	if !box.ranExact(miseFile, "exec", "--", "git", "clone", "--bare", b.Repos[0].URL,
+	if !box.ranExact(miseFile, "exec", "--", "git", "clone", "--bare",
+		"-c", "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*", b.Repos[0].URL,
 		filepath.Join(home, "workspace", "acme", cloneDir)) {
 		t.Errorf("the stage ran %v, want the clone run under the mise the box has", box.calls)
 	}

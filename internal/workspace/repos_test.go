@@ -51,8 +51,8 @@ func TestConvergeClonesADeclaredRepoBare(t *testing.T) {
 	if result.Failed() {
 		t.Fatalf("Result.Failed() = true, want false: %s", result.Report())
 	}
-	if want := "git clone --bare " + forge + " " + clonePath(home, "acme"); !box.ran(want) {
-		t.Errorf("the stage ran %v, want it to run %q", box.calls, want)
+	if want := forge + " " + clonePath(home, "acme"); !box.ran("git clone --bare") || !box.ran(want) {
+		t.Errorf("the stage ran %v, want a bare clone of %q", box.calls, want)
 	}
 	if !strings.Contains(progress, clonePath(home, "acme")) {
 		t.Errorf("progress = %q, want the clone reported as it completes", progress)

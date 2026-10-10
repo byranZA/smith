@@ -54,7 +54,7 @@ func TestConvergeContinuesPastAFailingRepo(t *testing.T) {
 	if !result.Failed() {
 		t.Fatalf("Result.Failed() = false, want the unreachable repo reported: %s", result.Report())
 	}
-	if want := "git clone --bare " + apiURL; !box.ran(want) {
+	if !box.ran("git clone --bare") || !box.ran(apiURL) {
 		t.Errorf("the stage ran %v, want it to clone the reachable repo anyway", box.calls)
 	}
 	if failed := failures(result); len(failed) != 1 {

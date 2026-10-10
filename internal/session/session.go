@@ -258,7 +258,8 @@ func (s standUp) worktree(ctx context.Context, env Env, worktrees []worktree, ex
 // path fetches. A branch cut from a stale base is a merge-time failure that
 // looks like anything but a session bug, and cutting is the one moment smith
 // is already touching the network, so the resume and connect paths pay
-// nothing for it.
+// nothing for it. The cut branch has no upstream, so a pull or push in the
+// session never targets the base it was cut from.
 func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool) error {
 	args := []string{"-C", s.bare, "worktree", "add", dir, s.branch}
 	if !exists {
@@ -275,7 +276,7 @@ func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool)
 				return err
 			}
 		}
-		args = []string{"-C", s.bare, "worktree", "add", "-b", s.branch, dir, base}
+		args = []string{"-C", s.bare, "worktree", "add", "--no-track", "-b", s.branch, dir, remoteBase(ctx, env.Git, s.bare, base)}
 	}
 	if _, err := run(ctx, env.Git, "git", args...); err != nil {
 		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", s.branch, s.repo.Name, dir, err)
@@ -291,6 +292,18 @@ func fetch(ctx context.Context, git Runner, bare, repo string) error {
 		return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
 	}
 	return nil
+}
+
+// remoteBase is the ref a branch cut from base starts at: origin's copy of it
+// when the fetch brought one down, since the clone's own branch of that name
+// is copied once and never moves, and base as given otherwise — a local-only
+// branch, a tag or a commit.
+func remoteBase(ctx context.Context, git Runner, bare, base string) string {
+	tracking := "refs/remotes/origin/" + base
+	if _, err := run(ctx, git, "git", "-C", bare, "rev-parse", "--verify", "--quiet", tracking); err != nil {
+		return base
+	}
+	return tracking
 }
 
 // branchExists reports whether the bare repo already holds that branch. It

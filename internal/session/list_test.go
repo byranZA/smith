@@ -100,9 +100,7 @@ func TestListReportsAStartedSessionWithItsTrueBranch(t *testing.T) {
 		t.Fatalf("List() err = %v", err)
 	}
 
-	// The bare repo the fixture clones has no remote-tracking refs, so the one
-	// commit the branch carries is on no remote and counts as unpushed.
-	want := []session.Session{{Name: "smith-smith-spec-42", Repo: "smith", Branch: "smith/spec-42", Live: true, Unpushed: 1}}
+	want := []session.Session{{Name: "smith-smith-spec-42", Repo: "smith", Branch: "smith/spec-42", Live: true}}
 	if len(got) != 1 || got[0] != want[0] {
 		t.Errorf("List() = %+v, want %+v", got, want)
 	}
