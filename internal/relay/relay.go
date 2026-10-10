@@ -268,10 +268,18 @@ func classify(v Verb, stderr string, err error) error {
 		return &NotInstalledError{Box: v.named()}
 	case code == RefusalExitCode:
 		return &MismatchError{Target: v.Target, Box: boxVersion(stderr), Local: v.Version}
+	case strings.Contains(stderr, predatesRelayedBox):
+		return &MismatchError{Target: v.Target, Local: v.Version}
 	default:
 		return &ExitError{Code: code, Target: v.Target}
 	}
 }
+
+// predatesRelayedBox is what a box's smith that predates --relayed-box says
+// about it. Such a smith fails to parse the command line before it can compare
+// versions and refuse, so this is read as the version mismatch it is, and the
+// operator is still offered the convergence that fixes it.
+const predatesRelayedBox = "unknown flag: --relayed-box"
 
 // RefusalExitCode is the status on-box smith exits with when it refuses a
 // command relayed by a smith of another version. It is a wire contract between
@@ -393,10 +401,12 @@ func (v Verb) named() string {
 }
 
 // remoteCmd renders the command line the box runs: the absolute path, the
-// version the relay is calling from, and the operator's own arguments, each
-// quoted so the box's shell hands them over as written.
+// version the relay is calling from, the box as the operator named it, and the
+// operator's own arguments, each quoted so the box's shell hands them over as
+// written. The name travels so a command the box suggests back names the box,
+// and so runs from where the operator reads it.
 func (v Verb) remoteCmd() string {
-	parts := []string{BoxSmith, "--relayed-from", connection.ShellArg(v.Version)}
+	parts := []string{BoxSmith, "--relayed-from", connection.ShellArg(v.Version), "--relayed-box", connection.ShellArg(v.named())}
 	for _, arg := range v.Args {
 		parts = append(parts, connection.ShellArg(arg))
 	}

@@ -46,7 +46,7 @@ func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writ
 	var err error
 	switch unit.Step {
 	case Placements:
-		summary, err = materialize(env.StateRoot, unit.Placement, env.owner())
+		summary, err = materialize(env, unit.Placement)
 	case Identity:
 		summary, err = setIdentity(ctx, env.Command, unit.Identity, progress)
 	case Packages:

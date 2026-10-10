@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // TestPlaceWritesTheStagedBytesIntoTheWorktree is the create path: a worktree
@@ -16,7 +17,7 @@ func TestPlaceWritesTheStagedBytesIntoTheWorktree(t *testing.T) {
 	worktree := t.TempDir()
 	stageRepoBytes(t, root, "smith", "config/.env", "TOKEN=staged\n")
 
-	result, err := Place(root, "smith", worktree, []blueprint.Placement{{From: "env:TOKEN", To: "config/.env"}})
+	result, err := Place(root, "smith", worktree, []blueprint.Placement{{From: "env:TOKEN", To: "config/.env"}}, hint.Invocation{})
 	if err != nil {
 		t.Fatalf("Place() err = %v", err)
 	}
@@ -42,7 +43,7 @@ func TestPlaceConvergesAnEditedFile(t *testing.T) {
 	stageRepoBytes(t, root, "smith", ".env", "TOKEN=staged\n")
 	writeAt(t, filepath.Join(worktree, ".env"), "TOKEN=edited\n")
 
-	result, err := Place(root, "smith", worktree, []blueprint.Placement{{To: ".env", Mode: "converge"}})
+	result, err := Place(root, "smith", worktree, []blueprint.Placement{{To: ".env", Mode: "converge"}}, hint.Invocation{})
 	if err != nil {
 		t.Fatalf("Place() err = %v", err)
 	}
@@ -63,7 +64,7 @@ func TestPlaceLeavesAWriteOnceFileAlone(t *testing.T) {
 	stageRepoBytes(t, root, "smith", ".env", "TOKEN=staged\n")
 	writeAt(t, filepath.Join(worktree, ".env"), "TOKEN=mine\n")
 
-	result, err := Place(root, "smith", worktree, []blueprint.Placement{{To: ".env", Mode: "once"}})
+	result, err := Place(root, "smith", worktree, []blueprint.Placement{{To: ".env", Mode: "once"}}, hint.Invocation{})
 	if err != nil {
 		t.Fatalf("Place() err = %v", err)
 	}
@@ -87,7 +88,7 @@ func TestPlaceWritesNothingWhenTheBytesAlreadyMatch(t *testing.T) {
 	writeAt(t, dest, "TOKEN=staged\n")
 	before := statAt(t, dest).ModTime()
 
-	result, err := Place(root, "smith", worktree, []blueprint.Placement{{To: ".env"}})
+	result, err := Place(root, "smith", worktree, []blueprint.Placement{{To: ".env"}}, hint.Invocation{})
 	if err != nil {
 		t.Fatalf("Place() err = %v", err)
 	}
@@ -109,7 +110,7 @@ func TestPlaceCarriesTheDeclaredPermissions(t *testing.T) {
 	dest := filepath.Join(worktree, "run.sh")
 	writeAt(t, dest, "old\n")
 
-	if _, err := Place(root, "smith", worktree, []blueprint.Placement{{To: "run.sh", Perms: "0755"}}); err != nil {
+	if _, err := Place(root, "smith", worktree, []blueprint.Placement{{To: "run.sh", Perms: "0755"}}, hint.Invocation{}); err != nil {
 		t.Fatalf("Place() err = %v", err)
 	}
 
@@ -125,7 +126,7 @@ func TestPlaceRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 	root := t.TempDir()
 	worktree := t.TempDir()
 
-	_, err := Place(root, "smith", worktree, []blueprint.Placement{{From: "file:/home/operator/.env", To: ".env"}})
+	_, err := Place(root, "smith", worktree, []blueprint.Placement{{From: "file:/home/operator/.env", To: ".env"}}, hint.Invocation{})
 
 	var missing *MissingPlacementError
 	if !errors.As(err, &missing) {

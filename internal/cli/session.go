@@ -12,6 +12,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/inventory"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/session"
@@ -30,23 +31,26 @@ type boxConfig struct {
 }
 
 // boxResolver reads the configuration the box smith is running on was built
-// from. It is passed into the session command rather than called inside it, so
+// from, for the command inv, which a refusal's suggested commands are spelled
+// for. It is passed into the session command rather than called inside it, so
 // a test drives the real command against a temp workspace.
-type boxResolver func() (boxConfig, error)
+type boxResolver func(inv hint.Invocation) (boxConfig, error)
 
 // stagedBoxConfig reads what `machine setup` staged on this box.
-func stagedBoxConfig() (boxConfig, error) { return stagedBoxConfigIn(staging.Root) }
+func stagedBoxConfig(inv hint.Invocation) (boxConfig, error) {
+	return stagedBoxConfigIn(staging.Root, inv)
+}
 
 // stagedBoxConfigIn reads the blueprint and the resolution staged under root.
 // A box with either one absent, or holding one that cannot be trusted, is
 // refused with the exit code its kind is owed; there is no fallback to
 // defaults, because a box resolves nothing itself.
-func stagedBoxConfigIn(root string) (boxConfig, error) {
-	b, err := staging.Load(root)
+func stagedBoxConfigIn(root string, inv hint.Invocation) (boxConfig, error) {
+	b, err := staging.Load(root, inv)
 	if err != nil {
 		return boxConfig{}, fmt.Errorf("read the blueprint staged on this box: %w", err)
 	}
-	r, err := stagedResolutionIn(root)
+	r, err := stagedResolutionIn(root, inv)
 	if err != nil {
 		return boxConfig{}, err
 	}
@@ -135,8 +139,7 @@ func (w sessionWiring) leadingBox(args []string) (string, []string, error) {
 }
 
 // verb renders the invocation the box is to run: the session verb by name, the
-// arguments it takes, and the flags the operator actually set, spelled back as
-// --flag=value so the box parses the command line they typed. The box target
+// arguments it takes, and the flags the operator actually set. The box target
 // is resolved here under the shared rule — an "@" is a literal target, a bare
 // value is looked up in the inventory — and an empty one is the verb running
 // on this machine.
@@ -145,11 +148,22 @@ func (w sessionWiring) verb(cmd *cobra.Command, name, box string, args ...string
 	if err != nil {
 		return relay.Verb{}, err
 	}
-	relayed := append([]string{"session", name}, args...)
-	cmd.Flags().Visit(func(f *pflag.Flag) {
-		relayed = append(relayed, "--"+f.Name+"="+f.Value.String())
-	})
+	relayed := append([]string{"session", name}, typed(cmd, args)...)
 	return relay.Verb{Target: target, Box: box, Version: w.version, Args: relayed}, nil
+}
+
+// typed spells a verb's own arguments back as the operator typed them: the
+// positional args, then every flag of the verb's own they set as
+// --flag=value, so the command line parses the same wherever it is run. The
+// root's relay flags are not the operator's and are left out.
+func typed(cmd *cobra.Command, args []string) []string {
+	spelled := append([]string(nil), args...)
+	cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			spelled = append(spelled, "--"+f.Name+"="+f.Value.String())
+		}
+	})
+	return spelled
 }
 
 // target resolves the box a verb named into the ssh target it relays to.
@@ -160,13 +174,14 @@ func (w sessionWiring) target(box string) (string, error) {
 // localEnv resolves what a verb running on this machine acts against: the
 // blueprint and resolution staged here, paired with the commands smith drives
 // the box with. A staged file that is absent or cannot be trusted travels out
-// untouched so it keeps the exit code its kind is owed.
-func (w sessionWiring) localEnv(cmd *cobra.Command, connect session.Execer) (session.Env, error) {
-	box, err := w.box()
+// untouched so it keeps the exit code its kind is owed. Every command the verb
+// suggests is spelled for inv.
+func (w sessionWiring) localEnv(cmd *cobra.Command, connect session.Execer, inv hint.Invocation) (session.Env, error) {
+	box, err := w.box(inv)
 	if err != nil {
 		return session.Env{}, err
 	}
-	env, err := sessionEnv(box, w.root, w.git, w.tmux, connect)
+	env, err := sessionEnv(box, w.root, w.git, w.tmux, connect, inv)
 	if err != nil {
 		return session.Env{}, reportInvalid(cmd, err)
 	}
@@ -243,7 +258,8 @@ func (w sessionWiring) dispatch(cmd *cobra.Command, args []string, v sessionVerb
 		if v.terminal {
 			connect = w.connect
 		}
-		env, err := w.localEnv(cmd, connect)
+		inv := invocation(cmd, "session "+v.name, typed(cmd, rest))
+		env, err := w.localEnv(cmd, connect, inv)
 		if err != nil {
 			return err
 		}
@@ -301,11 +317,11 @@ func newSessionListCmd(w sessionWiring) *cobra.Command {
 				if err != nil {
 					return reportInvalid(cmd, err)
 				}
-				render := session.Readout
+				listing := session.Readout(sessions, env.Hint)
 				if names {
-					render = session.Names
+					listing = session.Names(sessions)
 				}
-				if _, err := fmt.Fprint(cmd.OutOrStdout(), render(sessions)); err != nil {
+				if _, err := fmt.Fprint(cmd.OutOrStdout(), listing); err != nil {
 					return fmt.Errorf("write session listing: %w", err)
 				}
 				return nil
@@ -508,8 +524,9 @@ func writeOneRemoved(cmd *cobra.Command, removed session.Removal) error {
 
 // sessionEnv turns the box's staged configuration into what a session verb
 // runs against: an absolute workspace root and the repos the blueprint
-// declares, paired with the commands smith drives the box with.
-func sessionEnv(box boxConfig, root string, git, tmux session.Runner, connect session.Execer) (session.Env, error) {
+// declares, paired with the commands smith drives the box with and the command
+// inv its suggestions are spelled for.
+func sessionEnv(box boxConfig, root string, git, tmux session.Runner, connect session.Execer, inv hint.Invocation) (session.Env, error) {
 	workspace, err := boxPath(box.Resolution.Workspace)
 	if err != nil {
 		return session.Env{}, err
@@ -520,7 +537,8 @@ func sessionEnv(box boxConfig, root string, git, tmux session.Runner, connect se
 		Git:       git,
 		Tmux:      tmux,
 		Exec:      connect,
-		Placer:    stagedPlacer{root: root, repos: box.Repos},
+		Placer:    stagedPlacer{root: root, repos: box.Repos, hint: inv},
+		Hint:      inv,
 	}, nil
 }
 
@@ -535,6 +553,9 @@ type stagedPlacer struct {
 	// repos are the repos the box's blueprint declares, carrying the
 	// placements each one asks for in its worktrees.
 	repos []blueprint.Repo
+	// hint is the command the placement runs for, which a refusal's
+	// suggested command is spelled for.
+	hint hint.Invocation
 }
 
 // Place converges the named repo's declared placements into the worktree at
@@ -545,7 +566,7 @@ func (p stagedPlacer) Place(repo, dir string) error {
 		if r.Name != repo {
 			continue
 		}
-		if _, err := staging.Place(p.root, repo, dir, r.Placements); err != nil {
+		if _, err := staging.Place(p.root, repo, dir, r.Placements, p.hint); err != nil {
 			return fmt.Errorf("place the files repo %q declares into %s: %w", repo, dir, err)
 		}
 		return nil

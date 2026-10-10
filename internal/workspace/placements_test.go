@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -241,6 +242,22 @@ func TestConvergeRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 	}
 	if !strings.Contains(progress, "machine setup") {
 		t.Errorf("progress = %q, want the refusal reported as it happens", progress)
+	}
+}
+
+func TestConvergeRelayedNamesTheBoxInTheRestageCommand(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	b := blueprint.Blueprint{Placements: []blueprint.Placement{
+		{From: "file:~/npmrc", To: "~/.npmrc", Mode: "converge"},
+	}}
+	env := Env{Command: box(), StateRoot: root, Hint: hint.Invocation{Box: "smith-dev", Verb: "workspace converge"}}
+
+	result, err := Converge(context.Background(), env, Plan(b, resolved, home), io.Discard)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	if got := result.Outcomes[0].Err; got == nil || !strings.Contains(got.Error(), ": run `smith machine setup smith-dev` to stage them") {
+		t.Errorf("Converge() refusal = %v, want it to name `smith machine setup smith-dev`", got)
 	}
 }
 

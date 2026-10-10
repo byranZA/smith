@@ -144,7 +144,7 @@ const installer = "https://mise.run"
 // and may hold the operator's settings, and smith writes generated files by
 // whole-file replacement.
 func convergeToolchain(ctx context.Context, env Env, m *mise, f Fragment, progress io.Writer) (string, error) {
-	values, err := stagedValues(env.StateRoot, f.Repo, f.Env)
+	values, err := stagedValues(env, f.Repo, f.Env)
 	if err != nil {
 		return "", err
 	}
@@ -179,7 +179,7 @@ func installArgs(dir string) []string {
 }
 
 // stagedValues reads the value of every variable the fragment exports out of
-// what `machine setup` staged under root.
+// what `machine setup` staged under the run's state root.
 //
 // Nothing is resolved here, for any scheme. env:GITHUB_TOKEN names a variable
 // in the operator's shell and file:~/.secrets/token a path on their disk, so a
@@ -188,13 +188,13 @@ func installArgs(dir string) []string {
 // were read on the operator's machine at `machine setup` and staged; a variable
 // with no staged value fails the step by name rather than falling back to the
 // box.
-func stagedValues(root, repo string, names []string) (map[string]string, error) {
+func stagedValues(env Env, repo string, names []string) (map[string]string, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
 	values := make(map[string]string, len(names))
 	for _, name := range names {
-		value, err := staging.ReadValue(root, repo, name)
+		value, err := staging.ReadValue(env.StateRoot, repo, name, env.Hint)
 		if err != nil {
 			return nil, fmt.Errorf("export %s: %w", name, err)
 		}

@@ -71,7 +71,7 @@ func (r *pipelineRun) stages(stdout, stderr io.Writer) []bootstrap.Stage {
 			return stageConfig(ctx, connection.New(r.reach(), r.exec), r.staged, stdout)
 		}},
 		{Name: "workspace", Run: func(ctx context.Context) error {
-			return convergeWorkspace(ctx, r.exec, r.reach(), r.localVersion, r.staged, stdout, stderr)
+			return convergeWorkspace(ctx, r.exec, r.reach(), r.box, r.localVersion, r.staged, stdout, stderr)
 		}},
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 )
@@ -130,7 +131,7 @@ func resolvedBox(workspace string, repos ...string) boxResolver {
 	for i, repo := range repos {
 		declared[i] = blueprint.Repo{Name: repo, URL: "git@example.com:acme/" + repo + ".git"}
 	}
-	return func() (boxConfig, error) {
+	return func(hint.Invocation) (boxConfig, error) {
 		return boxConfig{Repos: declared, Resolution: staging.Resolution{Workspace: workspace}}, nil
 	}
 }
@@ -252,7 +253,7 @@ func resolvedBoxPlacing(workspace, repo string, to ...string) boxResolver {
 	for i, at := range to {
 		placements[i] = blueprint.Placement{From: "file:secrets/env", To: at}
 	}
-	return func() (boxConfig, error) {
+	return func(hint.Invocation) (boxConfig, error) {
 		return boxConfig{
 			Resolution: staging.Resolution{Workspace: workspace},
 			Repos: []blueprint.Repo{{

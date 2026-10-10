@@ -7,22 +7,24 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/workspace"
 )
 
 // stagedResolver reads the blueprint the box smith is running on was built
-// from. It is passed into the workspace command rather than called inside it,
+// from, for the command inv, which a refusal's suggested command is spelled
+// for. It is passed into the workspace command rather than called inside it,
 // so a test drives the real command against a document of its own.
-type stagedResolver func() (blueprint.Blueprint, error)
+type stagedResolver func(inv hint.Invocation) (blueprint.Blueprint, error)
 
 // stagedBlueprint reads what `machine setup` staged on this box. A box with
 // nothing staged, or a staged document that cannot be trusted, travels out
 // untouched so it keeps the exit code its kind is owed — the refusals are
 // inherited from the staged-config contract, never redefined here.
-func stagedBlueprint() (blueprint.Blueprint, error) {
-	b, err := staging.Load(staging.Root)
+func stagedBlueprint(inv hint.Invocation) (blueprint.Blueprint, error) {
+	b, err := staging.Load(staging.Root, inv)
 	if err != nil {
 		return blueprint.Blueprint{}, fmt.Errorf("read the blueprint staged on this box: %w", err)
 	}
@@ -32,18 +34,21 @@ func stagedBlueprint() (blueprint.Blueprint, error) {
 // resolutionReader reads the resolution staged beside the blueprint: the
 // fixed-key fields the operator's machine resolved. It is passed into the
 // workspace command rather than called inside it, so a test drives the real
-// command against a resolution of its own.
-type resolutionReader func() (staging.Resolution, error)
+// command against a resolution of its own. A refusal's suggested command is
+// spelled for inv.
+type resolutionReader func(inv hint.Invocation) (staging.Resolution, error)
 
 // stagedResolution reads the resolution `machine setup` staged on this box.
-func stagedResolution() (staging.Resolution, error) { return stagedResolutionIn(staging.Root) }
+func stagedResolution(inv hint.Invocation) (staging.Resolution, error) {
+	return stagedResolutionIn(staging.Root, inv)
+}
 
 // stagedResolutionIn reads the resolution staged under root. A box staged
 // before the resolution existed, or one whose resolution cannot be parsed,
 // travels out untouched so it keeps the exit code its kind is owed; there is
 // no fallback to defaults, because a box resolves nothing itself.
-func stagedResolutionIn(root string) (staging.Resolution, error) {
-	r, err := staging.LoadResolution(root)
+func stagedResolutionIn(root string, inv hint.Invocation) (staging.Resolution, error) {
+	r, err := staging.LoadResolution(root, inv)
 	if err != nil {
 		return staging.Resolution{}, fmt.Errorf("read the resolution staged on this box: %w", err)
 	}
@@ -139,11 +144,12 @@ func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 // progress to the operator's terminal as each step finishes. The final summary follows it, and a run with a failed
 // step exits non-zero having already said which one.
 func (w workspaceWiring) converge(cmd *cobra.Command) error {
-	b, err := w.blueprint()
+	inv := invocation(cmd, "workspace converge", nil)
+	b, err := w.blueprint(inv)
 	if err != nil {
 		return err
 	}
-	r, err := w.resolution()
+	r, err := w.resolution(inv)
 	if err != nil {
 		return err
 	}
@@ -152,7 +158,7 @@ func (w workspaceWiring) converge(cmd *cobra.Command) error {
 		return fmt.Errorf("locate the smith user's home on this box: %w", err)
 	}
 	stdout := cmd.OutOrStdout()
-	env := workspace.Env{Command: w.command, StateRoot: w.root, Owner: workspace.SmithUser{}}
+	env := workspace.Env{Command: w.command, StateRoot: w.root, Owner: workspace.SmithUser{}, Hint: inv}
 	result, err := workspace.Converge(cmd.Context(), env, workspace.Plan(b, r, home), stdout)
 	if err != nil {
 		return fmt.Errorf("converge this box's workspace: %w", err)

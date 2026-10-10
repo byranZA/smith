@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // stage writes document as the staged blueprint of a box rooted at a fresh
@@ -33,7 +34,7 @@ repos:
     url: git@github.com:acme/api.git
 `)
 
-	b, err := Load(root)
+	b, err := Load(root, hint.Invocation{})
 	if err != nil {
 		t.Fatalf("Load() err = %v, want nil", err)
 	}
@@ -54,7 +55,7 @@ repos:
 func TestLoadRefusesAnAbsentStagedBlueprintAsAbsent(t *testing.T) {
 	root := t.TempDir()
 
-	_, err := Load(root)
+	_, err := Load(root, hint.Invocation{})
 	var absent *AbsentError
 	if !errors.As(err, &absent) {
 		t.Fatalf("Load() err = %v, want an *AbsentError", err)
@@ -70,7 +71,7 @@ func TestLoadRefusesAnAbsentStagedBlueprintAsAbsent(t *testing.T) {
 func TestLoadRefusesATruncatedStagedBlueprintAsMalformed(t *testing.T) {
 	root := stage(t, "repos:\n  - name: \"api\n")
 
-	_, err := Load(root)
+	_, err := Load(root, hint.Invocation{})
 	var malformed *MalformedError
 	if !errors.As(err, &malformed) {
 		t.Fatalf("Load() err = %v, want a *MalformedError", err)
@@ -83,7 +84,7 @@ func TestLoadRefusesATruncatedStagedBlueprintAsMalformed(t *testing.T) {
 func TestLoadRefusesAnUnknownKeyNamingTheKeyAndItsLine(t *testing.T) {
 	root := stage(t, "access: tailscale\nterminals: tmux\n")
 
-	_, err := Load(root)
+	_, err := Load(root, hint.Invocation{})
 	var malformed *MalformedError
 	if !errors.As(err, &malformed) {
 		t.Fatalf("Load() err = %v, want a *MalformedError", err)
@@ -96,8 +97,8 @@ func TestLoadRefusesAnUnknownKeyNamingTheKeyAndItsLine(t *testing.T) {
 }
 
 func TestLoadWordsTheTwoRefusalsApart(t *testing.T) {
-	_, absent := Load(t.TempDir())
-	_, malformed := Load(stage(t, "repos:\n  - name: \"api\n"))
+	_, absent := Load(t.TempDir(), hint.Invocation{})
+	_, malformed := Load(stage(t, "repos:\n  - name: \"api\n"), hint.Invocation{})
 
 	if absent == nil || malformed == nil {
 		t.Fatalf("Load() errs = %v, %v, want both refused", absent, malformed)
@@ -149,7 +150,7 @@ func TestReadPlacementReadsABoxScopedPlacementsStagedBytes(t *testing.T) {
 	root := t.TempDir()
 	stagePlacement(t, BoxPlacementPathIn(root, "/home/smith/.npmrc"), "//registry:_authToken=t0ken\n")
 
-	got, err := ReadPlacement(root, "", "/home/smith/.npmrc")
+	got, err := ReadPlacement(root, "", "/home/smith/.npmrc", hint.Invocation{})
 	if err != nil {
 		t.Fatalf("ReadPlacement() err = %v, want nil", err)
 	}
@@ -162,7 +163,7 @@ func TestReadPlacementReadsATildeDestinationFromItsCanonicalKey(t *testing.T) {
 	root := t.TempDir()
 	stagePlacement(t, BoxPlacementPathIn(root, "/home/smith/.npmrc"), "canonical\n")
 
-	got, err := ReadPlacement(root, "", "~/.npmrc")
+	got, err := ReadPlacement(root, "", "~/.npmrc", hint.Invocation{})
 	if err != nil {
 		t.Fatalf("ReadPlacement() err = %v, want nil", err)
 	}
@@ -175,7 +176,7 @@ func TestReadPlacementReadsARepoScopedPlacementsStagedBytes(t *testing.T) {
 	root := t.TempDir()
 	stagePlacement(t, RepoPlacementPathIn(root, "api", ".env"), "DATABASE_URL=postgres://local\n")
 
-	got, err := ReadPlacement(root, "api", ".env")
+	got, err := ReadPlacement(root, "api", ".env", hint.Invocation{})
 	if err != nil {
 		t.Fatalf("ReadPlacement() err = %v, want nil", err)
 	}
@@ -200,7 +201,7 @@ func TestReadPlacementReadsEveryPlacementTheWriterStaged(t *testing.T) {
 	}
 
 	for i, p := range tree.Placements {
-		got, err := ReadPlacement(root, p.Repo, p.Destination)
+		got, err := ReadPlacement(root, p.Repo, p.Destination, hint.Invocation{})
 		if err != nil {
 			t.Fatalf("ReadPlacement(%q, %q) err = %v, want nil", p.Repo, p.Destination, err)
 		}
@@ -213,7 +214,7 @@ func TestReadPlacementReadsEveryPlacementTheWriterStaged(t *testing.T) {
 func TestReadPlacementRefusesAPlacementWithNoStagedBytes(t *testing.T) {
 	root := t.TempDir()
 
-	_, err := ReadPlacement(root, "api", ".env")
+	_, err := ReadPlacement(root, "api", ".env", hint.Invocation{})
 	var missing *MissingPlacementError
 	if !errors.As(err, &missing) {
 		t.Fatalf("ReadPlacement() err = %v, want a *MissingPlacementError", err)
@@ -239,7 +240,7 @@ func TestReadPlacementResolvesNoSourceReference(t *testing.T) {
 		{"", "/home/smith/.npmrc"},
 		{"api", ".env"},
 	} {
-		got, err := ReadPlacement(root, tt.repo, tt.destination)
+		got, err := ReadPlacement(root, tt.repo, tt.destination, hint.Invocation{})
 		if err != nil {
 			t.Fatalf("ReadPlacement(%q, %q) err = %v, want nil", tt.repo, tt.destination, err)
 		}

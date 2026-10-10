@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // EnvPath is where the blueprint's env is staged on the box, with every value
@@ -72,12 +74,15 @@ type MissingValueError struct {
 	Name string
 	// Path is the staged env its value was looked for in.
 	Path string
+	// Hint is the command that met the refusal, which the command it
+	// suggests is spelled for.
+	Hint hint.Invocation
 }
 
 // Error implements error.
 func (e *MissingValueError) Error() string {
 	return fmt.Sprintf("the variable %s%s has no staged value in %s: %s to stage one",
-		e.scope(), e.Name, e.Path, restage)
+		e.scope(), e.Name, e.Path, restage(e.Hint))
 }
 
 // scope names the repo a variable is scoped to, so the refusal reads as the
@@ -107,10 +112,10 @@ func EnvPathIn(root string) string {
 // consulting its own environment or filesystem for either would export
 // something else entirely, or nothing. A declared variable with no staged
 // value is refused as a *MissingValueError naming it rather than falling back
-// to what the box happens to hold.
-func ReadValue(root, repo, name string) (string, error) {
+// to what the box happens to hold, its suggested command spelled for inv.
+func ReadValue(root, repo, name string, inv hint.Invocation) (string, error) {
 	path := EnvPathIn(root)
-	missing := &MissingValueError{Repo: repo, Name: name, Path: path}
+	missing := &MissingValueError{Repo: repo, Name: name, Path: path, Hint: inv}
 	data, err := os.ReadFile(path) // #nosec G304 -- the staged env sits at a path smith derives itself.
 	if err != nil {
 		if os.IsNotExist(err) {

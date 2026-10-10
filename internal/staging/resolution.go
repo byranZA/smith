@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // ResolutionPath is where the operator's resolved configuration is staged on
@@ -73,22 +74,23 @@ func ResolutionPathIn(root string) string {
 
 // LoadResolution reads the resolution staged under root, never falling back to a
 // default. An absent file is an *AbsentError; an unparsable, incomplete or
-// unrecognised one is a *MalformedError.
-func LoadResolution(root string) (Resolution, error) {
+// unrecognised one is a *MalformedError, either spelling its suggested command
+// for inv.
+func LoadResolution(root string, inv hint.Invocation) (Resolution, error) {
 	path := ResolutionPathIn(root)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Resolution{}, &AbsentError{Path: path}
+			return Resolution{}, &AbsentError{Path: path, Hint: inv}
 		}
 		return Resolution{}, fmt.Errorf("read staged resolution %s: %w", path, err)
 	}
 	var r Resolution
 	if err := json.Unmarshal(data, &r); err != nil {
-		return Resolution{}, &MalformedError{Path: path, Err: err}
+		return Resolution{}, &MalformedError{Path: path, Err: err, Hint: inv}
 	}
 	if err := r.validate(); err != nil {
-		return Resolution{}, &MalformedError{Path: path, Err: err}
+		return Resolution{}, &MalformedError{Path: path, Err: err, Hint: inv}
 	}
 	return r, nil
 }

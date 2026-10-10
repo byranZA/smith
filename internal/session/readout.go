@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/byranZA/smith/internal/hint"
 )
 
-// startHint is the command an operator with no sessions runs next. A listing
-// that only said "nothing here" would leave them to go and look it up.
-const startHint = "Start one with:\n  smith session start --repo <name> --branch <name>"
+// startHint is the command an operator with no sessions runs next, spelled for
+// inv. A listing that only said "nothing here" would leave them to go and look
+// it up.
+func startHint(inv hint.Invocation) string {
+	return "Start one with:\n  " + inv.Command("session start", "--repo", "<name>", "--branch", "<name>")
+}
 
 // notApplicable is what a column with nothing to report renders as: a worktree
 // that is not dirty, and a detached worktree that has no branch to count
@@ -27,11 +32,11 @@ const notApplicable = "-"
 //
 // The summary line is printed unconditionally, including when there is nothing
 // to list, because the reassuring read before a hand-teardown only reassures if
-// it cannot be absent.
-func Readout(sessions []Session) string {
+// it cannot be absent. The command it suggests is spelled for inv.
+func Readout(sessions []Session, inv hint.Invocation) string {
 	var b strings.Builder
 	if len(sessions) == 0 {
-		fmt.Fprintf(&b, "no sessions\n\n%s\n", startHint)
+		fmt.Fprintf(&b, "no sessions\n\n%s\n", startHint(inv))
 		return b.String()
 	}
 

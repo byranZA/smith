@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/hint"
 )
 
 // declaresEnv is a blueprint exporting one variable on the box and one in a
@@ -106,7 +107,7 @@ func TestResolveStagesTheValueOfEveryDeclaredReference(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.scope, func(t *testing.T) {
-			got, err := ReadValue(root, tt.repo, tt.name)
+			got, err := ReadValue(root, tt.repo, tt.name, hint.Invocation{})
 			if err != nil {
 				t.Fatalf("ReadValue() error = %v", err)
 			}
@@ -172,7 +173,7 @@ func TestReadValueRefusesAVariableWithNoStagedValue(t *testing.T) {
 	stageEnv(t, root, tree)
 	t.Setenv("UNDECLARED", "from-the-box")
 
-	_, err = ReadValue(root, "", "UNDECLARED")
+	_, err = ReadValue(root, "", "UNDECLARED", hint.Invocation{})
 
 	if err == nil {
 		t.Fatal("ReadValue() error = nil, want a variable with no staged value refused")
@@ -194,7 +195,7 @@ func TestReadValueRefusesAVariableWithNoStagedValue(t *testing.T) {
 func TestReadValueRefusesOnABoxWithNothingStaged(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "from-the-box")
 
-	_, err := ReadValue(t.TempDir(), "", "GITHUB_TOKEN")
+	_, err := ReadValue(t.TempDir(), "", "GITHUB_TOKEN", hint.Invocation{})
 
 	var missing *MissingValueError
 	if !errors.As(err, &missing) {

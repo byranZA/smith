@@ -25,7 +25,8 @@ const defaultPerms = "0600"
 const dirMode = 0o700
 
 // materialize puts one box-scoped placement on disk from the bytes `machine
-// setup` staged under root, and reports what it did to the destination.
+// setup` staged under the run's state root, and reports what it did to the
+// destination.
 //
 // The two modes are the whole of the rule. A converge placement is whole-file
 // replacement, never a merge — smith does not parse the file, so it cannot
@@ -51,12 +52,12 @@ const dirMode = 0o700
 // reference that would resolve to the wrong thing. The file is smith-owned by
 // construction: on-box smith runs as the smith user, so what it writes belongs
 // to that account.
-func materialize(root string, p Placement, owner Owner) (string, error) {
+func materialize(env Env, p Placement) (string, error) {
 	current, exists, err := onBox(p.Path)
 	if err != nil {
 		return "", err
 	}
-	staged, err := staging.ReadPlacement(root, "", p.Destination)
+	staged, err := staging.ReadPlacement(env.StateRoot, "", p.Destination, env.Hint)
 	if err != nil {
 		return "", fmt.Errorf("place the file at %s: %w", p.Path, err)
 	}
@@ -68,7 +69,7 @@ func materialize(root string, p Placement, owner Owner) (string, error) {
 		return "", err
 	}
 	if exists && bytes.Equal(current, staged) {
-		return reconcile(p.Path, mode, owner)
+		return reconcile(p.Path, mode, env.owner())
 	}
 	if err := put(p.Path, staged, mode); err != nil {
 		return "", err

@@ -14,7 +14,7 @@ func TestConvergeWorkspaceRelaysTheStageToTheBox(t *testing.T) {
 	ssh := &fakeSSHRelay{stdout: "workspace: 1 step converged\n"}
 	var out, errBuf bytes.Buffer
 
-	if err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "0.2.0", nil, &out, &errBuf); err != nil {
+	if err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "smith-dev", "0.2.0", nil, &out, &errBuf); err != nil {
 		t.Fatalf("convergeWorkspace() err = %v, want nil", err)
 	}
 	if len(ssh.calls) != 0 {
@@ -23,11 +23,11 @@ func TestConvergeWorkspaceRelaysTheStageToTheBox(t *testing.T) {
 
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "packages:\n  - ripgrep\n")
-	if err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "0.2.0", stagedOrFatal(t, dir, "acme"), &out, &errBuf); err != nil {
+	if err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "smith-dev", "0.2.0", stagedOrFatal(t, dir, "acme"), &out, &errBuf); err != nil {
 		t.Fatalf("convergeWorkspace() err = %v, want nil", err)
 	}
 	line := ssh.line(t)
-	for _, want := range []string{"smith@10.0.0.4", "/usr/local/bin/smith", "--relayed-from '0.2.0'", "'workspace' 'converge'"} {
+	for _, want := range []string{"smith@10.0.0.4", "/usr/local/bin/smith", "--relayed-from '0.2.0' --relayed-box 'smith-dev' 'workspace' 'converge'"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("ssh argv = %q, want it to contain %q", line, want)
 		}
@@ -47,7 +47,7 @@ func TestConvergeWorkspaceReportsAStageTheBoxRefused(t *testing.T) {
 	ssh := &fakeSSHRelay{err: relayExit(1)}
 	var out, errBuf bytes.Buffer
 
-	err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "0.2.0", stagedOrFatal(t, dir, "acme"), &out, &errBuf)
+	err := convergeWorkspace(context.Background(), ssh, "smith@10.0.0.4", "smith-dev", "0.2.0", stagedOrFatal(t, dir, "acme"), &out, &errBuf)
 
 	if err == nil {
 		t.Fatal("convergeWorkspace() err = nil, want the box's refusal reported")

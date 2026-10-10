@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"github.com/spf13/cobra"
+
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/relay"
 )
 
@@ -24,6 +27,22 @@ type relayRefusedError struct {
 // smith reads this binary's version back out of it.
 func (e *relayRefusedError) Error() string {
 	return relay.Refusal(e.local, e.relayedFrom)
+}
+
+// relayedBoxFlag is the hidden root flag the relay names the box with, as the
+// operator named it. Like --relayed-from it is present only on a relayed
+// command line, so its absence is a command typed on the box.
+const relayedBoxFlag = "relayed-box"
+
+// invocation is the command an on-box verb answers, for spelling the commands
+// it suggests: verb with args as the operator typed them, and the box they
+// relayed it to when they did.
+func invocation(cmd *cobra.Command, verb string, args []string) hint.Invocation {
+	var box string
+	if f := cmd.Flag(relayedBoxFlag); f != nil {
+		box = f.Value.String()
+	}
+	return hint.Invocation{Box: box, Verb: verb, Args: args}
 }
 
 // acceptRelayedFrom decides whether on-box smith may run a command a relaying

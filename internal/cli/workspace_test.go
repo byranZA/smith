@@ -13,6 +13,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -83,12 +84,12 @@ func (f *fakeBox) line(t *testing.T) string {
 
 // staged answers with the blueprint a box holds staged.
 func staged(b blueprint.Blueprint) stagedResolver {
-	return func() (blueprint.Blueprint, error) { return b, nil }
+	return func(hint.Invocation) (blueprint.Blueprint, error) { return b, nil }
 }
 
 // resolvedAs answers with a staged resolution whose workspace root is workspace.
 func resolvedAs(workspace string) resolutionReader {
-	return func() (staging.Resolution, error) {
+	return func(hint.Invocation) (staging.Resolution, error) {
 		return staging.Resolution{Access: "public", Terminal: "tmux", Workspace: workspace}, nil
 	}
 }
@@ -143,7 +144,7 @@ func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
 	w := workspaceWiring{
 		blueprint: staged(blueprint.Blueprint{}),
 		command:   box,
-		resolution: func() (staging.Resolution, error) {
+		resolution: func(hint.Invocation) (staging.Resolution, error) {
 			return staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace",
 				Git: staging.Identity{UserName: "Ada", UserEmail: "ada@example.com"}}, nil
 		},
@@ -172,7 +173,7 @@ func TestWorkspaceConvergeFailsOnAFailedIdentityWrite(t *testing.T) {
 	w := workspaceWiring{
 		blueprint: staged(blueprint.Blueprint{}),
 		command:   box,
-		resolution: func() (staging.Resolution, error) {
+		resolution: func(hint.Invocation) (staging.Resolution, error) {
 			return staging.Resolution{Workspace: "~/workspace", Git: staging.Identity{UserEmail: "ada@example.com"}}, nil
 		},
 		boxHome: boxHomeAt(t.TempDir()),
@@ -193,7 +194,7 @@ func TestWorkspaceConvergeFailsOnAFailedIdentityWrite(t *testing.T) {
 func TestWorkspaceConvergeRefusesWithNothingStaged(t *testing.T) {
 	box := &fakeBox{}
 	w := workspaceWiring{
-		blueprint: func() (blueprint.Blueprint, error) {
+		blueprint: func(hint.Invocation) (blueprint.Blueprint, error) {
 			return blueprint.Blueprint{}, &staging.AbsentError{Path: staging.DocumentPath}
 		},
 		command:    box,
@@ -438,7 +439,7 @@ func TestWorkspaceConvergeRefusesABoxWithNoUsableStagedResolution(t *testing.T) 
 			box := &fakeBox{}
 			w := workspaceWiring{
 				blueprint:  staged(blueprint.Blueprint{Repos: []blueprint.Repo{{Name: "api", URL: "https://forge.test/api.git"}}}),
-				resolution: func() (staging.Resolution, error) { return stagedResolutionIn(root) },
+				resolution: func(inv hint.Invocation) (staging.Resolution, error) { return stagedResolutionIn(root, inv) },
 				command:    box,
 				root:       root,
 				boxHome:    boxHomeAt(t.TempDir()),
