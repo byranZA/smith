@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -243,4 +244,24 @@ func TestGatherClassifiesAFailedProbe(t *testing.T) {
 			t.Errorf("Gather() error = %v, want the run failure", err)
 		}
 	})
+}
+
+func TestGatherKeepsTheClassifiedConnectFailure(t *testing.T) {
+	refused := fmt.Errorf("ssh root@box: %w", connection.ErrAuthRefused)
+	tests := []struct {
+		name   string
+		conn   *scriptedConn
+		script *shipped.Fake
+	}{
+		{"reach check", &scriptedConn{err: refused}, probing(publicProbe)},
+		{"shipped probe", &scriptedConn{}, failing(fmt.Errorf("run bootstrap.sh probe: %w", refused))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, err := NewProber(tt.conn, tt.script, &fakeAdmin{}).Gather(context.Background())
+			if err != nil || g.Reachable || !errors.Is(g.ConnectErr, connection.ErrAuthRefused) {
+				t.Errorf("Gather() = %+v, %v, want unreachable carrying ErrAuthRefused", g, err)
+			}
+		})
+	}
 }

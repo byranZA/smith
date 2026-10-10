@@ -49,3 +49,21 @@ func TestReachableSurfacesAnythingElseAsAnError(t *testing.T) {
 		t.Error("Reachable() = true, want false alongside an error")
 	}
 }
+
+func TestReachableAnswersNotReachableForEveryKindOfConnectFailure(t *testing.T) {
+	t.Parallel()
+	for _, stderr := range []string{
+		"Permission denied (publickey)\n",
+		"ssh: connect to host box port 22: Connection timed out\n",
+		"kex_exchange_identification: read: Connection reset by peer\n",
+		"",
+	} {
+		t.Run(stderr, func(t *testing.T) {
+			t.Parallel()
+			got, err := Reachable(context.Background(), New("root@box", &recordingExec{exitCode: 255, replyStderr: stderr}))
+			if err != nil || got {
+				t.Errorf("Reachable() = (%v, %v), want (false, nil)", got, err)
+			}
+		})
+	}
+}

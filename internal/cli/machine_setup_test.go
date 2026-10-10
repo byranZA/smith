@@ -37,6 +37,8 @@ type setupSSH struct {
 	// answer — the shape of a box smith cannot prove it can reach by the
 	// address it is about to write down.
 	deafAt string
+	// deafStderr is what ssh writes to stderr when the deafAt probe fails.
+	deafStderr string
 	// machine is the machine hardware name `uname -m` prints on the box, which
 	// the install stage reads to pick the release asset to fetch.
 	machine string
@@ -73,7 +75,7 @@ type setupSSH struct {
 
 // Run answers whichever local binary the run launched, recording every ssh
 // destination it was pointed at.
-func (s *setupSSH) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, _ io.Writer) error {
+func (s *setupSSH) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if name == "tailscale" {
 		status := adminOnTailnet
 		if s.adminOffTailnet {
@@ -111,6 +113,9 @@ func (s *setupSSH) Run(_ context.Context, name string, args []string, stdin io.R
 	}
 	s.inputs = append(s.inputs, input)
 	if target == s.deafAt && remoteCmd == "true" {
+		if _, err := io.WriteString(stderr, s.deafStderr); err != nil {
+			return err
+		}
 		return refusedExit{}
 	}
 	if answered, err := answerVersionCheck(remoteCmd, stdout); answered {
@@ -380,6 +385,46 @@ func TestSetupReportsAProvisionedButUnregisteredBoxWhenItCannotProveReach(t *tes
 	}
 }
 
+func TestSetupSaysWhyItCouldNotReachTheBoxAsTheSmithUser(t *testing.T) {
+	tests := []struct {
+		name   string
+		stderr string
+		want   []string
+	}{
+		{
+			name:   "key refused",
+			stderr: "smith@203.0.113.10: Permission denied (publickey).\n",
+			want:   []string{"refused the key", "ssh-agent"},
+		},
+		{
+			name:   "no answer",
+			stderr: "ssh: connect to host 203.0.113.10 port 22: Connection timed out\n",
+			want:   []string{"did not answer", "port 22"},
+		},
+		{
+			name:   "unrecognised",
+			stderr: "kex_exchange_identification: read: Connection reset by peer\n",
+			want:   []string{"could not connect", "kex_exchange_identification: read: Connection reset by peer"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ssh := &setupSSH{deafAt: "smith@203.0.113.10", deafStderr: tt.stderr}
+
+			_, stderr, code := runSetup(t, t.TempDir(), ssh, "--name", "dev", "root@203.0.113.10")
+
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1: the phases completed, so a probe failure is partial", code)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr = %q, want it to say %q", stderr, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSetupCreatesTheConfigHomeWhenItRegisters(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "smith")
 
@@ -554,4 +599,48 @@ func answerVersionCheck(remoteCmd string, stdout io.Writer) (bool, error) {
 		return true, fmt.Errorf("write the box's version: %w", err)
 	}
 	return true, nil
+}
+
+// unconnectableSSH is a box ssh cannot connect to, writing stderr as ssh does.
+type unconnectableSSH struct{ stderr string }
+
+func (u unconnectableSSH) Run(_ context.Context, _ string, _ []string, _ io.Reader, _, stderr io.Writer) error {
+	if _, err := io.WriteString(stderr, u.stderr); err != nil {
+		return err
+	}
+	return refusedExit{}
+}
+
+func TestSetupTellsAKeyRefusalApartFromAnUnreachableBox(t *testing.T) {
+	tests := []struct {
+		name   string
+		stderr string
+		want   string
+		not    string
+	}{
+		{"key refused", "root@203.0.113.10: Permission denied (publickey).\n", "refused the key", "did not answer"},
+		{"no answer", "ssh: connect to host 203.0.113.10 port 22: Connection timed out\n", "did not answer", "refused the key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newMachineCmd(
+				func() (config.Home, error) { return config.NewHome(t.TempDir()), nil },
+				unconnectableSSH{stderr: tt.stderr}, &fakeDialer{}, provider.SystemClock(),
+			)
+			cmd.SetArgs([]string{"setup", "--smith-version", "0.2.0", "root@203.0.113.10"})
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+
+			code := codeFromError(cmd.Execute())
+
+			if code != 3 {
+				t.Errorf("exit code = %d, want 3 for a connect failure", code)
+			}
+			if !strings.Contains(out.String(), tt.want) || strings.Contains(out.String(), tt.not) {
+				t.Errorf("output = %q, want it to say %q and not %q", out.String(), tt.want, tt.not)
+			}
+		})
+	}
 }

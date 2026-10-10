@@ -1,6 +1,7 @@
 package status
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -244,5 +245,13 @@ func TestReconcileReportsAPreviousSchemaMarkersFacts(t *testing.T) {
 	}
 	if !strings.Contains(r.String(), "older smith schema") {
 		t.Errorf("report = %q, want it to note the older marker schema", r.String())
+	}
+}
+
+func TestUnreachableReportSaysWhyTheConnectionFailed(t *testing.T) {
+	out := Unreachable("root@box", errors.New("ssh root@box: the box did not answer; check the address")).String()
+	want := "✗ unreachable: could not connect to root@box\n\n  ssh root@box: the box did not answer; check the address\n"
+	if out != want {
+		t.Errorf("String() = %q, want %q", out, want)
 	}
 }

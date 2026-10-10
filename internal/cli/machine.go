@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -281,7 +282,7 @@ func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				return fmt.Errorf("probe box: %w", err)
 			}
 
-			report := status.Unreachable(target)
+			report := status.Unreachable(target, gathered.ConnectErr)
 			if gathered.Reachable {
 				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
 			}
@@ -392,13 +393,12 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 			ctx := cmd.Context()
 			conn := connection.New(target, exec)
 
-			reachable, err := connection.Reachable(ctx, conn)
-			if err != nil {
-				return fmt.Errorf("probe box: %w", err)
-			}
-			if !reachable {
+			if err := conn.Run(ctx, "true", io.Discard, io.Discard); err != nil {
+				if !errors.Is(err, connection.ErrConnect) {
+					return fmt.Errorf("probe box: %w", err)
+				}
 				return refuseAdd(cmd, bootstrap.OutcomeConnectFailed,
-					fmt.Errorf("could not connect to %s: register it once smith can reach it", target))
+					fmt.Errorf("could not connect to %s: register it once smith can reach it: %w", target, err))
 			}
 
 			box, present, err := status.ReadMarker(ctx, conn)

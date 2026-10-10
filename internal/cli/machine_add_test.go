@@ -220,3 +220,23 @@ func TestMachineAddRefusesToWriteAnInventoryANewerSmithOwns(t *testing.T) {
 		t.Errorf("inventory = %q, want it unchanged at %q", got, before)
 	}
 }
+
+func TestMachineAddSaysTheBoxRefusedTheKey(t *testing.T) {
+	ssh := unconnectableSSH{stderr: "smith@198.51.100.7: Permission denied (publickey).\n"}
+	cmd := newMachineCmd(
+		func() (config.Home, error) { return config.NewHome(t.TempDir()), nil },
+		ssh, &fakeDialer{}, provider.SystemClock(),
+	)
+	cmd.SetArgs([]string{"add", "smith@198.51.100.7"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+
+	if code := codeFromError(cmd.Execute()); code != 3 {
+		t.Errorf("exit code = %d, want 3 for a connect failure", code)
+	}
+	if !strings.Contains(out.String(), "refused the key") {
+		t.Errorf("output = %q, want it to say the box refused the key", out.String())
+	}
+}

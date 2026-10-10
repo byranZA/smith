@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -201,5 +202,112 @@ func TestReadRefusesWhatResolveRefuses(t *testing.T) {
 				t.Errorf("Read(%q) error = %v, want %v", tt.ref, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func homeWithToken(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".secrets"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".secrets", "gh-token"), []byte("ghp_fromhome\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return home
+}
+
+func TestResolveFileExpandsAHomeRelativePath(t *testing.T) {
+	homeWithToken(t)
+
+	got, err := Resolve("file:~/.secrets/gh-token")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got != "ghp_fromhome" {
+		t.Errorf("Resolve = %q, want %q", got, "ghp_fromhome")
+	}
+}
+
+func TestResolveFileNamesAMissingHomeRelativePathAsWrittenAndExpanded(t *testing.T) {
+	home := homeWithToken(t)
+
+	_, err := Resolve("file:~/.secrets/missing")
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Resolve error = %v, want %v", err, os.ErrNotExist)
+	}
+	for _, want := range []string{"~/.secrets/missing", filepath.Join(home, ".secrets", "missing")} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Resolve error = %v, want it to name %q", err, want)
+		}
+	}
+}
+
+func TestResolveFileRefusesAnotherUsersHome(t *testing.T) {
+	homeWithToken(t)
+
+	_, err := Resolve("file:~other/token")
+	if !errors.Is(err, ErrUserHome) {
+		t.Fatalf("Resolve error = %v, want %v", err, ErrUserHome)
+	}
+}
+
+func TestResolveFileReadsPathsThatAreNotHomeRelativeAsWritten(t *testing.T) {
+	homeWithToken(t)
+	work := t.TempDir()
+	t.Chdir(work)
+	if err := os.MkdirAll(filepath.Join(work, "relative"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "relative", "token"), []byte("from-work-dir"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "abs-token"), []byte("from-abs-path"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"an absolute path", filepath.Join(work, "abs-token"), "from-abs-path"},
+		{"a relative path, from the working directory", "relative/token", "from-work-dir"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Resolve("file:" + tt.path)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveFileReadsABareTildeAsTheHomeDirectoryItself(t *testing.T) {
+	home := homeWithToken(t)
+
+	_, err := Resolve("file:~")
+	if err == nil {
+		t.Fatal("Resolve error = nil, want reading the home directory to fail")
+	}
+	if !strings.Contains(err.Error(), home) {
+		t.Errorf("Resolve error = %v, want it to name %q", err, home)
+	}
+}
+
+func TestReadExpandsAHomeRelativePathWithoutTrimming(t *testing.T) {
+	homeWithToken(t)
+
+	got, err := Read("file:~/.secrets/gh-token")
+	if err != nil {
+		t.Fatalf("Read(%q) error = %v, want nil", "file:~/.secrets/gh-token", err)
+	}
+	if got != "ghp_fromhome\n" {
+		t.Errorf("Read(%q) = %q, want %q", "file:~/.secrets/gh-token", got, "ghp_fromhome\n")
 	}
 }
