@@ -34,7 +34,7 @@ func Load(path string) (Config, error) {
 ## Errors
 
 - **Handle every error**: return it, handle it, or (only in `main` or a truly unrecoverable case) exit. Never assign one to `_`, and use the two-value form of a type assertion.
-- **Wrap with context** using `%w` so callers can `errors.Is`/`errors.As` and the chain reads top-down:
+- **Wrap with the context the error lacks**, using `%w` so callers can `errors.Is`/`errors.As` and the chain reads top-down. An error from another package always lacks it (wrapcheck enforces this). A same-package error that already names what failed goes back as is; wrap it only to add what this caller alone knows, such as the spec a task belongs to.
 
 ```go
 fi, err := os.Stat(path)
