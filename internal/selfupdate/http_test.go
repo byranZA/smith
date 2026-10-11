@@ -8,6 +8,7 @@ import (
 )
 
 func TestHTTPGetReturnsTheBodyServed(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("checksums"))
 	}))
@@ -24,6 +25,7 @@ func TestHTTPGetReturnsTheBodyServed(t *testing.T) {
 }
 
 func TestHTTPGetTreatsAFailedResponseAsAnErrorNamingTheStatus(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nope", http.StatusNotFound)
 	}))

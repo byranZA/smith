@@ -206,6 +206,7 @@ func (r *updateRig) run(t *testing.T, args ...string) (stdout, stderr string, co
 }
 
 func TestUpdateRefusesOnWindowsBeforeAnyDownload(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.goos = "windows"
 
@@ -223,6 +224,7 @@ func TestUpdateRefusesOnWindowsBeforeAnyDownload(t *testing.T) {
 }
 
 func TestUpdateOnABoxRefusesAndPointsAtTheOperatorsMachine(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	if err := os.WriteFile(rig.markerPath, []byte(`{"schema_version":1}`), 0o600); err != nil {
 		t.Fatalf("write marker: %v", err)
@@ -244,6 +246,7 @@ func TestUpdateOnABoxRefusesAndPointsAtTheOperatorsMachine(t *testing.T) {
 }
 
 func TestUpdateBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoItForTheBoxStep(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 
 	stdout, stderr, code := rig.run(t, "--boxes")
@@ -274,8 +277,10 @@ func readBinary(t *testing.T, path string) string {
 }
 
 func TestUpdateToANamedOlderVersionInstallsIt(t *testing.T) {
+	t.Parallel()
 	for _, spelling := range []string{"0.1.0", "v0.1.0"} {
 		t.Run(spelling, func(t *testing.T) {
+			t.Parallel()
 			rig := newUpdateRig(t)
 
 			_, stderr, code := rig.run(t, "--version", spelling)
@@ -291,6 +296,7 @@ func TestUpdateToANamedOlderVersionInstallsIt(t *testing.T) {
 }
 
 func TestUpdateToAVersionWithNoReleaseRefusesBeforeAnyDownload(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 
 	_, stderr, code := rig.run(t, "--version", "dev")
@@ -307,6 +313,7 @@ func TestUpdateToAVersionWithNoReleaseRefusesBeforeAnyDownload(t *testing.T) {
 }
 
 func TestUpdateWhenAlreadyCurrentSaysSoAndGoesOnToTheBoxStep(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.version = "0.3.0"
 
@@ -345,6 +352,7 @@ func (r *updateRig) afterSwitch(answer string) {
 }
 
 func TestUpdateWithBoxesUpgradesEveryBoxWithoutAsking(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha", "beta")
 	rig.afterSwitch("")
@@ -368,6 +376,7 @@ func TestUpdateWithBoxesUpgradesEveryBoxWithoutAsking(t *testing.T) {
 }
 
 func TestUpdateContinuingAfterTheSwitchDoesNotRepeatTheLocalUpdate(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha")
 	rig.afterSwitch("")
@@ -383,6 +392,7 @@ func TestUpdateContinuingAfterTheSwitchDoesNotRepeatTheLocalUpdate(t *testing.T)
 }
 
 func TestUpdateAsksOneQuestionForEveryBox(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha", "beta", "gamma")
 	rig.afterSwitch("y")
@@ -403,8 +413,10 @@ func TestUpdateAsksOneQuestionForEveryBox(t *testing.T) {
 }
 
 func TestUpdateDeclinedUpgradesNoBoxAndPrintsTheUpgradeCommands(t *testing.T) {
+	t.Parallel()
 	for _, answer := range []string{"n", ""} {
 		t.Run(fmt.Sprintf("answer %q", answer), func(t *testing.T) {
+			t.Parallel()
 			rig := newUpdateRig(t)
 			rig.withBoxes(t, "alpha", "beta")
 			rig.afterSwitch(answer)
@@ -430,6 +442,7 @@ func TestUpdateDeclinedUpgradesNoBoxAndPrintsTheUpgradeCommands(t *testing.T) {
 }
 
 func TestUpdateUnattendedWithoutBoxesTouchesNoBoxAndPrintsOneCommandPerBox(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha", "beta")
 	rig.version = "0.3.0"
@@ -453,6 +466,7 @@ func TestUpdateUnattendedWithoutBoxesTouchesNoBoxAndPrintsOneCommandPerBox(t *te
 }
 
 func TestUpdateCarriesOnPastAnUnreachableBoxAndFailsNamingIt(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha", "beta")
 	rig.ssh.unreachable = map[string]bool{"smith@alpha": true}
@@ -474,6 +488,7 @@ func TestUpdateCarriesOnPastAnUnreachableBoxAndFailsNamingIt(t *testing.T) {
 }
 
 func TestUpdateReportsABoxAlreadyOnTheVersionAsCurrent(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha")
 	rig.ssh.boxes["smith@alpha"].installed = "0.3.0"
@@ -490,6 +505,7 @@ func TestUpdateReportsABoxAlreadyOnTheVersionAsCurrent(t *testing.T) {
 }
 
 func TestUpdateWithAMismatchedChecksumKeepsTheOldBinaryAndDoesNotSwitch(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	asset, err := release.ForPlatform("0.3.0", "darwin", "arm64")
 	if err != nil {
@@ -511,6 +527,7 @@ func TestUpdateWithAMismatchedChecksumKeepsTheOldBinaryAndDoesNotSwitch(t *testi
 }
 
 func TestUpdateToAReleaseThatPredatesTheBoxStepPrintsTheUpgradeCommandsInsteadOfSwitching(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha", "beta")
 	rig.predates = true
@@ -534,6 +551,7 @@ func TestUpdateToAReleaseThatPredatesTheBoxStepPrintsTheUpgradeCommandsInsteadOf
 }
 
 func TestUpdateWhoseProbeFailsExitsNonZeroWithoutSwitchingOrTouchingABox(t *testing.T) {
+	t.Parallel()
 	rig := newUpdateRig(t)
 	rig.withBoxes(t, "alpha")
 	rig.probeErr = errors.New("signal: killed")

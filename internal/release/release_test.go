@@ -89,6 +89,7 @@ func TestInstallable(t *testing.T) {
 }
 
 func TestForPlatformNamesEachPublishedPlatformsArchive(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		goos, goarch string
 		want         string
@@ -101,6 +102,7 @@ func TestForPlatformNamesEachPublishedPlatformsArchive(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.goos+"/"+tt.goarch, func(t *testing.T) {
+			t.Parallel()
 			got, err := ForPlatform("0.2.0", tt.goos, tt.goarch)
 			if err != nil {
 				t.Fatalf("ForPlatform(0.2.0, %s, %s) errored: %v", tt.goos, tt.goarch, err)
@@ -113,6 +115,7 @@ func TestForPlatformNamesEachPublishedPlatformsArchive(t *testing.T) {
 }
 
 func TestForPlatformRefusesAnUnpublishedPlatformByName(t *testing.T) {
+	t.Parallel()
 	_, err := ForPlatform("0.2.0", "windows", "arm64")
 
 	var unsupported *UnsupportedPlatformError

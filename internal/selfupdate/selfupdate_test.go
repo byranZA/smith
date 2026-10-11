@@ -34,6 +34,7 @@ func (f *fakeGetter) Get(_ context.Context, url string) ([]byte, error) {
 }
 
 func TestLatestReportsTheNewestReleaseWithoutTheTagPrefix(t *testing.T) {
+	t.Parallel()
 	g := &fakeGetter{bodies: map[string][]byte{
 		release.LatestURL: []byte(`{"tag_name":"v0.3.1","name":"v0.3.1","draft":false}`),
 	}}
@@ -115,6 +116,7 @@ func readFile(t *testing.T, path string) string {
 }
 
 func TestInstallReplacesTheBinaryWithTheReleasedOne(t *testing.T) {
+	t.Parallel()
 	g, asset := publishedRelease(t, "new smith")
 	path := installedBinary(t)
 
@@ -135,6 +137,7 @@ func TestInstallReplacesTheBinaryWithTheReleasedOne(t *testing.T) {
 }
 
 func TestInstallAbortsOnAChecksumMismatchLeavingTheOldBinary(t *testing.T) {
+	t.Parallel()
 	g, asset := publishedRelease(t, "new smith")
 	g.bodies[asset.URL] = tarball(t, map[string]string{"smith": "tampered smith"})
 	path := installedBinary(t)
@@ -154,6 +157,7 @@ func TestInstallAbortsOnAChecksumMismatchLeavingTheOldBinary(t *testing.T) {
 }
 
 func TestInstallRefusesAnArchiveTheChecksumsDoNotCover(t *testing.T) {
+	t.Parallel()
 	g, asset := publishedRelease(t, "new smith")
 	g.bodies[asset.ChecksumsURL] = []byte("0000000000000000000000000000000000000000000000000000000000000000  smith_0.3.0_linux_amd64.tar.gz\n")
 	path := installedBinary(t)
@@ -170,6 +174,7 @@ func TestInstallRefusesAnArchiveTheChecksumsDoNotCover(t *testing.T) {
 }
 
 func TestInstallIntoAnUnwritableDirectoryNamesThePathAndChangesNothing(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through directory permissions")
 	}
@@ -196,6 +201,7 @@ func TestInstallIntoAnUnwritableDirectoryNamesThePathAndChangesNothing(t *testin
 }
 
 func TestInstallThroughASymlinkReplacesItsTargetAndKeepsTheLink(t *testing.T) {
+	t.Parallel()
 	g, asset := publishedRelease(t, "new smith")
 	target := installedBinary(t)
 	link := filepath.Join(t.TempDir(), "smith")

@@ -30,6 +30,7 @@ func newUpdater(t *testing.T, g *fakeGetter, path string) Updater {
 }
 
 func TestRunBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoIt(t *testing.T) {
+	t.Parallel()
 	g, _ := publishedRelease(t, "new smith")
 	path := installedBinary(t)
 	u := newUpdater(t, g, path)
@@ -53,6 +54,7 @@ func TestRunBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoIt(t *testing.
 }
 
 func TestRunAlreadyOnTheTargetRunsTheBoxStepHereWithoutDownloading(t *testing.T) {
+	t.Parallel()
 	g, _ := publishedRelease(t, "new smith")
 	u := newUpdater(t, g, installedBinary(t))
 	u.Version = "0.3.0"
@@ -71,6 +73,7 @@ func TestRunAlreadyOnTheTargetRunsTheBoxStepHereWithoutDownloading(t *testing.T)
 }
 
 func TestRunIntoAReleaseWithNoBoxStepHandsTheBoxesOff(t *testing.T) {
+	t.Parallel()
 	g, _ := publishedRelease(t, "old smith")
 	u := newUpdater(t, g, installedBinary(t))
 	u.Continues = func(context.Context, string) (bool, error) { return false, nil }
@@ -86,6 +89,7 @@ func TestRunIntoAReleaseWithNoBoxStepHandsTheBoxesOff(t *testing.T) {
 }
 
 func TestRunRefusesBeforeFetchingAnything(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		adapt func(t *testing.T, u *Updater)
@@ -101,6 +105,7 @@ func TestRunRefusesBeforeFetchingAnything(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			g, _ := publishedRelease(t, "new smith")
 			u := newUpdater(t, g, installedBinary(t))
 			tt.adapt(t, &u)
@@ -135,6 +140,7 @@ func (f *fakeBoxes) converge(_ context.Context, box, version string) (onbox.Resu
 }
 
 func TestUpgradeWithAssumedYesConvergesEveryBoxInOrderWithoutAsking(t *testing.T) {
+	t.Parallel()
 	boxes := &fakeBoxes{results: map[string]onbox.Result{
 		"alpha": {Version: "0.3.0", Previous: "0.2.0", Changed: true},
 		"beta":  {Version: "0.3.0", Previous: "0.3.0"},
@@ -163,6 +169,7 @@ func TestUpgradeWithAssumedYesConvergesEveryBoxInOrderWithoutAsking(t *testing.T
 }
 
 func TestUpgradeDeclinedSkipsEveryBoxAndConvergesNone(t *testing.T) {
+	t.Parallel()
 	boxes := &fakeBoxes{}
 	var asked []string
 	b := Boxes{
@@ -188,6 +195,7 @@ func TestUpgradeDeclinedSkipsEveryBoxAndConvergesNone(t *testing.T) {
 }
 
 func TestUpgradeCarriesOnPastAFailedBoxAndCountsIt(t *testing.T) {
+	t.Parallel()
 	unreachable := errors.New("ssh: connect to host: Connection timed out")
 	boxes := &fakeBoxes{
 		results: map[string]onbox.Result{"beta": {Version: "0.3.0", Previous: "0.2.0", Changed: true}},
@@ -213,6 +221,7 @@ func TestUpgradeCarriesOnPastAFailedBoxAndCountsIt(t *testing.T) {
 }
 
 func TestRunWhoseProbeFailsNamesTheInstalledBinary(t *testing.T) {
+	t.Parallel()
 	g, _ := publishedRelease(t, "new smith")
 	path := installedBinary(t)
 	u := newUpdater(t, g, path)
