@@ -60,6 +60,6 @@ Work is complete when every item holds:
 
 - [ ] **Gate**: `make check` passes with lint actually running (see [GO.md](GO.md#gate)), plus `make race` for concurrent code
 - [ ] **Comments**: doc comments only, shaped as [GO.md](GO.md#doc-comments) says
-- [ ] **Errors**: every error handled or returned, wrapped with `%w` and context
+- [ ] **Errors**: every error handled or returned with the context it lacks (see [GO.md](GO.md#errors))
 - [ ] **Tests**: every logic function has tests that went red first
 - [ ] **Prompts**: every agent or LLM prompt lives in its own `.md` file (see [MARKDOWN.md](MARKDOWN.md#prompts))
