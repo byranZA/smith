@@ -52,9 +52,31 @@ tar -xf smith_0.1.1_windows_amd64.zip
 
 Confirm it: `smith version` should print `0.1.1`.
 
-Newer releases are listed on the [releases
-page](https://github.com/byranZA/smith/releases/latest); substitute the tag and
-archive name in the commands above.
+These one-liners are for the first install, and for every install on Windows. Once smith is on your `PATH`, [`smith update`](#update-smith) moves it to a newer release.
+
+## Update smith
+
+On macOS and Linux, `smith update` replaces your smith with the latest release, then offers to bring every box in your inventory to the same version:
+
+```sh
+smith update                     # the latest release
+smith update --version v0.2.0    # a named release, even an older one
+smith update --boxes             # upgrade every box without asking
+```
+
+It downloads the archive for your platform and its `checksums.txt` from GitHub, and aborts on a checksum mismatch, with no retry. The new binary is written beside the old one and renamed over it, so a failure before the rename leaves the old smith working. When `smith` on your `PATH` is a symlink, the file it points to is replaced and the link stays.
+
+smith never escalates to `sudo`. If you cannot write to the directory smith lives in, such as a root-owned `/usr/local/bin`, `smith update` names the directory and changes nothing. Make the directory yours, or reinstall smith into one you own, such as `~/.local/bin`.
+
+Once the local binary is replaced, smith restarts as the new version and lists your boxes in one question:
+
+```text
+Upgrade 3 boxes (alpha, beta, dev) to 0.3.0? [y/N]
+```
+
+A yes converges each box in turn, the way [`smith machine upgrade`](./on-box.md#machine-upgrade) does. A box that cannot be reached is reported and the rest still go ahead. A no, or a run with no terminal attached and no `--boxes`, upgrades nothing and prints the `smith machine upgrade <box>` command for each box instead. The run ends with one line per box (upgraded, already current, failed or skipped), and exits non-zero if any box failed, even though the local update succeeded.
+
+`smith update` refuses on Windows: download the new release with the one-liner [above](#download-a-release) instead. It also refuses on a box, whose smith version is driven from the operator's machine: run `smith update` there, or `smith machine upgrade <box>`.
 
 ## First step: `smith init`
 
@@ -159,5 +181,5 @@ than tracking `latest`.
 
 Local smith and on-box smith must be the **same version**: every relayed command
 declares the version it was built by, and on-box smith refuses a mismatch.
-`smith machine upgrade <box>` converges a box to your version — see [smith on
+`smith machine upgrade <box>` converges a box to your version, and `smith update` offers to converge every box once it has updated your own smith — see [smith on
 the box](./on-box.md).

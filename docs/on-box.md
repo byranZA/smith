@@ -128,7 +128,7 @@ smith machine upgrade dev
 `upgrade` runs the install stage and nothing else: no bootstrap phase runs, no
 configuration is staged, no placement is touched, and the marker is not
 written. It exists for the operator who upgraded their laptop's smith and wants
-to move one box without re-converging everything on it. It also works on a box
+to move one box without re-converging everything on it. [`smith update`](./install.md#update-smith) runs the same convergence on every box in the inventory, after updating local smith. It also works on a box
 that has never had smith — it installs it.
 
 **It converges the box to *your* version, so it will move a box backwards.**
