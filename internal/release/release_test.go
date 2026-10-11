@@ -87,3 +87,42 @@ func TestInstallable(t *testing.T) {
 		})
 	}
 }
+
+func TestForPlatformNamesEachPublishedPlatformsArchive(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		goos, goarch string
+		want         string
+	}{
+		{"darwin", "arm64", "https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_darwin_arm64.tar.gz"},
+		{"darwin", "amd64", "https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_darwin_amd64.tar.gz"},
+		{"linux", "amd64", "https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_linux_amd64.tar.gz"},
+		{"linux", "arm64", "https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_linux_arm64.tar.gz"},
+		{"windows", "amd64", "https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_windows_amd64.zip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.goos+"/"+tt.goarch, func(t *testing.T) {
+			t.Parallel()
+			got, err := ForPlatform("0.2.0", tt.goos, tt.goarch)
+			if err != nil {
+				t.Fatalf("ForPlatform(0.2.0, %s, %s) errored: %v", tt.goos, tt.goarch, err)
+			}
+			if got.URL != tt.want {
+				t.Errorf("ForPlatform(0.2.0, %s, %s).URL = %q, want %q", tt.goos, tt.goarch, got.URL, tt.want)
+			}
+		})
+	}
+}
+
+func TestForPlatformRefusesAnUnpublishedPlatformByName(t *testing.T) {
+	t.Parallel()
+	_, err := ForPlatform("0.2.0", "windows", "arm64")
+
+	var unsupported *UnsupportedPlatformError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("ForPlatform(0.2.0, windows, arm64) error = %v, want an *UnsupportedPlatformError", err)
+	}
+	if !strings.Contains(err.Error(), "windows/arm64") {
+		t.Errorf("error %q does not name the platform", err)
+	}
+}

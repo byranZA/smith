@@ -8,7 +8,7 @@ detail.
 
 | page | what it covers |
 | --- | --- |
-| [Installing smith](./install.md) | release downloads per platform, checksum verification, `go install`, building from source, Gatekeeper and SmartScreen, the `v0.x` compatibility position |
+| [Installing smith](./install.md) | release downloads per platform, updating with `smith update`, checksum verification, `go install`, building from source, Gatekeeper and SmartScreen, the `v0.x` compatibility position |
 | [Provisioning a box](./provisioning.md) | `machine setup` prerequisites, provisioning over public SSH, provisioning over Tailscale including the two ACL entries you must add yourself |
 | [Provider adapters](./providers.md) | describing your provider's CLI as data so `machine create` can make the box too |
 

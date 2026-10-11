@@ -1,16 +1,16 @@
 // Package release names smith's published release artifacts: which versions
-// have one, what a version's Linux asset is called, and where it is downloaded
-// from.
+// have one, what a version's asset is called on each platform, and where it and
+// the latest release are found.
 //
 // It is the one place the asset-naming convention lives, so the box-side
-// installer and any later consumer derive the same URL rather than each
-// spelling the convention out. It is pure and offline: nothing here reaches
-// GitHub, opens a connection or reads a box — it renders names and classifies
-// versions, and the fetching happens on the box.
+// installer and `smith update` derive the same URL rather than each spelling
+// the convention out. It is pure and offline: nothing here reaches GitHub,
+// opens a connection or reads a box — it renders names and classifies
+// versions, and the fetching happens elsewhere.
 //
 // The naming follows the release pipeline's own defaults: archives are
-// smith_<version>_linux_<arch>.tar.gz beside a checksums.txt, published under
-// the tag the version came from. Tags carry the "v" prefix and nothing else
+// smith_<version>_<os>_<arch>.tar.gz (.zip on Windows) beside a checksums.txt,
+// published under the tag the version came from. Tags carry the "v" prefix and nothing else
 // does, which is why the version renders bare everywhere but in the tag.
 package release
 
@@ -24,12 +24,17 @@ import (
 // directory per tag.
 const downloadBase = "https://github.com/byranZA/smith/releases/download"
 
-// Asset is the published Linux release artifact for one version and
-// architecture: the archive's name, where it is downloaded from, and where the
+// LatestURL is GitHub's latest-release endpoint for smith, whose JSON names the
+// newest published release's tag.
+const LatestURL = "https://api.github.com/repos/byranZA/smith/releases/latest"
+
+// Asset is the published release artifact for one version and platform: the archive's name, where it is downloaded from, and where the
 // checksums it is verified against are published.
 type Asset struct {
 	// Version is the smith version the asset carries, without the tag's "v".
 	Version string
+	// OS is the operating system the asset is built for, as GOOS names it.
+	OS string
 	// Arch is the release architecture the asset is built for.
 	Arch string
 	// Name is the archive's file name.
@@ -43,13 +48,57 @@ type Asset struct {
 }
 
 // For returns the Linux release asset for a version and a release
-// architecture. The version is the bare one ("0.2.0"); the tag's "v" is added
-// here, where the URL is built, and nowhere else.
+// architecture: the one a box installs. The version is the bare one ("0.2.0");
+// the tag's "v" is added where the URL is built, and nowhere else.
 func For(version, arch string) Asset {
-	name := fmt.Sprintf("smith_%s_linux_%s.tar.gz", version, arch)
+	return named(version, "linux", arch)
+}
+
+// published lists the platforms the release pipeline builds, keyed GOOS/GOARCH:
+// darwin and linux on both architectures and windows on amd64 alone.
+var published = map[string]bool{
+	"darwin/amd64":  true,
+	"darwin/arm64":  true,
+	"linux/amd64":   true,
+	"linux/arm64":   true,
+	"windows/amd64": true,
+}
+
+// UnsupportedPlatformError reports a GOOS/GOARCH pair smith publishes no
+// release asset for.
+type UnsupportedPlatformError struct {
+	// Platform is the pair, as GOOS/GOARCH.
+	Platform string
+}
+
+// Error implements error.
+func (e *UnsupportedPlatformError) Error() string {
+	return fmt.Sprintf("no smith release asset for the platform %s", e.Platform)
+}
+
+// ForPlatform returns the release asset for a version on a platform named the
+// way runtime.GOOS and runtime.GOARCH name it. A platform the pipeline does not
+// build is an *UnsupportedPlatformError.
+func ForPlatform(version, goos, goarch string) (Asset, error) {
+	platform := goos + "/" + goarch
+	if !published[platform] {
+		return Asset{}, &UnsupportedPlatformError{Platform: platform}
+	}
+	return named(version, goos, goarch), nil
+}
+
+// named renders the asset for a version on a platform: the archive is a zip on
+// Windows and a gzipped tarball everywhere else.
+func named(version, goos, arch string) Asset {
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
+	name := fmt.Sprintf("smith_%s_%s_%s.%s", version, goos, arch, ext)
 	tagDir := fmt.Sprintf("%s/v%s", downloadBase, version)
 	return Asset{
 		Version:      version,
+		OS:           goos,
 		Arch:         arch,
 		Name:         name,
 		URL:          tagDir + "/" + name,

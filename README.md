@@ -131,7 +131,7 @@ Attaching adds no listener, no port, no tunnel and no new credential — it is
 **smith on the box.** Local and on-box smith must be the same version: every
 relayed command declares the version it was built by, and on-box smith refuses a
 mismatch rather than silently misparsing a renamed flag. `smith machine upgrade
-dev` converges the box to *your* version — including backwards.
+dev` converges the box to *your* version — including backwards. `smith update` updates your own smith to the latest release, then offers to converge every box to it.
 → [docs/on-box.md](docs/on-box.md)
 
 **The loop.** `smith loop run <spec>` works a spec's tasks with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model and effort the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.

@@ -19,6 +19,7 @@ type scriptedTerminal struct {
 	answer   string
 	err      error
 	asked    bool
+	asks     int
 	question string
 	order    *[]string
 }
@@ -32,6 +33,7 @@ func (s *scriptedTerminal) Attended() bool {
 
 func (s *scriptedTerminal) ReadLine(prompt string) (string, error) {
 	s.asked = true
+	s.asks++
 	s.question = prompt
 	return s.answer, s.err
 }
