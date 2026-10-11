@@ -54,10 +54,9 @@ func Latest(ctx context.Context, g Getter) (string, error) {
 // binaryName is the name of the smith binary inside a release archive.
 const binaryName = "smith"
 
-// Install downloads asset, verifies it and replaces the binary at path with
-// the one it carries, returning the path of the file it replaced. A symlink at
-// path is followed, so the file it points to is replaced and the link is left
-// in place. Every failure leaves the old binary where it was.
+// Install downloads and verifies asset, then replaces the binary at path, or
+// the file a symlink there points to, and returns the path it replaced. Any
+// failure leaves the old binary in place.
 func Install(ctx context.Context, g Getter, asset release.Asset, path string) (string, error) {
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {

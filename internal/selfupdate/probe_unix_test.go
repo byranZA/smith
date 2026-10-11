@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// fakeSmith writes an executable at a fresh path whose content is body.
+// fakeSmith is the path of a fresh executable holding body.
 func fakeSmith(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "smith")

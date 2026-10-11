@@ -17,8 +17,7 @@ import (
 	"github.com/byranZA/smith/internal/release"
 )
 
-// fakeGetter serves canned bodies by URL in place of GitHub, and records each
-// URL it was asked for.
+// fakeGetter stands in for GitHub, serving canned bodies by URL.
 type fakeGetter struct {
 	bodies map[string][]byte
 	asked  []string
@@ -49,8 +48,7 @@ func TestLatestReportsTheNewestReleaseWithoutTheTagPrefix(t *testing.T) {
 	}
 }
 
-// tarball is a gzipped tar archive holding the given files, the shape the
-// release pipeline publishes.
+// tarball is a gzipped tar archive holding files, as the release pipeline publishes.
 func tarball(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -73,14 +71,12 @@ func tarball(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// checksumLine is the line checksums.txt carries for one archive.
 func checksumLine(archive []byte, name string) string {
 	sum := sha256.Sum256(archive)
 	return hex.EncodeToString(sum[:]) + "  " + name + "\n"
 }
 
-// publishedRelease is a getter serving the 0.3.0 darwin/arm64 archive holding
-// binary, and a checksums.txt that covers it truthfully.
+// publishedRelease serves the 0.3.0 darwin/arm64 release, whose smith holds binary.
 func publishedRelease(t *testing.T, binary string) (*fakeGetter, release.Asset) {
 	t.Helper()
 	asset, err := release.ForPlatform("0.3.0", "darwin", "arm64")
@@ -94,8 +90,7 @@ func publishedRelease(t *testing.T, binary string) (*fakeGetter, release.Asset) 
 	}}, asset
 }
 
-// installedBinary writes an old smith binary into a fresh directory and
-// returns its path.
+// installedBinary is the path of an "old smith" binary in a fresh directory.
 func installedBinary(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "smith")
@@ -105,7 +100,6 @@ func installedBinary(t *testing.T) string {
 	return path
 }
 
-// readFile returns the content of path, failing the test when it cannot.
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

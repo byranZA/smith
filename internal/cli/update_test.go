@@ -20,9 +20,7 @@ import (
 	"github.com/byranZA/smith/internal/selfupdate"
 )
 
-// releaseServer stands in for GitHub: it names the latest release and serves
-// each published release's darwin/arm64 archive and checksums, recording every
-// URL it was asked for.
+// releaseServer stands in for GitHub, serving canned bodies by URL.
 type releaseServer struct {
 	bodies map[string][]byte
 	asked  []string
@@ -37,8 +35,7 @@ func (r *releaseServer) Get(_ context.Context, url string) ([]byte, error) {
 	return body, nil
 }
 
-// newReleaseServer is a GitHub whose latest release is latest, publishing an
-// archive for each of versions whose smith binary reads "smith <version>".
+// newReleaseServer publishes darwin/arm64 versions whose binaries read "smith <version>".
 func newReleaseServer(t *testing.T, latest string, versions ...string) *releaseServer {
 	t.Helper()
 	r := &releaseServer{bodies: map[string][]byte{
@@ -57,7 +54,6 @@ func newReleaseServer(t *testing.T, latest string, versions ...string) *releaseS
 	return r
 }
 
-// downloaded reports whether any release archive was fetched.
 func (r *releaseServer) downloaded() bool {
 	for _, url := range r.asked {
 		if strings.HasSuffix(url, ".tar.gz") {
@@ -67,7 +63,6 @@ func (r *releaseServer) downloaded() bool {
 	return false
 }
 
-// smithArchive is a release tarball whose smith binary holds content.
 func smithArchive(t *testing.T, content string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -88,8 +83,7 @@ func smithArchive(t *testing.T, content string) []byte {
 	return buf.Bytes()
 }
 
-// switchRecorder stands in for replacing smith's process: it records the
-// executable and arguments the new process would have started with.
+// switchRecorder stands in for the process switch, recording what it would exec.
 type switchRecorder struct {
 	called bool
 	path   string
@@ -101,9 +95,7 @@ func (s *switchRecorder) exec(path string, args []string) error {
 	return nil
 }
 
-// fleetSSH answers each box by its ssh target: a box in boxes converges the way
-// upgradeSSH does, and a target in unreachable fails as ssh does when it cannot
-// connect.
+// fleetSSH routes ssh by target to an upgradeSSH box, or fails it as unreachable.
 type fleetSSH struct {
 	boxes       map[string]*upgradeSSH
 	unreachable map[string]bool
@@ -127,14 +119,12 @@ func (f *fleetSSH) Run(ctx context.Context, name string, args []string, stdin io
 	return box.Run(ctx, name, args, stdin, stdout, stderr)
 }
 
-// installed reports whether a box was asked to install anything.
 func (f *fleetSSH) installed(target string) bool {
 	box, ok := f.boxes[target]
 	return ok && box.installCommand() != ""
 }
 
-// updateRig is everything `smith update` reaches, faked: GitHub, the installed
-// binary, the process switch, the terminal and the boxes.
+// updateRig fakes everything `smith update` reaches.
 type updateRig struct {
 	version    string
 	goos       string
@@ -151,9 +141,7 @@ type updateRig struct {
 	probeErr error
 }
 
-// newUpdateRig is a darwin/arm64 operator's machine running release 0.2.0
-// from a writable directory, with GitHub's latest release 0.3.0, no terminal
-// attended and an empty inventory.
+// newUpdateRig runs darwin/arm64 smith 0.2.0, unattended, with 0.3.0 the latest and no boxes.
 func newUpdateRig(t *testing.T) *updateRig {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -177,7 +165,6 @@ func newUpdateRig(t *testing.T) *updateRig {
 	}
 }
 
-// run runs `smith update` with args against the rig.
 func (r *updateRig) run(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	resolve := func() (config.Home, error) { return config.NewHome(r.home), nil }
@@ -266,7 +253,6 @@ func TestUpdateBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoItForTheBox
 	}
 }
 
-// readBinary returns the content of the smith binary at path.
 func readBinary(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -332,8 +318,7 @@ func TestUpdateWhenAlreadyCurrentSaysSoAndGoesOnToTheBoxStep(t *testing.T) {
 	}
 }
 
-// withBoxes registers each named box in the rig's inventory at the target
-// smith@<name>, each running smith 0.2.0 on x86_64.
+// withBoxes registers each name at smith@<name>, running smith 0.2.0 on x86_64.
 func (r *updateRig) withBoxes(t *testing.T, names ...string) {
 	t.Helper()
 	entries := make([]string, 0, len(names))
@@ -344,8 +329,7 @@ func (r *updateRig) withBoxes(t *testing.T, names ...string) {
 	writeInventory(t, r.home, `{"schema_version":1,"boxes":{`+strings.Join(entries, ",")+`}}`)
 }
 
-// afterSwitch makes the rig the freshly installed 0.3.0 binary that a switch
-// started, attended by an operator who answers answer.
+// afterSwitch makes the rig the switched-into 0.3.0 binary, attended and answering answer.
 func (r *updateRig) afterSwitch(answer string) {
 	r.version = "0.3.0"
 	r.term.attended, r.term.answer = true, answer

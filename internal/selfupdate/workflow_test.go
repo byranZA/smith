@@ -12,9 +12,7 @@ import (
 	"github.com/byranZA/smith/internal/release"
 )
 
-// newUpdater is a darwin/arm64 smith 0.2.0 installed at path, off any box,
-// whose GitHub serves the 0.3.0 release as the latest and whose replacement
-// binary can continue the box step.
+// newUpdater is darwin/arm64 smith 0.2.0 at path, off any box, with 0.3.0 the latest.
 func newUpdater(t *testing.T, g *fakeGetter, path string) Updater {
 	t.Helper()
 	g.bodies[release.LatestURL] = []byte(`{"tag_name":"v0.3.0"}`)
@@ -123,8 +121,7 @@ func TestRunRefusesBeforeFetchingAnything(t *testing.T) {
 	}
 }
 
-// fakeBoxes converges boxes by name: each answers with its canned result, or
-// fails with its canned error. It records the boxes it was asked to converge.
+// fakeBoxes answers each box's convergence with its canned result or error.
 type fakeBoxes struct {
 	results map[string]onbox.Result
 	errs    map[string]error
