@@ -6,6 +6,7 @@ import (
 )
 
 func TestListedTasksFollowTheTasksChecklist(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		body string
 		want []Ref
@@ -18,14 +19,16 @@ func TestListedTasksFollowTheTasksChecklist(t *testing.T) {
 		"section ends at heading": {"## Tasks\n- #1\n# Other\n- #2\n", []Ref{{Number: 1}}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if got := listedTasks(tc.body); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("listedTasks() = %v, want %v", got, tc.want)
+				t.Errorf("listedTasks(%q) = %v, want %v", tc.body, got, tc.want)
 			}
 		})
 	}
 }
 
 func TestBlockersInReadTheBlockedBySection(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		body string
 		want []Ref
@@ -39,8 +42,9 @@ func TestBlockersInReadTheBlockedBySection(t *testing.T) {
 		"repeats kept once":        {"## Blocked by\n#3 and #3\n", []Ref{{Number: 3}}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if got := blockersIn(tc.body); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("blockersIn() = %v, want %v", got, tc.want)
+				t.Errorf("blockersIn(%q) = %v, want %v", tc.body, got, tc.want)
 			}
 		})
 	}

@@ -135,11 +135,12 @@ func recorded() map[string]string {
 }
 
 func TestSpecReadsTheSpecAndItsTasksInListedOrder(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{replies: recorded()}
 
-	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
+		t.Fatalf("Spec(42) error = %v", err)
 	}
 
 	want := tracker.Spec{Number: 42, Title: "Spec: the loop", Tasks: []tracker.Task{
@@ -149,15 +150,16 @@ func TestSpecReadsTheSpecAndItsTasksInListedOrder(t *testing.T) {
 		{Number: 50, Title: "Fix the summary", Open: true, For: tracker.Nobody},
 	}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Spec() =\n%+v\nwant\n%+v", got, want)
+		t.Errorf("Spec(42) =\n%+v\nwant\n%+v", got, want)
 	}
 }
 
 func TestSpecOnlyReadsTheTracker(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{replies: recorded()}
 
-	if _, err := tracker.NewGitHub(gh).Spec(context.Background(), 42); err != nil {
-		t.Fatalf("Spec() error = %v", err)
+	if _, err := tracker.NewGitHub(gh).Spec(t.Context(), 42); err != nil {
+		t.Fatalf("Spec(42) error = %v", err)
 	}
 
 	for _, ran := range gh.ran {
@@ -168,75 +170,82 @@ func TestSpecOnlyReadsTheTracker(t *testing.T) {
 }
 
 func TestSpecRefusesAnIssueThatIsNotASpec(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{replies: map[string]string{
 		specView(43): `{"body":"","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"}],"number":43,"state":"OPEN","subIssues":{"nodes":[],"totalCount":0},"title":"The tracker"}`,
 	}}
 
-	_, err := tracker.NewGitHub(gh).Spec(context.Background(), 43)
+	_, err := tracker.NewGitHub(gh).Spec(t.Context(), 43)
 
 	var notSpec *tracker.NotSpecError
 	if !errors.As(err, &notSpec) || notSpec.Number != 43 {
-		t.Errorf("Spec() error = %v, want a NotSpecError for #43", err)
+		t.Errorf("Spec(43) error = %v, want a NotSpecError for #43", err)
 	}
 }
 
 func TestSpecReportsAMissingIssueAsNotFound(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{replies: map[string]string{}}
 
-	_, err := tracker.NewGitHub(gh).Spec(context.Background(), 9999)
+	_, err := tracker.NewGitHub(gh).Spec(t.Context(), 9999)
 
 	var notFound *tracker.NotFoundError
 	if !errors.As(err, &notFound) || notFound.Number != 9999 {
-		t.Errorf("Spec() error = %v, want a NotFoundError for #9999", err)
+		t.Errorf("Spec(9999) error = %v, want a NotFoundError for #9999", err)
 	}
 }
 
 func TestSpecReportsAnUnusableGH(t *testing.T) {
+	t.Parallel()
 	for name, gh := range map[string]*fakeGH{
 		"not authenticated": {stderr: "To get started with GitHub CLI, please run:  gh auth login\n"},
 		"not installed":     {launch: exec.ErrNotFound},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+			t.Parallel()
+			_, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 
 			var unavailable *tracker.UnavailableError
 			if !errors.As(err, &unavailable) {
-				t.Errorf("Spec() error = %v, want an UnavailableError", err)
+				t.Errorf("Spec(42) error = %v, want an UnavailableError", err)
 			}
 		})
 	}
 }
 
 func TestUnavailableErrorCarriesWhatGHSaid(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{stderr: "To get started with GitHub CLI, please run:  gh auth login\n"}
 
-	_, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	_, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 
 	if err == nil || !strings.Contains(err.Error(), "gh auth login") {
-		t.Errorf("Spec() error = %v, want it to carry gh's own message", err)
+		t.Errorf("Spec(42) error = %v, want it to carry gh's own message", err)
 	}
 }
 
 func TestSpecReadsChildrenPastTheFirstHundred(t *testing.T) {
+	t.Parallel()
 	gh := manyChildren()
 
-	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
+		t.Fatalf("Spec(42) error = %v", err)
 	}
 
 	next, ok := loop.Survey(got).Next()
 	if !ok || next.Number != 201 {
-		t.Errorf("next task = #%d (%v), want #201", next.Number, ok)
+		t.Errorf("next task of Spec(42) = #%d (%v), want #201", next.Number, ok)
 	}
 }
 
 func TestSpecOrdersChildrenAcrossPages(t *testing.T) {
+	t.Parallel()
 	gh := manyChildren()
 
-	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
+		t.Fatalf("Spec(42) error = %v", err)
 	}
 
 	var order []int
@@ -250,11 +259,12 @@ func TestSpecOrdersChildrenAcrossPages(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(order, want) {
-		t.Errorf("task order = %v, want %v", order, want)
+		t.Errorf("task order of Spec(42) = %v, want %v", order, want)
 	}
 }
 
 func TestSpecReadsBlockersPastTheFirstFifty(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{replies: map[string]string{}, pages: map[string]string{}}
 	var first []string
 	for n := 301; n <= 350; n++ {
@@ -265,32 +275,35 @@ func TestSpecReadsBlockersPastTheFirstFifty(t *testing.T) {
 	gh.pages[pageKey("blockedBy", "43", "")] = graphQLPage("blockedBy", first, "c50")
 	gh.pages[pageKey("blockedBy", "43", "c50")] = graphQLPage("blockedBy", []string{node(351, "OPEN")}, "")
 
-	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
+		t.Fatalf("Spec(42) error = %v", err)
 	}
 
 	if next, ok := loop.Survey(got).Next(); ok {
-		t.Errorf("next task = #%d, want none while #351 blocks #43", next.Number)
+		t.Errorf("next task of Spec(42) = #%d, want none while #351 blocks #43", next.Number)
 	}
 }
 
 func TestSpecFailsWhenALaterPageCannotBeRead(t *testing.T) {
+	t.Parallel()
 	gh := manyChildren()
 	delete(gh.pages, pageKey("subIssues", "42", "c100"))
 
-	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || !reflect.DeepEqual(got, tracker.Spec{}) {
-		t.Errorf("Spec() = %d tasks, %v; want no spec and an UnavailableError", len(got.Tasks), err)
+		t.Errorf("Spec(42) = %d tasks, %v; want no spec and an UnavailableError", len(got.Tasks), err)
 	}
 }
 
 func TestLocalNamesAnIssueInTheCurrentRepo(t *testing.T) {
+	t.Parallel()
 	for _, ref := range []tracker.Ref{{Number: 42}, {Repo: "o/r", Number: 42}, {Repo: "O/R", Number: 42}} {
 		t.Run(ref.String(), func(t *testing.T) {
-			got, err := tracker.NewGitHub(&fakeGH{}).Local(context.Background(), ref)
+			t.Parallel()
+			got, err := tracker.NewGitHub(&fakeGH{}).Local(t.Context(), ref)
 			if err != nil || got != 42 {
 				t.Errorf("Local(%v) = %d, %v; want 42", ref, got, err)
 			}
@@ -299,13 +312,15 @@ func TestLocalNamesAnIssueInTheCurrentRepo(t *testing.T) {
 }
 
 func TestLocalRefusesAnIssueInAnotherRepo(t *testing.T) {
+	t.Parallel()
 	gh := &fakeGH{replies: recorded()}
 
-	got, err := tracker.NewGitHub(gh).Local(context.Background(), tracker.Ref{Repo: "other/repo", Number: 42})
+	got, err := tracker.NewGitHub(gh).Local(t.Context(), tracker.Ref{Repo: "other/repo", Number: 42})
 
+	want := tracker.ForeignError{Ref: tracker.Ref{Repo: "other/repo", Number: 42}, Repo: "o/r"}
 	var foreign *tracker.ForeignError
-	if !errors.As(err, &foreign) || foreign.Ref != (tracker.Ref{Repo: "other/repo", Number: 42}) {
-		t.Errorf("Local() = %d, %v; want a ForeignError for other/repo#42", got, err)
+	if !errors.As(err, &foreign) || *foreign != want {
+		t.Errorf("Local(other/repo#42) = %d, %v; want %+v", got, err, want)
 	}
 }
 
@@ -321,60 +336,65 @@ func sameNumbers(blockedBy, body string) *fakeGH {
 
 func blockersOf(t *testing.T, gh *fakeGH, number int) []tracker.Blocker {
 	t.Helper()
-	got, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 	if err != nil {
-		t.Fatalf("Spec() error = %v", err)
+		t.Fatalf("Spec(42) error = %v", err)
 	}
 	for _, task := range got.Tasks {
 		if task.Number == number {
 			return task.Blockers
 		}
 	}
-	t.Fatalf("Spec() has no task #%d", number)
+	t.Fatalf("Spec(42) has no task #%d", number)
 	return nil
 }
 
 func TestSpecReadsABlockerNamedInAnotherRepoFromThatRepo(t *testing.T) {
+	t.Parallel()
 	gh := sameNumbers(`{"nodes":[],"totalCount":0}`, "## Blocked by\n\n- https://github.com/other/repo/issues/43\n")
 
 	got := blockersOf(t, gh, 44)
 
 	want := []tracker.Blocker{{Repo: "other/repo", Number: 43, Open: true}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("blockers of #44 = %+v, want %+v", got, want)
+		t.Errorf("blockers of #44 in Spec(42) = %+v, want %+v", got, want)
 	}
 }
 
 func TestSpecKeepsALinkedBlockerInAnotherRepoApartFromTheSameNumberHere(t *testing.T) {
+	t.Parallel()
 	gh := sameNumbers(`{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/other/repo/issues/43"}],"totalCount":1}`, "## Blocked by\n\n- #43\n")
 
 	got := blockersOf(t, gh, 44)
 
 	want := []tracker.Blocker{{Repo: "other/repo", Number: 43, Open: true}, {Number: 43, Open: false}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("blockers of #44 = %+v, want %+v", got, want)
+		t.Errorf("blockers of #44 in Spec(42) = %+v, want %+v", got, want)
 	}
 }
 
 func TestSpecTakesABlockerURLInTheSameRepoAsTheLinkedOne(t *testing.T) {
+	t.Parallel()
 	gh := sameNumbers(`{"nodes":[{"number":43,"state":"CLOSED","url":"https://github.com/o/r/issues/43"}],"totalCount":1}`, "## Blocked by\n\n- https://github.com/O/R/issues/43\n")
 
 	got := blockersOf(t, gh, 44)
 
 	want := []tracker.Blocker{{Number: 43, Open: false}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("blockers of #44 = %+v, want %+v", got, want)
+		t.Errorf("blockers of #44 in Spec(42) = %+v, want %+v", got, want)
 	}
 }
 
 func TestSpecRefusesATaskInAnotherRepo(t *testing.T) {
+	t.Parallel()
 	gh := sameNumbers(`{"nodes":[],"totalCount":0}`, "")
 	gh.replies[specView(42)] = `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/other/repo/issues/43"}],"totalCount":1},"title":"Spec"}`
 
-	_, err := tracker.NewGitHub(gh).Spec(context.Background(), 42)
+	_, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
 
+	want := tracker.ForeignError{Ref: tracker.Ref{Repo: "other/repo", Number: 43}, Repo: "o/r"}
 	var foreign *tracker.ForeignError
-	if !errors.As(err, &foreign) || foreign.Ref != (tracker.Ref{Repo: "other/repo", Number: 43}) {
-		t.Errorf("Spec() error = %v, want a ForeignError for other/repo#43", err)
+	if !errors.As(err, &foreign) || *foreign != want {
+		t.Errorf("Spec(42) error = %v, want %+v", err, want)
 	}
 }

@@ -32,7 +32,10 @@ func ParseRef(ref string) (Ref, error) {
 		return Ref{}, fmt.Errorf("%q is not an issue: name it as 42, #42 or the issue URL", ref)
 	}
 	n, err := strconv.Atoi(m[2])
-	if err != nil || n == 0 {
+	if err != nil {
+		return Ref{}, fmt.Errorf("%q is not an issue number: %w", ref, err)
+	}
+	if n == 0 {
 		return Ref{}, fmt.Errorf("%q is not an issue number", ref)
 	}
 	return Ref{Repo: m[1], Number: n}, nil
