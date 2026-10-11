@@ -16,6 +16,7 @@ import (
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/release"
+	"github.com/byranZA/smith/internal/selfupdate"
 )
 
 // releaseServer stands in for GitHub: it names the latest release and serves
@@ -178,17 +179,19 @@ func (r *updateRig) run(t *testing.T, args ...string) (stdout, stderr string, co
 	t.Helper()
 	resolve := func() (config.Home, error) { return config.NewHome(r.home), nil }
 	cmd := newUpdateCmd(updateWiring{
-		version:    r.version,
-		goos:       r.goos,
-		goarch:     "arm64",
-		markerPath: r.markerPath,
-		get:        r.server,
-		executable: func() (string, error) { return r.binary, nil },
-		exec:       r.switched.exec,
-		continues:  func(context.Context, string) bool { return !r.predates },
-		term:       r.term,
-		home:       resolve,
-		converge:   convergeNamedBox(resolve, r.ssh),
+		updater: selfupdate.Updater{
+			Version:    r.version,
+			OS:         r.goos,
+			Arch:       "arm64",
+			MarkerPath: r.markerPath,
+			Get:        r.server,
+			Executable: func() (string, error) { return r.binary, nil },
+			Continues:  func(context.Context, string) (bool, error) { return !r.predates, nil },
+		},
+		exec:     r.switched.exec,
+		term:     r.term,
+		home:     resolve,
+		converge: convergeNamedBox(resolve, r.ssh),
 	})
 	cmd.SetArgs(args)
 	var out, errBuf bytes.Buffer
@@ -251,7 +254,7 @@ func TestUpdateBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoItForTheBox
 	if !strings.Contains(stdout, "0.2.0 → 0.3.0") {
 		t.Errorf("stdout = %q, want it to report 0.2.0 → 0.3.0", stdout)
 	}
-	want := []string{rig.binary, "update", "--" + continueBoxesFlag, "--boxes"}
+	want := []string{rig.binary, "update", "--" + selfupdate.ContinueFlag, "--boxes"}
 	if !rig.switched.called || rig.switched.path != rig.binary || strings.Join(rig.switched.args, " ") != strings.Join(want, " ") {
 		t.Errorf("switched to %q with %q, want %q with %q", rig.switched.path, rig.switched.args, rig.binary, want)
 	}
@@ -343,7 +346,7 @@ func TestUpdateWithBoxesUpgradesEveryBoxWithoutAsking(t *testing.T) {
 	rig.withBoxes(t, "alpha", "beta")
 	rig.afterSwitch("")
 
-	stdout, stderr, code := rig.run(t, "--"+continueBoxesFlag, "--boxes")
+	stdout, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag, "--boxes")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -366,7 +369,7 @@ func TestUpdateContinuingAfterTheSwitchDoesNotRepeatTheLocalUpdate(t *testing.T)
 	rig.withBoxes(t, "alpha")
 	rig.afterSwitch("")
 
-	_, stderr, code := rig.run(t, "--"+continueBoxesFlag, "--boxes")
+	_, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag, "--boxes")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -381,7 +384,7 @@ func TestUpdateAsksOneQuestionForEveryBox(t *testing.T) {
 	rig.withBoxes(t, "alpha", "beta", "gamma")
 	rig.afterSwitch("y")
 
-	_, stderr, code := rig.run(t, "--"+continueBoxesFlag)
+	_, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -403,7 +406,7 @@ func TestUpdateDeclinedUpgradesNoBoxAndPrintsTheUpgradeCommands(t *testing.T) {
 			rig.withBoxes(t, "alpha", "beta")
 			rig.afterSwitch(answer)
 
-			stdout, stderr, code := rig.run(t, "--"+continueBoxesFlag)
+			stdout, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag)
 
 			if code != 0 {
 				t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -428,7 +431,7 @@ func TestUpdateUnattendedWithoutBoxesTouchesNoBoxAndPrintsOneCommandPerBox(t *te
 	rig.withBoxes(t, "alpha", "beta")
 	rig.version = "0.3.0"
 
-	stdout, stderr, code := rig.run(t, "--"+continueBoxesFlag)
+	stdout, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
@@ -452,7 +455,7 @@ func TestUpdateCarriesOnPastAnUnreachableBoxAndFailsNamingIt(t *testing.T) {
 	rig.ssh.unreachable = map[string]bool{"smith@alpha": true}
 	rig.afterSwitch("")
 
-	stdout, _, code := rig.run(t, "--"+continueBoxesFlag, "--boxes")
+	stdout, _, code := rig.run(t, "--"+selfupdate.ContinueFlag, "--boxes")
 
 	if code == 0 {
 		t.Fatalf("exit code = 0, want non-zero for a failed box")
@@ -473,7 +476,7 @@ func TestUpdateReportsABoxAlreadyOnTheVersionAsCurrent(t *testing.T) {
 	rig.ssh.boxes["smith@alpha"].installed = "0.3.0"
 	rig.afterSwitch("")
 
-	stdout, stderr, code := rig.run(t, "--"+continueBoxesFlag, "--boxes")
+	stdout, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag, "--boxes")
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
