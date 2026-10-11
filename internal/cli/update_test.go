@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -146,6 +147,8 @@ type updateRig struct {
 	ssh        *fleetSSH
 	// predates makes the installed release one with no box step to switch into.
 	predates bool
+	// probeErr is what checking the installed release for the box step fails with.
+	probeErr error
 }
 
 // newUpdateRig is a darwin/arm64 operator's machine running release 0.2.0
@@ -186,7 +189,7 @@ func (r *updateRig) run(t *testing.T, args ...string) (stdout, stderr string, co
 			MarkerPath: r.markerPath,
 			Get:        r.server,
 			Executable: func() (string, error) { return r.binary, nil },
-			Continues:  func(context.Context, string) (bool, error) { return !r.predates, nil },
+			Continues:  func(context.Context, string) (bool, error) { return !r.predates, r.probeErr },
 		},
 		exec:     r.switched.exec,
 		term:     r.term,
@@ -527,5 +530,23 @@ func TestUpdateToAReleaseThatPredatesTheBoxStepPrintsTheUpgradeCommandsInsteadOf
 		if want := "smith machine upgrade " + box + "\n"; !strings.Contains(stdout, want) {
 			t.Errorf("stdout = %q, does not contain %q", stdout, want)
 		}
+	}
+}
+
+func TestUpdateWhoseProbeFailsExitsNonZeroWithoutSwitchingOrTouchingABox(t *testing.T) {
+	rig := newUpdateRig(t)
+	rig.withBoxes(t, "alpha")
+	rig.probeErr = errors.New("signal: killed")
+
+	_, _, code := rig.run(t, "--boxes")
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero after a failed probe")
+	}
+	if rig.switched.called {
+		t.Errorf("switched to %q, want no switch after a failed probe", rig.switched.path)
+	}
+	if rig.ssh.installed("smith@alpha") {
+		t.Errorf("box alpha was upgraded after a failed probe")
 	}
 }

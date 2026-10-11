@@ -89,7 +89,7 @@ func (u Updater) Run(ctx context.Context, named string) (Outcome, error) {
 	}
 	continues, err := u.Continues(ctx, outcome.Path)
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, &ProbeError{Path: outcome.Path, Target: target, Err: err}
 	}
 	outcome.Next = StepHandOff
 	if continues {

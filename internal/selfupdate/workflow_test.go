@@ -211,3 +211,25 @@ func TestUpgradeCarriesOnPastAFailedBoxAndCountsIt(t *testing.T) {
 		t.Errorf("Failed() = %d, want 1", got.Failed())
 	}
 }
+
+func TestRunWhoseProbeFailsNamesTheInstalledBinary(t *testing.T) {
+	g, _ := publishedRelease(t, "new smith")
+	path := installedBinary(t)
+	u := newUpdater(t, g, path)
+	cause := errors.New("signal: killed")
+	u.Continues = func(context.Context, string) (bool, error) { return false, cause }
+
+	_, err := u.Run(t.Context(), "")
+
+	var probe *ProbeError
+	if !errors.As(err, &probe) {
+		t.Fatalf("Run() error = %v, want a *ProbeError", err)
+	}
+	resolved, rerr := filepath.EvalSymlinks(path)
+	if rerr != nil {
+		t.Fatalf("resolve %s: %v", path, rerr)
+	}
+	if want := (ProbeError{Path: resolved, Target: "0.3.0", Err: cause}); *probe != want {
+		t.Errorf("Run() error = %+v, want %+v", *probe, want)
+	}
+}
