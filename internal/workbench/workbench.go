@@ -63,8 +63,8 @@ type Workbench struct {
 // the branch WorkBranch names from the tip of req's base on origin, or of
 // origin's default branch when req names none. It refuses a work branch that
 // is origin's default branch or the base, more than one numbered branch, and
-// one whose local and origin copies have diverged, and never touches dir's
-// own checkout.
+// one whose local and origin copies have diverged or that is checked out in a
+// worktree with uncommitted changes, and never touches dir's own checkout.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -78,6 +78,9 @@ func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench,
 	}
 	if found != nil {
 		w.branch = found.name
+	}
+	if err := w.refuseDirtyCheckout(ctx); err != nil {
+		return Workbench{}, err
 	}
 	base, err := w.base(ctx, req.Base)
 	if err != nil {
@@ -128,8 +131,8 @@ func (w Workbench) Open(ctx context.Context, task int) (string, error) {
 	return dir, nil
 }
 
-// Land fast-forwards the work branch to task's branch, then removes task's
-// worktree and branch. It refuses a worktree with uncommitted changes and a
+// Land fast-forwards the work branch to task's branch, in the worktree that has
+// it checked out when there is one, then removes task's worktree and branch. It refuses a worktree with uncommitted changes and a
 // task branch the work branch cannot fast-forward to, changing nothing.
 func (w Workbench) Land(ctx context.Context, task int) error {
 	dir := w.worktree(task)
@@ -169,10 +172,57 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 	if _, err := w.run(ctx, w.dir, "merge-base", "--is-ancestor", old, tip); err != nil {
 		return fmt.Errorf("work branch %s cannot fast-forward to %s: %w", w.branch, w.taskBranch(task), err)
 	}
+	checkout, err := w.checkout(ctx)
+	if err != nil {
+		return err
+	}
+	if checkout != "" {
+		if _, err := w.run(ctx, checkout, "merge", "--ff-only", "--quiet", branchRefPrefix+w.taskBranch(task)); err != nil {
+			return fmt.Errorf("fast-forward work branch %s in %s: %w", w.branch, checkout, err)
+		}
+		return nil
+	}
 	if _, err := w.run(ctx, w.dir, "update-ref", branchRefPrefix+w.branch, tip, old); err != nil {
 		return fmt.Errorf("fast-forward work branch %s: %w", w.branch, err)
 	}
 	return nil
+}
+
+// refuseDirtyCheckout refuses a work branch checked out in a worktree with
+// uncommitted changes, which landing a task would have to move.
+func (w Workbench) refuseDirtyCheckout(ctx context.Context) error {
+	checkout, err := w.checkout(ctx)
+	if err != nil || checkout == "" {
+		return err
+	}
+	status, err := w.run(ctx, checkout, "status", "--porcelain")
+	if err != nil {
+		return fmt.Errorf("read the status of %s: %w", checkout, err)
+	}
+	if status != "" {
+		return fmt.Errorf("work branch %s is checked out in %s, which has uncommitted changes: commit or stash them, then run again", w.branch, checkout)
+	}
+	return nil
+}
+
+// checkout returns the directory of the worktree that has the work branch
+// checked out, or empty when none has.
+func (w Workbench) checkout(ctx context.Context) (string, error) {
+	out, err := w.run(ctx, w.dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", fmt.Errorf("list worktrees: %w", err)
+	}
+	var dir string
+	for line := range strings.Lines(out) {
+		line = strings.TrimSpace(line)
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			dir = path
+		}
+		if line == "branch "+branchRefPrefix+w.branch {
+			return dir, nil
+		}
+	}
+	return "", nil
 }
 
 // cut creates the work branch at the tip of base on origin, fetched for the

@@ -543,3 +543,40 @@ func TestSetupRefusesAWorkBranchThatIsTheDefaultOrTheBaseBranch(t *testing.T) {
 		})
 	}
 }
+
+func TestLandBringsTheTasksCommitsIntoACleanCheckoutOfTheWorkBranch(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "switch", "-c", "smith/430-loop-works-in-task-worktrees")
+	bench := setup(t, clone)
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	landed := commitIn(t, dir, "431.txt")
+
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land() error = %v", err)
+	}
+
+	_, statErr := os.Stat(filepath.Join(clone, "431.txt"))
+	head, status := git(t, clone, "rev-parse", "HEAD"), git(t, clone, "status", "--porcelain")
+	if head != landed || status != "" || statErr != nil {
+		t.Errorf("checkout after Land() is at %s with status %q and 431.txt stat %v; want it clean at %s holding 431.txt", head, status, statErr, landed)
+	}
+}
+
+func TestSetupRefusesAWorkBranchCheckedOutInADirtyWorktree(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "switch", "-c", "smith/430-loop-works-in-task-worktrees")
+	if err := os.WriteFile(filepath.Join(clone, "wip.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+
+	if err == nil || !strings.Contains(err.Error(), resolved(t, clone)) {
+		t.Errorf("Setup() error = %v, want one naming the checkout %s", err, resolved(t, clone))
+	}
+}
