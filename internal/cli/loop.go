@@ -15,15 +15,19 @@ import (
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/tracker"
+	"github.com/byranZA/smith/internal/workbench"
 )
 
 // loopWiring is what the loop verbs reach the outside world through: gh for
-// the tracker, the launcher that starts an agent, the pusher that pushes its
-// work from a directory, the PATH search that finds an agent, and git, the
-// config home and the working directory that locate the repo file.
+// the tracker, the launcher that starts an agent, the bench that sets up an
+// execution's work branch and task worktrees in the repo a directory is in,
+// the pusher that pushes the work branch from a directory, the PATH search
+// that finds an agent, and git, the config home and the working directory
+// that locate the repo file.
 type loopWiring struct {
 	gh       tracker.Runner
 	launcher loop.Launcher
+	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error)
 	pusher   func(dir string) loop.Pusher
 	lookPath func(name string) (string, error)
 	git      repofile.Runner
@@ -32,18 +36,29 @@ type loopWiring struct {
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
-// agents started as processes on smith's own terminal, the real git pushing
-// to origin, and the real PATH.
+// agents started as processes on smith's own terminal, the real git keeping
+// the workbench and pushing to origin, and the real PATH.
 func systemLoop() loopWiring {
 	return loopWiring{
 		gh:       connection.System(),
 		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
+		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: exec.LookPath,
 		git:      connection.System(),
 		home:     userConfigHome,
 		workdir:  currentDir,
 	}
+}
+
+// systemBench sets up the workbench for req in the repo dir is in, with the
+// real git.
+func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+	bench, err := workbench.Setup(ctx, connection.System(), dir, req)
+	if err != nil {
+		return nil, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
+	}
+	return bench, nil
 }
 
 // newLoopCmd builds `smith loop`, the verbs that work a spec's tasks in the
@@ -109,17 +124,27 @@ func (w loopWiring) prompt(ctx context.Context) (loop.Prompt, error) {
 	return prompt, nil
 }
 
-// origin returns the pusher that pushes the branch checked out where smith is
-// run, or nil when settings turn pushing off.
+// origin returns the pusher that pushes the work branch from the repo smith
+// is run in, or nil when settings turn pushing off.
 func (w loopWiring) origin(settings loop.Settings) (loop.Pusher, error) {
 	if !settings.Pushes() {
 		return nil, nil
 	}
 	dir, err := w.workdir()
 	if err != nil {
-		return nil, fmt.Errorf("find the branch to push: %w", err)
+		return nil, fmt.Errorf("find the repo to push from: %w", err)
 	}
 	return w.pusher(dir), nil
+}
+
+// workbench sets up the work branch for spec in the repo smith is run in,
+// before any agent runs.
+func (w loopWiring) workbench(ctx context.Context, spec tracker.Spec) (loop.Bench, error) {
+	dir, err := w.workdir()
+	if err != nil {
+		return nil, fmt.Errorf("find the repo to work in: %w", err)
+	}
+	return w.bench(ctx, dir, workbench.Request{Number: spec.Number, Title: spec.Title})
 }
 
 // settingsReport renders each resolved setting with where it came from,
@@ -163,14 +188,16 @@ func newLoopPromptCmd() *cobra.Command {
 
 // newLoopRunCmd builds `smith loop run <spec>`, which works the spec's tasks
 // with a coding agent, or hands one task to an attached agent with --interactive.
-// It exits 0 only when the spec is complete or the interactive run's task was closed.
+// Each task is worked in a worktree of its own and landed on the spec's work
+// branch, never in the checkout smith is run from. It exits 0 only when the
+// spec is complete or the interactive run's task was closed.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
 	var interactive, noPush bool
 	cmd := &cobra.Command{
 		Use:   "run <spec>",
-		Short: "Work a spec's tasks to completion with a coding agent",
+		Short: "Work a spec's tasks to completion with a coding agent, on a work branch of its own",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := tracker.ParseRef(args[0])
@@ -208,12 +235,21 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			spec, err := github.Spec(cmd.Context(), number)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			bench, err := w.workbench(cmd.Context(), spec)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			l := loop.Loop{
 				Tracker:  github,
 				Launcher: w.launcher,
+				Bench:    bench,
 				Pusher:   pusher,
 				Agent:    adapter,
 				Options:  settings.Options(),
@@ -253,13 +289,19 @@ func runLoop(ctx context.Context, l loop.Loop, spec int, interactive bool) (stri
 		if err != nil {
 			return "", false, fmt.Errorf("work spec #%d: %w", spec, err)
 		}
-		return runReport(spec, l.Limits, outcome), outcome.Complete(), nil
+		return runReport(spec, l.Limits, outcome) + workBranchReport(outcome.WorkBranch), outcome.Complete(), nil
 	}
 	outcome, err := l.RunInteractive(ctx, spec)
 	if err != nil {
 		return "", false, fmt.Errorf("work spec #%d interactively: %w", spec, err)
 	}
-	return interactiveReport(spec, outcome), outcome.Succeeded(), nil
+	return interactiveReport(spec, outcome) + workBranchReport(outcome.WorkBranch), outcome.Succeeded(), nil
+}
+
+// workBranchReport renders the line naming the work branch a run's closed
+// tasks land on.
+func workBranchReport(branch string) string {
+	return fmt.Sprintf("work branch: %s\n", branch)
 }
 
 // interactiveReport renders how an interactive run ended: whether the task it

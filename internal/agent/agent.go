@@ -10,12 +10,14 @@ import (
 )
 
 // Command is a coding-agent invocation: the program, its arguments, the
-// environment variables to add to smith's own, and whether it is attached to
-// the operator's terminal.
+// environment variables to add to smith's own, the directory it runs in, and
+// whether it is attached to the operator's terminal.
 type Command struct {
 	Name string
 	Args []string
 	Env  []string
+	// Dir is the directory the agent runs in; empty is smith's own.
+	Dir string
 	// Attached commands read the operator's terminal and own it until they
 	// exit; the rest read no input.
 	Attached bool

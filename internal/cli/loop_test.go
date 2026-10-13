@@ -15,6 +15,7 @@ import (
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/workbench"
 )
 
 // fakeTracker answers `gh` from recorded JSON keyed by issue number.
@@ -81,13 +82,16 @@ func inRepo(t *testing.T, w loopWiring) loopWiring {
 	if w.pusher == nil {
 		w.pusher = (&fakeOrigin{}).at
 	}
+	if w.bench == nil {
+		w.bench = fakeBench
+	}
 	return w
 }
 
-// fakeOrigin stands in for origin, recording the directory each push was made from and failing each with err when set.
+// fakeOrigin stands in for origin, recording each push as the branch and the directory it was pushed from, and failing each with err when set.
 type fakeOrigin struct {
-	pushedFrom []string
-	err        error
+	pushed []string
+	err    error
 }
 
 func (f *fakeOrigin) at(dir string) loop.Pusher { return originAt{origin: f, dir: dir} }
@@ -98,10 +102,32 @@ type originAt struct {
 	dir    string
 }
 
-func (o originAt) Push(context.Context) (loop.Pushed, error) {
-	o.origin.pushedFrom = append(o.origin.pushedFrom, o.dir)
-	return loop.Pushed{Branch: "feat/42"}, o.origin.err
+func (o originAt) Push(_ context.Context, branch string) error {
+	o.origin.pushed = append(o.origin.pushed, branch+" from "+o.dir)
+	return o.origin.err
 }
+
+// fakeBench sets up a bench of benchAt for req, refusing to when the request names no spec.
+func fakeBench(_ context.Context, _ string, req workbench.Request) (loop.Bench, error) {
+	if req.Number == 0 {
+		return nil, errors.New("no spec to name a work branch after")
+	}
+	return benchAt{branch: workbench.Branch(req.Number, req.Title)}, nil
+}
+
+// benchAt is a bench on branch whose task worktrees sit under /bench and land without fault.
+type benchAt struct{ branch string }
+
+func (b benchAt) WorkBranch() string { return b.branch }
+
+func (benchAt) Open(_ context.Context, task int) (string, error) {
+	return fmt.Sprintf("/bench/%d", task), nil
+}
+
+func (benchAt) Land(context.Context, int) error { return nil }
+
+// workBranch is the final report's line naming spec #42's work branch.
+const workBranch = "work branch: smith/42-the-loop\n"
 
 // defaultSettings is the settings report of a run with no flag and no repo file.
 const defaultSettings = "agent:  claude (built-in default)\n" +
@@ -275,7 +301,7 @@ func TestLoopRunWorksEachTaskInOrderAndReportsTheSpecComplete(t *testing.T) {
 
 	stdout, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "42")
 
-	if code != 0 || !slices.Equal(claude.handed, []string{"43", "44"}) || !strings.HasSuffix(stdout, "spec #42 complete\n") {
+	if code != 0 || !slices.Equal(claude.handed, []string{"43", "44"}) || !strings.HasSuffix(stdout, "spec #42 complete\n"+workBranch) {
 		t.Errorf("exit %d, handed %v, stdout %q, stderr %q; want 0, #43 then #44, and the spec complete", code, claude.handed, stdout, stderr)
 	}
 }
@@ -289,7 +315,7 @@ func TestLoopRunOnACompleteSpecRunsNoAgentAndSucceeds(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "#42")
 
-	if code != 0 || len(claude.handed) != 0 || stdout != defaultSettings+"spec #42 complete\n" {
+	if code != 0 || len(claude.handed) != 0 || stdout != defaultSettings+"spec #42 complete\n"+workBranch {
 		t.Errorf("exit %d, handed %v, stdout %q; want 0, no agent run, the spec complete", code, claude.handed, stdout)
 	}
 }
@@ -320,7 +346,7 @@ func TestLoopRunStopsNamingTheHumanAndBlockedTasksLeft(t *testing.T) {
 
 	want := defaultSettings + "spec #42 stopped: no task is available for an agent\n" +
 		"  blocked: #44 (by #43)\n" +
-		"  waiting on a human: #43\n"
+		"  waiting on a human: #43\n" + workBranch
 	if code == 0 || len(claude.handed) != 0 || stdout != want {
 		t.Errorf("exit %d, handed %v, stdout =\n%s\nwant non-zero, no agent run, and\n%s", code, claude.handed, stdout, want)
 	}
@@ -336,7 +362,7 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
 	want := defaultSettings + "spec #42 stopped: the agent left a task open on every attempt\n" +
-		"  skipped after 3 attempts: #43\n"
+		"  skipped after 3 attempts: #43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
 	}
@@ -354,7 +380,7 @@ func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
 
 	want := defaultSettings + "spec #42 stopped: reached the cap of 3 agent runs\n" +
 		"  available: #44\n" +
-		"  skipped after 2 attempts: #43\n"
+		"  skipped after 2 attempts: #43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
 	}
@@ -570,7 +596,7 @@ func TestLoopRunInteractiveAttachesTheAgentForOneTaskAndSucceedsWhenItIsClosed(t
 
 	attached := len(claude.commands) == 1 && claude.commands[0].Attached &&
 		strings.Contains(claude.commands[0].Args[len(claude.commands[0].Args)-1], "A human is at the terminal")
-	if code != 0 || !slices.Equal(claude.handed, []string{"43"}) || !attached || stdout != defaultSettings+"task #43 closed\n" {
+	if code != 0 || !slices.Equal(claude.handed, []string{"43"}) || !attached || stdout != defaultSettings+"task #43 closed\n"+workBranch {
 		t.Errorf("exit %d, handed %v, commands %+v, stdout %q, stderr %q; want 0, #43 alone to an attached agent with the interactive note, and #43 reported closed", code, claude.handed, claude.commands, stdout, stderr)
 	}
 }
@@ -584,7 +610,7 @@ func TestLoopRunInteractiveFailsWhenTheTaskIsLeftOpen(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--interactive")
 
-	if code == 0 || idle.runs != 1 || stdout != defaultSettings+"task #43 still open\n" {
+	if code == 0 || idle.runs != 1 || stdout != defaultSettings+"task #43 still open\n"+workBranch {
 		t.Errorf("exit %d after %d agent runs, stdout %q; want non-zero after 1 run, reporting #43 still open", code, idle.runs, stdout)
 	}
 }
@@ -606,7 +632,7 @@ func TestLoopRunInteractiveWithNothingAvailableRunsNoAgentAndSaysWhy(t *testing.
 
 			stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--interactive")
 
-			if code != tt.wantCode || idle.runs != 0 || stdout != defaultSettings+tt.want {
+			if code != tt.wantCode || idle.runs != 0 || stdout != defaultSettings+tt.want+workBranch {
 				t.Errorf("exit %d after %d agent runs, stdout %q; want %d, no agent run, and %q", code, idle.runs, stdout, tt.wantCode, tt.want)
 			}
 		})
@@ -738,7 +764,7 @@ func TestLoopListReportsThePushSettingWithItsOrigin(t *testing.T) {
 	}
 }
 
-func TestLoopRunPushesFromTheRepoAfterEachClosedTaskByDefault(t *testing.T) {
+func TestLoopRunPushesTheWorkBranchFromTheRepoAfterEachClosedTaskByDefault(t *testing.T) {
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
 	origin := &fakeOrigin{}
@@ -747,9 +773,40 @@ func TestLoopRunPushesFromTheRepoAfterEachClosedTaskByDefault(t *testing.T) {
 
 	_, stderr, code := runLoopRun(t, w, "42")
 
-	root := rootOf(t, w)
-	if want := []string{root, root}; code != 0 || !slices.Equal(origin.pushedFrom, want) {
-		t.Errorf("exit %d, stderr %q, pushed from %q; want 0 and a push from %q after each of #43 and #44", code, stderr, origin.pushedFrom, root)
+	push := "smith/42-the-loop from " + rootOf(t, w)
+	if want := []string{push, push}; code != 0 || !slices.Equal(origin.pushed, want) {
+		t.Errorf("exit %d, stderr %q, pushed %q; want 0 and %q", code, stderr, origin.pushed, want)
+	}
+}
+
+func TestLoopRunHandsEachTaskToTheAgentInItsWorktree(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+
+	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "42")
+
+	var dirs []string
+	for _, c := range claude.commands {
+		dirs = append(dirs, c.Dir)
+	}
+	if want := []string{"/bench/43", "/bench/44"}; code != 0 || !slices.Equal(dirs, want) {
+		t.Errorf("exit %d, stderr %q, agents ran in %q; want 0 and %q", code, stderr, dirs, want)
+	}
+}
+
+func TestLoopRunRefusesBeforeAnyAgentRunsWhenTheWorkBranchCannotBeSetUp(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	idle := &idleAgent{}
+	refusing := func(context.Context, string, workbench.Request) (loop.Bench, error) {
+		return nil, errors.New("origin names no default branch")
+	}
+
+	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath, bench: refusing}, "42")
+
+	if code == 0 || !strings.Contains(stderr, "origin names no default branch") || idle.runs != 0 {
+		t.Errorf("exit %d, stderr %q, %d agent runs; want non-zero naming the refusal, no agent run", code, stderr, idle.runs)
 	}
 }
 
@@ -773,8 +830,8 @@ func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
 
 			stdout, stderr, code := runLoopRun(t, w, "42", tc.flags...)
 
-			if code != 0 || len(origin.pushedFrom) != 0 || !strings.Contains(stdout, tc.want) {
-				t.Errorf("exit %d, stdout %q, stderr %q, pushed from %q; want 0, no push and %q", code, stdout, stderr, origin.pushedFrom, tc.want)
+			if code != 0 || len(origin.pushed) != 0 || !strings.Contains(stdout, tc.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q, pushed %q; want 0, no push and %q", code, stdout, stderr, origin.pushed, tc.want)
 			}
 		})
 	}

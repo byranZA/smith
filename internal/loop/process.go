@@ -11,8 +11,8 @@ import (
 	"github.com/byranZA/smith/internal/agent"
 )
 
-// Process is the Launcher that starts a real agent process in the directory
-// smith runs from, with smith's environment plus the command's own. Only an
+// Process is the Launcher that starts a real agent process in the command's
+// directory, with smith's environment plus the command's own. Only an
 // attached command reads Stdin.
 type Process struct {
 	Stdin  io.Reader
@@ -31,6 +31,7 @@ const stopDelay = 3 * time.Second
 func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 	proc := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
 	proc.Env = append(os.Environ(), cmd.Env...)
+	proc.Dir = cmd.Dir
 	proc.Stdout = p.Stdout
 	proc.Stderr = p.Stderr
 	proc.WaitDelay = stopDelay

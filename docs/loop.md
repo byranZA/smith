@@ -10,7 +10,7 @@ smith loop prompt
 smith repo init [--agent <name>] [--model <name>] [--effort low|medium|high]
 ```
 
-Every verb runs in the repo it is invoked from: the loop works the current working tree on the current branch. It never commits or switches branch itself. The prompt asks the agent to commit, so a failed attempt's changes are still in the tree for the next attempt. After each task the agent closes, the loop pushes the branch to `origin` (see [Pushing](#pushing)), so closed work never exists on one machine only.
+Every verb runs in the repo it is invoked from, but no agent works in your checkout: `run` works each task in a worktree of its own, off the spec's work branch (see [The work branch](#the-work-branch)), and leaves the branch you stand on and its uncommitted changes alone. It never commits itself. The prompt asks the agent to commit, so a failed attempt's changes are still in its task worktree for the next attempt. After each task the agent closes, the loop brings its commits onto the work branch and pushes that to `origin` (see [Pushing](#pushing)), so closed work never exists on one machine only.
 
 ## What the loop reads from GitHub
 
@@ -43,7 +43,7 @@ Each setting names where its value came from. A kind of task with nothing in it 
 
 ## `smith loop run`
 
-Prints the same settings block as `list`, then works the spec unattended until no task is available. As it goes, it writes `smith: handing #N <title> to the agent` to stderr before each agent run, and `smith: the agent on #N ended with a failure: …` when one fails. At the end it reports why it stopped:
+Prints the same settings block as `list`, then works the spec unattended until no task is available. As it goes, it writes `smith: handing #N <title> to the agent in <worktree>` to stderr before each agent run, and `smith: the agent on #N ended with a failure: …` when one fails. At the end it reports why it stopped, then names the work branch (`work branch: smith/N-<slug>`):
 
 - **`spec #N complete`**: every task is closed. Exit 0.
 - **No task is available for an agent**: what remains is blocked, for a human, or not ready. Exit 1.
@@ -57,14 +57,19 @@ Two limits bound a run so it can be left alone:
 
 An agent that exits with a failure is reported and the loop carries on: whether the task is done is the tracker's call, not the exit code's. Ctrl-C stops the running agent and starts no further task.
 
+### The work branch
+
+Each run's work lands on the spec's **work branch**, `smith/<n>-<slug>`: the spec's number, then its title lower-cased and hyphenated, without a leading `Spec:`, and cut to at most 40 characters. Spec #430 titled "Spec: Loop works in task worktrees" works on `smith/430-loop-works-in-task-worktrees`. When that branch does not exist, the loop cuts it from the tip of `origin`'s default branch, which it asks `origin` for with `git ls-remote --symref origin HEAD`, so it works in a bare clone, which has no `origin/HEAD`. If `origin` names no default branch, the run stops before any agent runs, naming the problem. A later run on the same spec keeps working the branch it cut.
+
+Each task is worked in a **task worktree** under `<git-common-dir>/smith/worktrees/<task>` (`.git/smith/worktrees/` in an ordinary clone), on a **task branch** cut from the work branch's tip. A task the agent leaves open keeps its worktree, so the next attempt continues where the last stopped. Once the tracker says a task is closed, the loop fast-forwards the work branch to the task branch and removes the task worktree and task branch. A closed task whose worktree holds uncommitted changes, or whose branch the work branch cannot fast-forward to, stops the run with the work branch unchanged. The [worktrees ADR](./adr/0013-the-loop-works-in-task-worktrees.md) has the reasoning.
+
 ### Pushing
 
-After each task the agent closes, and before it chooses the next, the loop pushes the current branch to `origin` under the same name, setting that as the branch's upstream so a later bare `git push` works. It writes `smith: pushed #N on <branch> to origin` to stderr. The agent never pushes; the loop does. The loop never forces a push, and a task the agent closed without committing pushes nothing new, which is fine.
+After each task lands, and before the loop chooses the next, it pushes the work branch to `origin` under the same name, setting that as the branch's upstream so a later bare `git push` works. It writes `smith: pushed #N on <branch> to origin` to stderr. The agent never pushes; the loop does. Task branches are never pushed. The loop never forces a push, and a task the agent closed without committing pushes nothing new, which is fine.
 
-- **Origin's default branch is never pushed.** On it, the loop writes `smith: not pushing #N: <branch> is origin's default branch` and carries on, so a run on `main` cannot push past review. The loop asks `origin` which branch is its default with `git ls-remote --symref origin HEAD`, so it works in a bare clone, which has no `origin/HEAD`. If `origin` names no default branch, the run stops naming the problem and pushes nothing.
-- **A failed push stops the run** (auth, a rejected push, the network), exiting non-zero and naming the task and git's error. The task stays closed, because its work is committed, and no further task starts, so unpushed work cannot pile up. Fix the cause and push by hand, or run the loop again.
+- **A failed push stops the run** (auth, a rejected push, the network), exiting non-zero and naming the task and git's error. The task stays closed, because its work is committed and landed, and no further task starts, so unpushed work cannot pile up. Fix the cause and push by hand, or run the loop again.
 
-Pushing is on unless the repo file sets `push: false`; `--no-push` turns it off for one run. `--interactive` pushes the same way once its task is closed.
+Pushing is on unless the repo file sets `push: false`; `--no-push` turns it off for one run, and the work branch stays local. `--interactive` lands and pushes the same way once its task is closed.
 
 ### `--interactive`
 
