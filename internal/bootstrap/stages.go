@@ -17,6 +17,9 @@ type Stage struct {
 	Name string
 	// Run does the stage's work. Its error stops the pipeline.
 	Run func(ctx context.Context) error
+	// Idle marks a stage with no work in this run: it is neither run, announced
+	// nor counted among the completed stages.
+	Idle bool
 }
 
 // StageFailure is a stage of the pipeline that failed: the stage smith stopped
@@ -59,10 +62,10 @@ func (f *StageFailure) Report() string {
 	return b.String()
 }
 
-// RunStages runs the pipeline's stages in the order given, reporting each by
-// name to out as it begins and again when it completes, and stopping at the
-// first failure with a *StageFailure naming that stage and the ones that
-// completed before it.
+// RunStages runs the pipeline's stages in the order given, passing over an idle
+// one, reporting each by name to out as it begins and again when it completes,
+// and stopping at the first failure with a *StageFailure naming that stage and
+// the ones that completed before it.
 //
 // The order is the pipeline's whole content: each stage assumes what the ones
 // before it established, so a failure short-circuits the rest rather than
@@ -70,6 +73,9 @@ func (f *StageFailure) Report() string {
 func RunStages(ctx context.Context, stages []Stage, out io.Writer) error {
 	var completed []string
 	for _, stage := range stages {
+		if stage.Idle {
+			continue
+		}
 		if _, err := fmt.Fprintf(out, "%s%s\n", phaseStartPrefix, stage.Name); err != nil {
 			return fmt.Errorf("write stage start: %w", err)
 		}

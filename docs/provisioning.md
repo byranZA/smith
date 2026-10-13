@@ -205,15 +205,30 @@ A box set up before this phase reports it as missing in `machine status`, the sa
 
 `machine setup` ends with an ordered pipeline of named stages:
 
-1. `access` — in tailscale mode, enroll the box and close public SSH. In public
-   mode it does nothing.
+1. `access` — in tailscale mode, enroll the box and close public SSH. Public mode has no access stage to run, so it is left out of the output.
 2. `install` — put smith onto the box.
 3. `config` — stage the blueprint, when `--blueprint` is given.
 4. `workspace` — converge it, relayed to the smith on the box.
 
+The stages share their names with the phases above and their `▶` / `✓` lines, so a `setup stages:` heading separates the two blocks. A public-mode run with a blueprint shows:
+
+```text
+setup stages:
+▶ install
+installed smith 0.2.0
+✓ install
+▶ config
+✓ config
+▶ workspace
+…
+✓ workspace
+```
+
 Every stage reaches the box as the `smith` user, because hardening has closed
 the bootstrap login by then. They are covered in [smith on the
 box](./on-box.md) and [the workspace stage](./workspace.md).
+
+Every command smith runs on the box gets the `C.UTF-8` locale. smith sets `LC_ALL` on each connection, because the locale your ssh config forwards (macOS sends `LC_CTYPE=UTF-8`) may not exist on the box. Without it, tools such as perl warn `Setting locale failed`.
 
 ### Without a blueprint
 

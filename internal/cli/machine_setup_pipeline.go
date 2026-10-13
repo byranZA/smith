@@ -58,10 +58,11 @@ type pipelineRun struct {
 // runs second because the stages after it run on the box's own smith, and a box
 // cannot install the binary that would have to be there to install it (see
 // docs/adr/0008). Config staging runs before the workspace stage because that
-// stage reads the document and the placement bytes staging writes.
+// stage reads the document and the placement bytes staging writes. Access is
+// idle outside tailscale mode, which has no admin-side access layer.
 func (r *pipelineRun) stages(stdout, stderr io.Writer) []bootstrap.Stage {
 	return []bootstrap.Stage{
-		{Name: "access", Run: func(ctx context.Context) error {
+		{Name: "access", Idle: r.accessMode != "tailscale", Run: func(ctx context.Context) error {
 			return r.establishAccess(ctx, stdout)
 		}},
 		{Name: "install", Run: func(ctx context.Context) error {
@@ -92,7 +93,7 @@ func (r *pipelineRun) reach() string {
 // proves reach over the tailnet and closes public SSH, and records the address
 // the rest of the pipeline reaches the box by. Public mode has no admin-side
 // access layer — the phases left hardened SSH open on the public IP — so the
-// stage runs and does nothing.
+// stage does nothing.
 //
 // Like every stage it travels as the smith user, never the bootstrap login,
 // which hardening has closed by now on a root setup. It starts at the host the

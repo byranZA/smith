@@ -111,3 +111,36 @@ func TestStageFailureReportSeparatesAStageFromAPhase(t *testing.T) {
 		t.Errorf("Report() = %q, want it to report the phases as complete", report)
 	}
 }
+
+func TestRunStagesLeavesAStageWithNoWorkUnannounced(t *testing.T) {
+	var ran []string
+	idle := namedStage("access", &ran, nil)
+	idle.Idle = true
+	var out strings.Builder
+
+	if err := RunStages(context.Background(), []Stage{idle, namedStage("install", &ran, nil)}, &out); err != nil {
+		t.Fatalf("RunStages() err = %v, want nil", err)
+	}
+	if got, want := out.String(), "▶ install\n✓ install\n"; got != want {
+		t.Errorf("RunStages() output = %q, want %q", got, want)
+	}
+}
+
+func TestStageFailureLeavesAStageWithNoWorkOutOfTheCompleted(t *testing.T) {
+	var ran []string
+	idle := namedStage("access", &ran, nil)
+	idle.Idle = true
+	stages := []Stage{
+		idle,
+		namedStage("install", &ran, nil),
+		namedStage("config", &ran, errors.New("unreadable blueprint")),
+	}
+
+	var failure *StageFailure
+	if !errors.As(RunStages(context.Background(), stages, io.Discard), &failure) {
+		t.Fatal("RunStages() err is not a *StageFailure")
+	}
+	if got := strings.Join(failure.Completed, ","); got != "install" {
+		t.Errorf("completed stages = %q, want %q", got, "install")
+	}
+}
