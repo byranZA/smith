@@ -362,7 +362,8 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
 	want := defaultSettings + "spec #42 stopped: the agent left a task open on every attempt\n" +
-		"  skipped after 3 attempts: #43\n" + workBranch
+		"  skipped after 3 attempts: #43\n" +
+		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
 	}
@@ -380,7 +381,8 @@ func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
 
 	want := defaultSettings + "spec #42 stopped: reached the cap of 3 agent runs\n" +
 		"  available: #44\n" +
-		"  skipped after 2 attempts: #43\n" + workBranch
+		"  skipped after 2 attempts: #43\n" +
+		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
 	}

@@ -264,6 +264,25 @@ func TestLandWithNoCommitsLeavesTheWorkBranchWhereItWas(t *testing.T) {
 	}
 }
 
+func TestLandWithNoCommitsRemovesTheTaskWorktreeAndTaskBranch(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land() error = %v", err)
+	}
+
+	_, statErr := os.Stat(dir)
+	if branches := git(t, clone, "branch", "--list", "smith/tasks/*"); !os.IsNotExist(statErr) || branches != "" {
+		t.Errorf("after Land() worktree stat = %v, task branches %q; want the worktree and branch gone", statErr, branches)
+	}
+}
+
 func TestTheNextTaskStartsFromTheLandedWork(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)

@@ -3,6 +3,7 @@ package loop_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -156,5 +157,16 @@ func TestRunInteractiveWorksTheTaskInItsWorktreeThenLandsAndPushesIt(t *testing.
 	want := []string{"open 43", "hand 43 in /bench/43", "land 43", "push smith/42-spec"}
 	if err != nil || outcome.WorkBranch != "smith/42-spec" || !slices.Equal(j.events, want) {
 		t.Errorf("RunInteractive() = %+v, %v, events %q; want the work branch smith/42-spec and events %q", outcome, err, j.events, want)
+	}
+}
+
+func TestRunReportsTheWorktreeLeftForASkippedTask(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43}}}
+
+	outcome, err := journalLoop(t, j).Run(t.Context(), 42)
+
+	if want := map[int]string{43: "/bench/43"}; err != nil || !reflect.DeepEqual(outcome.Left, want) {
+		t.Errorf("Run() = %+v, %v; want the worktrees left %v", outcome, err, want)
 	}
 }

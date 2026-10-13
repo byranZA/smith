@@ -77,11 +77,13 @@ func DefaultLimits() Limits { return Limits{MaxIterations: 10, MaxAttempts: 2} }
 
 // Outcome is how a run ended: what remained of the spec when it stopped,
 // with the tasks it skipped among it, whether the iteration cap stopped it,
-// and the work branch its closed tasks landed on.
+// the work branch its closed tasks landed on, and the task worktrees it left.
 type Outcome struct {
 	Remaining  Remaining
 	Capped     bool
 	WorkBranch string
+	// Left maps each skipped task to the task worktree left for the operator.
+	Left map[int]string
 }
 
 // Complete reports whether the run ended with every task of the spec closed.
@@ -92,6 +94,7 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
+	worktrees := map[int]string{}
 	runs := 0
 	current, err := l.Tracker.Spec(ctx, spec)
 	if err != nil {
@@ -101,14 +104,16 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		remaining := Survey(current).Skip(skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, nil
+			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
 		}
 		if runs >= l.Limits.MaxIterations {
-			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch()}, nil
+			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
 		}
-		if err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options)); err != nil {
+		dir, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
+		if err != nil {
 			return Outcome{}, err
 		}
+		worktrees[next.Number] = dir
 		runs++
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
@@ -162,7 +167,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, nil
 	}
-	if err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
+	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	after, err := l.Tracker.Spec(ctx, spec)
@@ -177,26 +182,36 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
 }
 
-// hand gives task to one agent run of cmd in task's worktree. An agent that
-// exits with a failure is reported and left to the tracker to judge; only an
-// interrupted run is an error.
-func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) error {
+// hand gives task to one agent run of cmd in task's worktree, and returns
+// that worktree's directory. An agent that exits with a failure is reported
+// and left to the tracker to judge; only an interrupted run is an error.
+func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
-		return fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
+		return "", fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
-		return err
+		return "", err
 	}
 	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
-		return fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+		return "", fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 	}
 	if err != nil {
-		return l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
+		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
 	}
-	return nil
+	return dir, nil
+}
+
+// left returns the worktree of each task remaining skipped, from worktrees,
+// by task number.
+func left(remaining Remaining, worktrees map[int]string) map[int]string {
+	dirs := map[int]string{}
+	for _, task := range remaining.Skipped {
+		dirs[task.Number] = worktrees[task.Number]
+	}
+	return dirs
 }
 
 // land brings closed task's work onto the work branch and pushes that, when

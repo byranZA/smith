@@ -334,7 +334,8 @@ func checkLimits(limits loop.Limits) error {
 }
 
 // runReport renders how a run ended: the spec complete, or why it stopped and
-// what remains open, naming the tasks it skipped and the attempts each had.
+// what remains open, naming the tasks it skipped, the attempts each had and
+// the task worktree each was left in.
 func runReport(spec int, limits loop.Limits, outcome loop.Outcome) string {
 	if outcome.Complete() {
 		return fmt.Sprintf("spec #%d complete\n", spec)
@@ -349,6 +350,9 @@ func runReport(spec int, limits loop.Limits, outcome loop.Outcome) string {
 		fmt.Fprintf(&b, "spec #%d stopped: no task is available for an agent\n", spec)
 	}
 	writeKinds(&b, outcome.Remaining, limits, false)
+	for _, task := range outcome.Remaining.Skipped {
+		fmt.Fprintf(&b, "  #%d left in %s\n", task.Number, outcome.Left[task.Number])
+	}
 	return b.String()
 }
 
