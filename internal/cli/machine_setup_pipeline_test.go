@@ -144,8 +144,7 @@ func TestSetupInstallStageRunsAsTheSmithLogin(t *testing.T) {
 	}
 }
 
-// stageBlock returns the lines of out that make up the stage block's outline:
-// its heading and each stage's start and done line, without the stages' output.
+// stageBlock returns the stage block's heading and stage start and done lines from out.
 func stageBlock(out string) []string {
 	var block []string
 	for _, line := range strings.Split(out, "\n") {
