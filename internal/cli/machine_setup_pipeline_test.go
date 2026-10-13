@@ -143,3 +143,44 @@ func TestSetupInstallStageRunsAsTheSmithLogin(t *testing.T) {
 		}
 	}
 }
+
+// stageBlock returns the stage block's heading and stage start and done lines from out.
+func stageBlock(out string) []string {
+	var block []string
+	for _, line := range strings.Split(out, "\n") {
+		if line == "setup stages:" || strings.HasPrefix(line, "▶ ") || strings.HasPrefix(line, "✓ ") {
+			block = append(block, line)
+		}
+	}
+	return block
+}
+
+func TestSetupInPublicModeHeadsTheStagesAndLeavesTheIdleAccessStageOut(t *testing.T) {
+	t.Parallel()
+	ssh := &setupSSH{machine: "x86_64"}
+
+	stdout, stderr, code := runSetup(t, t.TempDir(), ssh, append(releaseRun("0.2.0"), "root@203.0.113.10")...)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := []string{"setup stages:", "▶ install", "✓ install", "▶ config", "✓ config", "▶ workspace", "✓ workspace"}
+	if got := stageBlock(stdout); !slices.Equal(got, want) {
+		t.Errorf("stage block = %q, want %q", got, want)
+	}
+}
+
+func TestSetupInTailscaleModeAnnouncesTheAccessStageUnderTheHeading(t *testing.T) {
+	ssh := &setupSSH{machine: "x86_64", tailnetIP: "100.92.14.7"}
+
+	args := append(tailscaleRun(t), append(releaseRun("0.2.0"), "root@203.0.113.10")...)
+	stdout, stderr, code := runSetup(t, t.TempDir(), ssh, args...)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := []string{"setup stages:", "▶ access", "✓ access", "▶ install", "✓ install", "▶ config", "✓ config", "▶ workspace", "✓ workspace"}
+	if got := stageBlock(stdout); !slices.Equal(got, want) {
+		t.Errorf("stage block = %q, want %q", got, want)
+	}
+}

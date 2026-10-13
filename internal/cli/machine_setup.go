@@ -204,6 +204,9 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 				localVersion: resolveVersion(),
 				staged:       staged,
 			}
+			if _, err := fmt.Fprintln(stdout, "setup stages:"); err != nil {
+				return fmt.Errorf("write stages heading: %w", err)
+			}
 			if err := bootstrap.RunStages(ctx, run.stages(stdout, stderr), stdout); err != nil {
 				return reportStageFailure(stderr, err)
 			}
