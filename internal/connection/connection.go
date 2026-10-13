@@ -50,14 +50,11 @@ const connectExitCode = 255
 
 // defaultSSHOptions harden the non-interactive bootstrap-in path: never prompt
 // for a password (key auth only), auto-accept a fresh box's host key, and time
-// out rather than hang when the box is unreachable. They also pin the remote
-// locale to one every box has, overriding any LANG or LC_* the operator's ssh
-// config forwards, which the box may lack (macOS forwards LC_CTYPE=UTF-8).
+// out rather than hang when the box is unreachable.
 var defaultSSHOptions = []string{
 	"-o", "BatchMode=yes",
 	"-o", "StrictHostKeyChecking=accept-new",
 	"-o", "ConnectTimeout=10",
-	"-o", "SetEnv=LC_ALL=C.UTF-8",
 }
 
 // Exec abstracts launching a local process (ssh or scp). It is injected so

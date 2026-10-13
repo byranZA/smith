@@ -64,39 +64,6 @@ func TestRunLaunchesTheRemoteCommandOverSSH(t *testing.T) {
 	}
 }
 
-func TestEveryInvocationPinsTheRemoteLocaleOverTheOperatorsForwardedOne(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		launch func(ctx context.Context, c *SSH) error
-	}{
-		{"run", func(ctx context.Context, c *SSH) error { return c.Run(ctx, "true", io.Discard, io.Discard) }},
-		{"run with input", func(ctx context.Context, c *SSH) error {
-			return c.RunWithInput(ctx, "true", strings.NewReader(""), io.Discard, io.Discard)
-		}},
-		{"copy", func(ctx context.Context, c *SSH) error { return c.Copy(ctx, "/tmp/a", "/tmp/b") }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			fake := &recordingExec{}
-			if err := tt.launch(t.Context(), New("smith@box", fake)); err != nil {
-				t.Fatalf("launch error = %v, want nil", err)
-			}
-			if got := strings.Join(fake.args, " "); !strings.Contains(got, "-o SetEnv=LC_ALL=C.UTF-8 ") {
-				t.Errorf("%s args = %q, want -o SetEnv=LC_ALL=C.UTF-8", fake.name, got)
-			}
-		})
-	}
-}
-
-func TestTerminalArgsPinsTheRemoteLocale(t *testing.T) {
-	t.Parallel()
-	if got := strings.Join(TerminalArgs("smith@box", "tmux"), " "); !strings.Contains(got, "-o SetEnv=LC_ALL=C.UTF-8 ") {
-		t.Errorf("TerminalArgs(%q, %q) = %q, want -o SetEnv=LC_ALL=C.UTF-8", "smith@box", "tmux", got)
-	}
-}
-
 func TestRunStreamsTheRemoteOutput(t *testing.T) {
 	t.Parallel()
 	fake := &recordingExec{replyStdout: "hello from box\n"}

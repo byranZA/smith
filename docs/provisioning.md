@@ -228,7 +228,7 @@ Every stage reaches the box as the `smith` user, because hardening has closed
 the bootstrap login by then. They are covered in [smith on the
 box](./on-box.md) and [the workspace stage](./workspace.md).
 
-Every command smith runs on the box gets the `C.UTF-8` locale. smith sets `LC_ALL` on each connection, because the locale your ssh config forwards (macOS sends `LC_CTYPE=UTF-8`) may not exist on the box. Without it, tools such as perl warn `Setting locale failed`.
+Commands smith runs on the box use the box's own default locale. Your ssh config may forward your local `LANG` and `LC_*` (macOS sends `LC_CTYPE=UTF-8`), which the box may not have, and tools such as perl then warn `Setting locale failed`. smith launches `ssh` and `scp` without those variables, so there is nothing to forward. The rest of your ssh config (identities, proxies, host aliases) applies as usual.
 
 ### Without a blueprint
 

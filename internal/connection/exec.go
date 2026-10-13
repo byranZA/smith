@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -18,9 +19,11 @@ func System() SystemExec { return SystemExec{} }
 
 // Run launches name with args, streaming the given stdin/stdout/stderr live.
 // The subprocess inherits smith's environment, which is how a provider CLI
-// reaches a credential smith never reads.
+// reaches a credential smith never reads; ssh and scp inherit it without the
+// operator's locale (see environFor).
 func (SystemExec) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = environFor(name)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -38,8 +41,25 @@ func (SystemExec) Exec(name string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("find %s on PATH: %w", name, err)
 	}
-	if err := syscall.Exec(path, append([]string{name}, args...), os.Environ()); err != nil {
+	if err := syscall.Exec(path, append([]string{name}, args...), environFor(name)); err != nil {
 		return fmt.Errorf("replace smith with %s: %w", name, err)
 	}
 	return nil
+}
+
+// environFor returns the environment the process name runs with: smith's own,
+// minus LANG and LC_* for ssh and scp, so an ssh config that forwards the
+// operator's locale has none to send and the box keeps its own default.
+func environFor(name string) []string {
+	if name != "ssh" && name != "scp" {
+		return os.Environ()
+	}
+	environ := os.Environ()
+	env := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, "LANG=") && !strings.HasPrefix(kv, "LC_") {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
