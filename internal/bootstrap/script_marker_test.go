@@ -11,6 +11,7 @@ import (
 )
 
 func TestScriptSetupAbortsWithoutReportingAPhaseItCannotRecord(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through a read-only directory")
 	}
@@ -58,6 +59,7 @@ chmod 0555 "`+markerDir+`"
 }
 
 func TestScriptSetupLeavesOnlyTheMarkerInItsDirectory(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
@@ -90,6 +92,7 @@ func TestScriptSetupLeavesOnlyTheMarkerInItsDirectory(t *testing.T) {
 }
 
 func TestScriptSetupKeepsTheMarkerWhenTheCapabilityGuardFails(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
