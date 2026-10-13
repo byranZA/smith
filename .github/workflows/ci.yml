@@ -46,6 +46,13 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
+      # Install sshd so the connection tests that run real ssh against a
+      # throwaway sshd actually run. The runner image ships only the ssh client,
+      # and without sshd those tests skip, which would leave the locale handling
+      # unchecked against a real server.
+      - name: Install sshd
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server
+
       # fmt-check + vet + lint + test — identical to the local gate.
       - name: make check
         run: make check
