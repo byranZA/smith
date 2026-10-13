@@ -68,19 +68,19 @@ func TestEveryInvocationPinsTheRemoteLocaleOverTheOperatorsForwardedOne(t *testi
 	t.Parallel()
 	tests := []struct {
 		name   string
-		launch func(c *SSH) error
+		launch func(ctx context.Context, c *SSH) error
 	}{
-		{"run", func(c *SSH) error { return c.Run(context.Background(), "true", io.Discard, io.Discard) }},
-		{"run with input", func(c *SSH) error {
-			return c.RunWithInput(context.Background(), "true", strings.NewReader(""), io.Discard, io.Discard)
+		{"run", func(ctx context.Context, c *SSH) error { return c.Run(ctx, "true", io.Discard, io.Discard) }},
+		{"run with input", func(ctx context.Context, c *SSH) error {
+			return c.RunWithInput(ctx, "true", strings.NewReader(""), io.Discard, io.Discard)
 		}},
-		{"copy", func(c *SSH) error { return c.Copy(context.Background(), "/tmp/a", "/tmp/b") }},
+		{"copy", func(ctx context.Context, c *SSH) error { return c.Copy(ctx, "/tmp/a", "/tmp/b") }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			fake := &recordingExec{}
-			if err := tt.launch(New("smith@box", fake)); err != nil {
+			if err := tt.launch(t.Context(), New("smith@box", fake)); err != nil {
 				t.Fatalf("launch error = %v, want nil", err)
 			}
 			if got := strings.Join(fake.args, " "); !strings.Contains(got, "-o SetEnv=LC_ALL=C.UTF-8 ") {

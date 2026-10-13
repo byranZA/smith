@@ -113,12 +113,13 @@ func TestStageFailureReportSeparatesAStageFromAPhase(t *testing.T) {
 }
 
 func TestRunStagesLeavesAStageWithNoWorkUnannounced(t *testing.T) {
+	t.Parallel()
 	var ran []string
 	idle := namedStage("access", &ran, nil)
 	idle.Idle = true
 	var out strings.Builder
 
-	if err := RunStages(context.Background(), []Stage{idle, namedStage("install", &ran, nil)}, &out); err != nil {
+	if err := RunStages(t.Context(), []Stage{idle, namedStage("install", &ran, nil)}, &out); err != nil {
 		t.Fatalf("RunStages() err = %v, want nil", err)
 	}
 	if got, want := out.String(), "▶ install\n✓ install\n"; got != want {
@@ -127,6 +128,7 @@ func TestRunStagesLeavesAStageWithNoWorkUnannounced(t *testing.T) {
 }
 
 func TestStageFailureLeavesAStageWithNoWorkOutOfTheCompleted(t *testing.T) {
+	t.Parallel()
 	var ran []string
 	idle := namedStage("access", &ran, nil)
 	idle.Idle = true
@@ -137,7 +139,7 @@ func TestStageFailureLeavesAStageWithNoWorkOutOfTheCompleted(t *testing.T) {
 	}
 
 	var failure *StageFailure
-	if !errors.As(RunStages(context.Background(), stages, io.Discard), &failure) {
+	if !errors.As(RunStages(t.Context(), stages, io.Discard), &failure) {
 		t.Fatal("RunStages() err is not a *StageFailure")
 	}
 	if got := strings.Join(failure.Completed, ","); got != "install" {

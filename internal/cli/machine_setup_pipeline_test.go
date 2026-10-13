@@ -156,6 +156,7 @@ func stageBlock(out string) []string {
 }
 
 func TestSetupInPublicModeHeadsTheStagesAndLeavesTheIdleAccessStageOut(t *testing.T) {
+	t.Parallel()
 	ssh := &setupSSH{machine: "x86_64"}
 
 	stdout, stderr, code := runSetup(t, t.TempDir(), ssh, append(releaseRun("0.2.0"), "root@203.0.113.10")...)
