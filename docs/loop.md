@@ -74,7 +74,7 @@ Pushing is on unless the repo file sets `push: false`; `--no-push` turns it off 
 
 ### `--interactive`
 
-Hands the next available task to one agent run attached to your terminal, then stops. The prompt gains a note asking the agent to check its plan with you, ask rather than guess, and show you the result before it commits and closes the task. Approvals are the agent's own, so you answer them as you would in any session. The limits play no part. It reports `task #N closed` and exits 0, or `task #N still open` and exits 1. With no task available it runs no agent, prints the same stop report as `run`, and exits 0 only if the spec is complete.
+Hands the next available task to one agent run attached to your terminal, in the task's worktree like any other run, then stops. The prompt gains a note asking the agent to check its plan with you, ask rather than guess, and show you the result before it commits and closes the task. Approvals are the agent's own, so you answer them as you would in any session. The limits play no part. It reports `task #N closed` and exits 0, or `task #N still open` and exits 1. With no task available it runs no agent, prints the same stop report as `run`, and exits 0 only if the spec is complete.
 
 Use it for the first run on a new repo or prompt, or for a task you want to steer.
 

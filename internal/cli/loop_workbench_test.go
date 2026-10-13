@@ -79,3 +79,44 @@ func TestLoopRunLandsEachTaskOnANewWorkBranchAndPushesItLeavingTheCheckoutAlone(
 		t.Errorf("operator's checkout branch, HEAD and status = %q, want them unchanged as %q", after, before)
 	}
 }
+
+func TestLoopRunInteractiveWorksTheTaskInAWorktreeThenLandsAndPushesItLeavingTheCheckoutAlone(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
+	gitIn(t, root, "init", "--bare", "-b", "main", remote)
+	gitIn(t, root, "clone", remote, clone)
+	gitIn(t, clone, "commit", "--allow-empty", "-m", "seed")
+	gitIn(t, clone, "push", "origin", "main")
+	if err := os.WriteFile(filepath.Join(clone, "wip.txt"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkout := func() []string {
+		return []string{gitIn(t, clone, "symbolic-ref", "HEAD"), gitIn(t, clone, "rev-parse", "HEAD"), gitIn(t, clone, "status", "--porcelain")}
+	}
+	before := checkout()
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
+	claude := &committingAgent{fakeAgent: fakeAgent{gh: gh}, t: t}
+	w := loopWiring{
+		gh:       gh,
+		launcher: claude,
+		bench:    systemBench,
+		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
+		lookPath: onPath,
+		git:      connection.System(),
+		workdir:  func() (string, error) { return clone, nil },
+	}
+
+	stdout, stderr, code := runLoopRun(t, w, "42", "--interactive")
+
+	if code != 0 || !strings.HasSuffix(stdout, "task #43 closed\n"+workBranch) {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 with #43 closed and the work branch named", code, stdout, stderr)
+	}
+	landed := gitIn(t, remote, "log", "--format=%s", "smith/42-the-loop")
+	if want := "task 43\nseed"; landed != want {
+		t.Errorf("origin's smith/42-the-loop holds %q, want %q", landed, want)
+	}
+	if after := checkout(); !slices.Equal(after, before) {
+		t.Errorf("operator's checkout branch, HEAD and status = %q, want them unchanged as %q", after, before)
+	}
+}
