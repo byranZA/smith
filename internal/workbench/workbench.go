@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	"maps"
 	"os"
@@ -119,16 +120,43 @@ func (w Workbench) WorkBranch() string { return w.branch }
 
 // Open returns the directory of task's worktree, creating it on a new task
 // branch cut from the work branch's tip, or returning the one an earlier
-// attempt left as it is.
+// attempt left as it is. It refuses, leaving it in place, anything at that
+// path that is not this repo's worktree on task's branch.
 func (w Workbench) Open(ctx context.Context, task int) (string, error) {
 	dir := w.worktree(task)
-	if _, err := os.Stat(dir); err == nil {
+	_, err := os.Lstat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.taskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
+			return "", fmt.Errorf("add worktree %s: %w", dir, err)
+		}
 		return dir, nil
 	}
-	if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.taskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
-		return "", fmt.Errorf("add worktree %s: %w", dir, err)
+	if err != nil {
+		return "", fmt.Errorf("look for worktree %s: %w", dir, err)
+	}
+	if err := w.owns(ctx, task, dir); err != nil {
+		return "", err
 	}
 	return dir, nil
+}
+
+// owns refuses dir unless git registers it as a worktree of this repo with
+// task's branch checked out.
+func (w Workbench) owns(ctx context.Context, task int, dir string) error {
+	trees, err := w.worktrees(ctx)
+	if err != nil {
+		return err
+	}
+	want := branchRefPrefix + w.taskBranch(task)
+	i := slices.IndexFunc(trees, func(t tree) bool { return t.dir == dir })
+	if i < 0 {
+		return fmt.Errorf("%s is not a worktree of this repo, so cannot hold task branch %s: move it aside, then run again", dir, w.taskBranch(task))
+	}
+	if trees[i].ref != want {
+		return fmt.Errorf("worktree %s has %s checked out, not task branch %s: an execution on another work branch left it, so finish or remove it there, then run again",
+			dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.taskBranch(task))
+	}
+	return nil
 }
 
 // Land fast-forwards the work branch to task's branch, in the worktree that has
@@ -208,21 +236,41 @@ func (w Workbench) refuseDirtyCheckout(ctx context.Context) error {
 // checkout returns the directory of the worktree that has the work branch
 // checked out, or empty when none has.
 func (w Workbench) checkout(ctx context.Context) (string, error) {
-	out, err := w.run(ctx, w.dir, "worktree", "list", "--porcelain")
+	trees, err := w.worktrees(ctx)
 	if err != nil {
-		return "", fmt.Errorf("list worktrees: %w", err)
+		return "", err
 	}
-	var dir string
-	for line := range strings.Lines(out) {
-		line = strings.TrimSpace(line)
-		if path, ok := strings.CutPrefix(line, "worktree "); ok {
-			dir = path
-		}
-		if line == "branch "+branchRefPrefix+w.branch {
-			return dir, nil
+	for _, t := range trees {
+		if t.ref == branchRefPrefix+w.branch {
+			return t.dir, nil
 		}
 	}
 	return "", nil
+}
+
+// tree is a worktree git registers for the repo, and the full ref of the
+// branch it has checked out, empty when none is.
+type tree struct {
+	dir, ref string
+}
+
+// worktrees returns every worktree git registers for the repo.
+func (w Workbench) worktrees(ctx context.Context) ([]tree, error) {
+	out, err := w.run(ctx, w.dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("list worktrees: %w", err)
+	}
+	var trees []tree
+	for line := range strings.Lines(out) {
+		line = strings.TrimSpace(line)
+		if dir, ok := strings.CutPrefix(line, "worktree "); ok {
+			trees = append(trees, tree{dir: dir})
+		}
+		if ref, ok := strings.CutPrefix(line, "branch "); ok && len(trees) > 0 {
+			trees[len(trees)-1].ref = ref
+		}
+	}
+	return trees, nil
 }
 
 // cut creates the work branch at the tip of base on origin, fetched for the

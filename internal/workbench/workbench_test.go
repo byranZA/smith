@@ -1,11 +1,13 @@
 package workbench_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -578,5 +580,83 @@ func TestSetupRefusesAWorkBranchCheckedOutInADirtyWorktree(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), resolved(t, clone)) {
 		t.Errorf("Setup() error = %v, want one naming the checkout %s", err, resolved(t, clone))
+	}
+}
+
+func TestOpenRefusesARetainedWorktreeOfAnotherWorkBranch(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	req := spec430
+	req.Branch = "work-a"
+	benchA, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup(work-a) error = %v", err)
+	}
+	dir, err := benchA.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() on work-a error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "half.txt"), []byte("half done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req.Branch = "work-b"
+	benchB, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup(work-b) error = %v", err)
+	}
+
+	got, err := benchB.Open(t.Context(), 431)
+
+	if err == nil || got != "" || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "smith/tasks/work-b/431") || git(t, dir, "status", "--porcelain") != "?? half.txt" {
+		t.Errorf("Open(431) on work-b = %q, %v; want an error naming %s and smith/tasks/work-b/431, with half.txt kept", got, err, dir)
+	}
+}
+
+func TestOpenRefusesAndKeepsAnUnregisteredPathAtTheTaskWorktree(t *testing.T) {
+	t.Parallel()
+	for name, place := range map[string]func(path string) error{
+		"directory": func(path string) error { return os.MkdirAll(path, 0o755) },
+		"regular file": func(path string) error {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(path, []byte("mine\n"), 0o644)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			clone, _ := cloned(t)
+			bench := setup(t, clone)
+			path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "431")
+			if err := place(path); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := bench.Open(t.Context(), 431)
+
+			_, statErr := os.Stat(path)
+			if err == nil || got != "" || !strings.Contains(err.Error(), path) || statErr != nil {
+				t.Errorf("Open(431) over an unregistered %s = %q, %v, with stat %v; want an error naming %s and the %s kept", name, got, err, statErr, path, name)
+			}
+		})
+	}
+}
+
+func TestOpenKeepsTheCauseOfAFilesystemErrorAtTheTaskWorktree(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	smith := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith")
+	if err := os.MkdirAll(smith, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(smith, "worktrees"), []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := bench.Open(t.Context(), 431)
+
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Open(431) under a regular file error = %v, want one wrapping %v", err, syscall.ENOTDIR)
 	}
 }
