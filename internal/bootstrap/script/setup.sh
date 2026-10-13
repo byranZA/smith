@@ -53,7 +53,9 @@ parse_setup_args() {
 
 # setup guards the required capabilities, writes the marker early, then runs each
 # ordered phase. The capability guard runs before any mutation, so a box past the
-# OS floor that lacks a needed capability fails named and untouched. In tailscale mode
+# OS floor that lacks a needed capability fails named and untouched, its existing
+# marker included: that marker still describes the box as the last setup left it,
+# and `machine status` reports any capability lost since as drift. In tailscale mode
 # the terminal access phase is not a box-side streamed phase: enrolling the node
 # and closing public SSH are gated on a live tailnet probe run from the admin
 # side, so smith drives them separately (enroll, then close-public-ssh once the

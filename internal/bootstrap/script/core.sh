@@ -137,13 +137,16 @@ json_phases() {
   printf '%s' "$body"
 }
 
-# write_marker renders the marker from the current run state and writes it
-# atomically as root. It is called early (empty completed_phases) and again
-# after each phase succeeds.
+# write_marker renders the marker from the current run state into a temp file in
+# MARKER_DIR and renames it over MARKER as root, so a reader only ever sees a
+# complete marker. A failed write returns non-zero, leaves the previous marker in
+# place and removes the temp file. It is called early (empty completed_phases)
+# and again after each phase succeeds.
 write_marker() {
-  local ts
+  local ts tmp
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   as_root mkdir -p "$MARKER_DIR"
+  tmp="$(as_root mktemp "${MARKER_DIR}/.$(basename "$MARKER").XXXXXX")"
   # The name and the blueprint pointer are recorded only when the run has one:
   # a box named nothing, or built from no blueprint, carries no such key at all
   # rather than carrying it empty.
@@ -156,13 +159,18 @@ write_marker() {
     optional="${optional}  \"blueprint\": \"${BLUEPRINT}\",
 "
   fi
-  printf '%s\n' "{
+  if ! printf '%s\n' "{
   \"schema_version\": ${SMITH_BOOTSTRAP_VERSION},
   \"smith_version\": \"${SMITH_VERSION}\",
   \"access_mode\": \"${ACCESS}\",
 ${optional}  \"completed_phases\": [$(json_phases)],
   \"updated_at\": \"${ts}\"
-}" | as_root tee "$MARKER" >/dev/null
+}" | as_root tee "$tmp" >/dev/null \
+    || ! as_root chmod 0644 "$tmp" \
+    || ! as_root mv -f "$tmp" "$MARKER"; then
+    as_root rm -f "$tmp"
+    return 1
+  fi
 }
 
 # mark_complete records a phase as completed (idempotently) and rewrites the
@@ -179,9 +187,9 @@ mark_complete() {
   write_marker
 }
 
-# run_phase runs one phase, streaming its live progress and a final success or
-# already-satisfied marker, then records it. A phase that fails aborts setup via
-# set -e before the success marker is printed or recorded.
+# run_phase runs one phase, streaming its live progress, records it, then prints
+# its final success or already-satisfied line. A phase that fails, or that cannot
+# be recorded, aborts setup via set -e before its success line is printed.
 run_phase() {
   local name="$1"
   printf '▶ %s\n' "$name"
@@ -189,10 +197,10 @@ run_phase() {
   # Phase names are hyphenated (they are the marker's values); the functions that
   # implement them use underscores, since bash function names cannot contain '-'.
   "phase_${name//-/_}"
+  mark_complete "$name"
   if [ "$PHASE_STATUS" = "satisfied" ]; then
     printf '✓ %s (already-satisfied)\n' "$name"
   else
     printf '✓ %s\n' "$name"
   fi
-  mark_complete "$name"
 }
