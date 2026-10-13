@@ -14,6 +14,7 @@ import (
 	"iter"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -383,17 +384,31 @@ func (w Workbench) adopt(ctx context.Context, m match) error {
 	if err != nil {
 		return fmt.Errorf("read work branch %s: %w", m.name, err)
 	}
-	if w.isAncestor(ctx, ours, theirs) || w.isAncestor(ctx, theirs, ours) {
-		return nil
+	for _, pair := range [][2]string{{ours, theirs}, {theirs, ours}} {
+		behind, err := w.isAncestor(ctx, pair[0], pair[1])
+		if err != nil {
+			return fmt.Errorf("compare work branch %s with origin's copy: %w", m.name, err)
+		}
+		if behind {
+			return nil
+		}
 	}
 	return fmt.Errorf("work branch %s has diverged from origin's copy: reconcile the two, then run again", m.name)
 }
 
 // isAncestor reports whether commit a is an ancestor of, or the same as,
-// commit b.
-func (w Workbench) isAncestor(ctx context.Context, a, b string) bool {
+// commit b. Only git's exit status 1 is a no; any other failure is an error.
+func (w Workbench) isAncestor(ctx context.Context, a, b string) (bool, error) {
 	_, err := w.run(ctx, w.dir, "merge-base", "--is-ancestor", a, b)
-	return err == nil
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // fetch fetches branch from origin and returns its tip there.

@@ -1,7 +1,9 @@
 package workbench_test
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -693,6 +695,40 @@ func TestLandRefusesACheckoutOfTheWorkBranchDirtiedAfterSetup(t *testing.T) {
 			git(t, clone, "rev-parse", "--verify", "refs/heads/smith/tasks/smith/430-loop-works-in-task-worktrees/431")
 			if got, err := os.ReadFile(filepath.Join(clone, edit)); err != nil || string(got) != "operator's edit\n" {
 				t.Errorf("operator's %s after Land() = %q, %v; want it untouched", edit, got, err)
+			}
+		})
+	}
+}
+
+// ancestryFails runs git for real, except that a merge-base ancestry check fails with err.
+type ancestryFails struct {
+	err error
+}
+
+func (f ancestryFails) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if slices.Contains(args, "--is-ancestor") {
+		return f.err
+	}
+	return connection.System().Run(ctx, name, args, stdin, stdout, stderr)
+}
+
+func TestSetupKeepsTheCauseOfAFailedAncestryCheck(t *testing.T) {
+	t.Parallel()
+	errBroken := errors.New("repository is corrupt")
+	for name, cause := range map[string]error{"operational": errBroken, "cancelled": context.Canceled} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			clone, _ := cloned(t)
+			git(t, clone, "branch", "smith/430-x", "main")
+			git(t, clone, "push", "origin", "smith/430-x")
+			git(t, clone, "switch", "smith/430-x")
+			commitIn(t, clone, "ours.txt")
+			git(t, clone, "switch", "main")
+
+			_, err := workbench.Setup(t.Context(), ancestryFails{err: cause}, clone, spec430)
+
+			if !errors.Is(err, cause) || !strings.Contains(err.Error(), "smith/430-x") || strings.Contains(err.Error(), "diverged") {
+				t.Errorf("Setup() error = %v, want one naming smith/430-x and wrapping %v, not a divergence", err, cause)
 			}
 		})
 	}
