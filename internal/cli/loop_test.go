@@ -837,6 +837,33 @@ func TestLoopRunSetsUpTheWorkBranchFromTheBaseFlagNames(t *testing.T) {
 	}
 }
 
+func TestLoopRunSetsUpTheWorkBranchTheBranchFlagNames(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		flags []string
+		want  string
+	}{
+		"named":   {flags: []string{"--branch", "worktree-loop"}, want: "worktree-loop"},
+		"unnamed": {want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+			var branches []string
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+				branches = append(branches, req.Branch)
+				return fakeBench(ctx, dir, req)
+			}
+
+			_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath, bench: recording}, "42", tc.flags...)
+
+			if code != 0 || !slices.Equal(branches, []string{tc.want}) {
+				t.Errorf("exit %d, stderr %q, work branches set up as %q; want 0 and %q", code, stderr, branches, []string{tc.want})
+			}
+		})
+	}
+}
+
 func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {

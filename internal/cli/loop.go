@@ -138,14 +138,15 @@ func (w loopWiring) origin(settings loop.Settings) (loop.Pusher, error) {
 }
 
 // workbench sets up the work branch for spec in the repo smith is run in,
-// cutting a missing one from base, or from origin's default branch when base
-// is empty, before any agent runs.
-func (w loopWiring) workbench(ctx context.Context, spec tracker.Spec, base string) (loop.Bench, error) {
+// the one branch names or, when it is empty, the spec's own, cutting a missing
+// one from base, or from origin's default branch when base is empty, before
+// any agent runs.
+func (w loopWiring) workbench(ctx context.Context, spec tracker.Spec, branch, base string) (loop.Bench, error) {
 	dir, err := w.workdir()
 	if err != nil {
 		return nil, fmt.Errorf("find the repo to work in: %w", err)
 	}
-	return w.bench(ctx, dir, workbench.Request{Number: spec.Number, Title: spec.Title, Base: base})
+	return w.bench(ctx, dir, workbench.Request{Number: spec.Number, Title: spec.Title, Branch: branch, Base: base})
 }
 
 // settingsReport renders each resolved setting with where it came from,
@@ -196,7 +197,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
 	var interactive, noPush bool
-	var base string
+	var branch, base string
 	cmd := &cobra.Command{
 		Use:   "run <spec>",
 		Short: "Work a spec's tasks to completion with a coding agent, on a work branch of its own",
@@ -241,7 +242,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			bench, err := w.workbench(cmd.Context(), spec, base)
+			bench, err := w.workbench(cmd.Context(), spec, branch, base)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -278,6 +279,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
+	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a new work branch is cut from (default: origin's default branch)")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
 	return cmd

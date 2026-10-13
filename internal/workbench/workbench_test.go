@@ -437,3 +437,90 @@ func TestSetupAdoptsALocalWorkBranchAheadOfOrigin(t *testing.T) {
 		t.Errorf("work branch and its tip = %q, want %q", got, want)
 	}
 }
+
+func TestSetupUsesTheNamedWorkBranchExactlyAsNamed(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "switch", "-c", "worktree-loop")
+	docs := commitIn(t, clone, "docs.md")
+	git(t, clone, "switch", "main")
+	req := spec430
+	req.Branch = "worktree-loop"
+
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	got := []string{bench.WorkBranch(), git(t, dir, "rev-parse", "HEAD")}
+	want := []string{"worktree-loop", docs}
+	if !slices.Equal(got, want) {
+		t.Errorf("work branch and #431's start = %q, want %q", got, want)
+	}
+}
+
+func TestSetupWithANamedWorkBranchLooksNoBranchUpByNumber(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "branch", "smith/430-a", "main")
+	git(t, clone, "branch", "smith/430-b", "main")
+	req := spec430
+	req.Branch = "worktree-loop"
+
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	if got, tip := git(t, clone, "rev-parse", "refs/heads/worktree-loop"), git(t, clone, "rev-parse", "main"); bench.WorkBranch() != "worktree-loop" || got != tip {
+		t.Errorf("work branch %q at %s; want worktree-loop cut at main's %s", bench.WorkBranch(), got, tip)
+	}
+}
+
+func TestSetupAdoptsANamedWorkBranchOnlyOnOrigin(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	other := filepath.Join(t.TempDir(), "other")
+	git(t, filepath.Dir(other), "clone", remote, other)
+	docs := commitIn(t, other, "docs.md")
+	git(t, other, "push", "origin", "HEAD:refs/heads/worktree-loop")
+	req := spec430
+	req.Branch = "worktree-loop"
+
+	if _, err := workbench.Setup(t.Context(), connection.System(), clone, req); err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	if got := git(t, clone, "rev-parse", "refs/heads/worktree-loop"); got != docs {
+		t.Errorf("worktree-loop = %s, want origin's %s", got, docs)
+	}
+}
+
+func TestSetupRefusesAWorkBranchThatIsTheDefaultOrTheBaseBranch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ branch, base string }{
+		{"main", ""},
+		{"main", "main"},
+		{"release-2", "release-2"},
+		{"main", "release-2"},
+	} {
+		t.Run(tc.branch+" on "+tc.base, func(t *testing.T) {
+			t.Parallel()
+			clone, remote := cloned(t)
+			git(t, clone, "push", "origin", "main:refs/heads/release-2")
+			before := git(t, remote, "for-each-ref")
+			req := spec430
+			req.Branch, req.Base = tc.branch, tc.base
+
+			_, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+
+			if after := git(t, remote, "for-each-ref"); err == nil || !strings.Contains(err.Error(), tc.branch) || after != before {
+				t.Errorf("Setup(branch %q, base %q) error = %v, origin's refs %q; want an error naming %s and origin's refs still %q", tc.branch, tc.base, err, after, tc.branch, before)
+			}
+		})
+	}
+}

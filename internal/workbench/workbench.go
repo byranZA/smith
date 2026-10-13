@@ -5,6 +5,7 @@ package workbench
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -39,6 +40,9 @@ type Runner interface {
 type Request struct {
 	Number int
 	Title  string
+	// Branch names the work branch exactly; empty means the one found by
+	// Number, or else smith/<n>-<slug>.
+	Branch string
 	// Base names the branch on origin a missing work branch is cut from;
 	// empty means origin's default branch.
 	Base string
@@ -54,30 +58,57 @@ type Workbench struct {
 }
 
 // Setup readies the work branch for req in the repo dir is inside: it adopts
-// the one branch, local or on origin, named smith/<n> or smith/<n>-<slug> for
-// req's number, and otherwise cuts the branch Branch names from the tip of
-// req's base on origin, or of origin's default branch when req names none. It
-// refuses more than one such branch and one whose local and origin copies
-// have diverged, and never touches dir's own checkout.
+// the branch req.Branch names, or else the one branch named smith/<n> or
+// smith/<n>-<slug> for req's number, local or on origin, and otherwise cuts
+// the branch WorkBranch names from the tip of req's base on origin, or of
+// origin's default branch when req names none. It refuses a work branch that
+// is origin's default branch or the base, more than one numbered branch, and
+// one whose local and origin copies have diverged, and never touches dir's
+// own checkout.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
-	w := Workbench{git: git, dir: dir, branch: Branch(req.Number, req.Title)}
+	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return Workbench{}, fmt.Errorf("find the repo's git directory: %w", err)
 	}
 	w.common = common
-	found, err := w.find(ctx, req.Number)
+	found, err := w.find(ctx, req)
 	if err != nil {
 		return Workbench{}, err
 	}
 	if found != nil {
 		w.branch = found.name
+	}
+	base, err := w.base(ctx, req.Base)
+	if err != nil {
+		return Workbench{}, err
+	}
+	if found != nil {
 		return w, w.adopt(ctx, *found)
 	}
-	if err := w.cut(ctx, req.Base); err != nil {
+	if err := w.cut(ctx, base); err != nil {
 		return Workbench{}, fmt.Errorf("cut work branch %s: %w", w.branch, err)
 	}
 	return w, nil
+}
+
+// base returns the branch a missing work branch is cut from: named, or
+// origin's default branch when named is empty, which is empty itself when
+// origin names none. It refuses a work branch that is origin's default branch
+// or that base.
+func (w Workbench) base(ctx context.Context, named string) (string, error) {
+	def, err := w.defaultBranch(ctx)
+	if err != nil && !errors.Is(err, errNoDefaultBranch) {
+		return "", err
+	}
+	base := cmp.Or(named, def)
+	switch w.branch {
+	case def:
+		return "", fmt.Errorf("work branch %s is origin's default branch: name another work branch", w.branch)
+	case base:
+		return "", fmt.Errorf("work branch %s is the base it is cut from: name another work branch or base", w.branch)
+	}
+	return base, nil
 }
 
 // WorkBranch names the work branch.
@@ -145,13 +176,10 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 }
 
 // cut creates the work branch at the tip of base on origin, fetched for the
-// purpose, or of origin's default branch when base is empty.
+// purpose. An empty base is origin naming no default branch.
 func (w Workbench) cut(ctx context.Context, base string) error {
 	if base == "" {
-		var err error
-		if base, err = w.defaultBranch(ctx); err != nil {
-			return err
-		}
+		return errNoDefaultBranch
 	}
 	tip, err := w.fetch(ctx, base)
 	if err != nil {
@@ -169,17 +197,22 @@ type match struct {
 	local, onOrigin bool
 }
 
-// find returns the one branch, local or on origin, that is a work branch of
-// issue number by name, or nil when there is none. More than one is an error
-// naming each.
-func (w Workbench) find(ctx context.Context, number int) (*match, error) {
-	local, err := w.run(ctx, w.dir, "for-each-ref", "--format=%(refname)", branchRefPrefix+"smith/")
-	if err != nil {
-		return nil, fmt.Errorf("list local smith branches: %w", err)
+// find returns the one branch, local or on origin, that req's work branch can
+// be: the one req.Branch names or, when it names none, a work branch of req's
+// number by name. It returns nil when there is none, and more than one is an
+// error naming each.
+func (w Workbench) find(ctx context.Context, req Request) (*match, error) {
+	prefix, owns := "smith/", func(name string) bool { return belongs(name, req.Number) }
+	if req.Branch != "" {
+		prefix, owns = req.Branch, func(name string) bool { return name == req.Branch }
 	}
-	remote, err := w.run(ctx, w.dir, "ls-remote", "origin", branchRefPrefix+"smith/*")
+	local, err := w.run(ctx, w.dir, "for-each-ref", "--format=%(refname)", branchRefPrefix+prefix)
 	if err != nil {
-		return nil, fmt.Errorf("list origin's smith branches: %w", err)
+		return nil, fmt.Errorf("list local branches under %s: %w", prefix, err)
+	}
+	remote, err := w.run(ctx, w.dir, "ls-remote", "origin", branchRefPrefix+prefix+"*")
+	if err != nil {
+		return nil, fmt.Errorf("list origin's branches under %s: %w", prefix, err)
 	}
 	found := map[string]*match{}
 	note := func(name string) *match {
@@ -188,10 +221,10 @@ func (w Workbench) find(ctx context.Context, number int) (*match, error) {
 		}
 		return found[name]
 	}
-	for _, name := range owned(strings.Lines(local), number) {
+	for _, name := range owned(strings.Lines(local), owns) {
 		note(name).local = true
 	}
-	for _, name := range owned(lsRemoteRefs(remote), number) {
+	for _, name := range owned(lsRemoteRefs(remote), owns) {
 		note(name).onOrigin = true
 	}
 	names := slices.Sorted(maps.Keys(found))
@@ -201,17 +234,16 @@ func (w Workbench) find(ctx context.Context, number int) (*match, error) {
 	case 1:
 		return found[names[0]], nil
 	default:
-		return nil, fmt.Errorf("more than one branch is a work branch of #%d: %s", number, strings.Join(names, ", "))
+		return nil, fmt.Errorf("more than one branch is a work branch of #%d: %s", req.Number, strings.Join(names, ", "))
 	}
 }
 
-// owned returns the names of the branches among refs that are work branches
-// of issue number.
-func owned(refs iter.Seq[string], number int) []string {
+// owned returns the names of the branches among refs that owns accepts.
+func owned(refs iter.Seq[string], owns func(name string) bool) []string {
 	var mine []string
 	for ref := range refs {
 		name, ok := strings.CutPrefix(strings.TrimSpace(ref), branchRefPrefix)
-		if ok && belongs(name, number) {
+		if ok && owns(name) {
 			mine = append(mine, name)
 		}
 	}
