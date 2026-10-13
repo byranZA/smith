@@ -337,3 +337,103 @@ func resolved(t *testing.T, path string) string {
 	}
 	return r
 }
+
+func TestSetupAdoptsALocalWorkBranchByNumberAfterTheSpecIsRenamed(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "switch", "-c", "smith/430-old-title")
+	docs := commitIn(t, clone, "docs.md")
+	git(t, clone, "switch", "main")
+
+	bench := setup(t, clone)
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	got := []string{bench.WorkBranch(), git(t, dir, "rev-parse", "HEAD")}
+	want := []string{"smith/430-old-title", docs}
+	if !slices.Equal(got, want) {
+		t.Errorf("work branch and #431's start = %q, want %q", got, want)
+	}
+}
+
+func TestSetupAdoptsAWorkBranchOnlyOnOrigin(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	other := filepath.Join(t.TempDir(), "other")
+	git(t, filepath.Dir(other), "clone", remote, other)
+	docs := commitIn(t, other, "docs.md")
+	git(t, other, "push", "origin", "HEAD:refs/heads/smith/430-old-title")
+
+	bench := setup(t, clone)
+
+	got := []string{bench.WorkBranch(), git(t, clone, "rev-parse", "refs/heads/smith/430-old-title")}
+	want := []string{"smith/430-old-title", docs}
+	if !slices.Equal(got, want) {
+		t.Errorf("work branch and its local tip = %q, want %q", got, want)
+	}
+}
+
+func TestSetupRefusesAWorkBranchThatHasDivergedFromOrigin(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	git(t, clone, "branch", "smith/430-x", "main")
+	git(t, clone, "push", "origin", "smith/430-x")
+	other := filepath.Join(t.TempDir(), "other")
+	git(t, filepath.Dir(other), "clone", "-b", "smith/430-x", remote, other)
+	commitIn(t, other, "theirs.txt")
+	git(t, other, "push", "origin", "smith/430-x")
+	git(t, clone, "switch", "smith/430-x")
+	ours := commitIn(t, clone, "ours.txt")
+	git(t, clone, "switch", "main")
+
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+
+	if got := git(t, clone, "rev-parse", "refs/heads/smith/430-x"); err == nil || !strings.Contains(err.Error(), "smith/430-x") || got != ours {
+		t.Errorf("Setup() = %v, smith/430-x at %s; want an error naming smith/430-x and the branch still %s", err, got, ours)
+	}
+}
+
+func TestSetupRefusesMoreThanOneBranchMatchingTheNumber(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "branch", "smith/430-a", "main")
+	git(t, clone, "push", "origin", "main:refs/heads/smith/430-b")
+
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+
+	if err == nil || !strings.Contains(err.Error(), "smith/430-a") || !strings.Contains(err.Error(), "smith/430-b") {
+		t.Errorf("Setup() error = %v; want it to name smith/430-a and smith/430-b", err)
+	}
+}
+
+func TestSetupIgnoresBranchesOfOtherNumbers(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "branch", "smith/4301-other", "main")
+	git(t, clone, "branch", "smith/43-other", "main")
+
+	bench := setup(t, clone)
+
+	if got, want := bench.WorkBranch(), "smith/430-loop-works-in-task-worktrees"; got != want {
+		t.Errorf("WorkBranch() = %q, want %q", got, want)
+	}
+}
+
+func TestSetupAdoptsALocalWorkBranchAheadOfOrigin(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "push", "origin", "main:refs/heads/smith/430-x")
+	git(t, clone, "switch", "-c", "smith/430-x", "main")
+	ahead := commitIn(t, clone, "ahead.txt")
+	git(t, clone, "switch", "main")
+
+	bench := setup(t, clone)
+
+	got := []string{bench.WorkBranch(), git(t, clone, "rev-parse", "refs/heads/smith/430-x")}
+	want := []string{"smith/430-x", ahead}
+	if !slices.Equal(got, want) {
+		t.Errorf("work branch and its tip = %q, want %q", got, want)
+	}
+}

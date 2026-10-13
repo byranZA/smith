@@ -51,3 +51,10 @@ func slugOf(title string) string {
 	}
 	return strings.TrimSuffix(cut, "-")
 }
+
+// belongs reports whether branch is a work branch of issue number by its
+// name alone: smith/<number>, or smith/<number>-<slug> under any slug.
+func belongs(branch string, number int) bool {
+	name := "smith/" + strconv.Itoa(number)
+	return branch == name || strings.HasPrefix(branch, name+"-")
+}

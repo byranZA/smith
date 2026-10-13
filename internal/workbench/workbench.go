@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -50,10 +53,12 @@ type Workbench struct {
 	branch string
 }
 
-// Setup readies the work branch for req in the repo dir is inside: it keeps
-// the branch Branch names when it exists, and otherwise cuts it from the tip
-// of req's base on origin, or of origin's default branch when req names none.
-// It never touches dir's own checkout.
+// Setup readies the work branch for req in the repo dir is inside: it adopts
+// the one branch, local or on origin, named smith/<n> or smith/<n>-<slug> for
+// req's number, and otherwise cuts the branch Branch names from the tip of
+// req's base on origin, or of origin's default branch when req names none. It
+// refuses more than one such branch and one whose local and origin copies
+// have diverged, and never touches dir's own checkout.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: Branch(req.Number, req.Title)}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -61,12 +66,13 @@ func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench,
 		return Workbench{}, fmt.Errorf("find the repo's git directory: %w", err)
 	}
 	w.common = common
-	exists, err := w.exists(ctx, w.branch)
+	found, err := w.find(ctx, req.Number)
 	if err != nil {
 		return Workbench{}, err
 	}
-	if exists {
-		return w, nil
+	if found != nil {
+		w.branch = found.name
+		return w, w.adopt(ctx, *found)
 	}
 	if err := w.cut(ctx, req.Base); err != nil {
 		return Workbench{}, fmt.Errorf("cut work branch %s: %w", w.branch, err)
@@ -147,12 +153,9 @@ func (w Workbench) cut(ctx context.Context, base string) error {
 			return err
 		}
 	}
-	if _, err := w.run(ctx, w.dir, "fetch", "--quiet", "origin", branchRefPrefix+base); err != nil {
-		return fmt.Errorf("fetch origin's %s: %w", base, err)
-	}
-	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	tip, err := w.fetch(ctx, base)
 	if err != nil {
-		return fmt.Errorf("read origin's %s: %w", base, err)
+		return err
 	}
 	if _, err := w.run(ctx, w.dir, "update-ref", branchRefPrefix+w.branch, tip, ""); err != nil {
 		return fmt.Errorf("create it at origin's %s: %w", base, err)
@@ -160,13 +163,117 @@ func (w Workbench) cut(ctx context.Context, base string) error {
 	return nil
 }
 
-// exists reports whether branch exists locally.
-func (w Workbench) exists(ctx context.Context, branch string) (bool, error) {
-	out, err := w.run(ctx, w.dir, "for-each-ref", "--format=%(refname)", branchRefPrefix+branch)
+// match is a branch that is a work branch by name, and where it exists.
+type match struct {
+	name            string
+	local, onOrigin bool
+}
+
+// find returns the one branch, local or on origin, that is a work branch of
+// issue number by name, or nil when there is none. More than one is an error
+// naming each.
+func (w Workbench) find(ctx context.Context, number int) (*match, error) {
+	local, err := w.run(ctx, w.dir, "for-each-ref", "--format=%(refname)", branchRefPrefix+"smith/")
 	if err != nil {
-		return false, fmt.Errorf("look for branch %s: %w", branch, err)
+		return nil, fmt.Errorf("list local smith branches: %w", err)
 	}
-	return out != "", nil
+	remote, err := w.run(ctx, w.dir, "ls-remote", "origin", branchRefPrefix+"smith/*")
+	if err != nil {
+		return nil, fmt.Errorf("list origin's smith branches: %w", err)
+	}
+	found := map[string]*match{}
+	note := func(name string) *match {
+		if found[name] == nil {
+			found[name] = &match{name: name}
+		}
+		return found[name]
+	}
+	for _, name := range owned(strings.Lines(local), number) {
+		note(name).local = true
+	}
+	for _, name := range owned(lsRemoteRefs(remote), number) {
+		note(name).onOrigin = true
+	}
+	names := slices.Sorted(maps.Keys(found))
+	switch len(names) {
+	case 0:
+		return nil, nil
+	case 1:
+		return found[names[0]], nil
+	default:
+		return nil, fmt.Errorf("more than one branch is a work branch of #%d: %s", number, strings.Join(names, ", "))
+	}
+}
+
+// owned returns the names of the branches among refs that are work branches
+// of issue number.
+func owned(refs iter.Seq[string], number int) []string {
+	var mine []string
+	for ref := range refs {
+		name, ok := strings.CutPrefix(strings.TrimSpace(ref), branchRefPrefix)
+		if ok && belongs(name, number) {
+			mine = append(mine, name)
+		}
+	}
+	return mine
+}
+
+// lsRemoteRefs yields the ref of each line of git ls-remote's output.
+func lsRemoteRefs(out string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for line := range strings.Lines(out) {
+			_, ref, _ := strings.Cut(line, "\t")
+			if !yield(ref) {
+				return
+			}
+		}
+	}
+}
+
+// adopt makes m the work branch: a local copy is kept, one only on origin is
+// created locally from origin's copy, and local and origin copies that have
+// diverged are refused.
+func (w Workbench) adopt(ctx context.Context, m match) error {
+	if !m.onOrigin {
+		return nil
+	}
+	theirs, err := w.fetch(ctx, m.name)
+	if err != nil {
+		return err
+	}
+	if !m.local {
+		if _, err := w.run(ctx, w.dir, "update-ref", branchRefPrefix+m.name, theirs, ""); err != nil {
+			return fmt.Errorf("create work branch %s from origin's copy: %w", m.name, err)
+		}
+		return nil
+	}
+	ours, err := w.run(ctx, w.dir, "rev-parse", "--verify", branchRefPrefix+m.name)
+	if err != nil {
+		return fmt.Errorf("read work branch %s: %w", m.name, err)
+	}
+	if w.isAncestor(ctx, ours, theirs) || w.isAncestor(ctx, theirs, ours) {
+		return nil
+	}
+	return fmt.Errorf("work branch %s has diverged from origin's copy: reconcile the two, then run again", m.name)
+}
+
+// isAncestor reports whether commit a is an ancestor of, or the same as,
+// commit b.
+func (w Workbench) isAncestor(ctx context.Context, a, b string) bool {
+	_, err := w.run(ctx, w.dir, "merge-base", "--is-ancestor", a, b)
+	return err == nil
+}
+
+// fetch fetches branch from origin and returns its tip there.
+func (w Workbench) fetch(ctx context.Context, branch string) (string, error) {
+	if _, err := w.run(ctx, w.dir, "fetch", "--quiet", "origin", branchRefPrefix+branch); err != nil {
+		return "", fmt.Errorf("fetch origin's %s: %w", branch, err)
+	}
+	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("read origin's %s: %w", branch, err)
+	}
+	return tip, nil
 }
 
 // defaultBranch asks origin, over git alone, which branch its HEAD names. A
