@@ -660,3 +660,40 @@ func TestOpenKeepsTheCauseOfAFilesystemErrorAtTheTaskWorktree(t *testing.T) {
 		t.Errorf("Open(431) under a regular file error = %v, want one wrapping %v", err, syscall.ENOTDIR)
 	}
 }
+
+func TestLandRefusesACheckoutOfTheWorkBranchDirtiedAfterSetup(t *testing.T) {
+	t.Parallel()
+	for name, edit := range map[string]string{"tracked": "notes.txt", "untracked": "wip.txt"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			clone, _ := cloned(t)
+			git(t, clone, "switch", "-c", "smith/430-loop-works-in-task-worktrees")
+			before := commitIn(t, clone, "notes.txt")
+			bench := setup(t, clone)
+			dir, err := bench.Open(t.Context(), 431)
+			if err != nil {
+				t.Fatalf("Open() error = %v", err)
+			}
+			commitIn(t, dir, "431.txt")
+			if err := os.WriteFile(filepath.Join(clone, edit), []byte("operator's edit\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err = bench.Land(t.Context(), 431)
+
+			if err == nil || !strings.Contains(err.Error(), resolved(t, clone)) {
+				t.Errorf("Land() error = %v, want one naming the checkout %s", err, resolved(t, clone))
+			}
+			if got := git(t, clone, "rev-parse", bench.WorkBranch()); got != before {
+				t.Errorf("work branch is at %s after Land(), want it still at %s", got, before)
+			}
+			if _, err := os.Stat(dir); err != nil {
+				t.Errorf("task worktree stat after Land() = %v, want it kept", err)
+			}
+			git(t, clone, "rev-parse", "--verify", "refs/heads/smith/tasks/smith/430-loop-works-in-task-worktrees/431")
+			if got, err := os.ReadFile(filepath.Join(clone, edit)); err != nil || string(got) != "operator's edit\n" {
+				t.Errorf("operator's %s after Land() = %q, %v; want it untouched", edit, got, err)
+			}
+		})
+	}
+}

@@ -80,7 +80,7 @@ func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench,
 	if found != nil {
 		w.branch = found.name
 	}
-	if err := w.refuseDirtyCheckout(ctx); err != nil {
+	if _, err := w.cleanCheckout(ctx); err != nil {
 		return Workbench{}, err
 	}
 	base, err := w.base(ctx, req.Base)
@@ -160,8 +160,9 @@ func (w Workbench) owns(ctx context.Context, task int, dir string) error {
 }
 
 // Land fast-forwards the work branch to task's branch, in the worktree that has
-// it checked out when there is one, then removes task's worktree and branch. It refuses a worktree with uncommitted changes and a
-// task branch the work branch cannot fast-forward to, changing nothing.
+// it checked out when there is one, then removes task's worktree and branch. It
+// refuses, changing nothing, a task worktree or work-branch checkout with
+// uncommitted changes and a task branch the work branch cannot fast-forward to.
 func (w Workbench) Land(ctx context.Context, task int) error {
 	dir := w.worktree(task)
 	status, err := w.run(ctx, dir, "status", "--porcelain")
@@ -200,7 +201,7 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 	if _, err := w.run(ctx, w.dir, "merge-base", "--is-ancestor", old, tip); err != nil {
 		return fmt.Errorf("work branch %s cannot fast-forward to %s: %w", w.branch, w.taskBranch(task), err)
 	}
-	checkout, err := w.checkout(ctx)
+	checkout, err := w.cleanCheckout(ctx)
 	if err != nil {
 		return err
 	}
@@ -216,21 +217,22 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 	return nil
 }
 
-// refuseDirtyCheckout refuses a work branch checked out in a worktree with
-// uncommitted changes, which landing a task would have to move.
-func (w Workbench) refuseDirtyCheckout(ctx context.Context) error {
+// cleanCheckout returns the directory of the worktree that has the work branch
+// checked out, or empty when none has, and refuses one with uncommitted
+// changes, which landing a task would have to move.
+func (w Workbench) cleanCheckout(ctx context.Context) (string, error) {
 	checkout, err := w.checkout(ctx)
 	if err != nil || checkout == "" {
-		return err
+		return "", err
 	}
 	status, err := w.run(ctx, checkout, "status", "--porcelain")
 	if err != nil {
-		return fmt.Errorf("read the status of %s: %w", checkout, err)
+		return "", fmt.Errorf("read the status of %s: %w", checkout, err)
 	}
 	if status != "" {
-		return fmt.Errorf("work branch %s is checked out in %s, which has uncommitted changes: commit or stash them, then run again", w.branch, checkout)
+		return "", fmt.Errorf("work branch %s is checked out in %s, which has uncommitted changes: commit or stash them, then run again", w.branch, checkout)
 	}
-	return nil
+	return checkout, nil
 }
 
 // checkout returns the directory of the worktree that has the work branch
