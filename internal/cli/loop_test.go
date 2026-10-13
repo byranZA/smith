@@ -810,6 +810,33 @@ func TestLoopRunRefusesBeforeAnyAgentRunsWhenTheWorkBranchCannotBeSetUp(t *testi
 	}
 }
 
+func TestLoopRunSetsUpTheWorkBranchFromTheBaseFlagNames(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		flags []string
+		want  string
+	}{
+		"named":   {flags: []string{"--base", "release-2"}, want: "release-2"},
+		"unnamed": {want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+			var bases []string
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+				bases = append(bases, req.Base)
+				return fakeBench(ctx, dir, req)
+			}
+
+			_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath, bench: recording}, "42", tc.flags...)
+
+			if code != 0 || !slices.Equal(bases, []string{tc.want}) {
+				t.Errorf("exit %d, stderr %q, bases set up from %q; want 0 and %q", code, stderr, bases, []string{tc.want})
+			}
+		})
+	}
+}
+
 func TestLoopRunPushesNothingWhenPushIsOff(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {

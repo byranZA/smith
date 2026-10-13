@@ -77,6 +77,47 @@ func TestSetupCutsANewWorkBranchFromOriginsDefaultBranch(t *testing.T) {
 	}
 }
 
+func TestSetupCutsANewWorkBranchFromTheNamedBase(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	later := filepath.Join(t.TempDir(), "later")
+	git(t, filepath.Dir(later), "clone", remote, later)
+	git(t, later, "commit", "--allow-empty", "-m", "on release-2")
+	git(t, later, "push", "origin", "HEAD:refs/heads/release-2")
+	req := spec430
+	req.Base = "release-2"
+
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	if got, tip := git(t, clone, "rev-parse", "refs/heads/"+bench.WorkBranch()), git(t, remote, "rev-parse", "release-2"); got != tip {
+		t.Errorf("%s = %s, want origin's release-2 %s", bench.WorkBranch(), got, tip)
+	}
+}
+
+func TestSetupCutsFromTheNamedBaseWhenOriginNamesNoDefaultBranch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
+	git(t, root, "init", "--bare", "-b", "main", remote)
+	git(t, root, "clone", remote, clone)
+	git(t, clone, "commit", "--allow-empty", "-m", "on release-2")
+	git(t, clone, "push", "origin", "HEAD:refs/heads/release-2")
+	req := spec430
+	req.Base = "release-2"
+
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	if got, tip := git(t, clone, "rev-parse", "refs/heads/"+bench.WorkBranch()), git(t, remote, "rev-parse", "release-2"); got != tip {
+		t.Errorf("%s = %s, want origin's release-2 %s", bench.WorkBranch(), got, tip)
+	}
+}
+
 func TestSetupKeepsAWorkBranchItAlreadyCut(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)

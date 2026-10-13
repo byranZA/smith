@@ -31,11 +31,14 @@ type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
-// Request is what an execution's work branch is named and found by: the issue
-// the execution is derived from.
+// Request is what an execution's work branch is named and found by, the issue
+// the execution is derived from, and the base a missing one is cut from.
 type Request struct {
 	Number int
 	Title  string
+	// Base names the branch on origin a missing work branch is cut from;
+	// empty means origin's default branch.
+	Base string
 }
 
 // Workbench is an execution's work branch in one repo, with the task
@@ -49,7 +52,8 @@ type Workbench struct {
 
 // Setup readies the work branch for req in the repo dir is inside: it keeps
 // the branch Branch names when it exists, and otherwise cuts it from the tip
-// of origin's default branch. It never touches dir's own checkout.
+// of req's base on origin, or of origin's default branch when req names none.
+// It never touches dir's own checkout.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: Branch(req.Number, req.Title)}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -64,7 +68,7 @@ func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench,
 	if exists {
 		return w, nil
 	}
-	if err := w.cut(ctx); err != nil {
+	if err := w.cut(ctx, req.Base); err != nil {
 		return Workbench{}, fmt.Errorf("cut work branch %s: %w", w.branch, err)
 	}
 	return w, nil
@@ -134,12 +138,14 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 	return nil
 }
 
-// cut creates the work branch at the tip of origin's default branch, fetched
-// for the purpose.
-func (w Workbench) cut(ctx context.Context) error {
-	base, err := w.defaultBranch(ctx)
-	if err != nil {
-		return err
+// cut creates the work branch at the tip of base on origin, fetched for the
+// purpose, or of origin's default branch when base is empty.
+func (w Workbench) cut(ctx context.Context, base string) error {
+	if base == "" {
+		var err error
+		if base, err = w.defaultBranch(ctx); err != nil {
+			return err
+		}
 	}
 	if _, err := w.run(ctx, w.dir, "fetch", "--quiet", "origin", branchRefPrefix+base); err != nil {
 		return fmt.Errorf("fetch origin's %s: %w", base, err)

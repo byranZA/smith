@@ -6,6 +6,7 @@ The **loop** works a spec's tasks with a coding agent, one task per agent run. I
 smith loop list <spec>
 smith loop run  <spec> [--agent <name>] [--model <name>] [--effort low|medium|high]
                        [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push]
+                       [--base <branch>]
 smith loop prompt
 smith repo init [--agent <name>] [--model <name>] [--effort low|medium|high]
 ```
@@ -59,7 +60,7 @@ An agent that exits with a failure is reported and the loop carries on: whether 
 
 ### The work branch
 
-Each run's work lands on the spec's **work branch**, `smith/<n>-<slug>`: the spec's number, then its title lower-cased and hyphenated, without a leading `Spec:`, and cut to at most 40 characters. Spec #430 titled "Spec: Loop works in task worktrees" works on `smith/430-loop-works-in-task-worktrees`. When that branch does not exist, the loop cuts it from the tip of `origin`'s default branch, which it asks `origin` for with `git ls-remote --symref origin HEAD`, so it works in a bare clone, which has no `origin/HEAD`. If `origin` names no default branch, the run stops before any agent runs, naming the problem. A later run on the same spec keeps working the branch it cut.
+Each run's work lands on the spec's **work branch**, `smith/<n>-<slug>`: the spec's number, then its title lower-cased and hyphenated, without a leading `Spec:`, and cut to at most 40 characters. Spec #430 titled "Spec: Loop works in task worktrees" works on `smith/430-loop-works-in-task-worktrees`. When that branch does not exist, the loop cuts it from the tip of the branch `--base` names on `origin`. Without `--base`, it cuts it from the tip of `origin`'s default branch, which it asks `origin` for with `git ls-remote --symref origin HEAD`, so it works in a bare clone, which has no `origin/HEAD`. If `origin` names no default branch and no `--base` is given, the run stops before any agent runs, saying how to give `origin` one. A later run on the same spec keeps working the branch it cut.
 
 Each task is worked in a **task worktree** under `<git-common-dir>/smith/worktrees/<task>` (`.git/smith/worktrees/` in an ordinary clone), on a **task branch** cut from the work branch's tip. A task the agent leaves open keeps its worktree, so the next attempt continues where the last stopped. Once the tracker says a task is closed, the loop fast-forwards the work branch to the task branch and removes the task worktree and task branch. A closed task whose worktree holds uncommitted changes, or whose branch the work branch cannot fast-forward to, stops the run with the work branch unchanged. The [worktrees ADR](./adr/0013-the-loop-works-in-task-worktrees.md) has the reasoning.
 
