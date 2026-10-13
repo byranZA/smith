@@ -348,8 +348,7 @@ live `tmux has-session` probe — no daemon.
 _Avoid_: terminal, tab, pane.
 
 **Worktree**:
-A git worktree of a managed repo on the box — the unit of parallel work, one per session. Lets
-several sessions (human or agent) work a repo's branches side by side without colliding.
+A git worktree of a repo — the unit of parallel work. A session has one, and so does each task the loop works (its **task worktree**). Lets several sessions and tasks work a repo's branches side by side without colliding.
 _Avoid_: checkout, clone.
 
 **Workspace**:
@@ -401,10 +400,7 @@ silently outranks the blueprint, so a surprise about which version is active sta
 _Avoid_: override, merge (nothing is merged — each file is whole-file owned).
 
 **Execution**:
-The unit a branch and worktree correspond to: 1..N tasks run sequentially on one branch, commits
-landing directly on it. A single task is an execution of length one. Names are derived by whatever
-drives the work, never by the session primitive — which takes `(repo, branch, base)` and knows
-nothing of specs or tasks.
+The unit a **work branch** corresponds to: 1..N tasks, each worked on its own task branch and merged back into the work branch. A single task is an execution of length one. Names are derived by whatever drives the work, never by the session primitive — which takes `(repo, branch, base)` and knows nothing of specs or tasks.
 _Avoid_: job, run, task (a task is one item *within* an execution).
 
 **Work-state predicate**:
@@ -438,8 +434,20 @@ _Avoid_: view mode, permission.
 ### The loop
 
 **Loop**:
-The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs, in the repo it is invoked from. Locally that is the operator's machine acting as its own box. On a box, an agent-driven session's root process will be this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). v1 runs an execution's tasks one after another, in the current working tree on the current branch, and never creates or switches branch. After each task the agent closes, the loop itself pushes that branch to `origin` under the same name, never forcing and never pushing `origin`'s default branch, and a failed push stops the run, so closed work is never left on one machine only.
+The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs, in the repo it is invoked from. Locally that is the operator's machine acting as its own box. On a box, an agent-driven session's root process will be this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). No agent works in the checkout the loop is invoked from: the loop creates or adopts the execution's work branch from a base branch, and works each task in its own task worktree on its own task branch. It runs the tasks one after another, so each closed task's branch fast-forwards the work branch (in whichever clean worktree has it checked out), and a task branch that cannot is an error that stops the run. After each merge the loop pushes the work branch to `origin` under the same name, never forcing, and a failed push stops the run, so closed work is never left on one machine only. Task branches are never pushed ([ADR-0013](./docs/adr/0013-the-loop-works-in-task-worktrees.md)).
 _Avoid_: ralph, runner, orchestrator, delegation loop (the old name for it).
+
+**Base branch**:
+The branch an execution starts from, and the one its work is eventually proposed back into. The loop only ever reads it.
+_Avoid_: target branch, main (one common base, not the term).
+
+**Work branch**:
+The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to review. An existing work branch is adopted, local or on `origin`; a missing one is cut from the base branch. It is what a reviewer sees.
+_Avoid_: feature branch, execution branch.
+
+**Task branch**:
+The branch one task is worked on, checked out in that task's task worktree and cut from the work branch's tip. It and its worktree outlive a failed attempt, so a retry continues where the last one stopped; they are removed once merged. A skipped task's are left for a human.
+_Avoid_: agent branch, scratch branch.
 
 **Spec**:
 The tracker item an execution is derived from: a PRD whose children are the execution's tasks, in the order the spec lists them. The loop never hands a spec itself to an agent.

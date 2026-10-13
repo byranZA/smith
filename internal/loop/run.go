@@ -22,31 +22,37 @@ type Launcher interface {
 	Launch(ctx context.Context, cmd agent.Command) error
 }
 
-// Pusher is the seam through which the loop pushes the work an agent committed.
-type Pusher interface {
-	// Push pushes the current branch to origin under its own name, or skips
-	// it when it is origin's default branch.
-	Push(ctx context.Context) (Pushed, error)
+// Bench is the seam through which the loop reaches the git an execution
+// works in: the work branch, and the task worktree each task is worked in.
+type Bench interface {
+	// WorkBranch names the branch closed tasks land on.
+	WorkBranch() string
+	// Open returns the directory of task's worktree, creating it from the
+	// work branch's tip or returning the one an earlier attempt left.
+	Open(ctx context.Context, task int) (string, error)
+	// Land brings task's commits into the work branch and removes its
+	// worktree and branch.
+	Land(ctx context.Context, task int) error
 }
 
-// Pushed is what a push did with the current branch.
-type Pushed struct {
-	// Branch is the current branch, pushed or not.
-	Branch string
-	// Skipped reports that Branch is origin's default branch, which the loop
-	// never pushes.
-	Skipped bool
+// Pusher is the seam through which the loop pushes the work branch.
+type Pusher interface {
+	// Push pushes branch to origin under its own name, never forcing.
+	Push(ctx context.Context, branch string) error
 }
 
 // Loop works one spec's tasks with a coding agent, one task per agent run.
-// It never commits, switches branch or looks at the working tree: that is the
-// agent's work, asked for through the prompt, so a failed attempt's changes
-// are still there for the next. After each task the agent closes, it pushes
-// the branch through Pusher, when one is set.
+// Each task is worked in its own worktree from Bench, never in the operator's
+// checkout. The loop never commits: that is the agent's work, asked for
+// through the prompt, so a failed attempt's changes are still in the worktree
+// for the next. Each task the agent closes is landed on the work branch,
+// which is then pushed through Pusher, when one is set.
 type Loop struct {
 	Tracker  Tracker
 	Launcher Launcher
-	// Pusher pushes the branch after each closed task; nil turns pushing off.
+	Bench    Bench
+	// Pusher pushes the work branch after each landed task; nil turns
+	// pushing off.
 	Pusher Pusher
 	Agent  agent.Adapter
 	// Options are the model and effort every agent run asks for.
@@ -70,10 +76,14 @@ type Limits struct {
 func DefaultLimits() Limits { return Limits{MaxIterations: 10, MaxAttempts: 2} }
 
 // Outcome is how a run ended: what remained of the spec when it stopped,
-// with the tasks it skipped among it, and whether the iteration cap stopped it.
+// with the tasks it skipped among it, whether the iteration cap stopped it,
+// the work branch its closed tasks landed on, and the task worktrees it left.
 type Outcome struct {
-	Remaining Remaining
-	Capped    bool
+	Remaining  Remaining
+	Capped     bool
+	WorkBranch string
+	// Left maps each skipped task to the task worktree left for the operator.
+	Left map[int]string
 }
 
 // Complete reports whether the run ended with every task of the spec closed.
@@ -84,6 +94,7 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
+	worktrees := map[int]string{}
 	runs := 0
 	current, err := l.Tracker.Spec(ctx, spec)
 	if err != nil {
@@ -93,14 +104,16 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		remaining := Survey(current).Skip(skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining}, nil
+			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
 		}
 		if runs >= l.Limits.MaxIterations {
-			return Outcome{Remaining: remaining, Capped: true}, nil
+			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
 		}
-		if err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options)); err != nil {
+		dir, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
+		if err != nil {
 			return Outcome{}, err
 		}
+		worktrees[next.Number] = dir
 		runs++
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
@@ -108,7 +121,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
 		}
 		if closedIn(current, next) {
-			if err := l.push(ctx, next); err != nil {
+			if err := l.land(ctx, next); err != nil {
 				return Outcome{}, err
 			}
 		}
@@ -124,6 +137,8 @@ type InteractiveOutcome struct {
 	Handed bool
 	// Remaining is the spec as the tracker told it after the run.
 	Remaining Remaining
+	// WorkBranch is the branch a closed task landed on.
+	WorkBranch string
 }
 
 // Closed reports whether the run handed a task and the agent closed it.
@@ -150,9 +165,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	remaining := Survey(current)
 	next, ok := remaining.Next()
 	if !ok {
-		return InteractiveOutcome{Remaining: remaining}, nil
+		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, nil
 	}
-	if err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
+	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	after, err := l.Tracker.Spec(ctx, spec)
@@ -160,44 +175,60 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
 	}
 	if closedIn(after, next) {
-		if err := l.push(ctx, next); err != nil {
+		if err := l.land(ctx, next); err != nil {
 			return InteractiveOutcome{}, err
 		}
 	}
-	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after)}, nil
+	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
 }
 
-// hand gives task to one agent run of cmd. An agent that exits with a
-// failure is reported and left to the tracker to judge; only an interrupted
-// run is an error.
-func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) error {
-	if err := l.report("smith: handing #%d %s to the agent\n", task.Number, task.Title); err != nil {
-		return err
+// hand gives task to one agent run of cmd in task's worktree, and returns
+// that worktree's directory. An agent that exits with a failure is reported
+// and left to the tracker to judge; only an interrupted run is an error.
+func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
+	dir, err := l.Bench.Open(ctx, task.Number)
+	if err != nil {
+		return "", fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
-	err := l.Launcher.Launch(ctx, cmd)
+	cmd.Dir = dir
+	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
+		return "", err
+	}
+	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
-		return fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+		return "", fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 	}
 	if err != nil {
-		return l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
+		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
 	}
-	return nil
+	return dir, nil
 }
 
-// push pushes the branch holding task's work, when the loop has a Pusher, and
-// reports what it did. A failed push is an error naming task.
-func (l Loop) push(ctx context.Context, task tracker.Task) error {
+// left returns the worktree of each task remaining skipped, from worktrees,
+// by task number.
+func left(remaining Remaining, worktrees map[int]string) map[int]string {
+	dirs := map[int]string{}
+	for _, task := range remaining.Skipped {
+		dirs[task.Number] = worktrees[task.Number]
+	}
+	return dirs
+}
+
+// land brings closed task's work onto the work branch and pushes that, when
+// the loop has a Pusher, reporting the push. A failed landing or push is an
+// error naming task.
+func (l Loop) land(ctx context.Context, task tracker.Task) error {
+	if err := l.Bench.Land(ctx, task.Number); err != nil {
+		return fmt.Errorf("land the work on #%d: %w", task.Number, err)
+	}
 	if l.Pusher == nil {
 		return nil
 	}
-	pushed, err := l.Pusher.Push(ctx)
-	if err != nil {
+	branch := l.Bench.WorkBranch()
+	if err := l.Pusher.Push(ctx, branch); err != nil {
 		return fmt.Errorf("push the work on #%d: %w", task.Number, err)
 	}
-	if pushed.Skipped {
-		return l.report("smith: not pushing #%d: %s is origin's default branch\n", task.Number, pushed.Branch)
-	}
-	return l.report("smith: pushed #%d on %s to origin\n", task.Number, pushed.Branch)
+	return l.report("smith: pushed #%d on %s to origin\n", task.Number, branch)
 }
 
 // closedIn reports whether spec holds task as closed.

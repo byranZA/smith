@@ -3,6 +3,7 @@ package loop_test
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,6 +22,24 @@ func TestProcessStreamsTheAgentsOutputWithItsEnvironmentAdded(t *testing.T) {
 
 	if got, want := out.String(), "kept added\n"; got != want {
 		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestProcessRunsTheAgentInItsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "pwd -P"}, Dir: dir}
+
+	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(context.Background(), cmd); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("Launch() ran in %q, want %q", got, want)
 	}
 }
 

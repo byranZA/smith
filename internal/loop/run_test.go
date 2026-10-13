@@ -215,8 +215,20 @@ func loopOn(t *testing.T, b *board, launcher loop.Launcher) loop.Loop {
 	if err != nil {
 		t.Fatalf("Lookup(claude) error = %v", err)
 	}
-	return loop.Loop{Tracker: b, Launcher: launcher, Agent: claude, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard, Limits: loop.DefaultLimits()}
+	return loop.Loop{Tracker: b, Launcher: launcher, Bench: trees{}, Agent: claude, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard, Limits: loop.DefaultLimits()}
 }
+
+// trees is a bench whose every task worktree opens and lands without fault.
+type trees struct{}
+
+func (trees) WorkBranch() string { return "smith/42-spec" }
+
+func (trees) Open(_ context.Context, task int) (string, error) { return worktreeOf(task), nil }
+
+func (trees) Land(context.Context, int) error { return nil }
+
+// worktreeOf is where a fake bench puts task's worktree.
+func worktreeOf(task int) string { return "/bench/" + strconv.Itoa(task) }
 
 // failing is a launcher whose agent does its work and then exits with a failure, cancelling the run first when cancel is set.
 type failing struct {
