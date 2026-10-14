@@ -10,10 +10,12 @@ import (
 
 // Execution is what the loop works for one issue: the issue its work branch
 // is named after, and the tasks to work, in order. For a spec that is the spec
-// and its tasks; for a standalone task, the task and itself alone.
+// and its tasks; for a standalone task, the task and itself alone. Single
+// marks an execution of one task named on its own, rather than a spec's tasks.
 type Execution struct {
 	Number int
 	Title  string
+	Single bool
 	Tasks  []Task
 }
 

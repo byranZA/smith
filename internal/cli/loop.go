@@ -244,6 +244,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			if err := loop.Admit(execution); err != nil {
+				return reportInvalid(cmd, err)
+			}
 			bench, err := w.workbench(cmd.Context(), execution, branch, base)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -310,7 +313,7 @@ func runLoop(ctx context.Context, l loop.Loop, execution tracker.Execution, inte
 // executionName names execution in a report as what it is: "task #80" for a
 // task standing alone, "spec #42" otherwise.
 func executionName(execution tracker.Execution) string {
-	if len(execution.Tasks) == 1 && execution.Tasks[0].Number == execution.Number {
+	if execution.Single {
 		return fmt.Sprintf("task #%d", execution.Number)
 	}
 	return fmt.Sprintf("spec #%d", execution.Number)

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/loop"
@@ -72,6 +73,51 @@ func TestLoopListNamesAnAvailableStandaloneTaskAsNextAndNothingElse(t *testing.T
 		"task #80 Task 80\n" +
 		"next: #80 Task 80\n" +
 		"  available: #80\n"
+	if code != 0 || stdout != want {
+		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 and\n%s", code, stderr, stdout, want)
+	}
+}
+
+func TestLoopRunRefusesAnUnavailableTaskBeforeAnyWorkBranchIsSetUp(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		issue string
+		want  string
+	}{
+		"closed":      {taskJSON(80, "CLOSED", "ready-for-agent"), "#80 is closed\n"},
+		"for a human": {taskJSON(80, "OPEN", "ready-for-human"), "#80 is meant for a human\n"},
+		"unlabelled":  {taskJSON(80, "OPEN", "bug"), "#80 is not labelled \"ready-for-agent\"\n"},
+		"blocked":     {taskJSON(80, "OPEN", "ready-for-agent", 79), "#80 is blocked by #79\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gh := &fakeTracker{issues: map[string]string{"80": tc.issue}}
+			claude := &fakeAgent{gh: gh}
+			var requests []workbench.Request
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+				requests = append(requests, req)
+				return fakeBench(ctx, dir, req)
+			}
+
+			_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath, bench: recording}, "80")
+
+			if code == 0 || !strings.HasSuffix(stderr, tc.want) || len(claude.handed) != 0 || len(requests) != 0 {
+				t.Errorf("exit %d, stderr %q, handed %v, work branches set up for %+v; want non-zero ending %q, no agent run and no work branch", code, stderr, claude.handed, requests, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoopListShowsAnUnavailableTaskUnderItsState(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent", 79)}}
+
+	stdout, stderr, code := runLoopList(t, gh, "80")
+
+	want := defaultSettings +
+		"task #80 Task 80\n" +
+		"next: none\n" +
+		"  blocked: #80 (by #79)\n"
 	if code != 0 || stdout != want {
 		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 and\n%s", code, stderr, stdout, want)
 	}

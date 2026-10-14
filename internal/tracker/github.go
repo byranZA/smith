@@ -188,7 +188,7 @@ func (g GitHub) standalone(ctx context.Context, repo string, number int) (Execut
 		return Execution{}, err
 	}
 	only := Task{Number: number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}
-	return Execution{Number: number, Title: task.Title, Tasks: []Task{only}}, nil
+	return Execution{Number: number, Title: task.Title, Single: true, Tasks: []Task{only}}, nil
 }
 
 // task reads task number with every issue linked as blocking it.

@@ -23,6 +23,8 @@ The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed an
 - **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue labelled `spec` is a nested spec, never a task.
 - **Blockers** are a task's GitHub "blocked by" links, plus any issue named in its `## Blocked by` section. A task is **available** when it is open, for an agent, and every blocker is closed.
 
+A task named on its own must be available. Otherwise `run` launches no agent, sets up no work branch or worktree, and exits 1 naming why: `#N is closed`, `#N is meant for a human`, `#N is not labelled "ready-for-agent"` or `#N is blocked by #M`. There is no override. `list` still shows the task under where it stands, such as `blocked: #N (by #M)`, and exits 0.
+
 The loop hands out the first available task in the spec's order. It reads the tracker again before every choice, so a task filed or unblocked mid-run is seen.
 
 ## `smith loop list`

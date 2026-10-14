@@ -182,7 +182,7 @@ func TestExecutionOfAStandaloneTaskIsTheTaskAlone(t *testing.T) {
 		t.Fatalf("Execution(80) error = %v", err)
 	}
 
-	want := tracker.Execution{Number: 80, Title: "Fix X", Tasks: []tracker.Task{
+	want := tracker.Execution{Number: 80, Title: "Fix X", Single: true, Tasks: []tracker.Task{
 		{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Blockers: []tracker.Blocker{{Number: 79, Open: false}, {Number: 7, Open: false}}},
 	}}
 	if !reflect.DeepEqual(got, want) {
