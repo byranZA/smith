@@ -296,14 +296,15 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 // interactive task closed.
 func runLoop(ctx context.Context, l loop.Loop, execution tracker.Execution, interactive bool) (string, bool, error) {
 	name := executionName(execution)
+	number, _ := execution.Issue()
 	if !interactive {
-		outcome, err := l.Run(ctx, execution.Number)
+		outcome, err := l.Run(ctx, number)
 		if err != nil {
 			return "", false, fmt.Errorf("work %s: %w", name, err)
 		}
 		return runReport(name, l.Limits, outcome) + workBranchReport(outcome.WorkBranch), outcome.Complete(), nil
 	}
-	outcome, err := l.RunInteractive(ctx, execution.Number)
+	outcome, err := l.RunInteractive(ctx, number)
 	if err != nil {
 		return "", false, fmt.Errorf("work %s interactively: %w", name, err)
 	}
@@ -311,12 +312,13 @@ func runLoop(ctx context.Context, l loop.Loop, execution tracker.Execution, inte
 }
 
 // executionName names execution in a report as what it is: "task #80" for a
-// task standing alone, "spec #42" otherwise.
+// task named on its own, "spec #42" otherwise.
 func executionName(execution tracker.Execution) string {
+	number, _ := execution.Issue()
 	if execution.Single {
-		return fmt.Sprintf("task #%d", execution.Number)
+		return fmt.Sprintf("task #%d", number)
 	}
-	return fmt.Sprintf("spec #%d", execution.Number)
+	return fmt.Sprintf("spec #%d", number)
 }
 
 // workBranchReport renders the line naming the work branch a run's closed
@@ -412,7 +414,8 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 // of task that remains, leaving out the kinds it has none of.
 func listReport(execution tracker.Execution, remaining loop.Remaining) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s\n", executionName(execution), execution.Title)
+	_, title := execution.Issue()
+	fmt.Fprintf(&b, "%s %s\n", executionName(execution), title)
 	switch next, ok := remaining.Next(); {
 	case ok:
 		fmt.Fprintf(&b, "next: #%d %s\n", next.Number, next.Title)

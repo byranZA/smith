@@ -115,7 +115,7 @@ func manyChildren() *fakeGH {
 }
 
 const (
-	specFields = "number,title,state,labels,body,subIssues,url"
+	specFields = "number,title,state,labels,body,subIssues,url,parent"
 	taskFields = "number,title,state,labels,body,blockedBy"
 )
 
@@ -187,6 +187,56 @@ func TestExecutionOfAStandaloneTaskIsTheTaskAlone(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Execution(80) =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// childOf is the tracker holding #82, an available task whose parent is #parent titled title.
+func childOf(parent int, title string) *fakeGH {
+	return &fakeGH{replies: map[string]string{
+		specView(82): fmt.Sprintf(`{"body":"","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"}],"number":82,"state":"OPEN","url":"https://github.com/o/r/issues/82","subIssues":{"nodes":[],"totalCount":0},"parent":{"id":"I_P","number":%d,"state":"OPEN","title":%q,"url":"https://github.com/o/r/issues/%d"},"title":"Task 82"}`, parent, title, parent),
+		taskView(82): agentTask(82, "OPEN", `{"nodes":[],"totalCount":0}`),
+	}}
+}
+
+func TestExecutionOfAChildTaskIsTheTaskAloneUnderItsParent(t *testing.T) {
+	t.Parallel()
+
+	got, err := tracker.NewGitHub(childOf(74, "Spec: Widgets")).Execution(t.Context(), 82)
+	if err != nil {
+		t.Fatalf("Execution(82) error = %v", err)
+	}
+
+	want := tracker.Execution{Number: 74, Title: "Spec: Widgets", Single: true, Tasks: []tracker.Task{
+		{Number: 82, Title: "Task 82", Open: true, For: tracker.Agent},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Execution(82) =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestExecutionOfATaskUnderANestedSpecIsUnderItsImmediateParent(t *testing.T) {
+	t.Parallel()
+
+	got, err := tracker.NewGitHub(childOf(76, "Gadgets")).Execution(t.Context(), 82)
+	if err != nil {
+		t.Fatalf("Execution(82) error = %v", err)
+	}
+
+	if got.Number != 76 || got.Title != "Gadgets" {
+		t.Errorf("Execution(82) is under #%d %q, want #76 \"Gadgets\"", got.Number, got.Title)
+	}
+}
+
+func TestExecutionRefusesATaskWhoseParentIsInAnotherRepo(t *testing.T) {
+	t.Parallel()
+	gh := childOf(74, "Spec: Widgets")
+	gh.replies[specView(82)] = strings.Replace(gh.replies[specView(82)], "o/r/issues/74", "o/x/issues/74", 1)
+
+	_, err := tracker.NewGitHub(gh).Execution(t.Context(), 82)
+
+	var foreign *tracker.ForeignError
+	if !errors.As(err, &foreign) || foreign.Ref != (tracker.Ref{Repo: "o/x", Number: 74}) {
+		t.Errorf("Execution(82) error = %v, want a *ForeignError for o/x#74", err)
 	}
 }
 

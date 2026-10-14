@@ -20,7 +20,7 @@ const (
 
 // The issue fields read for a spec and for a task.
 const (
-	specFields = "number,title,state,labels,body,subIssues,url"
+	specFields = "number,title,state,labels,body,subIssues,url,parent"
 	taskFields = "number,title,state,labels,body,blockedBy"
 )
 
@@ -69,6 +69,14 @@ type issue struct {
 	Labels    []label    `json:"labels"`
 	SubIssues connection `json:"subIssues"`
 	BlockedBy connection `json:"blockedBy"`
+	Parent    *parent    `json:"parent"`
+}
+
+// parent is the spec an issue is a sub-issue of, as gh gives it.
+type parent struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
 }
 
 // connection is a list of linked issues as gh's issue view gives it: at most
@@ -133,8 +141,8 @@ func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
 
 // Execution reads issue number as an execution: a spec, labelled "spec", with
 // its sub-issues, those its "## Tasks" checklist lists first and in that order,
-// then the rest as GitHub holds them; or any other issue as a standalone task,
-// itself alone. A task's blockers are its blocked-by links and the issues its
+// then the rest as GitHub holds them; or any other issue as a task alone, under
+// its immediate parent when it has one and under itself otherwise. A task's blockers are its blocked-by links and the issues its
 // "## Blocked by" section names.
 func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	spec, err := g.view(ctx, Ref{Number: number}, specFields)
@@ -142,7 +150,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		return Execution{}, err
 	}
 	if !spec.labelled(specLabel) {
-		return g.standalone(ctx, spec.repo(), number)
+		return g.single(ctx, spec)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
 	if err != nil {
@@ -176,10 +184,12 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }
 
-// standalone reads task number, in repo, as an execution of its own: itself
-// and itself alone as its one task.
-func (g GitHub) standalone(ctx context.Context, repo string, number int) (Execution, error) {
-	task, err := g.task(ctx, number)
+// single reads the task viewed as an execution of that task alone, whose
+// work branch is named after its parent when it has one and after itself
+// otherwise. A parent in another repo is refused.
+func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
+	repo := viewed.repo()
+	task, err := g.task(ctx, viewed.Number)
 	if err != nil {
 		return Execution{}, err
 	}
@@ -187,8 +197,14 @@ func (g GitHub) standalone(ctx context.Context, repo string, number int) (Execut
 	if err != nil {
 		return Execution{}, err
 	}
-	only := Task{Number: number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}
-	return Execution{Number: number, Title: task.Title, Single: true, Tasks: []Task{only}}, nil
+	only := Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}
+	if viewed.Parent == nil {
+		return Execution{Number: task.Number, Title: task.Title, Single: true, Tasks: []Task{only}}, nil
+	}
+	if ref := (issueNode{Number: viewed.Parent.Number, URL: viewed.Parent.URL}).ref().in(repo); ref.Repo != "" {
+		return Execution{}, &ForeignError{Ref: ref, Repo: repo}
+	}
+	return Execution{Number: viewed.Parent.Number, Title: viewed.Parent.Title, Single: true, Tasks: []Task{only}}, nil
 }
 
 // task reads task number with every issue linked as blocking it.

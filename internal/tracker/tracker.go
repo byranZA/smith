@@ -10,13 +10,24 @@ import (
 
 // Execution is what the loop works for one issue: the issue its work branch
 // is named after, and the tasks to work, in order. For a spec that is the spec
-// and its tasks; for a standalone task, the task and itself alone. Single
-// marks an execution of one task named on its own, rather than a spec's tasks.
+// and its tasks; for a task with a parent, its immediate parent and the task
+// alone; for a standalone task, the task and itself alone. Single marks an
+// execution of one task named on its own, rather than a spec's tasks.
 type Execution struct {
 	Number int
 	Title  string
 	Single bool
 	Tasks  []Task
+}
+
+// Issue returns the number and title of the issue the execution was read for:
+// its one task when Single, and the spec its work branch is named after
+// otherwise.
+func (e Execution) Issue() (int, string) {
+	if e.Single && len(e.Tasks) == 1 {
+		return e.Tasks[0].Number, e.Tasks[0].Title
+	}
+	return e.Number, e.Title
 }
 
 // Task is one child of a spec: whether it is open, who it is meant for, and

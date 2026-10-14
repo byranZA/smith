@@ -122,3 +122,63 @@ func TestLoopListShowsAnUnavailableTaskUnderItsState(t *testing.T) {
 		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 and\n%s", code, stderr, stdout, want)
 	}
 }
+
+// specWithChildren is the tracker holding spec #42 with tasks #43 and #44, both available, #44 naming #42 as its parent.
+func specWithChildren() *fakeTracker {
+	child := strings.TrimSuffix(taskJSON(44, "OPEN", "ready-for-agent"), "}") +
+		`,"url":"https://github.com/byranZA/smith/issues/44","parent":{"number":42,"title":"Spec: the loop","url":"https://github.com/byranZA/smith/issues/42"}}`
+	return &fakeTracker{issues: map[string]string{
+		"42": specJSON(43, 44),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+		"44": child,
+	}}
+}
+
+func TestLoopRunWorksAChildTaskAloneOnItsParentsWorkBranch(t *testing.T) {
+	t.Parallel()
+	gh := specWithChildren()
+	claude := &fakeAgent{gh: gh}
+	var requests []workbench.Request
+	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+		requests = append(requests, req)
+		return fakeBench(ctx, dir, req)
+	}
+
+	stdout, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath, bench: recording}, "44")
+
+	want := defaultSettings + "task #44 complete\n" + workBranch
+	wantRequests := []workbench.Request{{Number: 42, Title: "Spec: the loop"}}
+	if code != 0 || !slices.Equal(claude.handed, []string{"44"}) || stdout != want || !slices.Equal(requests, wantRequests) {
+		t.Errorf("exit %d, stderr %q, handed %v, work branches set up for %+v, stdout =\n%s\nwant 0, handed [44], %+v, and\n%s", code, stderr, claude.handed, requests, stdout, wantRequests, want)
+	}
+}
+
+func TestLoopRunOfASpecAfterOneOfItsTasksWorksOnlyWhatRemains(t *testing.T) {
+	t.Parallel()
+	gh := specWithChildren()
+	claude := &fakeAgent{gh: gh}
+	if _, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "44"); code != 0 {
+		t.Fatalf("loop run 44 exit %d, stderr %q", code, stderr)
+	}
+
+	stdout, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "42")
+
+	want := defaultSettings + "spec #42 complete\n" + workBranch
+	if code != 0 || !slices.Equal(claude.handed, []string{"44", "43"}) || stdout != want {
+		t.Errorf("exit %d, stderr %q, handed %v, stdout =\n%s\nwant 0, handed [44 43], and\n%s", code, stderr, claude.handed, stdout, want)
+	}
+}
+
+func TestLoopListOfAChildTaskShowsThatTaskAlone(t *testing.T) {
+	t.Parallel()
+
+	stdout, stderr, code := runLoopList(t, specWithChildren(), "44")
+
+	want := defaultSettings +
+		"task #44 Task 44\n" +
+		"next: #44 Task 44\n" +
+		"  available: #44\n"
+	if code != 0 || stdout != want {
+		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 and\n%s", code, stderr, stdout, want)
+	}
+}
