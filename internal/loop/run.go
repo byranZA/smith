@@ -10,10 +10,14 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// Tracker is where the loop reads a spec and its tasks.
+// Tracker is where the loop reads an execution and its tasks.
 type Tracker interface {
-	// Spec reads spec number and its tasks as they stand now.
-	Spec(ctx context.Context, number int) (tracker.Spec, error)
+	// Execution reads issue number as an execution: a spec and its tasks, or
+	// a task alone, as they stand now.
+	Execution(ctx context.Context, number int) (tracker.Execution, error)
+	// Task reads issue number as a task as it stands now, whatever it has
+	// become since.
+	Task(ctx context.Context, number int) (tracker.Task, error)
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -96,9 +100,9 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	skipped := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
-	current, err := l.Tracker.Spec(ctx, spec)
+	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
 	for {
 		remaining := Survey(current).Skip(skipped)
@@ -117,8 +121,8 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		runs++
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
-		if current, err = l.Tracker.Spec(ctx, spec); err != nil {
-			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		if current, err = l.refresh(ctx, spec, current); err != nil {
+			return Outcome{}, err
 		}
 		if closedIn(current, next) {
 			if err := l.land(ctx, next); err != nil {
@@ -158,9 +162,9 @@ func (o InteractiveOutcome) Succeeded() bool {
 // RunInteractive hands spec's next available task to one agent run attached to
 // the operator's terminal, and runs no agent when no task is available.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
-	current, err := l.Tracker.Spec(ctx, spec)
+	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
-		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		return InteractiveOutcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
 	remaining := Survey(current)
 	next, ok := remaining.Next()
@@ -170,9 +174,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
-	after, err := l.Tracker.Spec(ctx, spec)
+	after, err := l.refresh(ctx, spec, current)
 	if err != nil {
-		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		return InteractiveOutcome{}, err
 	}
 	if closedIn(after, next) {
 		if err := l.land(ctx, next); err != nil {
@@ -180,6 +184,25 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 		}
 	}
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
+}
+
+// refresh reads current, the execution read for issue number, as it stands
+// now. A single task keeps its scope: it is read again as that task, so one
+// that gains sub-issues or the spec label is never swapped for its children.
+func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution) (tracker.Execution, error) {
+	if !current.Single || len(current.Tasks) != 1 {
+		execution, err := l.Tracker.Execution(ctx, number)
+		if err != nil {
+			return tracker.Execution{}, fmt.Errorf("read #%d: %w", number, err)
+		}
+		return execution, nil
+	}
+	task, err := l.Tracker.Task(ctx, current.Tasks[0].Number)
+	if err != nil {
+		return tracker.Execution{}, fmt.Errorf("read #%d: %w", current.Tasks[0].Number, err)
+	}
+	current.Tasks = []tracker.Task{task}
+	return current, nil
 }
 
 // hand gives task to one agent run of cmd in task's worktree, and returns
@@ -232,7 +255,7 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 }
 
 // closedIn reports whether spec holds task as closed.
-func closedIn(spec tracker.Spec, task tracker.Task) bool {
+func closedIn(spec tracker.Execution, task tracker.Task) bool {
 	return slices.ContainsFunc(spec.Tasks, func(t tracker.Task) bool { return t.Number == task.Number && !t.Open })
 }
 

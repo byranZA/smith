@@ -42,7 +42,7 @@ func TestNextIsTheFirstAvailableTask(t *testing.T) {
 		"in listed order":        {[]tracker.Task{agentTask(45), agentTask(43)}, 45},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, ok := loop.Survey(tracker.Spec{Number: 42, Tasks: tc.tasks}).Next()
+			got, ok := loop.Survey(tracker.Execution{Number: 42, Tasks: tc.tasks}).Next()
 
 			if !ok || got.Number != tc.want {
 				t.Errorf("Next() = #%d, %v, want #%d", got.Number, ok, tc.want)
@@ -52,7 +52,7 @@ func TestNextIsTheFirstAvailableTask(t *testing.T) {
 }
 
 func TestNoTaskIsNextWhenOnlyAHumanCanProceed(t *testing.T) {
-	remaining := loop.Survey(tracker.Spec{Number: 42, Tasks: []tracker.Task{humanTask(43), closed(agentTask(44)), closed(agentTask(45))}})
+	remaining := loop.Survey(tracker.Execution{Number: 42, Tasks: []tracker.Task{humanTask(43), closed(agentTask(44)), closed(agentTask(45))}})
 
 	if got, ok := remaining.Next(); ok {
 		t.Errorf("Next() = #%d, want no next task", got.Number)
@@ -61,7 +61,7 @@ func TestNoTaskIsNextWhenOnlyAHumanCanProceed(t *testing.T) {
 
 func TestSurveySortsTheTasksByWhereTheyStand(t *testing.T) {
 	unready := tracker.Task{Number: 47, Open: true, For: tracker.Nobody}
-	spec := tracker.Spec{Number: 42, Tasks: []tracker.Task{
+	spec := tracker.Execution{Number: 42, Tasks: []tracker.Task{
 		humanTask(43),
 		agentTask(44, tracker.Blocker{Number: 43, Open: true}),
 		closed(agentTask(45)),
@@ -90,7 +90,7 @@ func TestCompleteOnlyWhenEveryTaskIsClosed(t *testing.T) {
 		"an agent task open": {[]tracker.Task{agentTask(43)}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := loop.Survey(tracker.Spec{Number: 42, Tasks: tc.tasks}).Complete(); got != tc.want {
+			if got := loop.Survey(tracker.Execution{Number: 42, Tasks: tc.tasks}).Complete(); got != tc.want {
 				t.Errorf("Complete() = %v, want %v", got, tc.want)
 			}
 		})
