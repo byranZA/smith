@@ -27,6 +27,15 @@ func (b *board) Execution(_ context.Context, number int) (tracker.Execution, err
 	return tracker.Execution{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
 }
 
+func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {
+	for _, task := range b.tasks {
+		if task.Number == number {
+			return task, nil
+		}
+	}
+	return tracker.Task{}, &tracker.NotFoundError{Number: number}
+}
+
 func (b *board) Launch(_ context.Context, cmd agent.Command) error {
 	b.launched = append(b.launched, cmd)
 	n, err := strconv.Atoi(taskOf(cmd))

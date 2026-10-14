@@ -21,7 +21,7 @@ const (
 // The issue fields read for a spec and for a task.
 const (
 	specFields = "number,title,state,labels,body,subIssues,url,parent"
-	taskFields = "number,title,state,labels,body,blockedBy,subIssues"
+	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
 // linkedQuery reads one page of an issue's linked issues over the connection
@@ -188,23 +188,33 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 // work branch is named after its parent when it has one and after itself
 // otherwise. A parent in another repo is refused.
 func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
-	repo := viewed.repo()
-	task, err := g.task(ctx, viewed.Number)
+	only, err := g.Task(ctx, viewed.Number)
 	if err != nil {
 		return Execution{}, err
 	}
-	blockers, err := g.blockers(ctx, repo, task, nil)
-	if err != nil {
-		return Execution{}, err
-	}
-	only := Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}
 	if viewed.Parent == nil {
-		return Execution{Number: task.Number, Title: task.Title, Single: true, Tasks: []Task{only}}, nil
+		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}}, nil
 	}
+	repo := viewed.repo()
 	if ref := (issueNode{Number: viewed.Parent.Number, URL: viewed.Parent.URL}).ref().in(repo); ref.Repo != "" {
 		return Execution{}, &ForeignError{Ref: ref, Repo: repo}
 	}
 	return Execution{Number: viewed.Parent.Number, Title: viewed.Parent.Title, Single: true, Tasks: []Task{only}}, nil
+}
+
+// Task reads issue number as a task as it stands now, with its blockers,
+// whatever it has become since: one that has gained sub-issues or the spec
+// label is still that task, meant for nobody.
+func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
+	task, err := g.task(ctx, number)
+	if err != nil {
+		return Task{}, err
+	}
+	blockers, err := g.blockers(ctx, task.repo(), task, nil)
+	if err != nil {
+		return Task{}, err
+	}
+	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}, nil
 }
 
 // task reads task number with every issue linked as blocking it.

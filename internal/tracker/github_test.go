@@ -116,7 +116,7 @@ func manyChildren() *fakeGH {
 
 const (
 	specFields = "number,title,state,labels,body,subIssues,url,parent"
-	taskFields = "number,title,state,labels,body,blockedBy,subIssues"
+	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
 func specView(n int) string { return fmt.Sprintf("issue view %d --json %s", n, specFields) }
@@ -173,7 +173,7 @@ func TestExecutionOfAStandaloneTaskIsTheTaskAlone(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{replies: map[string]string{
 		specView(80):                       `{"body":"## Blocked by\n\n- #7\n","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"}],"number":80,"state":"OPEN","url":"https://github.com/o/r/issues/80","subIssues":{"nodes":[],"totalCount":0},"title":"Fix X"}`,
-		taskView(80):                       `{"blockedBy":{"nodes":[{"id":"I_79","number":79,"state":"CLOSED","title":"Y","url":"https://github.com/o/r/issues/79"}],"totalCount":1},"body":"## Blocked by\n\n- #7\n","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"}],"number":80,"state":"OPEN","title":"Fix X"}`,
+		taskView(80):                       `{"blockedBy":{"nodes":[{"id":"I_79","number":79,"state":"CLOSED","title":"Y","url":"https://github.com/o/r/issues/79"}],"totalCount":1},"body":"## Blocked by\n\n- #7\n","labels":[{"id":"LA_2","name":"ready-for-agent","description":"","color":"000000"}],"number":80,"state":"OPEN","title":"Fix X","url":"https://github.com/o/r/issues/80"}`,
 		"issue view 7 --json number,state": `{"number":7,"state":"CLOSED"}`,
 	}}
 
@@ -535,5 +535,50 @@ func TestExecutionNeverHandsANestedSpecToAnyone(t *testing.T) {
 				t.Errorf("tasks of Execution(74) =\n%+v\nwant\n%+v", got.Tasks, want)
 			}
 		})
+	}
+}
+
+func TestTaskReadsATaskThatBecameASpecAsThatTask(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		labels    string
+		subIssues string
+	}{
+		"gained sub-issues":   {`{"name":"ready-for-agent"}`, `{"nodes":[{"number":81,"state":"OPEN"}],"totalCount":1}`},
+		"gained a spec label": {`{"name":"ready-for-agent"},{"name":"spec"}`, `{"nodes":[],"totalCount":0}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gh := &fakeGH{replies: map[string]string{
+				taskView(80): fmt.Sprintf(`{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[%s],"number":80,"state":"CLOSED","subIssues":%s,"title":"Fix X","url":"https://github.com/o/r/issues/80"}`, tc.labels, tc.subIssues),
+			}}
+
+			got, err := tracker.NewGitHub(gh).Task(t.Context(), 80)
+			if err != nil {
+				t.Fatalf("Task(80) error = %v", err)
+			}
+
+			if want := (tracker.Task{Number: 80, Title: "Fix X", Open: false, For: tracker.Nobody}); !reflect.DeepEqual(got, want) {
+				t.Errorf("Task(80) = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestTaskReadsAnOpenTasksBlockers(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		taskView(80):                       `{"blockedBy":{"nodes":[{"number":79,"state":"OPEN","url":"https://github.com/o/r/issues/79"}],"totalCount":1},"body":"## Blocked by\n\n- #7\n","labels":[{"name":"ready-for-agent"}],"number":80,"state":"OPEN","title":"Fix X","url":"https://github.com/o/r/issues/80"}`,
+		"issue view 7 --json number,state": `{"number":7,"state":"CLOSED"}`,
+	}}
+
+	got, err := tracker.NewGitHub(gh).Task(t.Context(), 80)
+	if err != nil {
+		t.Fatalf("Task(80) error = %v", err)
+	}
+
+	want := tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Blockers: []tracker.Blocker{{Number: 79, Open: true}, {Number: 7, Open: false}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Task(80) = %+v, want %+v", got, want)
 	}
 }
