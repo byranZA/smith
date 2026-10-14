@@ -49,3 +49,14 @@ func TestAdmitLetsASpecWithNoAvailableTaskRun(t *testing.T) {
 		t.Errorf("Admit(spec #42) = %v, want nil", err)
 	}
 }
+
+func TestAdmitRefusesASpecWithNoTasks(t *testing.T) {
+	t.Parallel()
+
+	err := loop.Admit(tracker.Execution{Number: 76, Title: "Gadgets", Tasks: []tracker.Task{}})
+
+	var empty *loop.EmptyError
+	if !errors.As(err, &empty) || err.Error() != "#76 has no tasks" {
+		t.Errorf("Admit(spec #76) = %v, want an EmptyError \"#76 has no tasks\"", err)
+	}
+}

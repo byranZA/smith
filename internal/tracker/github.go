@@ -21,7 +21,7 @@ const (
 // The issue fields read for a spec and for a task.
 const (
 	specFields = "number,title,state,labels,body,subIssues,url,parent"
-	taskFields = "number,title,state,labels,body,blockedBy"
+	taskFields = "number,title,state,labels,body,blockedBy,subIssues"
 )
 
 // linkedQuery reads one page of an issue's linked issues over the connection
@@ -139,8 +139,8 @@ func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
 	return ref.Number, nil
 }
 
-// Execution reads issue number as an execution: a spec, labelled "spec", with
-// its sub-issues, those its "## Tasks" checklist lists first and in that order,
+// Execution reads issue number as an execution: a spec, labelled "spec" or
+// with sub-issues, and its sub-issues, those its "## Tasks" checklist lists first and in that order,
 // then the rest as GitHub holds them; or any other issue as a task alone, under
 // its immediate parent when it has one and under itself otherwise. A task's blockers are its blocked-by links and the issues its
 // "## Blocked by" section names.
@@ -149,7 +149,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	if err != nil {
 		return Execution{}, err
 	}
-	if !spec.labelled(specLabel) {
+	if !spec.isSpec() {
 		return g.single(ctx, spec)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
@@ -324,11 +324,17 @@ func (i issue) labelled(name string) bool {
 	return slices.Contains(i.Labels, label{Name: name})
 }
 
+// isSpec reports whether the issue is a spec: labelled "spec", or with
+// sub-issues whatever its labels.
+func (i issue) isSpec() bool {
+	return i.labelled(specLabel) || len(i.SubIssues.Nodes) > 0 || i.SubIssues.TotalCount > 0
+}
+
 // audience is who the issue is meant for. A nested spec is never a task for
 // either, and an issue labelled for both is kept for the human.
 func (i issue) audience() Audience {
 	switch {
-	case i.labelled(specLabel):
+	case i.isSpec():
 		return Nobody
 	case i.labelled(humanLabel):
 		return Human

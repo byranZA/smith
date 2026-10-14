@@ -116,7 +116,7 @@ func manyChildren() *fakeGH {
 
 const (
 	specFields = "number,title,state,labels,body,subIssues,url,parent"
-	taskFields = "number,title,state,labels,body,blockedBy"
+	taskFields = "number,title,state,labels,body,blockedBy,subIssues"
 )
 
 func specView(n int) string { return fmt.Sprintf("issue view %d --json %s", n, specFields) }
@@ -453,5 +453,87 @@ func TestExecutionRefusesATaskInAnotherRepo(t *testing.T) {
 	var foreign *tracker.ForeignError
 	if !errors.As(err, &foreign) || *foreign != want {
 		t.Errorf("Execution(42) error = %v, want %+v", err, want)
+	}
+}
+
+// parentOf is the tracker holding #n labelled labels, with available tasks #78 and #79 as its sub-issues.
+func parentOf(n int, labels string) *fakeGH {
+	return &fakeGH{replies: map[string]string{
+		specView(n):  fmt.Sprintf(`{"body":"","labels":[%s],"number":%d,"state":"OPEN","url":"https://github.com/o/r/issues/%d","subIssues":{"nodes":[{"number":78,"state":"OPEN","url":"https://github.com/o/r/issues/78"},{"number":79,"state":"OPEN","url":"https://github.com/o/r/issues/79"}],"totalCount":2},"title":"Widgets"}`, labels, n, n),
+		taskView(78): agentTask(78, "OPEN", `{"nodes":[],"totalCount":0}`),
+		taskView(79): agentTask(79, "OPEN", `{"nodes":[],"totalCount":0}`),
+	}}
+}
+
+func TestExecutionOfAnIssueWithSubIssuesIsASpec(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		number int
+		labels string
+	}{
+		"unlabelled":              {75, ``},
+		"labelled for an agent":   {77, `{"name":"ready-for-agent"}`},
+		"labelled spec and agent": {74, `{"name":"spec"},{"name":"ready-for-agent"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tracker.NewGitHub(parentOf(tc.number, tc.labels)).Execution(t.Context(), tc.number)
+			if err != nil {
+				t.Fatalf("Execution(%d) error = %v", tc.number, err)
+			}
+
+			want := tracker.Execution{Number: tc.number, Title: "Widgets", Tasks: []tracker.Task{
+				{Number: 78, Title: "Task 78", Open: true, For: tracker.Agent},
+				{Number: 79, Title: "Task 79", Open: true, For: tracker.Agent},
+			}}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("Execution(%d) =\n%+v\nwant\n%+v", tc.number, got, want)
+			}
+		})
+	}
+}
+
+func TestExecutionOfASpecWithNoSubIssuesHasNoTasks(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		specView(76): `{"body":"","labels":[{"name":"spec"},{"name":"ready-for-agent"}],"number":76,"state":"OPEN","url":"https://github.com/o/r/issues/76","subIssues":{"nodes":[],"totalCount":0},"title":"Gadgets"}`,
+	}}
+
+	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 76)
+	if err != nil {
+		t.Fatalf("Execution(76) error = %v", err)
+	}
+
+	want := tracker.Execution{Number: 76, Title: "Gadgets", Tasks: []tracker.Task{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Execution(76) =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestExecutionNeverHandsANestedSpecToAnyone(t *testing.T) {
+	t.Parallel()
+	for name, labels := range map[string]string{
+		"unlabelled":            `[]`,
+		"labelled for an agent": `[{"name":"ready-for-agent"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gh := parentOf(74, `{"name":"spec"}`)
+			gh.replies[taskView(79)] = fmt.Sprintf(`{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":%s,"number":79,"state":"OPEN","subIssues":{"nodes":[{"number":90,"state":"OPEN"}],"totalCount":1},"title":"Task 79"}`, labels)
+
+			got, err := tracker.NewGitHub(gh).Execution(t.Context(), 74)
+			if err != nil {
+				t.Fatalf("Execution(74) error = %v", err)
+			}
+
+			want := []tracker.Task{
+				{Number: 78, Title: "Task 78", Open: true, For: tracker.Agent},
+				{Number: 79, Title: "Task 79", Open: true, For: tracker.Nobody},
+			}
+			if !reflect.DeepEqual(got.Tasks, want) {
+				t.Errorf("tasks of Execution(74) =\n%+v\nwant\n%+v", got.Tasks, want)
+			}
+		})
 	}
 }

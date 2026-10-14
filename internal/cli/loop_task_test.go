@@ -182,3 +182,64 @@ func TestLoopListOfAChildTaskShowsThatTaskAlone(t *testing.T) {
 		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 and\n%s", code, stderr, stdout, want)
 	}
 }
+
+// parentLabelled is the tracker holding #42 labelled label, with available tasks #43 and #44 as its sub-issues.
+func parentLabelled(label string) *fakeTracker {
+	gh := specWithChildren()
+	gh.issues["42"] = strings.Replace(gh.issues["42"], `"labels":[{"name":"spec"}]`, `"labels":[{"name":"`+label+`"}]`, 1)
+	return gh
+}
+
+func TestLoopRunWorksAnIssueWithSubIssuesAsASpec(t *testing.T) {
+	t.Parallel()
+	for _, label := range []string{"bug", "ready-for-agent"} {
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+			gh := parentLabelled(label)
+			claude := &fakeAgent{gh: gh}
+
+			stdout, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "42")
+
+			want := defaultSettings + "spec #42 complete\n" + workBranch
+			if code != 0 || !slices.Equal(claude.handed, []string{"43", "44"}) || stdout != want {
+				t.Errorf("exit %d, stderr %q, handed %v, stdout =\n%s\nwant 0, handed [43 44], and\n%s", code, stderr, claude.handed, stdout, want)
+			}
+		})
+	}
+}
+
+func TestLoopRunRefusesASpecWithNoTasks(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{
+		"76": `{"number":76,"title":"Spec: Gadgets","state":"OPEN","body":"","labels":[{"name":"spec"},{"name":"ready-for-agent"}],"subIssues":{"nodes":[]}}`,
+	}}
+	claude := &fakeAgent{gh: gh}
+	var requests []workbench.Request
+	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+		requests = append(requests, req)
+		return fakeBench(ctx, dir, req)
+	}
+
+	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath, bench: recording}, "76")
+
+	if code == 0 || !strings.HasSuffix(stderr, "#76 has no tasks\n") || len(claude.handed) != 0 || len(requests) != 0 {
+		t.Errorf("exit %d, stderr %q, handed %v, work branches set up for %+v; want non-zero ending %q, no agent run and no work branch", code, stderr, claude.handed, requests, "#76 has no tasks\n")
+	}
+}
+
+func TestLoopListLeavesANestedSpecOutOfTheAvailableTasks(t *testing.T) {
+	t.Parallel()
+	gh := specWithChildren()
+	gh.issues["44"] = strings.TrimSuffix(taskJSON(44, "OPEN", "ready-for-agent"), "}") + `,"subIssues":{"nodes":[{"number":90,"state":"OPEN"}]}}`
+
+	stdout, stderr, code := runLoopList(t, gh, "42")
+
+	want := defaultSettings +
+		"spec #42 Spec: the loop\n" +
+		"next: #43 Task 43\n" +
+		"  available: #43\n" +
+		"  not ready for an agent or a human: #44\n"
+	if code != 0 || stdout != want {
+		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 and\n%s", code, stderr, stdout, want)
+	}
+}

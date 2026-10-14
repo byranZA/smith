@@ -17,11 +17,24 @@ type RefusedError struct {
 // Error implements error.
 func (e *RefusedError) Error() string { return fmt.Sprintf("#%d %s", e.Task.Number, e.Reason) }
 
-// Admit returns nil when execution may run: a spec whatever its tasks hold,
-// and a single task only when it is available. Otherwise it returns a
-// *RefusedError naming why the task would not run.
+// EmptyError reports a spec not yet split into tasks, which leaves nothing to
+// hand to an agent.
+type EmptyError struct {
+	Number int
+}
+
+// Error implements error.
+func (e *EmptyError) Error() string { return fmt.Sprintf("#%d has no tasks", e.Number) }
+
+// Admit returns nil when execution may run: a spec with at least one task,
+// whatever they hold, and a single task only when it is available. Otherwise
+// it returns an *EmptyError for a spec with no tasks, or a *RefusedError naming
+// why the task would not run.
 func Admit(execution tracker.Execution) error {
 	if !execution.Single {
+		if len(execution.Tasks) == 0 {
+			return &EmptyError{Number: execution.Number}
+		}
 		return nil
 	}
 	for _, task := range execution.Tasks {

@@ -18,12 +18,14 @@ Every verb runs in the repo it is invoked from, but no agent works in your check
 The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed and authenticated.
 
 - **The issue** the loop is given is named as `42`, `#42` or its issue URL, and is a spec or a single task. A URL for an issue in a different repo from the one `gh` sees in the working directory is refused.
-- **A spec** is an issue labelled `spec`. Any other issue is a task, worked alone as a run of one task. A **child task**, one with a parent, runs on its immediate parent's work branch, and no sibling task is worked. A **standalone task**, with no parent, runs on a work branch of its own.
+- **A spec** is an issue with sub-issues, whatever its labels, or one labelled `spec`, which marks a spec not yet split into tasks. An issue with sub-issues is a spec even when it is labelled `ready-for-agent`, and is never handed to an agent itself. Any other issue is a task, worked alone as a run of one task. A **child task**, one with a parent, runs on its immediate parent's work branch, and no sibling task is worked. A **standalone task**, with no parent, runs on a work branch of its own.
 - **Its tasks** are its sub-issues. The ones its `## Tasks` checklist lists come first, in that order, then any other sub-issue in the order GitHub holds them.
-- **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue labelled `spec` is a nested spec, never a task.
+- **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue that is itself a spec, labelled `spec` or with sub-issues of its own, is a nested spec, never a task.
 - **Blockers** are a task's GitHub "blocked by" links, plus any issue named in its `## Blocked by` section. A task is **available** when it is open, for an agent, and every blocker is closed.
 
 A task named on its own must be available. Otherwise `run` launches no agent, sets up no work branch or worktree, and exits 1 naming why: `#N is closed`, `#N is meant for a human`, `#N is not labelled "ready-for-agent"` or `#N is blocked by #M`. There is no override. `list` still shows the task under where it stands, such as `blocked: #N (by #M)`, and exits 0.
+
+A spec with no tasks yet is never handed to an agent: `run` sets up no work branch or worktree and exits 1 with `#N has no tasks`.
 
 The loop hands out the first available task in the spec's order. It reads the tracker again before every choice, so a task filed or unblocked mid-run is seen.
 
