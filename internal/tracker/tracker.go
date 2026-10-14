@@ -8,11 +8,10 @@ import (
 	"strings"
 )
 
-// Execution is what the loop works for one issue: the issue its work branch
-// is named after, and the tasks to work, in order. For a spec that is the spec
-// and its tasks; for a task with a parent, its immediate parent and the task
-// alone; for a standalone task, the task and itself alone. Single marks an
-// execution of one task named on its own, rather than a spec's tasks.
+// Execution is what the loop works for one issue: Number and Title name the
+// issue its work branch is named after, and Tasks the tasks to work, in order.
+// Single marks one task named on its own, whose branch is its parent's or its
+// own, rather than a spec's tasks.
 type Execution struct {
 	Number int
 	Title  string
