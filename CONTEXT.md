@@ -144,6 +144,12 @@ smith installed, classified as such and pointed at `machine setup`. Converging i
 skew ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)).
 _Avoid_: drift, schema skew.
 
+**Self-update**:
+`smith update` replacing local smith with a released version, checked against the release's
+checksums, then offering to converge every inventoried box to it the way `machine upgrade` does.
+Never on a box and never through sudo ([ADR-0014](./docs/adr/0014-smith-updates-itself.md)).
+_Avoid_: auto-update (smith never updates unasked), upgrade (reserved for converging a box).
+
 ### Secrets
 
 **Reference, not value**:
@@ -470,7 +476,7 @@ smith's own small scale for how hard an agent should think, which each agent ada
 _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 
 **Repo file**:
-`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone running the loop on that repo should share (agent, model, effort). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone running the loop on that repo should share (agent, model, effort, and whether to push). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
 _Avoid_: project config, repo config, local config, config file.
 
 **Loop prompt**:

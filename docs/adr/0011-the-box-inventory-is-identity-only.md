@@ -78,7 +78,7 @@ No flag, no sigil, no per-verb convention. The literal branch keeps
 `machine setup root@203.0.113.10` working for a box smith has never seen. The miss branch is what
 makes an `ssh_config` alias or a MagicDNS name a usable smith argument with **no smith configuration
 at all**, because the target is never parsed — smith passes it to system `ssh`/`scp` as given
-([`connection.go:74`](../../internal/connection/connection.go:74)), which is *reference, not value*
+([`connection.go:74`](../../internal/connection/connection.go)), which is *reference, not value*
 ([ADR-0002](./0002-secrets-are-references-not-values.md)) extended from secrets to reach.
 
 Two costs are accepted rather than mitigated:
@@ -182,7 +182,7 @@ breaks.
   else to live.
 - **`schema_version` is honoured the way the marker's is** — read what you understand, and on a
   *newer* version refuse to write rather than silently rewriting a file a newer smith owns
-  ([`marker.go:78`](../../internal/marker/marker.go:78) is the posture copied). Two builds touch this
+  ([`marker.go:78`](../../internal/marker/marker.go) is the posture copied). Two builds touch this
   file the moment you upgrade, or downgrade to debug.
 - **Anyone adding a third field re-opens this decision.** The test is not "is this field useful" —
   they all are — but "does the box already know it?" If it does, the field belongs on the marker and

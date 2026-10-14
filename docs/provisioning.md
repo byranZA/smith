@@ -22,7 +22,8 @@ The box you're provisioning must be:
   into `ssh-agent` first). This is the same access you used to reach the box;
   smith reuses it, copying that login's `authorized_keys` onto the new `smith`
   user. A key at a non-default path belongs in a `Host` entry in
-  `~/.ssh/config`, and that alias works as a smith argument.
+  `~/.ssh/config`; pass setup the alias with its login, `root@<alias>`, and
+  ssh applies that entry.
 - Running sshd on **port 22**. The firewall smith enables allows SSH on 22
   only, so other ports aren't supported yet.
 
@@ -41,6 +42,8 @@ smith machine setup root@203.0.113.10 --name dev
 # or a sudo-capable user:
 smith machine setup ubuntu@203.0.113.10 --name dev
 ```
+
+Setup first prints the access mode it resolved and where it came from — `access: public (built-in default)`, or `access: tailscale (blueprint)` when a blueprint or your preferences ask for the tailnet — and then the preflight result. A preferences file or blueprint that will not read refuses the run with `setup refused:` before the box is touched.
 
 When it finishes, the box is reachable as the `smith` user over hardened public
 SSH, and smith has written down the address it just proved — so you address the
@@ -197,7 +200,7 @@ tmux runs each pane in its own systemd scope. By default, when the kernel kills 
 
 `tmux-oom-policy` runs after `packages`. It writes `OOMPolicy=continue` into `/etc/systemd/user/tmux-spawn-.scope.d/50-smith-oom-policy.conf`, a drop-in for every tmux pane scope on the box, whether smith or a person started the session. An out-of-memory kill then takes out only the process the kernel chose, and the shell and the session survive. The phase signals every running user manager to reload, so sessions started after setup get the policy without a reboot or a fresh login, and the file in `/etc` keeps it across a reboot. A manager that exits before its signal needs no reload and is skipped. If listing or signalling the running managers fails, setup stops at this phase, and the next run reloads them again even though the drop-in is already written. Once every manager has reloaded, a re-run finds the drop-in in place and changes nothing.
 
-systemd honours `OOMPolicy=` on a scope from version 253; Ubuntu 24.04 ships 255. On an older systemd the phase writes nothing, prints `tmux-oom-policy skipped: systemd <version> does not support OOMPolicy= on scopes`, is recorded as complete, and setup goes on.
+systemd honours `OOMPolicy=` on a scope from version 253; Ubuntu 24.04 ships 255. On an older systemd the phase writes nothing, prints `tmux-oom-policy skipped: systemd <version> does not support OOMPolicy= on scopes (it needs 253 or later)`, is recorded as complete, and setup goes on.
 
 A box set up before this phase reports it as missing in `machine status`, the same way as `swap` above. Re-run `smith machine setup <name>` to add it.
 

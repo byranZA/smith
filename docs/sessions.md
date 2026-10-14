@@ -187,7 +187,7 @@ for you:
 
 ```
 session "smith-spec-42" is not running: resume it with
-`smith session start --repo smith --branch spec-42`
+`smith session start dev --repo smith --branch spec-42`
 ```
 
 ### Read-only is advisory, not a permission boundary
@@ -243,10 +243,10 @@ smith session rm dev smith-spec-42
 ```
 
 ```
-session `smith/smith-spec-42` is running — `smith session stop smith-spec-42` first
+session `smith/smith-spec-42` is running — `smith session stop dev smith-spec-42` first
 worktree of session "smith-spec-42" holds uncommitted work: 2 modified, 1 staged,
 0 untracked, and 3 commits not on any remote; reclaim it and lose that work with
-`smith session rm smith-spec-42 --force`
+`smith session rm dev smith-spec-42 --force`
 ```
 
 The two refusals are printed **separately**: killing a process and destroying a
@@ -351,9 +351,9 @@ in the same report:
 
 ```
 worktree of session "smith-spec-42" holds uncommitted work: 2 modified, 0 staged,
-0 untracked; reclaim it and lose that work with `smith session rm smith-spec-42 --force`
+0 untracked; reclaim it and lose that work with `smith session rm dev smith-spec-42 --force`
 worktree of session "web-hotfix" holds uncommitted work: 1 modified, 0 staged,
-0 untracked; reclaim it and lose that work with `smith session rm web-hotfix --force`
+0 untracked; reclaim it and lose that work with `smith session rm dev web-hotfix --force`
 nothing was removed: `smith session rm` is all-or-nothing across the 2 sessions it was handed
 ```
 

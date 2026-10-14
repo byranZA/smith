@@ -111,7 +111,7 @@ this is a partial outcome, not a failure — and the fix is a command, not a
 re-run:
 
 ```
-the box is provisioned but unregistered: smith could not reach the box as smith@203.0.113.10
+the box is provisioned but unregistered: smith could not reach the box as smith@203.0.113.10: ssh smith@203.0.113.10: could not connect to box: the box did not answer; check the address, that sshd is listening on port 22, and the provider's firewall
 
 Every setup phase completed, so the box is provisioned and secured; smith just
 has no name it can reach it by. Register it once it answers:
@@ -237,9 +237,13 @@ Provision it first with:
   smith machine setup <login>@198.51.100.7
 ```
 
-A box that will not answer is refused the same way. Re-adding a box already
-registered at the same target succeeds unchanged; adding under a name that
-reaches a different box is the same hard error setup gives.
+A box smith cannot connect to is refused with the reason, once — whether it answered but refused the key, or did not answer — and what to check, with exit code 3:
+
+```text
+add refused: ssh smith@198.51.100.7: could not connect to box: the box answered but refused the key; check the key is loaded in ssh-agent or set by a Host entry in ~/.ssh/config (a passphrase key must be agent-loaded), and that the login is right
+```
+
+Re-adding a box already registered at the same target succeeds unchanged; adding under a name that reaches a different box is the same hard error setup gives.
 
 ## Renaming a box
 

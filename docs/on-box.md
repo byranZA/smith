@@ -27,7 +27,8 @@ Neither of these is a bug, and both look like one at first:
 
 - **on-box smith has no box inventory.** The inventory (`~/.smith/cache/boxes.json`)
   is your laptop's name → address book. On a box it is empty, so
-  `machine list`, `machine add` and `machine forget` have nothing to work on.
+  `machine list`, `machine add`, `machine rename` and `machine forget` have nothing
+  to work on.
 - **a box does not provision other boxes.** `machine setup` and `machine upgrade`
   are driven from your machine. `upgrade` is local for a second, unrelated
   reason: a box cannot replace the binary that the running command *is*.
@@ -128,8 +129,10 @@ smith machine upgrade dev
 `upgrade` runs the install stage and nothing else: no bootstrap phase runs, no
 configuration is staged, no placement is touched, and the marker is not
 written. It exists for the operator who upgraded their laptop's smith and wants
-to move one box without re-converging everything on it. [`smith update`](./install.md#update-smith) runs the same convergence on every box in the inventory, after updating local smith. It also works on a box
-that has never had smith — it installs it.
+to move one box without re-converging everything on it. It also works on a box
+that has never had smith — it installs it. [`smith update`](./install.md#update-smith)
+runs the same convergence on every box in the inventory, after updating local
+smith.
 
 **It converges the box to *your* version, so it will move a box backwards.**
 The post-condition is *no version skew*, not *the box is newest*, and the
