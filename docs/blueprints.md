@@ -93,7 +93,7 @@ The built-in defaults are `access: public`, `terminal: tmux`,
 
 ### Every resolved field reaches the box
 
-`machine setup` resolves the chain on your machine and stages the result onto the box as the **staged resolution**, `/etc/smith/resolved.json`, beside the verbatim blueprint (see [Config staging](./on-box.md#config-staging)). On-box smith reads `access`, `terminal`, `workspace` and the git identity from there and resolves nothing itself, so the box acts on exactly what `blueprint check` showed you, including a `workspace` set only in your preferences. `provider` is not staged: it is `machine create`'s concern, resolved on your machine. A changed field reaches the box on the next `machine setup`.
+Given `--blueprint`, `machine setup` resolves the chain on your machine and stages the result onto the box as the **staged resolution**, `/etc/smith/resolved.json`, beside the verbatim blueprint (see [Config staging](./on-box.md#config-staging)). On-box smith reads `access`, `terminal`, `workspace` and the git identity from there and resolves nothing itself, so the box acts on exactly what `blueprint check` showed you, including a `workspace` set only in your preferences. `provider` is not staged: it is `machine create`'s concern, resolved on your machine. A changed field reaches the box on the next `machine setup`.
 
 Changing `workspace` changes where clones and sessions land from then on. The clones under the old root stay where they are, and nothing reports them: the orphans step scans only the current root.
 
@@ -256,6 +256,8 @@ every placement `from` is a `scheme:argument` reference:
 A value with no scheme is refused, and an unknown scheme is named as unknown —
 `LOG_FORMAT: "json:pretty"` fails as an unknown scheme rather than being taken
 as a literal. `literal:` is not valid as a placement source.
+
+`file:` expands a leading `~/` to your home directory; `~user` is refused. A placement source is placed byte for byte, so a key keeps its final newline, while an `env` value read through `env:` or `file:` is trimmed of surrounding whitespace.
 
 This does not stop you committing a secret. It makes doing so **deliberate**,
 and makes `grep -r 'literal:'` a complete audit.

@@ -183,7 +183,8 @@ The guarantees this decision owes the downstream map, so it does not have to red
 - **Local self-upgrade (`smith upgrade`)** — ruled out of scope as a *distribution* concern: it is
   the hosted `install.sh` question that [the release map](https://github.com/byranZA/smith/issues/33)
   already ruled out of its own scope. An operator who `curl`s a new local smith and then converges
-  their boxes is fully served.
+  their boxes is fully served. *Superseded by [ADR-0014](./0014-smith-updates-itself.md): `smith
+  update` replaces local smith and offers to converge every box.*
 
 ## Consequences
 

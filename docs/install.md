@@ -74,6 +74,8 @@ Once the local binary is replaced, smith restarts as the new version and lists y
 Upgrade 3 boxes (alpha, beta, dev) to 0.3.0? [y/N]
 ```
 
+When your smith is already on that release, `smith update` says `local smith is already 0.3.0`, replaces nothing, and goes straight to the same question, so re-running it upgrades boxes you skipped. A release older than `smith update` itself cannot upgrade boxes: smith installs it, says so, and prints the `smith machine upgrade <box>` command for each box instead of asking.
+
 A yes converges each box in turn, the way [`smith machine upgrade`](./on-box.md#machine-upgrade) does. A box that cannot be reached is reported and the rest still go ahead. A no, or a run with no terminal attached and no `--boxes`, upgrades nothing and prints the `smith machine upgrade <box>` command for each box instead. The run ends with one line per box (upgraded, already current, failed or skipped), and exits non-zero if any box failed, even though the local update succeeded.
 
 `smith update` refuses on Windows: download the new release with the one-liner [above](#download-a-release) instead. It also refuses on a box, whose smith version is driven from the operator's machine: run `smith update` there, or `smith machine upgrade <box>`.

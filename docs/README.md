@@ -9,7 +9,7 @@ detail.
 | page | what it covers |
 | --- | --- |
 | [Installing smith](./install.md) | release downloads per platform, updating with `smith update`, checksum verification, `go install`, building from source, Gatekeeper and SmartScreen, the `v0.x` compatibility position |
-| [Provisioning a box](./provisioning.md) | `machine setup` prerequisites, provisioning over public SSH, provisioning over Tailscale including the two ACL entries you must add yourself |
+| [Provisioning a box](./provisioning.md) | `machine setup` prerequisites, provisioning over public SSH, provisioning over Tailscale including the two ACL entries you must add yourself, the memory advisory and the swap and tmux OOM-policy phases |
 | [Provider adapters](./providers.md) | describing your provider's CLI as data so `machine create` can make the box too |
 
 ## Using a box
@@ -17,10 +17,10 @@ detail.
 | page | what it covers |
 | --- | --- |
 | [Blueprints and preferences](./blueprints.md) | the config home, the split between the two files, precedence, and what smith does and does not do about credentials |
-| [The box inventory](./inventory.md) | the four `machine` verbs, naming rules, collisions and renames, the file's schema versioning |
+| [The box inventory](./inventory.md) | the `machine` verbs that read or write it (setup naming, `list`, `add`, `rename`, `forget`), naming rules, collisions and renames, the file's schema versioning |
 | [The workspace stage](./workspace.md) | what `workspace converge` converges, the order the steps land in, and why it is that order |
 | [Sessions](./sessions.md) | the five session verbs and their flags, the three paths through `start`, the two access levels, what `rm` destroys, the pre-teardown read |
-| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, attempts and the iteration cap, `--interactive`, the agent adapters, the repo file and its precedence, ejecting the loop prompt |
+| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, attempts and the iteration cap, `--interactive`, the agent adapters, the repo file and its precedence, ejecting the loop prompt |
 | [smith on the box](./on-box.md) | the setup pipeline's stages, the relay, version skew and `machine upgrade`, the refusal paths |
 
 ## Examples
