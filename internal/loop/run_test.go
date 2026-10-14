@@ -22,9 +22,9 @@ type board struct {
 	launched  []agent.Command
 }
 
-func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
+func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Spec{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
+	return tracker.Execution{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
 }
 
 func (b *board) Launch(_ context.Context, cmd agent.Command) error {

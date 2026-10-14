@@ -1,5 +1,5 @@
-// Package tracker reads specs and their tasks from where they live, so the
-// loop can decide which task is next. v1 knows one tracker, GitHub Issues,
+// Package tracker reads specs and tasks from where they live, so the loop
+// can decide which task is next. v1 knows one tracker, GitHub Issues,
 // reached through the gh CLI and gh's own authentication.
 package tracker
 
@@ -8,9 +8,10 @@ import (
 	"strings"
 )
 
-// Spec is a tracker item the loop works: a spec and its tasks, in the order
-// the spec lists them.
-type Spec struct {
+// Execution is what the loop works for one issue: the issue its work branch
+// is named after, and the tasks to work, in order. For a spec that is the spec
+// and its tasks; for a standalone task, the task and itself alone.
+type Execution struct {
 	Number int
 	Title  string
 	Tasks  []Task
@@ -53,16 +54,6 @@ type NotFoundError struct {
 
 // Error implements error.
 func (e *NotFoundError) Error() string { return fmt.Sprintf("issue #%d not found", e.Number) }
-
-// NotSpecError reports an issue that exists but is not a spec.
-type NotSpecError struct {
-	Number int
-}
-
-// Error implements error.
-func (e *NotSpecError) Error() string {
-	return fmt.Sprintf("#%d is not a spec: it is not labelled %q", e.Number, specLabel)
-}
 
 // ForeignError reports an issue in a repo other than the one the loop works,
 // which v1 refuses rather than take for the same-numbered issue here.

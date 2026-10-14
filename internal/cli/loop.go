@@ -61,13 +61,14 @@ func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.B
 	return bench, nil
 }
 
-// newLoopCmd builds `smith loop`, the verbs that work a spec's tasks in the
+// newLoopCmd builds `smith loop`, the verbs that work a spec's tasks, or a
+// single task, in the
 // repo smith is run from, reading the tracker through gh. None is relayed to a
 // box: each runs where smith is invoked.
 func newLoopCmd(w loopWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "loop",
-		Short: "Work a spec's tasks with a coding agent, one task at a time",
+		Short: "Work a spec's tasks, or a single task, with a coding agent, one task at a time",
 	}
 	cmd.AddCommand(newLoopListCmd(w), newLoopRunCmd(w), newLoopPromptCmd())
 	return cmd
@@ -137,16 +138,16 @@ func (w loopWiring) origin(settings loop.Settings) (loop.Pusher, error) {
 	return w.pusher(dir), nil
 }
 
-// workbench sets up the work branch for spec in the repo smith is run in,
-// the one branch names or, when it is empty, the spec's own, cutting a missing
-// one from base, or from origin's default branch when base is empty, before
-// any agent runs.
-func (w loopWiring) workbench(ctx context.Context, spec tracker.Spec, branch, base string) (loop.Bench, error) {
+// workbench sets up the work branch for execution in the repo smith is run
+// in, the one branch names or, when it is empty, the execution's own, cutting a
+// missing one from base, or from origin's default branch when base is empty,
+// before any agent runs.
+func (w loopWiring) workbench(ctx context.Context, execution tracker.Execution, branch, base string) (loop.Bench, error) {
 	dir, err := w.workdir()
 	if err != nil {
 		return nil, fmt.Errorf("find the repo to work in: %w", err)
 	}
-	return w.bench(ctx, dir, workbench.Request{Number: spec.Number, Title: spec.Title, Branch: branch, Base: base})
+	return w.bench(ctx, dir, workbench.Request{Number: execution.Number, Title: execution.Title, Branch: branch, Base: base})
 }
 
 // settingsReport renders each resolved setting with where it came from,
@@ -188,19 +189,20 @@ func newLoopPromptCmd() *cobra.Command {
 	}
 }
 
-// newLoopRunCmd builds `smith loop run <spec>`, which works the spec's tasks
-// with a coding agent, or hands one task to an attached agent with --interactive.
-// Each task is worked in a worktree of its own and landed on the spec's work
-// branch, never in the checkout smith is run from. It exits 0 only when the
-// spec is complete or the interactive run's task was closed.
+// newLoopRunCmd builds `smith loop run <issue>`, which works a spec's tasks,
+// or a single task, with a coding agent, or hands one task to an attached agent
+// with --interactive. Each task is worked in a worktree of its own and landed
+// on the execution's work branch, never in the checkout smith is run from. It
+// exits 0 only when the execution is complete or the interactive run's task
+// was closed.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
 	var interactive, noPush bool
 	var branch, base string
 	cmd := &cobra.Command{
-		Use:   "run <spec>",
-		Short: "Work a spec's tasks to completion with a coding agent, on a work branch of its own",
+		Use:   "run <issue>",
+		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := tracker.ParseRef(args[0])
@@ -238,11 +240,11 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			spec, err := github.Spec(cmd.Context(), number)
+			execution, err := github.Execution(cmd.Context(), number)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			bench, err := w.workbench(cmd.Context(), spec, branch, base)
+			bench, err := w.workbench(cmd.Context(), execution, branch, base)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -260,7 +262,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
 			}
-			report, succeeded, err := runLoop(cmd.Context(), l, number, interactive)
+			report, succeeded, err := runLoop(cmd.Context(), l, execution, interactive)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -279,28 +281,39 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
-	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's smith/<n>-<slug> branch)")
+	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a new work branch is cut from (default: origin's default branch)")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
 	return cmd
 }
 
-// runLoop works spec with l, unattended to completion or, when interactive,
-// one task attached to the terminal, and returns the report of how it ended
-// and whether it succeeded: the spec complete, or the interactive task closed.
-func runLoop(ctx context.Context, l loop.Loop, spec int, interactive bool) (string, bool, error) {
+// runLoop works execution with l, unattended to completion or, when
+// interactive, one task attached to the terminal, and returns the report of
+// how it ended and whether it succeeded: the execution complete, or the
+// interactive task closed.
+func runLoop(ctx context.Context, l loop.Loop, execution tracker.Execution, interactive bool) (string, bool, error) {
+	name := executionName(execution)
 	if !interactive {
-		outcome, err := l.Run(ctx, spec)
+		outcome, err := l.Run(ctx, execution.Number)
 		if err != nil {
-			return "", false, fmt.Errorf("work spec #%d: %w", spec, err)
+			return "", false, fmt.Errorf("work %s: %w", name, err)
 		}
-		return runReport(spec, l.Limits, outcome) + workBranchReport(outcome.WorkBranch), outcome.Complete(), nil
+		return runReport(name, l.Limits, outcome) + workBranchReport(outcome.WorkBranch), outcome.Complete(), nil
 	}
-	outcome, err := l.RunInteractive(ctx, spec)
+	outcome, err := l.RunInteractive(ctx, execution.Number)
 	if err != nil {
-		return "", false, fmt.Errorf("work spec #%d interactively: %w", spec, err)
+		return "", false, fmt.Errorf("work %s interactively: %w", name, err)
 	}
-	return interactiveReport(spec, outcome) + workBranchReport(outcome.WorkBranch), outcome.Succeeded(), nil
+	return interactiveReport(name, outcome) + workBranchReport(outcome.WorkBranch), outcome.Succeeded(), nil
+}
+
+// executionName names execution in a report as what it is: "task #80" for a
+// task standing alone, "spec #42" otherwise.
+func executionName(execution tracker.Execution) string {
+	if len(execution.Tasks) == 1 && execution.Tasks[0].Number == execution.Number {
+		return fmt.Sprintf("task #%d", execution.Number)
+	}
+	return fmt.Sprintf("spec #%d", execution.Number)
 }
 
 // workBranchReport renders the line naming the work branch a run's closed
@@ -311,10 +324,10 @@ func workBranchReport(branch string) string {
 
 // interactiveReport renders how an interactive run ended: whether the task it
 // handed was closed or, with no task to hand, why not.
-func interactiveReport(spec int, outcome loop.InteractiveOutcome) string {
+func interactiveReport(name string, outcome loop.InteractiveOutcome) string {
 	switch {
 	case !outcome.Handed:
-		return runReport(spec, loop.Limits{}, loop.Outcome{Remaining: outcome.Remaining})
+		return runReport(name, loop.Limits{}, loop.Outcome{Remaining: outcome.Remaining})
 	case outcome.Closed():
 		return fmt.Sprintf("task #%d closed\n", outcome.Task.Number)
 	default:
@@ -333,21 +346,21 @@ func checkLimits(limits loop.Limits) error {
 	return nil
 }
 
-// runReport renders how a run ended: the spec complete, or why it stopped and
-// what remains open, naming the tasks it skipped, the attempts each had and
-// the task worktree each was left in.
-func runReport(spec int, limits loop.Limits, outcome loop.Outcome) string {
+// runReport renders how the run of the execution called name ended: complete,
+// or why it stopped and what remains open, naming the tasks it skipped, the
+// attempts each had and the task worktree each was left in.
+func runReport(name string, limits loop.Limits, outcome loop.Outcome) string {
 	if outcome.Complete() {
-		return fmt.Sprintf("spec #%d complete\n", spec)
+		return name + " complete\n"
 	}
 	var b strings.Builder
 	switch {
 	case outcome.Capped:
-		fmt.Fprintf(&b, "spec #%d stopped: reached the cap of %d agent runs\n", spec, limits.MaxIterations)
+		fmt.Fprintf(&b, "%s stopped: reached the cap of %d agent runs\n", name, limits.MaxIterations)
 	case len(outcome.Remaining.Skipped) > 0:
-		fmt.Fprintf(&b, "spec #%d stopped: the agent left a task open on every attempt\n", spec)
+		fmt.Fprintf(&b, "%s stopped: the agent left a task open on every attempt\n", name)
 	default:
-		fmt.Fprintf(&b, "spec #%d stopped: no task is available for an agent\n", spec)
+		fmt.Fprintf(&b, "%s stopped: no task is available for an agent\n", name)
 	}
 	writeKinds(&b, outcome.Remaining, limits, false)
 	for _, task := range outcome.Remaining.Skipped {
@@ -356,13 +369,14 @@ func runReport(spec int, limits loop.Limits, outcome loop.Outcome) string {
 	return b.String()
 }
 
-// newLoopListCmd builds `smith loop list <spec>`, which names the spec's next
-// available task and sorts what remains, after the loop settings the repo
-// file resolves to, running no agent and changing nothing in the tracker. Exit 0 once the spec is read, whatever it holds; a
-// spec that cannot be read is reported naming why.
+// newLoopListCmd builds `smith loop list <issue>`, which names the next
+// available task of a spec, or of a single task, and sorts what remains, after
+// the loop settings the repo file resolves to, running no agent and changing
+// nothing in the tracker. Exit 0 once the issue is read, whatever it holds; an
+// issue that cannot be read is reported naming why.
 func newLoopListCmd(w loopWiring) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list <spec>",
+		Use:   "list <issue>",
 		Short: "Show the next task the loop would run, and what remains",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -379,11 +393,11 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			spec, err := github.Spec(cmd.Context(), number)
+			execution, err := github.Execution(cmd.Context(), number)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)+listReport(spec, loop.Survey(spec))); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)+listReport(execution, loop.Survey(execution))); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			return nil
@@ -391,11 +405,11 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 	}
 }
 
-// listReport renders the spec, its next task, and one line for each kind of
-// task that remains, leaving out the kinds it has none of.
-func listReport(spec tracker.Spec, remaining loop.Remaining) string {
+// listReport renders the execution, its next task, and one line for each kind
+// of task that remains, leaving out the kinds it has none of.
+func listReport(execution tracker.Execution, remaining loop.Remaining) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "spec #%d %s\n", spec.Number, spec.Title)
+	fmt.Fprintf(&b, "%s %s\n", executionName(execution), execution.Title)
 	switch next, ok := remaining.Next(); {
 	case ok:
 		fmt.Fprintf(&b, "next: #%d %s\n", next.Number, next.Title)

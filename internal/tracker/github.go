@@ -131,41 +131,37 @@ func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
 	return ref.Number, nil
 }
 
-// Spec reads spec number and its tasks: the spec's sub-issues, those its
-// "## Tasks" checklist lists first and in that order, then any other child in
-// the order GitHub holds them, which takes in a task filed after the spec was
-// written. A task's blockers are its blocked-by links and the issues its
+// Execution reads issue number as an execution: a spec, labelled "spec", with
+// its sub-issues, those its "## Tasks" checklist lists first and in that order,
+// then the rest as GitHub holds them; or any other issue as a standalone task,
+// itself alone. A task's blockers are its blocked-by links and the issues its
 // "## Blocked by" section names.
-func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
+func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	spec, err := g.view(ctx, Ref{Number: number}, specFields)
 	if err != nil {
-		return Spec{}, err
+		return Execution{}, err
 	}
 	if !spec.labelled(specLabel) {
-		return Spec{}, &NotSpecError{Number: number}
+		return g.standalone(ctx, spec.repo(), number)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
 	if err != nil {
-		return Spec{}, err
+		return Execution{}, err
 	}
 	repo := spec.repo()
 	children := make([]int, 0, len(subIssues))
 	for _, node := range subIssues {
 		child := node.ref().in(repo)
 		if child.Repo != "" {
-			return Spec{}, &ForeignError{Ref: child, Repo: repo}
+			return Execution{}, &ForeignError{Ref: child, Repo: repo}
 		}
 		children = append(children, child.Number)
 	}
 	issues := map[int]issue{}
 	for _, n := range children {
-		task, err := g.view(ctx, Ref{Number: n}, taskFields)
+		task, err := g.task(ctx, n)
 		if err != nil {
-			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
-		}
-		task.BlockedBy.Nodes, err = g.linked(ctx, n, "blockedBy", task.BlockedBy)
-		if err != nil {
-			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
+			return Execution{}, fmt.Errorf("read task of spec #%d: %w", number, err)
 		}
 		issues[n] = task
 	}
@@ -173,11 +169,39 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 	for _, n := range listedOrder(localNumbers(listedTasks(spec.Body), repo), children) {
 		blockers, err := g.blockers(ctx, repo, issues[n], issues)
 		if err != nil {
-			return Spec{}, err
+			return Execution{}, err
 		}
 		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers})
 	}
-	return Spec{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
+	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
+}
+
+// standalone reads task number, in repo, as an execution of its own: itself
+// and itself alone as its one task.
+func (g GitHub) standalone(ctx context.Context, repo string, number int) (Execution, error) {
+	task, err := g.task(ctx, number)
+	if err != nil {
+		return Execution{}, err
+	}
+	blockers, err := g.blockers(ctx, repo, task, nil)
+	if err != nil {
+		return Execution{}, err
+	}
+	only := Task{Number: number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}
+	return Execution{Number: number, Title: task.Title, Tasks: []Task{only}}, nil
+}
+
+// task reads task number with every issue linked as blocking it.
+func (g GitHub) task(ctx context.Context, number int) (issue, error) {
+	task, err := g.view(ctx, Ref{Number: number}, taskFields)
+	if err != nil {
+		return issue{}, err
+	}
+	task.BlockedBy.Nodes, err = g.linked(ctx, number, "blockedBy", task.BlockedBy)
+	if err != nil {
+		return issue{}, err
+	}
+	return task, nil
 }
 
 // blockers returns what blocks task in repo: its blocked-by links, then the

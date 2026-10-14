@@ -244,7 +244,6 @@ func TestLoopListFailsNamingTheCause(t *testing.T) {
 		want string
 	}{
 		"missing issue": {&fakeTracker{issues: map[string]string{}}, "9999", "#9999 not found"},
-		"not a spec":    {&fakeTracker{issues: map[string]string{"43": taskJSON(43, "OPEN", "ready-for-agent")}}, "43", "#43 is not a spec"},
 		"gh unusable":   {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
 		"not an issue":  {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
 		"another repo":  {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
@@ -428,7 +427,6 @@ func TestLoopRunFailsNamingTheCauseBeforeAnyAgentRuns(t *testing.T) {
 		want string
 	}{
 		"missing issue": {&fakeTracker{issues: map[string]string{}}, "9999", "#9999 not found"},
-		"not a spec":    {&fakeTracker{issues: map[string]string{"43": taskJSON(43, "OPEN", "ready-for-agent")}}, "43", "#43 is not a spec"},
 		"gh unusable":   {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
 		"not an issue":  {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
 		"another repo":  {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},

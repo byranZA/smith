@@ -13,7 +13,7 @@ import (
 // Tracker is where the loop reads a spec and its tasks.
 type Tracker interface {
 	// Spec reads spec number and its tasks as they stand now.
-	Spec(ctx context.Context, number int) (tracker.Spec, error)
+	Execution(ctx context.Context, number int) (tracker.Execution, error)
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -96,9 +96,9 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	skipped := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
-	current, err := l.Tracker.Spec(ctx, spec)
+	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
 	for {
 		remaining := Survey(current).Skip(skipped)
@@ -117,8 +117,8 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		runs++
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
-		if current, err = l.Tracker.Spec(ctx, spec); err != nil {
-			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		if current, err = l.Tracker.Execution(ctx, spec); err != nil {
+			return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
 		}
 		if closedIn(current, next) {
 			if err := l.land(ctx, next); err != nil {
@@ -158,9 +158,9 @@ func (o InteractiveOutcome) Succeeded() bool {
 // RunInteractive hands spec's next available task to one agent run attached to
 // the operator's terminal, and runs no agent when no task is available.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
-	current, err := l.Tracker.Spec(ctx, spec)
+	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
-		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		return InteractiveOutcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
 	remaining := Survey(current)
 	next, ok := remaining.Next()
@@ -170,9 +170,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
-	after, err := l.Tracker.Spec(ctx, spec)
+	after, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
-		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+		return InteractiveOutcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
 	if closedIn(after, next) {
 		if err := l.land(ctx, next); err != nil {
@@ -232,7 +232,7 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 }
 
 // closedIn reports whether spec holds task as closed.
-func closedIn(spec tracker.Spec, task tracker.Task) bool {
+func closedIn(spec tracker.Execution, task tracker.Task) bool {
 	return slices.ContainsFunc(spec.Tasks, func(t tracker.Task) bool { return t.Number == task.Number && !t.Open })
 }
 

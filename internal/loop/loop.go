@@ -27,7 +27,7 @@ type Remaining struct {
 }
 
 // Survey sorts spec's tasks by where they stand.
-func Survey(spec tracker.Spec) Remaining {
+func Survey(spec tracker.Execution) Remaining {
 	var r Remaining
 	for _, task := range spec.Tasks {
 		switch {

@@ -134,7 +134,7 @@ mismatch rather than silently misparsing a renamed flag. `smith machine upgrade
 dev` converges the box to *your* version — including backwards. `smith update` updates your own smith to the latest release, then offers to converge every box to it.
 → [docs/on-box.md](docs/on-box.md)
 
-**The loop.** `smith loop run <spec>` works a spec's tasks with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. Each task is worked in its own worktree and lands on the spec's work branch (`smith/<n>-<slug>`), which is pushed after each closed task. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model, effort and push setting the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
+**The loop.** `smith loop run <issue>` works a spec's tasks, or a single task, with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. Each task is worked in its own worktree and lands on the spec's or task's work branch (`smith/<n>-<slug>`), which is pushed after each closed task. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model, effort and push setting the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
 → [docs/loop.md](docs/loop.md)
 
 > **smith provisions no service's credentials.** It places files and exports
