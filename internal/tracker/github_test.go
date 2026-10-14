@@ -222,8 +222,11 @@ func TestExecutionOfATaskUnderANestedSpecIsUnderItsImmediateParent(t *testing.T)
 		t.Fatalf("Execution(82) error = %v", err)
 	}
 
-	if got.Number != 76 || got.Title != "Gadgets" {
-		t.Errorf("Execution(82) is under #%d %q, want #76 \"Gadgets\"", got.Number, got.Title)
+	want := tracker.Execution{Number: 76, Title: "Gadgets", Single: true, Tasks: []tracker.Task{
+		{Number: 82, Title: "Task 82", Open: true, For: tracker.Agent},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Execution(82) =\n%+v\nwant\n%+v", got, want)
 	}
 }
 
