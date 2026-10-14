@@ -17,7 +17,7 @@ Every verb runs in the repo it is invoked from, but no agent works in your check
 
 The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed and authenticated.
 
-- **The issue** the loop is given is named as `42`, `#42` or its issue URL, and is a spec or a single task. A URL for an issue in a different repo from the one `gh` sees in the working directory is refused.
+- **The issue** the loop is given is named as `42`, `#42`, `owner/name#42` or its issue URL, and is a spec or a single task. A qualified reference or URL for an issue in a different repo from the one `gh` sees in the working directory is refused.
 - **A spec** is an issue with sub-issues, whatever its labels, or one labelled `spec`, which marks a spec not yet split into tasks. An issue with sub-issues is a spec even when it is labelled `ready-for-agent`, and is never handed to an agent itself. Any other issue is a task, worked alone as a run of one task. A **child task**, one with a parent, runs on its immediate parent's work branch, and no sibling task is worked. A **standalone task**, with no parent, runs on a work branch of its own.
 - **Its tasks** are its sub-issues. The ones its `## Tasks` checklist lists come first, in that order, then any other sub-issue in the order GitHub holds them.
 - **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue that is itself a spec, labelled `spec` or with sub-issues of its own, is a nested spec, never a task.

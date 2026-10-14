@@ -13,7 +13,8 @@ func TestParseRefAcceptsEachWayOfNamingAnIssue(t *testing.T) {
 		"#42": {Number: 42},
 		"https://github.com/byranZA/smith/issues/42":  {Repo: "byranZA/smith", Number: 42},
 		"https://github.com/byranZA/smith/issues/42/": {Repo: "byranZA/smith", Number: 42},
-		" 42 ": {Number: 42},
+		" 42 ":             {Number: 42},
+		"byranZA/smith#42": {Repo: "byranZA/smith", Number: 42},
 	} {
 		t.Run(ref, func(t *testing.T) {
 			t.Parallel()
@@ -30,7 +31,7 @@ func TestParseRefAcceptsEachWayOfNamingAnIssue(t *testing.T) {
 
 func TestParseRefRefusesWhatIsNotAnIssue(t *testing.T) {
 	t.Parallel()
-	for _, ref := range []string{"", "#", "forty-two", "0", "-3", "https://github.com/byranZA/smith/pull/42", "42abc", "99999999999999999999"} {
+	for _, ref := range []string{"", "#", "forty-two", "0", "-3", "https://github.com/byranZA/smith/pull/42", "42abc", "99999999999999999999", "other#42", "other/repo#", "/repo#42", "a/b/c#42"} {
 		t.Run(ref, func(t *testing.T) {
 			t.Parallel()
 			if got, err := tracker.ParseRef(ref); err == nil {
@@ -47,6 +48,7 @@ func TestParseRefKeepsTheRepoAURLNames(t *testing.T) {
 		"#42": {Number: 42},
 		"https://github.com/byranZA/smith/issues/42": {Repo: "byranZA/smith", Number: 42},
 		"https://github.com/other/repo/issues/42":    {Repo: "other/repo", Number: 42},
+		"other/repo#42": {Repo: "other/repo", Number: 42},
 	} {
 		t.Run(ref, func(t *testing.T) {
 			t.Parallel()

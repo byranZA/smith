@@ -243,10 +243,11 @@ func TestLoopListFailsNamingTheCause(t *testing.T) {
 		ref  string
 		want string
 	}{
-		"missing issue": {&fakeTracker{issues: map[string]string{}}, "9999", "#9999 not found"},
-		"gh unusable":   {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
-		"not an issue":  {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
-		"another repo":  {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
+		"missing issue":           {&fakeTracker{issues: map[string]string{}}, "9999", "#9999 not found"},
+		"gh unusable":             {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
+		"not an issue":            {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
+		"another repo":            {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
+		"another repo, qualified": {&fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}, "other/repo#80", "the loop works only issues in the repo it is run in"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, stderr, code := runLoopList(t, tc.gh, tc.ref)
@@ -330,6 +331,36 @@ func TestLoopRunRefusesASpecInAnotherRepoBeforeAnyAgentRuns(t *testing.T) {
 
 	if code == 0 || len(claude.handed) != 0 || !strings.Contains(stderr, "other/repo#42") {
 		t.Errorf("exit %d, handed %v, stderr %q; want non-zero, no agent run, naming other/repo#42", code, claude.handed, stderr)
+	}
+}
+
+func TestLoopRunRefusesAQualifiedIssueInAnotherRepoBeforeAnyBenchIsSetUp(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	claude := &fakeAgent{gh: gh}
+	var benched []int
+	bench := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+		benched = append(benched, req.Number)
+		return fakeBench(ctx, dir, req)
+	}
+
+	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath, bench: bench}, "other/repo#80")
+
+	if code == 0 || len(benched) != 0 || len(claude.handed) != 0 || !strings.Contains(stderr, "other/repo#80 is not in byranZA/smith") {
+		t.Errorf("exit %d, benched %v, handed %v, stderr %q; want non-zero, no bench, no agent run, naming other/repo#80", code, benched, claude.handed, stderr)
+	}
+}
+
+func TestLoopRunWorksAQualifiedIssueInThisRepoAsTheLocalOne(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+	}}
+	claude := &fakeAgent{gh: gh}
+
+	stdout, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: claude, lookPath: onPath}, "byranZA/smith#42")
+
+	if code != 0 || !slices.Equal(claude.handed, []string{"43"}) || !strings.HasSuffix(stdout, "spec #42 complete\n"+workBranch) {
+		t.Errorf("exit %d, handed %v, stdout %q, stderr %q; want 0, #43 worked, and the spec complete", code, claude.handed, stdout, stderr)
 	}
 }
 
@@ -426,10 +457,11 @@ func TestLoopRunFailsNamingTheCauseBeforeAnyAgentRuns(t *testing.T) {
 		ref  string
 		want string
 	}{
-		"missing issue": {&fakeTracker{issues: map[string]string{}}, "9999", "#9999 not found"},
-		"gh unusable":   {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
-		"not an issue":  {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
-		"another repo":  {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
+		"missing issue":           {&fakeTracker{issues: map[string]string{}}, "9999", "#9999 not found"},
+		"gh unusable":             {&fakeTracker{stderr: "gh auth login\n"}, "42", "gh could not be used"},
+		"not an issue":            {&fakeTracker{}, "forty-two", `"forty-two" is not an issue`},
+		"another repo":            {&fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}, "https://github.com/other/repo/issues/42", "other/repo#42 is not in byranZA/smith"},
+		"another repo, qualified": {&fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}, "other/repo#80", "the loop works only issues in the repo it is run in"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			claude := &fakeAgent{gh: tc.gh}
