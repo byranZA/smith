@@ -460,7 +460,7 @@ The tracker item an execution is derived from: a PRD whose children are the exec
 _Avoid_: PRD (as the domain term), epic, parent issue.
 
 **Task**:
-One child of a spec, and one iteration of the loop: an agent gets exactly one task per run. A task is meant either for an agent or for a human, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it.
+One child of a spec, and one iteration of the loop: an agent gets exactly one task per run. A task is meant either for an agent or for a human, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it: it hands the task to a human and labels it failed ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)).
 _Avoid_: ticket, job, step.
 
 **Tracker**:
