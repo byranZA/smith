@@ -53,12 +53,12 @@ Prints the same settings block as `list`, then works the spec unattended until n
 
 Two limits bound a run so it can be left alone:
 
-- **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`).
+- **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`).
 - **`--max-iterations`** (default 10): the most agent runs the whole loop makes.
 
 An agent that exits with a failure is reported and the loop carries on: whether the task is done is the tracker's call, not the exit code's. Ctrl-C stops the running agent and starts no further task.
 
-While an agent runs on a task, the loop labels the task `smith:working` on GitHub, and removes the label after every attempt, whether the agent closed the task or left it open, so you can see on the tracker which task is being worked. The label is a signal for people: the loop never reads it to choose a task ([ADR-0015](./adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)). A repo without the label gets it created the first time it is needed. A label write that fails costs no work, so it is a `smith: warning: …` line on stderr naming the task, and the run carries on. `--interactive` marks its task the same way.
+While an agent runs on a task, the loop labels the task `smith:working` on GitHub, and removes the label after every attempt, whether the agent closed the task, left it open or used its last attempt, so you can see on the tracker which task is being worked. The labels are signals for people: the loop never reads them to choose a task ([ADR-0015](./adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)). A repo without one of these labels gets it created the first time it is needed. A label write that fails costs no work, so it is a `smith: warning: …` line on stderr naming the task, and the run carries on. `--interactive` marks its task the same way, but never hands a task to a human: a task it leaves open stays `ready-for-agent`.
 
 ### The work branch
 

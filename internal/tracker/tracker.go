@@ -1,7 +1,7 @@
 // Package tracker reads specs and their tasks from where they live, so the
-// loop can decide which task is next, and marks the task an agent is working.
-// v1 knows one tracker, GitHub Issues, reached through the gh CLI and gh's own
-// authentication.
+// loop can decide which task is next, and marks the task an agent is working
+// or the loop gave up on. v1 knows one tracker, GitHub Issues, reached through
+// the gh CLI and gh's own authentication.
 package tracker
 
 import (

@@ -36,6 +36,11 @@ func (b *board) Stop(_ context.Context, number int) error {
 	return b.refuse
 }
 
+func (b *board) Fail(_ context.Context, number int) error {
+	b.events = append(b.events, "fail "+strconv.Itoa(number))
+	return b.refuse
+}
+
 func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
 	b.reads++
 	return tracker.Spec{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
@@ -353,13 +358,26 @@ func TestRunMarksATaskOnlyWhileItsAgentRuns(t *testing.T) {
 	}
 }
 
-func TestRunUnmarksATaskBetweenAttempts(t *testing.T) {
-	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+func TestRunHandsATaskToAHumanOnlyAfterItsLastAttempt(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43}}
 
 	run(t, b)
 
-	want := []string{"start 43", "launch 43", "stop 43", "start 43", "launch 43", "stop 43"}
+	want := []string{"start 43", "launch 43", "stop 43", "start 43", "launch 43", "fail 43", "start 44", "launch 44", "stop 44"}
 	if !slices.Equal(b.events, want) {
+		t.Errorf("Run() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunNeverFailsATaskClosedOnItsLastAttempt(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	tree := &wip{board: b}
+
+	if _, err := loopOn(t, b, tree).Run(context.Background(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := []string{"start 43", "stop 43", "start 43", "launch 43", "stop 43"}; !slices.Equal(b.events, want) {
 		t.Errorf("Run() made %q, want %q", b.events, want)
 	}
 }
@@ -385,6 +403,35 @@ func TestRunInteractiveMarksTheTaskWhileTheAttachedAgentRuns(t *testing.T) {
 
 	if want := []string{"start 43", "launch 43", "stop 43"}; !slices.Equal(b.events, want) {
 		t.Errorf("RunInteractive() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunInteractiveNeverFailsATaskLeftOpen(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	l := loopOn(t, b, b)
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.RunInteractive(context.Background(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; !slices.Equal(b.events, want) {
+		t.Errorf("RunInteractive() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunWarnsOfAFailedHandOffAndEndsWithTheTaskSkipped(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}, refuse: errors.New("HTTP 403")}
+	var progress strings.Builder
+	l := loopOn(t, b, b)
+	l.Progress = &progress
+	l.Limits.MaxAttempts = 1
+
+	outcome, err := l.Run(context.Background(), 42)
+
+	want := []string{"smith: warning: could not hand #43 to a human: HTTP 403"}
+	if err != nil || !slices.Equal(numbers(outcome.Remaining.Skipped), []int{43}) || !containsLines(progress.String(), want) {
+		t.Errorf("Run() = %+v, %v with progress\n%s\nwant #43 skipped and the lines %q", outcome, err, progress.String(), want)
 	}
 }
 

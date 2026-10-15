@@ -11,7 +11,8 @@ import (
 )
 
 // Tracker is where the loop reads a spec and its tasks, and marks the task an
-// agent is working for people to see. The loop never reads the mark back.
+// agent is working or the loop gave up on, for people to see. The loop never
+// reads the marks back.
 type Tracker interface {
 	// Spec reads spec number and its tasks as they stand now.
 	Spec(ctx context.Context, number int) (tracker.Spec, error)
@@ -19,6 +20,9 @@ type Tracker interface {
 	Start(ctx context.Context, number int) error
 	// Stop removes the mark Start made on task number.
 	Stop(ctx context.Context, number int) error
+	// Fail removes the mark Start made on task number and hands it to a
+	// human, marked as failed.
+	Fail(ctx context.Context, number int) error
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -96,6 +100,7 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
 // Run works spec until no task is available for an agent, handing a task left
 // open out again up to MaxAttempts and stopping after MaxIterations agent runs.
+// A task left open after its last attempt is skipped and handed to a human.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -125,7 +130,11 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		if current, err = l.Tracker.Spec(ctx, spec); err != nil {
 			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
 		}
-		if closedIn(current, next) {
+		closed := closedIn(current, next)
+		if err := l.release(ctx, next, skipped[next.Number] && !closed); err != nil {
+			return Outcome{}, err
+		}
+		if closed {
 			if err := l.land(ctx, next); err != nil {
 				return Outcome{}, err
 			}
@@ -175,6 +184,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
+	if err := l.release(ctx, next, false); err != nil {
+		return InteractiveOutcome{}, err
+	}
 	after, err := l.Tracker.Spec(ctx, spec)
 	if err != nil {
 		return InteractiveOutcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
@@ -188,9 +200,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 }
 
 // hand gives task to one agent run of cmd in task's worktree, marking task as
-// worked while the agent runs, and returns that worktree's directory. An agent
-// that exits with a failure is reported and left to the tracker to judge; only
-// an interrupted run is an error.
+// worked before the agent runs, and returns that worktree's directory. The
+// caller releases the mark. An agent that exits with a failure is reported and
+// left to the tracker to judge; only an interrupted run is an error.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
@@ -207,13 +219,19 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 	}
-	if err := l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number); err != nil {
-		return "", err
-	}
 	if err != nil {
 		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
 	}
 	return dir, nil
+}
+
+// release removes the mark hand made on task once its agent has run, handing
+// task to a human instead when the loop skips it.
+func (l Loop) release(ctx context.Context, task tracker.Task, skipped bool) error {
+	if skipped {
+		return l.warnIf(l.Tracker.Fail(ctx, task.Number), "could not hand #%d to a human", task.Number)
+	}
+	return l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number)
 }
 
 // left returns the worktree of each task remaining skipped, from worktrees,

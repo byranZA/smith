@@ -19,9 +19,14 @@ const (
 	humanLabel = "ready-for-human"
 )
 
-// workingLabel is the label on a task while an agent runs on it, a signal for
-// people the loop never reads to choose a task.
-const workingLabel = "smith:working"
+// The labels that mark what the loop did with a task, signals for people the
+// loop never reads to choose a task.
+const (
+	// workingLabel is on a task while an agent runs on it.
+	workingLabel = "smith:working"
+	// failedLabel is on a task the loop skipped and handed to a human.
+	failedLabel = "smith:failed"
+)
 
 // The issue fields read for a spec and for a task.
 const (
@@ -59,7 +64,7 @@ type Runner interface {
 
 // GitHub is the tracker over GitHub Issues, reached through the gh CLI in the
 // repo smith is run from. It reads specs and their tasks, and writes only the
-// labels that mark the task an agent is working.
+// labels that mark the task an agent is working or the loop gave up on.
 type GitHub struct {
 	gh Runner
 }
@@ -190,9 +195,10 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 	return Spec{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }
 
-// Start labels task number as worked, while an agent runs on it.
+// Start labels task number as worked, while an agent runs on it, and clears
+// any failed mark an earlier run left.
 func (g GitHub) Start(ctx context.Context, number int) error {
-	return g.edit(ctx, number, []string{workingLabel}, nil)
+	return g.edit(ctx, number, []string{workingLabel}, []string{failedLabel})
 }
 
 // Stop removes the label that marks task number as worked.
@@ -200,9 +206,15 @@ func (g GitHub) Stop(ctx context.Context, number int) error {
 	return g.edit(ctx, number, nil, []string{workingLabel})
 }
 
-// edit adds and removes labels on issue number in one gh issue edit. When gh
-// reports a label the repo does not have, it creates that label and retries
-// the edit once.
+// Fail hands task number to a human, marked as failed: it is no longer
+// worked or ready for an agent, but ready for a human.
+func (g GitHub) Fail(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{humanLabel, failedLabel}, []string{workingLabel, agentLabel})
+}
+
+// edit adds and removes labels on issue number in one gh issue edit. Each time
+// gh reports a label the repo does not have, it creates that label and retries
+// the edit, once per label, since gh names only one missing label at a time.
 func (g GitHub) edit(ctx context.Context, number int, add, remove []string) error {
 	args := []string{"issue", "edit", strconv.Itoa(number)}
 	for _, name := range add {
@@ -211,21 +223,21 @@ func (g GitHub) edit(ctx context.Context, number int, add, remove []string) erro
 	for _, name := range remove {
 		args = append(args, "--remove-label", name)
 	}
-	stderr, err := g.run(ctx, args)
-	if err == nil {
-		return nil
+	var created []string
+	for {
+		stderr, err := g.run(ctx, args)
+		if err == nil {
+			return nil
+		}
+		missing := missingLabelMark.FindStringSubmatch(stderr)
+		if missing == nil || slices.Contains(created, missing[1]) {
+			return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+		}
+		if stderr, err := g.run(ctx, []string{"label", "create", missing[1]}); err != nil {
+			return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+		}
+		created = append(created, missing[1])
 	}
-	missing := missingLabelMark.FindStringSubmatch(stderr)
-	if missing == nil {
-		return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
-	}
-	if stderr, err := g.run(ctx, []string{"label", "create", missing[1]}); err != nil {
-		return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
-	}
-	if stderr, err := g.run(ctx, args); err != nil {
-		return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
-	}
-	return nil
 }
 
 // run runs gh with args for its effect alone, returning what gh said on

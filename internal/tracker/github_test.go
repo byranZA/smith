@@ -426,15 +426,15 @@ func TestSpecRefusesATaskInAnotherRepo(t *testing.T) {
 	}
 }
 
-func TestStartLabelsTheTaskAsWorkedInOneEdit(t *testing.T) {
+func TestStartLabelsTheTaskAsWorkedAndClearsItsFailedMarkInOneEdit(t *testing.T) {
 	t.Parallel()
-	gh := &fakeGH{labels: []string{"smith:working"}}
+	gh := &fakeGH{labels: []string{"smith:working", "smith:failed"}}
 
 	if err := tracker.NewGitHub(gh).Start(t.Context(), 12); err != nil {
 		t.Fatalf("Start(12) error = %v", err)
 	}
 
-	if want := []string{"issue edit 12 --add-label smith:working"}; !slices.Equal(gh.ran, want) {
+	if want := []string{"issue edit 12 --add-label smith:working --remove-label smith:failed"}; !slices.Equal(gh.ran, want) {
 		t.Errorf("Start(12) ran gh %q, want %q", gh.ran, want)
 	}
 }
@@ -454,16 +454,16 @@ func TestStopRemovesTheWorkedLabelInOneEdit(t *testing.T) {
 
 func TestStartCreatesAMissingLabelAndRetriesOnce(t *testing.T) {
 	t.Parallel()
-	gh := &fakeGH{}
+	gh := &fakeGH{labels: []string{"smith:failed"}}
 
 	if err := tracker.NewGitHub(gh).Start(t.Context(), 12); err != nil {
 		t.Fatalf("Start(12) error = %v", err)
 	}
 
 	want := []string{
-		"issue edit 12 --add-label smith:working",
+		"issue edit 12 --add-label smith:working --remove-label smith:failed",
 		"label create smith:working",
-		"issue edit 12 --add-label smith:working",
+		"issue edit 12 --add-label smith:working --remove-label smith:failed",
 	}
 	if !slices.Equal(gh.ran, want) {
 		t.Errorf("Start(12) ran gh %q, want %q", gh.ran, want)
@@ -490,5 +490,34 @@ func TestStartRetriesAnEditOnlyOnce(t *testing.T) {
 
 	if err == nil || len(gh.ran) != 3 {
 		t.Errorf("Start(12) error = %v after gh %q, want an error after one create and one retry", err, gh.ran)
+	}
+}
+
+func TestFailHandsTheTaskToAHumanInOneEdit(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"smith:working", "smith:failed", "ready-for-agent", "ready-for-human"}}
+
+	if err := tracker.NewGitHub(gh).Fail(t.Context(), 12); err != nil {
+		t.Fatalf("Fail(12) error = %v", err)
+	}
+
+	want := []string{"issue edit 12 --add-label ready-for-human --add-label smith:failed --remove-label smith:working --remove-label ready-for-agent"}
+	if !slices.Equal(gh.ran, want) {
+		t.Errorf("Fail(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestFailCreatesEachMissingLabel(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"smith:working", "ready-for-agent"}}
+
+	if err := tracker.NewGitHub(gh).Fail(t.Context(), 12); err != nil {
+		t.Fatalf("Fail(12) error = %v", err)
+	}
+
+	edit := "issue edit 12 --add-label ready-for-human --add-label smith:failed --remove-label smith:working --remove-label ready-for-agent"
+	want := []string{edit, "label create ready-for-human", edit, "label create smith:failed", edit}
+	if !slices.Equal(gh.ran, want) {
+		t.Errorf("Fail(12) ran gh %q, want %q", gh.ran, want)
 	}
 }
