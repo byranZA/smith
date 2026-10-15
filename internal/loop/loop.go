@@ -19,20 +19,29 @@ type Remaining struct {
 	Human []tracker.Task
 	// Unready tasks are open but meant for neither an agent nor a human yet.
 	Unready []tracker.Task
-	// Skipped tasks are available but were left open by the agent on every
-	// attempt the run allowed, so the run hands them out no more.
+	// Skipped tasks were left open by the agent on every attempt the run
+	// allowed, so the run hands them out no more. A skipped task is listed
+	// here, not under Human, once the run has handed it to a human.
 	Skipped []tracker.Task
 	// Closed tasks are done.
 	Closed []tracker.Task
 }
 
 // Survey sorts spec's tasks by where they stand.
-func Survey(spec tracker.Execution) Remaining {
+func Survey(spec tracker.Execution) Remaining { return survey(spec, nil) }
+
+// survey sorts spec's tasks by where they stand, counting as Skipped each open
+// task numbered in skipped that is available or now meant for a human: a
+// skipped task the run has since handed to a human stays skipped, while one
+// that is now blocked or unready stays so.
+func survey(spec tracker.Execution, skipped map[int]bool) Remaining {
 	var r Remaining
 	for _, task := range spec.Tasks {
 		switch {
 		case !task.Open:
 			r.Closed = append(r.Closed, task)
+		case skipped[task.Number] && (task.For == tracker.Human || task.For == tracker.Agent && !blocked(task)):
+			r.Skipped = append(r.Skipped, task)
 		case task.For == tracker.Human:
 			r.Human = append(r.Human, task)
 		case task.For != tracker.Agent:
@@ -40,21 +49,6 @@ func Survey(spec tracker.Execution) Remaining {
 		case blocked(task):
 			r.Blocked = append(r.Blocked, task)
 		default:
-			r.Available = append(r.Available, task)
-		}
-	}
-	return r
-}
-
-// Skip moves the available tasks numbered in skipped to Skipped, leaving the
-// other kinds alone: a skipped task that is now blocked or closed stays so.
-func (r Remaining) Skip(skipped map[int]bool) Remaining {
-	available := r.Available
-	r.Available, r.Skipped = nil, slices.Clone(r.Skipped)
-	for _, task := range available {
-		if skipped[task.Number] {
-			r.Skipped = append(r.Skipped, task)
-		} else {
 			r.Available = append(r.Available, task)
 		}
 	}

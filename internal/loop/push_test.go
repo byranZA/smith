@@ -170,3 +170,14 @@ func TestRunReportsTheWorktreeLeftForASkippedTask(t *testing.T) {
 		t.Errorf("Run() = %+v, %v; want the worktrees left %v", outcome, err, want)
 	}
 }
+
+func TestRunReportsNoWorktreeForATaskAlreadyMeantForAHuman(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{humanTask(43), agentTask(44)}, leaveOpen: []int{44}}}
+
+	outcome, err := journalLoop(t, j).Run(t.Context(), 42)
+
+	if want := map[int]string{44: "/bench/44"}; err != nil || !reflect.DeepEqual(outcome.Left, want) || !slices.Equal(numbers(outcome.Remaining.Human), []int{43}) {
+		t.Errorf("Run() = %+v, %v; want #43 waiting on a human and the worktrees left %v", outcome, err, want)
+	}
+}

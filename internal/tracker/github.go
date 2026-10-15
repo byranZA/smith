@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +17,15 @@ const (
 	specLabel  = "spec"
 	agentLabel = "ready-for-agent"
 	humanLabel = "ready-for-human"
+)
+
+// The labels that mark what the loop did with a task, signals for people the
+// loop never reads to choose a task.
+const (
+	// workingLabel is on a task while an agent runs on it.
+	workingLabel = "smith:working"
+	// failedLabel is on a task the loop skipped and handed to a human.
+	failedLabel = "smith:failed"
 )
 
 // The issue fields read for a spec and for a task.
@@ -40,6 +50,10 @@ const linkedQuery = `query($owner: String!, $repo: String!, $number: Int!, $endC
 // notFoundMark is how gh says an issue number resolves to nothing.
 const notFoundMark = "Could not resolve to an issue"
 
+// missingLabelMark matches how gh says an issue edit names a label the repo
+// does not have, capturing the label's name.
+var missingLabelMark = regexp.MustCompile(`'([^']+)' not found`)
+
 // Runner launches a command on the operator's machine. It is the boundary gh
 // is reached through, injected so a test can stand in for gh.
 type Runner interface {
@@ -48,8 +62,9 @@ type Runner interface {
 	Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
-// GitHub is the tracker over GitHub Issues, read through the gh CLI in the
-// repo smith is run from. It only ever reads.
+// GitHub is the tracker over GitHub Issues, reached through the gh CLI in the
+// repo smith is run from. It reads specs and their tasks, and writes only the
+// labels that mark the task an agent is working or the loop gave up on.
 type GitHub struct {
 	gh Runner
 }
@@ -179,7 +194,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		if err != nil {
 			return Execution{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers, Working: issues[n].labelled(workingLabel)})
 	}
 	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }
@@ -214,7 +229,7 @@ func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers}, nil
+	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers, Working: task.labelled(workingLabel)}, nil
 }
 
 // task reads task number with every issue linked as blocking it.
@@ -228,6 +243,59 @@ func (g GitHub) task(ctx context.Context, number int) (issue, error) {
 		return issue{}, err
 	}
 	return task, nil
+}
+
+// Start labels task number as worked, while an agent runs on it, and clears
+// any failed mark an earlier run left.
+func (g GitHub) Start(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{workingLabel}, []string{failedLabel})
+}
+
+// Stop removes the label that marks task number as worked.
+func (g GitHub) Stop(ctx context.Context, number int) error {
+	return g.edit(ctx, number, nil, []string{workingLabel})
+}
+
+// Fail hands task number to a human, marked as failed: it is no longer
+// worked or ready for an agent, but ready for a human.
+func (g GitHub) Fail(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{humanLabel, failedLabel}, []string{workingLabel, agentLabel})
+}
+
+// edit adds and removes labels on issue number in one gh issue edit. Each time
+// gh reports a label the repo does not have, it creates that label and retries
+// the edit, once per label, since gh names only one missing label at a time.
+func (g GitHub) edit(ctx context.Context, number int, add, remove []string) error {
+	args := []string{"issue", "edit", strconv.Itoa(number)}
+	for _, name := range add {
+		args = append(args, "--add-label", name)
+	}
+	for _, name := range remove {
+		args = append(args, "--remove-label", name)
+	}
+	var created []string
+	for {
+		stderr, err := g.run(ctx, args)
+		if err == nil {
+			return nil
+		}
+		missing := missingLabelMark.FindStringSubmatch(stderr)
+		if missing == nil || slices.Contains(created, missing[1]) {
+			return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+		}
+		if stderr, err := g.run(ctx, []string{"label", "create", missing[1]}); err != nil {
+			return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+		}
+		created = append(created, missing[1])
+	}
+}
+
+// run runs gh with args for its effect alone, returning what gh said on
+// stderr and the process error.
+func (g GitHub) run(ctx context.Context, args []string) (string, error) {
+	var stderr bytes.Buffer
+	err := g.gh.Run(ctx, "gh", args, nil, io.Discard, &stderr)
+	return stderr.String(), err
 }
 
 // blockers returns what blocks task in repo: its blocked-by links, then the

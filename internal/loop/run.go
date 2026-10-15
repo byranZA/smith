@@ -2,15 +2,19 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
+	"time"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// Tracker is where the loop reads an execution and its tasks.
+// Tracker is where the loop reads an execution and its tasks, and marks the
+// task an agent is working or the loop gave up on, for people to see. The loop
+// never reads the marks to choose a task, only to clear those a dead run left.
 type Tracker interface {
 	// Execution reads issue number as an execution: a spec and its tasks, or
 	// a task alone, as they stand now.
@@ -18,6 +22,13 @@ type Tracker interface {
 	// Task reads issue number as a task as it stands now, whatever it has
 	// become since.
 	Task(ctx context.Context, number int) (tracker.Task, error)
+	// Start marks task number as worked, while an agent runs on it.
+	Start(ctx context.Context, number int) error
+	// Stop removes the mark Start made on task number.
+	Stop(ctx context.Context, number int) error
+	// Fail removes the mark Start made on task number and hands it to a
+	// human, marked as failed.
+	Fail(ctx context.Context, number int) error
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -93,8 +104,10 @@ type Outcome struct {
 // Complete reports whether the run ended with every task of the spec closed.
 func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
-// Run works spec until no task is available for an agent, handing a task left
-// open out again up to MaxAttempts and stopping after MaxIterations agent runs.
+// Run first clears the worked marks a run that died left on spec's tasks, then
+// works spec until no task is available for an agent, handing a task left open
+// out again up to MaxAttempts and stopping after MaxIterations agent runs. A
+// task left open after its last attempt is skipped and handed to a human.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -104,8 +117,11 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
+	if err := l.sweep(ctx, current); err != nil {
+		return Outcome{}, err
+	}
 	for {
-		remaining := Survey(current).Skip(skipped)
+		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
 			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
@@ -122,9 +138,13 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
 		if current, err = l.refresh(ctx, spec, current); err != nil {
+			return Outcome{}, errors.Join(err, l.unmarkDetached(ctx, next))
+		}
+		closed := closedIn(current, next)
+		if err := l.release(ctx, next, skipped[next.Number] && !closed); err != nil {
 			return Outcome{}, err
 		}
-		if closedIn(current, next) {
+		if closed {
 			if err := l.land(ctx, next); err != nil {
 				return Outcome{}, err
 			}
@@ -174,6 +194,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
+	if err := l.release(ctx, next, false); err != nil {
+		return InteractiveOutcome{}, err
+	}
 	after, err := l.refresh(ctx, spec, current)
 	if err != nil {
 		return InteractiveOutcome{}, err
@@ -205,9 +228,11 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 	return current, nil
 }
 
-// hand gives task to one agent run of cmd in task's worktree, and returns
-// that worktree's directory. An agent that exits with a failure is reported
-// and left to the tracker to judge; only an interrupted run is an error.
+// hand marks task as worked and gives it to one agent run of cmd in task's
+// worktree, returning that worktree's directory, and reports an agent that
+// exits with a failure, leaving it to the tracker to judge. The caller releases
+// the mark, except on an error from an interrupted run or a failed report of
+// that failure, when hand has already removed it.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
@@ -217,14 +242,61 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
 		return "", err
 	}
+	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
+		return "", err
+	}
 	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
-		return "", fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+		return "", errors.Join(interrupted, l.unmarkDetached(ctx, task))
 	}
 	if err != nil {
-		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
+		if failed := l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err); failed != nil {
+			return "", errors.Join(failed, l.unmarkDetached(ctx, task))
+		}
 	}
 	return dir, nil
+}
+
+// sweep removes the mark from each of execution's tasks marked as worked,
+// which a run that died left behind, before any agent runs.
+func (l Loop) sweep(ctx context.Context, execution tracker.Execution) error {
+	for _, task := range execution.Tasks {
+		if !task.Working {
+			continue
+		}
+		if err := l.unmark(ctx, task); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// release removes the mark hand made on task once its agent has run, handing
+// task to a human instead when the loop skips it.
+func (l Loop) release(ctx context.Context, task tracker.Task, skipped bool) error {
+	if skipped {
+		return l.warnIf(l.Tracker.Fail(ctx, task.Number), "could not hand #%d to a human", task.Number)
+	}
+	return l.unmark(ctx, task)
+}
+
+// unmark removes the mark that says task is worked, warning when it cannot.
+func (l Loop) unmark(ctx context.Context, task tracker.Task) error {
+	return l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number)
+}
+
+// detachedStopTimeout bounds removing the worked mark from a task on a run
+// that is ending in an error, so a hung tracker cannot hold the run up.
+const detachedStopTimeout = 10 * time.Second
+
+// unmarkDetached removes the mark that says task is worked as a run ends in
+// an error, on a context detached from ctx, the run's, so it runs even once
+// ctx is cancelled, and bounded by detachedStopTimeout, warning when it cannot.
+func (l Loop) unmarkDetached(ctx context.Context, task tracker.Task) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedStopTimeout)
+	defer cancel()
+	return l.unmark(ctx, task)
 }
 
 // left returns the worktree of each task remaining skipped, from worktrees,
@@ -257,6 +329,16 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 // closedIn reports whether spec holds task as closed.
 func closedIn(spec tracker.Execution, task tracker.Task) bool {
 	return slices.ContainsFunc(spec.Tasks, func(t tracker.Task) bool { return t.Number == task.Number && !t.Open })
+}
+
+// warnIf reports failed as a warning line led by what the format says, when
+// failed is not nil. A label write that fails loses no work, so it never
+// stops a run; only a failed progress write is an error.
+func (l Loop) warnIf(failed error, format string, args ...any) error {
+	if failed == nil {
+		return nil
+	}
+	return l.report("smith: warning: %s: %v\n", fmt.Sprintf(format, args...), failed)
 }
 
 // report writes a progress line.

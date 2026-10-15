@@ -40,6 +40,12 @@ func (s *sprouting) Execution(_ context.Context, number int) (tracker.Execution,
 
 func (s *sprouting) Task(context.Context, int) (tracker.Task, error) { return s.task(), nil }
 
+func (s *sprouting) Start(context.Context, int) error { return nil }
+
+func (s *sprouting) Stop(context.Context, int) error { return nil }
+
+func (s *sprouting) Fail(context.Context, int) error { return nil }
+
 func (s *sprouting) task() tracker.Task {
 	task := tracker.Task{Number: 80, Title: "Fix X", Open: s.open, For: tracker.Agent}
 	if s.changed && s.becomes != staysATask {
