@@ -565,3 +565,66 @@ func worked(task tracker.Task) tracker.Task {
 	task.Working = true
 	return task
 }
+
+// unreadable is a tracker whose every spec read after the first fails, cancelling the run first when cancel is set.
+type unreadable struct {
+	*board
+	cancel context.CancelFunc
+}
+
+// errUnreadable is what an unreadable tracker's failed spec reads fail with.
+var errUnreadable = errors.New("HTTP 502")
+
+func (u unreadable) Spec(ctx context.Context, number int) (tracker.Spec, error) {
+	if u.reads == 0 {
+		return u.board.Spec(ctx, number)
+	}
+	if u.cancel != nil {
+		u.cancel()
+	}
+	return tracker.Spec{}, errUnreadable
+}
+
+func TestRunUnmarksTheTaskWhenTheReadAfterItsAgentFails(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l := loopOn(t, b, b)
+	l.Tracker = unreadable{board: b}
+
+	_, err := l.Run(context.Background(), 42)
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; !errors.Is(err, errUnreadable) || !slices.Equal(b.events, want) {
+		t.Errorf("Run() made %q with error %v; want %q and the read's error", b.events, err, want)
+	}
+}
+
+func TestRunInterruptedDuringTheReadAfterItsAgentUnmarksTheTaskWithinAShortTimeout(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := loopOn(t, b, b)
+	l.Tracker = unreadable{board: b, cancel: cancel}
+
+	_, err := l.Run(ctx, 42)
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; !errors.Is(err, errUnreadable) || !slices.Equal(b.events, want) {
+		t.Fatalf("Run() made %q with error %v; want %q and the read's error", b.events, err, want)
+	}
+	if last := b.deadlines[len(b.deadlines)-1]; last <= 0 || last > 30*time.Second {
+		t.Errorf("Run() unmarked #43 with %v left to run, want a limit of at most 30s", last)
+	}
+}
+
+func TestRunWarnsOfAFailedUnmarkingAndKeepsTheReadsError(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, refuse: errors.New("HTTP 403")}
+	var progress strings.Builder
+	l := loopOn(t, b, b)
+	l.Tracker = unreadable{board: b}
+	l.Progress = &progress
+
+	_, err := l.Run(context.Background(), 42)
+
+	want := []string{"smith: warning: could not remove the worked mark from #43: HTTP 403"}
+	if !errors.Is(err, errUnreadable) || !containsLines(progress.String(), want) {
+		t.Errorf("Run() error = %v with progress\n%s\nwant the read's error and the lines %q", err, progress.String(), want)
+	}
+}

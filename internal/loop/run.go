@@ -134,7 +134,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
 		if current, err = l.Tracker.Spec(ctx, spec); err != nil {
-			return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+			return Outcome{}, errors.Join(fmt.Errorf("read spec #%d: %w", spec, err), l.unmarkDetached(ctx, next))
 		}
 		closed := closedIn(current, next)
 		if err := l.release(ctx, next, skipped[next.Number] && !closed); err != nil {
@@ -225,7 +225,7 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
-		return "", errors.Join(interrupted, l.unmarkInterrupted(ctx, task))
+		return "", errors.Join(interrupted, l.unmarkDetached(ctx, task))
 	}
 	if err != nil {
 		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
@@ -261,15 +261,15 @@ func (l Loop) unmark(ctx context.Context, task tracker.Task) error {
 	return l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number)
 }
 
-// interruptedStopTimeout bounds removing the worked mark from a task whose
-// run was interrupted, so a hung tracker cannot hold the interrupt up.
-const interruptedStopTimeout = 10 * time.Second
+// detachedStopTimeout bounds removing the worked mark from a task on a run
+// that is ending in an error, so a hung tracker cannot hold the run up.
+const detachedStopTimeout = 10 * time.Second
 
-// unmarkInterrupted removes the mark that says task is worked once ctx, the
-// run's, is cancelled, on a context detached from it and bounded by
-// interruptedStopTimeout, warning when it cannot.
-func (l Loop) unmarkInterrupted(ctx context.Context, task tracker.Task) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptedStopTimeout)
+// unmarkDetached removes the mark that says task is worked as a run ends in
+// an error, on a context detached from ctx, the run's, so it runs even once
+// ctx is cancelled, and bounded by detachedStopTimeout, warning when it cannot.
+func (l Loop) unmarkDetached(ctx context.Context, task tracker.Task) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedStopTimeout)
 	defer cancel()
 	return l.unmark(ctx, task)
 }
