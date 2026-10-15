@@ -145,7 +145,11 @@ func TestInstallAbortsOnAChecksumMismatchLeavingTheOldBinary(t *testing.T) {
 	if got := readFile(t, path); got != "old smith" {
 		t.Errorf("binary at %s = %q, want the old %q", path, got, "old smith")
 	}
-	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Dir(path), err)
+	}
+	if len(entries) != 1 {
 		t.Errorf("install dir holds %d entries, want only the old binary", len(entries))
 	}
 }
@@ -167,18 +171,29 @@ func TestInstallRefusesAnArchiveTheChecksumsDoNotCover(t *testing.T) {
 	}
 }
 
-func TestInstallIntoAnUnwritableDirectoryNamesThePathAndChangesNothing(t *testing.T) {
-	t.Parallel()
+// unwritableBinary is the path of an "old smith" binary in a directory this user cannot write to.
+func unwritableBinary(t *testing.T) string {
+	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through directory permissions")
 	}
-	g, asset := publishedRelease(t, "new smith")
 	path := installedBinary(t)
 	dir := filepath.Dir(path)
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatalf("chmod %s: %v", dir, err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Errorf("restore %s: %v", dir, err)
+		}
+	})
+	return path
+}
+
+func TestInstallIntoAnUnwritableDirectoryNamesTheDirectory(t *testing.T) {
+	t.Parallel()
+	g, asset := publishedRelease(t, "new smith")
+	path := unwritableBinary(t)
 
 	_, err := Install(t.Context(), g, asset, path)
 
@@ -186,9 +201,20 @@ func TestInstallIntoAnUnwritableDirectoryNamesThePathAndChangesNothing(t *testin
 	if !errors.As(err, &unwritable) {
 		t.Fatalf("Install() error = %v, want an *UnwritableError", err)
 	}
-	if !strings.Contains(err.Error(), dir) {
-		t.Errorf("error %q does not name the directory %s", err, dir)
+	if dir := filepath.Dir(path); !strings.Contains(err.Error(), dir) {
+		t.Errorf("Install() error = %q, want one naming the directory %s", err, dir)
 	}
+}
+
+func TestInstallIntoAnUnwritableDirectoryLeavesTheOldBinary(t *testing.T) {
+	t.Parallel()
+	g, asset := publishedRelease(t, "new smith")
+	path := unwritableBinary(t)
+
+	if _, err := Install(t.Context(), g, asset, path); err == nil {
+		t.Fatalf("Install() error = nil, want an error")
+	}
+
 	if got := readFile(t, path); got != "old smith" {
 		t.Errorf("binary at %s = %q, want the old %q", path, got, "old smith")
 	}

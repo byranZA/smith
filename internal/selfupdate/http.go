@@ -20,7 +20,7 @@ func (h HTTP) Get(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build request for %s: %w", url, err)
 	}
-	resp, err := h.Client.Do(req) // #nosec G107 -- the URLs are smith's own release endpoints.
+	resp, err := h.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}

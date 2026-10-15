@@ -21,7 +21,7 @@ const ContinueFlag = "continue-boxes"
 // binary that runs and rejects the command is reported old; any other failure
 // is an error.
 func Probe(ctx context.Context, path string) (bool, error) {
-	err := exec.CommandContext(ctx, path, "update", "--"+ContinueFlag, "--help").Run() // #nosec G204 -- path is the smith binary update just installed.
+	err := exec.CommandContext(ctx, path, "update", "--"+ContinueFlag, "--help").Run()
 	if err == nil {
 		return true, nil
 	}

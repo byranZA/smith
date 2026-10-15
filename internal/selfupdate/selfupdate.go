@@ -156,7 +156,7 @@ func writeExecutable(f *os.File, binary []byte) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", f.Name(), err)
 	}
-	if err := os.Chmod(f.Name(), 0o755); err != nil { // #nosec G302 -- a binary on PATH must be executable by its users.
+	if err := os.Chmod(f.Name(), 0o755); err != nil {
 		return fmt.Errorf("make %s executable: %w", f.Name(), err)
 	}
 	return nil

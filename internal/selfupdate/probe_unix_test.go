@@ -36,17 +36,17 @@ func TestProbeReportsABinaryThatRejectsTheContinuationAsOld(t *testing.T) {
 }
 
 func TestProbeFailsWhenItCannotTellWhetherTheBinaryIsOld(t *testing.T) {
-	cancelled, cancel := context.WithCancel(context.Background())
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	tests := []struct {
 		name string
 		ctx  context.Context
 		body string
 	}{
-		{"the binary cannot be executed", context.Background(), "\x7fELF not really a binary"},
-		{"the binary is killed by a signal", context.Background(), "#!/bin/sh\nkill -9 $$\n"},
+		{"the binary cannot be executed", t.Context(), "\x7fELF not really a binary"},
+		{"the binary is killed by a signal", t.Context(), "#!/bin/sh\nkill -9 $$\n"},
 		{"the probe is cancelled", cancelled, "#!/bin/sh\nexit 0\n"},
-		{"the binary panics", context.Background(), "#!/bin/sh\nexit 2\n"},
+		{"the binary panics", t.Context(), "#!/bin/sh\nexit 2\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

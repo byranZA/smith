@@ -10,7 +10,9 @@ import (
 func TestHTTPGetReturnsTheBodyServed(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("checksums"))
+		if _, err := w.Write([]byte("checksums")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	t.Cleanup(srv.Close)
 
