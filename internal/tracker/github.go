@@ -30,8 +30,8 @@ const (
 
 // The issue fields read for a spec and for a task.
 const (
-	specFields = "number,title,state,labels,body,subIssues,url"
-	taskFields = "number,title,state,labels,body,blockedBy"
+	specFields = "number,title,state,labels,body,subIssues,url,parent"
+	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
 // linkedQuery reads one page of an issue's linked issues over the connection
@@ -84,6 +84,14 @@ type issue struct {
 	Labels    []label    `json:"labels"`
 	SubIssues connection `json:"subIssues"`
 	BlockedBy connection `json:"blockedBy"`
+	Parent    *parent    `json:"parent"`
+}
+
+// parent is the spec an issue is a sub-issue of, as gh gives it.
+type parent struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
 }
 
 // connection is a list of linked issues as gh's issue view gives it: at most
@@ -146,41 +154,37 @@ func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
 	return ref.Number, nil
 }
 
-// Spec reads spec number and its tasks: the spec's sub-issues, those its
-// "## Tasks" checklist lists first and in that order, then any other child in
-// the order GitHub holds them, which takes in a task filed after the spec was
-// written. A task's blockers are its blocked-by links and the issues its
+// Execution reads issue number as an execution: a spec, labelled "spec" or
+// with sub-issues, and its sub-issues, those its "## Tasks" checklist lists first and in that order,
+// then the rest as GitHub holds them; or any other issue as a task alone, under
+// its immediate parent when it has one and under itself otherwise. A task's blockers are its blocked-by links and the issues its
 // "## Blocked by" section names.
-func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
+func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	spec, err := g.view(ctx, Ref{Number: number}, specFields)
 	if err != nil {
-		return Spec{}, err
+		return Execution{}, err
 	}
-	if !spec.labelled(specLabel) {
-		return Spec{}, &NotSpecError{Number: number}
+	if !spec.isSpec() {
+		return g.single(ctx, spec)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
 	if err != nil {
-		return Spec{}, err
+		return Execution{}, err
 	}
 	repo := spec.repo()
 	children := make([]int, 0, len(subIssues))
 	for _, node := range subIssues {
 		child := node.ref().in(repo)
 		if child.Repo != "" {
-			return Spec{}, &ForeignError{Ref: child, Repo: repo}
+			return Execution{}, &ForeignError{Ref: child, Repo: repo}
 		}
 		children = append(children, child.Number)
 	}
 	issues := map[int]issue{}
 	for _, n := range children {
-		task, err := g.view(ctx, Ref{Number: n}, taskFields)
+		task, err := g.task(ctx, n)
 		if err != nil {
-			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
-		}
-		task.BlockedBy.Nodes, err = g.linked(ctx, n, "blockedBy", task.BlockedBy)
-		if err != nil {
-			return Spec{}, fmt.Errorf("read task of spec #%d: %w", number, err)
+			return Execution{}, fmt.Errorf("read task of spec #%d: %w", number, err)
 		}
 		issues[n] = task
 	}
@@ -188,11 +192,57 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 	for _, n := range listedOrder(localNumbers(listedTasks(spec.Body), repo), children) {
 		blockers, err := g.blockers(ctx, repo, issues[n], issues)
 		if err != nil {
-			return Spec{}, err
+			return Execution{}, err
 		}
 		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers, Working: issues[n].labelled(workingLabel)})
 	}
-	return Spec{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
+	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
+}
+
+// single reads the task viewed as an execution of that task alone, whose
+// work branch is named after its parent when it has one and after itself
+// otherwise. A parent in another repo is refused.
+func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
+	only, err := g.Task(ctx, viewed.Number)
+	if err != nil {
+		return Execution{}, err
+	}
+	if viewed.Parent == nil {
+		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}}, nil
+	}
+	repo := viewed.repo()
+	if ref := (issueNode{Number: viewed.Parent.Number, URL: viewed.Parent.URL}).ref().in(repo); ref.Repo != "" {
+		return Execution{}, &ForeignError{Ref: ref, Repo: repo}
+	}
+	return Execution{Number: viewed.Parent.Number, Title: viewed.Parent.Title, Single: true, Tasks: []Task{only}}, nil
+}
+
+// Task reads issue number as a task as it stands now, with its blockers,
+// whatever it has become since: one that has gained sub-issues or the spec
+// label is still that task, meant for nobody.
+func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
+	task, err := g.task(ctx, number)
+	if err != nil {
+		return Task{}, err
+	}
+	blockers, err := g.blockers(ctx, task.repo(), task, nil)
+	if err != nil {
+		return Task{}, err
+	}
+	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers, Working: task.labelled(workingLabel)}, nil
+}
+
+// task reads task number with every issue linked as blocking it.
+func (g GitHub) task(ctx context.Context, number int) (issue, error) {
+	task, err := g.view(ctx, Ref{Number: number}, taskFields)
+	if err != nil {
+		return issue{}, err
+	}
+	task.BlockedBy.Nodes, err = g.linked(ctx, number, "blockedBy", task.BlockedBy)
+	if err != nil {
+		return issue{}, err
+	}
+	return task, nil
 }
 
 // Start labels task number as worked, while an agent runs on it, and clears
@@ -352,11 +402,17 @@ func (i issue) labelled(name string) bool {
 	return slices.Contains(i.Labels, label{Name: name})
 }
 
+// isSpec reports whether the issue is a spec: labelled "spec", or with
+// sub-issues whatever its labels.
+func (i issue) isSpec() bool {
+	return i.labelled(specLabel) || len(i.SubIssues.Nodes) > 0 || i.SubIssues.TotalCount > 0
+}
+
 // audience is who the issue is meant for. A nested spec is never a task for
 // either, and an issue labelled for both is kept for the human.
 func (i issue) audience() Audience {
 	switch {
-	case i.labelled(specLabel):
+	case i.isSpec():
 		return Nobody
 	case i.labelled(humanLabel):
 		return Human

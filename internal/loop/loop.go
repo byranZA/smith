@@ -28,13 +28,13 @@ type Remaining struct {
 }
 
 // Survey sorts spec's tasks by where they stand.
-func Survey(spec tracker.Spec) Remaining { return survey(spec, nil) }
+func Survey(spec tracker.Execution) Remaining { return survey(spec, nil) }
 
 // survey sorts spec's tasks by where they stand, counting as Skipped each open
 // task numbered in skipped that is available or now meant for a human: a
 // skipped task the run has since handed to a human stays skipped, while one
 // that is now blocked or unready stays so.
-func survey(spec tracker.Spec, skipped map[int]bool) Remaining {
+func survey(spec tracker.Execution, skipped map[int]bool) Remaining {
 	var r Remaining
 	for _, task := range spec.Tasks {
 		switch {

@@ -69,9 +69,18 @@ func deadlineOf(ctx context.Context) time.Duration {
 	return time.Until(deadline)
 }
 
-func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
+func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Spec{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
+	return tracker.Execution{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
+}
+
+func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {
+	for _, task := range b.tasks {
+		if task.Number == number {
+			return task, nil
+		}
+	}
+	return tracker.Task{}, &tracker.NotFoundError{Number: number}
 }
 
 func (b *board) Launch(_ context.Context, cmd agent.Command) error {
@@ -598,14 +607,14 @@ type unreadable struct {
 // errUnreadable is what an unreadable tracker's failed spec reads fail with.
 var errUnreadable = errors.New("HTTP 502")
 
-func (u unreadable) Spec(ctx context.Context, number int) (tracker.Spec, error) {
+func (u unreadable) Execution(ctx context.Context, number int) (tracker.Execution, error) {
 	if u.reads == 0 {
-		return u.board.Spec(ctx, number)
+		return u.board.Execution(ctx, number)
 	}
 	if u.cancel != nil {
 		u.cancel()
 	}
-	return tracker.Spec{}, errUnreadable
+	return tracker.Execution{}, errUnreadable
 }
 
 func TestRunUnmarksTheTaskWhenTheReadAfterItsAgentFails(t *testing.T) {
