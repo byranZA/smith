@@ -27,7 +27,17 @@ func newUpdater(t *testing.T, g *fakeGetter, path string) Updater {
 	}
 }
 
-func TestRunBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoIt(t *testing.T) {
+// resolved is path with every symlink resolved, as Install reports the file it replaced.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	p, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", path, err)
+	}
+	return p
+}
+
+func TestRunBehindTheLatestReleaseSwitchesIntoTheNewBinary(t *testing.T) {
 	t.Parallel()
 	g, _ := publishedRelease(t, "new smith")
 	path := installedBinary(t)
@@ -38,16 +48,23 @@ func TestRunBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoIt(t *testing.
 		t.Fatalf("Run() errored: %v", err)
 	}
 
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		t.Fatalf("resolve %s: %v", path, err)
-	}
-	want := Outcome{From: "0.2.0", Target: "0.3.0", Path: resolved, Next: StepSwitch}
-	if got != want {
+	if want := (Outcome{From: "0.2.0", Target: "0.3.0", Path: resolved(t, path), Next: StepSwitch}); got != want {
 		t.Errorf("Run() = %+v, want %+v", got, want)
 	}
-	if content := readFile(t, path); content != "new smith" {
-		t.Errorf("binary = %q, want %q", content, "new smith")
+}
+
+func TestRunBehindTheLatestReleaseReplacesTheBinary(t *testing.T) {
+	t.Parallel()
+	g, _ := publishedRelease(t, "new smith")
+	path := installedBinary(t)
+	u := newUpdater(t, g, path)
+
+	if _, err := u.Run(t.Context(), ""); err != nil {
+		t.Fatalf("Run() errored: %v", err)
+	}
+
+	if got := readFile(t, path); got != "new smith" {
+		t.Errorf("binary at %s = %q, want %q", path, got, "new smith")
 	}
 }
 
@@ -73,7 +90,8 @@ func TestRunAlreadyOnTheTargetRunsTheBoxStepHereWithoutDownloading(t *testing.T)
 func TestRunIntoAReleaseWithNoBoxStepHandsTheBoxesOff(t *testing.T) {
 	t.Parallel()
 	g, _ := publishedRelease(t, "old smith")
-	u := newUpdater(t, g, installedBinary(t))
+	path := installedBinary(t)
+	u := newUpdater(t, g, path)
 	u.Continues = func(context.Context, string) (bool, error) { return false, nil }
 
 	got, err := u.Run(t.Context(), "")
@@ -81,8 +99,8 @@ func TestRunIntoAReleaseWithNoBoxStepHandsTheBoxesOff(t *testing.T) {
 		t.Fatalf("Run() errored: %v", err)
 	}
 
-	if got.Next != StepHandOff {
-		t.Errorf("Run().Next = %v, want StepHandOff", got.Next)
+	if want := (Outcome{From: "0.2.0", Target: "0.3.0", Path: resolved(t, path), Next: StepHandOff}); got != want {
+		t.Errorf("Run() = %+v, want %+v", got, want)
 	}
 }
 
@@ -191,7 +209,7 @@ func TestUpgradeDeclinedSkipsEveryBoxAndConvergesNone(t *testing.T) {
 	}
 }
 
-func TestUpgradeCarriesOnPastAFailedBoxAndCountsIt(t *testing.T) {
+func TestUpgradeCarriesOnPastAFailedBox(t *testing.T) {
 	t.Parallel()
 	unreachable := errors.New("ssh: connect to host: Connection timed out")
 	boxes := &fakeBoxes{
@@ -212,8 +230,20 @@ func TestUpgradeCarriesOnPastAFailedBoxAndCountsIt(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Upgrade() = %+v, want %+v", got, want)
 	}
-	if got.Failed() != 1 {
-		t.Errorf("Failed() = %d, want 1", got.Failed())
+}
+
+func TestFleetFailedCountsOnlyFailedBoxes(t *testing.T) {
+	t.Parallel()
+	fleet := Fleet{
+		{Box: "alpha", Status: StatusFailed},
+		{Box: "beta", Status: StatusUpgraded},
+		{Box: "gamma", Status: StatusFailed},
+		{Box: "delta", Status: StatusCurrent},
+		{Box: "epsilon", Status: StatusSkipped},
+	}
+
+	if got := fleet.Failed(); got != 2 {
+		t.Errorf("Fleet%v.Failed() = %d, want 2", fleet, got)
 	}
 }
 
@@ -231,11 +261,7 @@ func TestRunWhoseProbeFailsNamesTheInstalledBinary(t *testing.T) {
 	if !errors.As(err, &probe) {
 		t.Fatalf("Run() error = %v, want a *ProbeError", err)
 	}
-	resolved, rerr := filepath.EvalSymlinks(path)
-	if rerr != nil {
-		t.Fatalf("resolve %s: %v", path, rerr)
-	}
-	if want := (ProbeError{Path: resolved, Target: "0.3.0", Err: cause}); *probe != want {
+	if want := (ProbeError{Path: resolved(t, path), Target: "0.3.0", Err: cause}); *probe != want {
 		t.Errorf("Run() error = %+v, want %+v", *probe, want)
 	}
 }
