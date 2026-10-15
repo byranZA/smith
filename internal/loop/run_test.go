@@ -16,6 +16,7 @@ import (
 )
 
 // board fakes spec #42's tracker and an agent that closes each task not in leaveOpen.
+// A Fail that succeeds hands the task to a human, as the tracker does.
 type board struct {
 	tasks     []tracker.Task
 	leaveOpen []int
@@ -38,7 +39,15 @@ func (b *board) Stop(ctx context.Context, number int) error {
 }
 
 func (b *board) Fail(ctx context.Context, number int) error {
-	return b.write(ctx, "fail", number)
+	if err := b.write(ctx, "fail", number); err != nil {
+		return err
+	}
+	for i := range b.tasks {
+		if b.tasks[i].Number == number {
+			b.tasks[i].For = tracker.Human
+		}
+	}
+	return nil
 }
 
 // write logs a label write of verb on task number, which like gh never reaches the tracker once ctx is done.

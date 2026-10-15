@@ -117,7 +117,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		return Outcome{}, err
 	}
 	for {
-		remaining := Survey(current).Skip(skipped)
+		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
 			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
