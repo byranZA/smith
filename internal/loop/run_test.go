@@ -248,6 +248,7 @@ func TestRunStartsNoFurtherTaskOnceInterrupted(t *testing.T) {
 }
 
 func TestAnInterruptedRunUnmarksTheTaskItWasWorking(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		run  func(loop.Loop, context.Context) error
@@ -257,6 +258,7 @@ func TestAnInterruptedRunUnmarksTheTaskItWasWorking(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -271,6 +273,7 @@ func TestAnInterruptedRunUnmarksTheTaskItWasWorking(t *testing.T) {
 }
 
 func TestAnInterruptedRunBoundsTheUnmarkingByAShortTimeout(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -285,6 +288,7 @@ func TestAnInterruptedRunBoundsTheUnmarkingByAShortTimeout(t *testing.T) {
 }
 
 func TestAnInterruptedRunWarnsOfAFailedUnmarking(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, refuse: errors.New("HTTP 403")}
 	var progress strings.Builder
 	ctx, cancel := context.WithCancel(context.Background())
@@ -429,6 +433,7 @@ func TestRunInteractiveWithNothingAvailableRunsNoAgent(t *testing.T) {
 }
 
 func TestRunMarksATaskOnlyWhileItsAgentRuns(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
 
 	run(t, b)
@@ -440,6 +445,7 @@ func TestRunMarksATaskOnlyWhileItsAgentRuns(t *testing.T) {
 }
 
 func TestRunHandsATaskToAHumanOnlyAfterItsLastAttempt(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43}}
 
 	run(t, b)
@@ -451,6 +457,7 @@ func TestRunHandsATaskToAHumanOnlyAfterItsLastAttempt(t *testing.T) {
 }
 
 func TestRunNeverFailsATaskClosedOnItsLastAttempt(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	tree := &wip{board: b}
 
@@ -464,6 +471,7 @@ func TestRunNeverFailsATaskClosedOnItsLastAttempt(t *testing.T) {
 }
 
 func TestRunUnmarksTheTaskWhenTheIterationCapStopsIt(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
 	l := loopOn(t, b, b)
 	l.Limits.MaxIterations = 1
@@ -476,6 +484,7 @@ func TestRunUnmarksTheTaskWhenTheIterationCapStopsIt(t *testing.T) {
 }
 
 func TestRunInteractiveMarksTheTaskWhileTheAttachedAgentRuns(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 
 	if _, err := loopOn(t, b, b).RunInteractive(context.Background(), 42); err != nil {
@@ -488,6 +497,7 @@ func TestRunInteractiveMarksTheTaskWhileTheAttachedAgentRuns(t *testing.T) {
 }
 
 func TestRunInteractiveNeverFailsATaskLeftOpen(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
 	l := loopOn(t, b, b)
 	l.Limits.MaxAttempts = 1
@@ -502,6 +512,7 @@ func TestRunInteractiveNeverFailsATaskLeftOpen(t *testing.T) {
 }
 
 func TestRunWarnsOfAFailedHandOffAndEndsWithTheTaskSkipped(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}, refuse: errors.New("HTTP 403")}
 	var progress strings.Builder
 	l := loopOn(t, b, b)
@@ -517,6 +528,7 @@ func TestRunWarnsOfAFailedHandOffAndEndsWithTheTaskSkipped(t *testing.T) {
 }
 
 func TestRunWarnsOfAFailedMarkAndCarriesOn(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, refuse: errors.New("HTTP 403")}
 	var progress strings.Builder
 	l := loopOn(t, b, b)
@@ -545,6 +557,7 @@ func containsLines(text string, lines []string) bool {
 }
 
 func TestRunClearsItsSpecsStaleMarksBeforeAnyAgentStarts(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{worked(closed(agentTask(43))), agentTask(44), worked(agentTask(45))}}
 
 	run(t, b)
@@ -556,6 +569,7 @@ func TestRunClearsItsSpecsStaleMarksBeforeAnyAgentStarts(t *testing.T) {
 }
 
 func TestRunWarnsOfAFailedSweepAndCarriesOn(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{worked(closed(agentTask(43)))}, refuse: errors.New("HTTP 403")}
 	var progress strings.Builder
 	l := loopOn(t, b, b)
@@ -595,6 +609,7 @@ func (u unreadable) Spec(ctx context.Context, number int) (tracker.Spec, error) 
 }
 
 func TestRunUnmarksTheTaskWhenTheReadAfterItsAgentFails(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	l := loopOn(t, b, b)
 	l.Tracker = unreadable{board: b}
@@ -607,6 +622,7 @@ func TestRunUnmarksTheTaskWhenTheReadAfterItsAgentFails(t *testing.T) {
 }
 
 func TestRunInterruptedDuringTheReadAfterItsAgentUnmarksTheTaskWithinAShortTimeout(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -624,6 +640,7 @@ func TestRunInterruptedDuringTheReadAfterItsAgentUnmarksTheTaskWithinAShortTimeo
 }
 
 func TestRunWarnsOfAFailedUnmarkingAndKeepsTheReadsError(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, refuse: errors.New("HTTP 403")}
 	var progress strings.Builder
 	l := loopOn(t, b, b)
@@ -652,6 +669,7 @@ func (b *brittle) Write(p []byte) (int, error) {
 }
 
 func TestRunUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	l := loopOn(t, b, failing{board: b})
 	l.Progress = &brittle{}
@@ -664,6 +682,7 @@ func TestRunUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testing.T) {
 }
 
 func TestRunInteractiveUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	l := loopOn(t, b, failing{board: b})
 	l.Progress = &brittle{}
