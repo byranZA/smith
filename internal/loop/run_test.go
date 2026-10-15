@@ -637,3 +637,40 @@ func TestRunWarnsOfAFailedUnmarkingAndKeepsTheReadsError(t *testing.T) {
 		t.Errorf("Run() error = %v with progress\n%s\nwant the read's error and the lines %q", err, progress.String(), want)
 	}
 }
+
+// brittle is progress output that takes its first line and then fails every write, as a closed pipe does.
+type brittle struct {
+	lines int
+}
+
+func (b *brittle) Write(p []byte) (int, error) {
+	b.lines++
+	if b.lines > 1 {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func TestRunUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l := loopOn(t, b, failing{board: b})
+	l.Progress = &brittle{}
+
+	_, err := l.Run(context.Background(), 42)
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; !errors.Is(err, io.ErrClosedPipe) || !slices.Equal(b.events, want) {
+		t.Errorf("Run() made %q with error %v; want %q and the progress error", b.events, err, want)
+	}
+}
+
+func TestRunInteractiveUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l := loopOn(t, b, failing{board: b})
+	l.Progress = &brittle{}
+
+	_, err := l.RunInteractive(context.Background(), 42)
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; !errors.Is(err, io.ErrClosedPipe) || !slices.Equal(b.events, want) {
+		t.Errorf("RunInteractive() made %q with error %v; want %q and the progress error", b.events, err, want)
+	}
+}

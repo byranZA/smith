@@ -207,9 +207,10 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 
 // hand gives task to one agent run of cmd in task's worktree, marking task as
 // worked before the agent runs, and returns that worktree's directory. The
-// caller releases the mark, except on an interrupted run: that is an error,
+// caller releases the mark, except when the agent's run ends in an error: an
+// interrupted run, or a failed report of an agent that exited with a failure,
 // returned once hand has removed the mark itself. An agent that exits with a
-// failure is reported and left to the tracker to judge.
+// failure is otherwise reported and left to the tracker to judge.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
@@ -228,7 +229,9 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 		return "", errors.Join(interrupted, l.unmarkDetached(ctx, task))
 	}
 	if err != nil {
-		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
+		if failed := l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err); failed != nil {
+			return "", errors.Join(failed, l.unmarkDetached(ctx, task))
+		}
 	}
 	return dir, nil
 }
