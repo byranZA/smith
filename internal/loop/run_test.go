@@ -462,3 +462,34 @@ func containsLines(text string, lines []string) bool {
 	}
 	return true
 }
+
+func TestRunClearsItsSpecsStaleMarksBeforeAnyAgentStarts(t *testing.T) {
+	b := &board{tasks: []tracker.Task{worked(closed(agentTask(43))), agentTask(44), worked(agentTask(45))}}
+
+	run(t, b)
+
+	want := []string{"stop 43", "stop 45", "start 44", "launch 44", "stop 44", "start 45", "launch 45", "stop 45"}
+	if !slices.Equal(b.events, want) {
+		t.Errorf("Run() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunWarnsOfAFailedSweepAndCarriesOn(t *testing.T) {
+	b := &board{tasks: []tracker.Task{worked(closed(agentTask(43)))}, refuse: errors.New("HTTP 403")}
+	var progress strings.Builder
+	l := loopOn(t, b, b)
+	l.Progress = &progress
+
+	outcome, err := l.Run(context.Background(), 42)
+
+	want := []string{"smith: warning: could not remove the worked mark from #43: HTTP 403"}
+	if err != nil || !outcome.Complete() || !containsLines(progress.String(), want) {
+		t.Errorf("Run() = %+v, %v with progress\n%s\nwant the spec complete and the lines %q", outcome, err, progress.String(), want)
+	}
+}
+
+// worked is task labelled as worked, as a run that died would leave it.
+func worked(task tracker.Task) tracker.Task {
+	task.Working = true
+	return task
+}

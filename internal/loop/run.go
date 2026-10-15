@@ -12,7 +12,7 @@ import (
 
 // Tracker is where the loop reads a spec and its tasks, and marks the task an
 // agent is working or the loop gave up on, for people to see. The loop never
-// reads the marks back.
+// reads the marks to choose a task, only to clear those a dead run left.
 type Tracker interface {
 	// Spec reads spec number and its tasks as they stand now.
 	Spec(ctx context.Context, number int) (tracker.Spec, error)
@@ -100,7 +100,8 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
 // Run works spec until no task is available for an agent, handing a task left
 // open out again up to MaxAttempts and stopping after MaxIterations agent runs.
-// A task left open after its last attempt is skipped and handed to a human.
+// It first clears the worked marks a run that died left on spec's tasks. A
+// task left open after its last attempt is skipped and handed to a human.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -109,6 +110,9 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	current, err := l.Tracker.Spec(ctx, spec)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("read spec #%d: %w", spec, err)
+	}
+	if err := l.sweep(ctx, current); err != nil {
+		return Outcome{}, err
 	}
 	for {
 		remaining := Survey(current).Skip(skipped)
@@ -225,12 +229,31 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 	return dir, nil
 }
 
+// sweep removes the mark from each of spec's tasks marked as worked, which a
+// run that died left behind, before any agent runs.
+func (l Loop) sweep(ctx context.Context, spec tracker.Spec) error {
+	for _, task := range spec.Tasks {
+		if !task.Working {
+			continue
+		}
+		if err := l.unmark(ctx, task); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // release removes the mark hand made on task once its agent has run, handing
 // task to a human instead when the loop skips it.
 func (l Loop) release(ctx context.Context, task tracker.Task, skipped bool) error {
 	if skipped {
 		return l.warnIf(l.Tracker.Fail(ctx, task.Number), "could not hand #%d to a human", task.Number)
 	}
+	return l.unmark(ctx, task)
+}
+
+// unmark removes the mark that says task is worked, warning when it cannot.
+func (l Loop) unmark(ctx context.Context, task tracker.Task) error {
 	return l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number)
 }
 

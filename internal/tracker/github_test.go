@@ -521,3 +521,25 @@ func TestFailCreatesEachMissingLabel(t *testing.T) {
 		t.Errorf("Fail(12) ran gh %q, want %q", gh.ran, want)
 	}
 }
+
+func TestSpecReportsATaskLabelledAsWorked(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		specView(42): `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/o/r/issues/43"},{"number":44,"state":"OPEN","url":"https://github.com/o/r/issues/44"}],"totalCount":2},"title":"Spec"}`,
+		taskView(43): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"ready-for-agent"},{"name":"smith:working"}],"number":43,"state":"OPEN","title":"Task 43"}`,
+		taskView(44): agentTask(44, "OPEN", `{"nodes":[],"totalCount":0}`),
+	}}
+
+	got, err := tracker.NewGitHub(gh).Spec(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("Spec(42) error = %v", err)
+	}
+
+	want := []tracker.Task{
+		{Number: 43, Title: "Task 43", Open: true, For: tracker.Agent, Working: true},
+		{Number: 44, Title: "Task 44", Open: true, For: tracker.Agent},
+	}
+	if !reflect.DeepEqual(got.Tasks, want) {
+		t.Errorf("Spec(42) tasks =\n%+v\nwant\n%+v", got.Tasks, want)
+	}
+}

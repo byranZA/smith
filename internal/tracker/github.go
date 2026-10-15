@@ -190,7 +190,7 @@ func (g GitHub) Spec(ctx context.Context, number int) (Spec, error) {
 		if err != nil {
 			return Spec{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers, Working: issues[n].labelled(workingLabel)})
 	}
 	return Spec{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }

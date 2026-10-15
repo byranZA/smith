@@ -17,14 +17,17 @@ type Spec struct {
 	Tasks  []Task
 }
 
-// Task is one child of a spec: whether it is open, who it is meant for, and
-// the issues blocking it.
+// Task is one child of a spec: whether it is open, who it is meant for, the
+// issues blocking it, and whether it is marked as worked.
 type Task struct {
 	Number   int
 	Title    string
 	Open     bool
 	For      Audience
 	Blockers []Blocker
+	// Working reports whether the task is marked as worked by an agent. It is
+	// a signal for people, never a reason to choose a task or pass one over.
+	Working bool
 }
 
 // Audience is who a task is meant for.
