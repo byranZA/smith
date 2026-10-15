@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,9 +19,13 @@ import (
 type fakeGH struct {
 	replies map[string]string
 	pages   map[string]string
-	stderr  string
-	launch  error
-	ran     []string
+	// labels are the labels the repo has, which an issue edit may add or remove.
+	labels []string
+	// lostLabels drops each label gh is asked to create, as if it were deleted again at once.
+	lostLabels bool
+	stderr     string
+	launch     error
+	ran        []string
 }
 
 func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
@@ -43,6 +48,15 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if args[0] == "repo" {
 		_, err := io.WriteString(stdout, `{"nameWithOwner":"o/r"}`)
 		return err
+	}
+	if args[0] == "label" {
+		if !f.lostLabels {
+			f.labels = append(f.labels, args[2])
+		}
+		return nil
+	}
+	if args[0] == "issue" && args[1] == "edit" {
+		return f.edit(args, stderr)
 	}
 	reply, ok := f.replies[strings.Join(args, " ")]
 	if !ok {
@@ -77,6 +91,19 @@ func (f *fakeGH) page(args []string, stdout, stderr io.Writer) error {
 	}
 	_, err := io.WriteString(stdout, reply)
 	return err
+}
+
+// edit refuses, as gh does, an issue edit naming a label the repo does not have.
+func (f *fakeGH) edit(args []string, stderr io.Writer) error {
+	for i := 0; i+1 < len(args); i++ {
+		if (args[i] == "--add-label" || args[i] == "--remove-label") && !slices.Contains(f.labels, args[i+1]) {
+			if _, err := fmt.Fprintf(stderr, "failed to update https://github.com/o/r/issues/%s: '%s' not found\nfailed to update 1 issue\n", args[2], args[i+1]); err != nil {
+				return err
+			}
+			return errors.New("exit status 1")
+		}
+	}
+	return nil
 }
 
 func pageKey(connection, number, cursor string) string {
@@ -396,5 +423,72 @@ func TestSpecRefusesATaskInAnotherRepo(t *testing.T) {
 	var foreign *tracker.ForeignError
 	if !errors.As(err, &foreign) || *foreign != want {
 		t.Errorf("Spec(42) error = %v, want %+v", err, want)
+	}
+}
+
+func TestStartLabelsTheTaskAsWorkedInOneEdit(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"smith:working"}}
+
+	if err := tracker.NewGitHub(gh).Start(t.Context(), 12); err != nil {
+		t.Fatalf("Start(12) error = %v", err)
+	}
+
+	if want := []string{"issue edit 12 --add-label smith:working"}; !slices.Equal(gh.ran, want) {
+		t.Errorf("Start(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestStopRemovesTheWorkedLabelInOneEdit(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"smith:working"}}
+
+	if err := tracker.NewGitHub(gh).Stop(t.Context(), 12); err != nil {
+		t.Fatalf("Stop(12) error = %v", err)
+	}
+
+	if want := []string{"issue edit 12 --remove-label smith:working"}; !slices.Equal(gh.ran, want) {
+		t.Errorf("Stop(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestStartCreatesAMissingLabelAndRetriesOnce(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{}
+
+	if err := tracker.NewGitHub(gh).Start(t.Context(), 12); err != nil {
+		t.Fatalf("Start(12) error = %v", err)
+	}
+
+	want := []string{
+		"issue edit 12 --add-label smith:working",
+		"label create smith:working",
+		"issue edit 12 --add-label smith:working",
+	}
+	if !slices.Equal(gh.ran, want) {
+		t.Errorf("Start(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestStartReportsARefusedEdit(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{stderr: "HTTP 403: Resource not accessible by integration\n"}
+
+	err := tracker.NewGitHub(gh).Start(t.Context(), 12)
+
+	var unavailable *tracker.UnavailableError
+	if !errors.As(err, &unavailable) || len(gh.ran) != 1 {
+		t.Errorf("Start(12) error = %v after gh %q, want an UnavailableError after one edit", err, gh.ran)
+	}
+}
+
+func TestStartRetriesAnEditOnlyOnce(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{lostLabels: true}
+
+	err := tracker.NewGitHub(gh).Start(t.Context(), 12)
+
+	if err == nil || len(gh.ran) != 3 {
+		t.Errorf("Start(12) error = %v after gh %q, want an error after one create and one retry", err, gh.ran)
 	}
 }

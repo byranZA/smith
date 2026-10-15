@@ -10,10 +10,15 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// Tracker is where the loop reads a spec and its tasks.
+// Tracker is where the loop reads a spec and its tasks, and marks the task an
+// agent is working for people to see. The loop never reads the mark back.
 type Tracker interface {
 	// Spec reads spec number and its tasks as they stand now.
 	Spec(ctx context.Context, number int) (tracker.Spec, error)
+	// Start marks task number as worked, while an agent runs on it.
+	Start(ctx context.Context, number int) error
+	// Stop removes the mark Start made on task number.
+	Stop(ctx context.Context, number int) error
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -182,9 +187,10 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
 }
 
-// hand gives task to one agent run of cmd in task's worktree, and returns
-// that worktree's directory. An agent that exits with a failure is reported
-// and left to the tracker to judge; only an interrupted run is an error.
+// hand gives task to one agent run of cmd in task's worktree, marking task as
+// worked while the agent runs, and returns that worktree's directory. An agent
+// that exits with a failure is reported and left to the tracker to judge; only
+// an interrupted run is an error.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
@@ -194,9 +200,15 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
 		return "", err
 	}
+	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
+		return "", err
+	}
 	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+	}
+	if err := l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number); err != nil {
+		return "", err
 	}
 	if err != nil {
 		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
@@ -234,6 +246,16 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 // closedIn reports whether spec holds task as closed.
 func closedIn(spec tracker.Spec, task tracker.Task) bool {
 	return slices.ContainsFunc(spec.Tasks, func(t tracker.Task) bool { return t.Number == task.Number && !t.Open })
+}
+
+// warnIf reports failed as a warning line led by what the format says, when
+// failed is not nil. A label write that fails loses no work, so it never
+// stops a run; only a failed progress write is an error.
+func (l Loop) warnIf(failed error, format string, args ...any) error {
+	if failed == nil {
+		return nil
+	}
+	return l.report("smith: warning: %s: %v\n", fmt.Sprintf(format, args...), failed)
 }
 
 // report writes a progress line.

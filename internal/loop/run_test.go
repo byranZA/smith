@@ -20,6 +20,20 @@ type board struct {
 	leaveOpen []int
 	reads     int
 	launched  []agent.Command
+	// events logs each label write and agent launch, in order.
+	events []string
+	// refuse, when set, is what every label write fails with.
+	refuse error
+}
+
+func (b *board) Start(_ context.Context, number int) error {
+	b.events = append(b.events, "start "+strconv.Itoa(number))
+	return b.refuse
+}
+
+func (b *board) Stop(_ context.Context, number int) error {
+	b.events = append(b.events, "stop "+strconv.Itoa(number))
+	return b.refuse
 }
 
 func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
@@ -29,6 +43,7 @@ func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
 
 func (b *board) Launch(_ context.Context, cmd agent.Command) error {
 	b.launched = append(b.launched, cmd)
+	b.events = append(b.events, "launch "+taskOf(cmd))
 	n, err := strconv.Atoi(taskOf(cmd))
 	if err != nil {
 		return err
@@ -325,4 +340,78 @@ func TestRunInteractiveWithNothingAvailableRunsNoAgent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunMarksATaskOnlyWhileItsAgentRuns(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
+
+	run(t, b)
+
+	want := []string{"start 43", "launch 43", "stop 43", "start 44", "launch 44", "stop 44"}
+	if !slices.Equal(b.events, want) {
+		t.Errorf("Run() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunUnmarksATaskBetweenAttempts(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+
+	run(t, b)
+
+	want := []string{"start 43", "launch 43", "stop 43", "start 43", "launch 43", "stop 43"}
+	if !slices.Equal(b.events, want) {
+		t.Errorf("Run() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunUnmarksTheTaskWhenTheIterationCapStopsIt(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	l := loopOn(t, b, b)
+	l.Limits.MaxIterations = 1
+
+	outcome, err := l.Run(context.Background(), 42)
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; err != nil || !outcome.Capped || !slices.Equal(b.events, want) {
+		t.Errorf("Run() = %+v, %v after %q; want capped after %q", outcome, err, b.events, want)
+	}
+}
+
+func TestRunInteractiveMarksTheTaskWhileTheAttachedAgentRuns(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+
+	if _, err := loopOn(t, b, b).RunInteractive(context.Background(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	if want := []string{"start 43", "launch 43", "stop 43"}; !slices.Equal(b.events, want) {
+		t.Errorf("RunInteractive() made %q, want %q", b.events, want)
+	}
+}
+
+func TestRunWarnsOfAFailedMarkAndCarriesOn(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, refuse: errors.New("HTTP 403")}
+	var progress strings.Builder
+	l := loopOn(t, b, b)
+	l.Progress = &progress
+
+	outcome, err := l.Run(context.Background(), 42)
+
+	want := []string{
+		"smith: warning: could not mark #43 as worked: HTTP 403",
+		"smith: warning: could not remove the worked mark from #43: HTTP 403",
+	}
+	if err != nil || !outcome.Complete() || !containsLines(progress.String(), want) {
+		t.Errorf("Run() = %+v, %v with progress\n%s\nwant the spec complete and the lines %q", outcome, err, progress.String(), want)
+	}
+}
+
+// containsLines reports whether text holds each of lines as a whole line.
+func containsLines(text string, lines []string) bool {
+	got := strings.Split(text, "\n")
+	for _, line := range lines {
+		if !slices.Contains(got, line) {
+			return false
+		}
+	}
+	return true
 }
