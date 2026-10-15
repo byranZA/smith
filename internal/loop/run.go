@@ -2,9 +2,11 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
+	"time"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/tracker"
@@ -205,8 +207,9 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 
 // hand gives task to one agent run of cmd in task's worktree, marking task as
 // worked before the agent runs, and returns that worktree's directory. The
-// caller releases the mark. An agent that exits with a failure is reported and
-// left to the tracker to judge; only an interrupted run is an error.
+// caller releases the mark, except on an interrupted run: that is an error,
+// returned once hand has removed the mark itself. An agent that exits with a
+// failure is reported and left to the tracker to judge.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
@@ -221,7 +224,8 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 	}
 	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
-		return "", fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
+		return "", errors.Join(interrupted, l.unmarkInterrupted(ctx, task))
 	}
 	if err != nil {
 		return dir, l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
@@ -255,6 +259,19 @@ func (l Loop) release(ctx context.Context, task tracker.Task, skipped bool) erro
 // unmark removes the mark that says task is worked, warning when it cannot.
 func (l Loop) unmark(ctx context.Context, task tracker.Task) error {
 	return l.warnIf(l.Tracker.Stop(ctx, task.Number), "could not remove the worked mark from #%d", task.Number)
+}
+
+// interruptedStopTimeout bounds removing the worked mark from a task whose
+// run was interrupted, so a hung tracker cannot hold the interrupt up.
+const interruptedStopTimeout = 10 * time.Second
+
+// unmarkInterrupted removes the mark that says task is worked once ctx, the
+// run's, is cancelled, on a context detached from it and bounded by
+// interruptedStopTimeout, warning when it cannot.
+func (l Loop) unmarkInterrupted(ctx context.Context, task tracker.Task) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptedStopTimeout)
+	defer cancel()
+	return l.unmark(ctx, task)
 }
 
 // left returns the worktree of each task remaining skipped, from worktrees,

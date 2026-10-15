@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/loop"
@@ -24,21 +25,39 @@ type board struct {
 	events []string
 	// refuse, when set, is what every label write fails with.
 	refuse error
+	// deadlines holds how long each logged label write had left to run, zero for no limit.
+	deadlines []time.Duration
 }
 
-func (b *board) Start(_ context.Context, number int) error {
-	b.events = append(b.events, "start "+strconv.Itoa(number))
+func (b *board) Start(ctx context.Context, number int) error {
+	return b.write(ctx, "start", number)
+}
+
+func (b *board) Stop(ctx context.Context, number int) error {
+	return b.write(ctx, "stop", number)
+}
+
+func (b *board) Fail(ctx context.Context, number int) error {
+	return b.write(ctx, "fail", number)
+}
+
+// write logs a label write of verb on task number, which like gh never reaches the tracker once ctx is done.
+func (b *board) write(ctx context.Context, verb string, number int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	b.events = append(b.events, verb+" "+strconv.Itoa(number))
+	b.deadlines = append(b.deadlines, deadlineOf(ctx))
 	return b.refuse
 }
 
-func (b *board) Stop(_ context.Context, number int) error {
-	b.events = append(b.events, "stop "+strconv.Itoa(number))
-	return b.refuse
-}
-
-func (b *board) Fail(_ context.Context, number int) error {
-	b.events = append(b.events, "fail "+strconv.Itoa(number))
-	return b.refuse
+// deadlineOf is how long ctx has left before its deadline, or zero when it has none.
+func deadlineOf(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	return time.Until(deadline)
 }
 
 func (b *board) Spec(_ context.Context, number int) (tracker.Spec, error) {
@@ -216,6 +235,59 @@ func TestRunStartsNoFurtherTaskOnceInterrupted(t *testing.T) {
 
 	if !errors.Is(err, context.Canceled) || !slices.Equal(b.handed(), []string{"43"}) {
 		t.Errorf("Run() error = %v, handed %v; want context.Canceled after #43 alone", err, b.handed())
+	}
+}
+
+func TestAnInterruptedRunUnmarksTheTaskItWasWorking(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(loop.Loop, context.Context) error
+	}{
+		{"unattended", func(l loop.Loop, ctx context.Context) error { _, err := l.Run(ctx, 42); return err }},
+		{"interactive", func(l loop.Loop, ctx context.Context) error { _, err := l.RunInteractive(ctx, 42); return err }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			err := tt.run(loopOn(t, b, failing{board: b, cancel: cancel}), ctx)
+
+			if want := []string{"start 43", "launch 43", "stop 43"}; !errors.Is(err, context.Canceled) || !slices.Equal(b.events, want) {
+				t.Errorf("run made %q with error %v; want %q and context.Canceled", b.events, err, want)
+			}
+		})
+	}
+}
+
+func TestAnInterruptedRunBoundsTheUnmarkingByAShortTimeout(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if _, err := loopOn(t, b, failing{board: b, cancel: cancel}).Run(ctx, 42); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+
+	if last := b.deadlines[len(b.deadlines)-1]; last <= 0 || last > 30*time.Second {
+		t.Errorf("Run() unmarked #43 with %v left to run, want a limit of at most 30s", last)
+	}
+}
+
+func TestAnInterruptedRunWarnsOfAFailedUnmarking(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, refuse: errors.New("HTTP 403")}
+	var progress strings.Builder
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := loopOn(t, b, failing{board: b, cancel: cancel})
+	l.Progress = &progress
+
+	_, err := l.Run(ctx, 42)
+
+	want := []string{"smith: warning: could not remove the worked mark from #43: HTTP 403"}
+	if !errors.Is(err, context.Canceled) || !containsLines(progress.String(), want) {
+		t.Errorf("Run() error = %v with progress\n%s\nwant context.Canceled and the lines %q", err, progress.String(), want)
 	}
 }
 
