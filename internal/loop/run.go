@@ -100,9 +100,9 @@ type Outcome struct {
 // Complete reports whether the run ended with every task of the spec closed.
 func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
-// Run works spec until no task is available for an agent, handing a task left
-// open out again up to MaxAttempts and stopping after MaxIterations agent runs.
-// It first clears the worked marks a run that died left on spec's tasks. A
+// Run first clears the worked marks a run that died left on spec's tasks, then
+// works spec until no task is available for an agent, handing a task left open
+// out again up to MaxAttempts and stopping after MaxIterations agent runs. A
 // task left open after its last attempt is skipped and handed to a human.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
@@ -205,12 +205,11 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
 }
 
-// hand gives task to one agent run of cmd in task's worktree, marking task as
-// worked before the agent runs, and returns that worktree's directory. The
-// caller releases the mark, except when the agent's run ends in an error: an
-// interrupted run, or a failed report of an agent that exited with a failure,
-// returned once hand has removed the mark itself. An agent that exits with a
-// failure is otherwise reported and left to the tracker to judge.
+// hand marks task as worked and gives it to one agent run of cmd in task's
+// worktree, returning that worktree's directory, and reports an agent that
+// exits with a failure, leaving it to the tracker to judge. The caller releases
+// the mark, except on an error from an interrupted run or a failed report of
+// that failure, when hand has already removed it.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
