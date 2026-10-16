@@ -74,14 +74,13 @@ type Lag struct {
 
 // Setup readies the work branch for req in the repo dir is inside: it adopts
 // the branch req.Branch names, or else the one branch named smith/<n> or
-// smith/<n>-<slug> for req's number, local or on origin, and otherwise cuts
-// the branch WorkBranch names from the tip of req's base on origin, or of
-// origin's default branch when req names none. It refuses a work branch that
-// is origin's default branch or the base, more than one numbered branch, and
-// one whose local and origin copies have diverged or that is checked out in a
-// worktree with uncommitted changes, and never touches dir's own checkout. An
-// adopted branch is compared with the tip of its base on origin, and Lag
-// reports what that found.
+// smith/<n>-<slug> for req's number, local or on origin, comparing it with the
+// tip of its base on origin for Lag, and otherwise cuts the branch WorkBranch
+// names from the tip of req's base on origin, or of origin's default branch
+// when req names none. It refuses a work branch that is origin's default branch
+// or the base, more than one numbered branch, and one whose local and origin
+// copies have diverged or that is checked out in a worktree with uncommitted
+// changes, and never touches dir's own checkout.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
