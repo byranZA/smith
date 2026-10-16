@@ -26,7 +26,7 @@ func labelFindings(data []byte) []blueprint.Finding {
 	var report []blueprint.Finding
 	claimed := map[string]*yaml.Node{}
 	for i := 0; i+1 < len(labels.Content); i += 2 {
-		key, value := labels.Content[i], labels.Content[i+1]
+		key, value := labels.Content[i], resolved(labels.Content[i+1])
 		path := labelsKey + "." + key.Value
 		first, taken := claimed[value.Value]
 		switch {
@@ -52,11 +52,20 @@ func mappingValue(node *yaml.Node, key string) *yaml.Node {
 		return nil
 	}
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key && node.Content[i+1].Kind == yaml.MappingNode {
-			return node.Content[i+1]
+		if value := resolved(node.Content[i+1]); node.Content[i].Value == key && value.Kind == yaml.MappingNode {
+			return value
 		}
 	}
 	return nil
+}
+
+// resolved returns the node an alias stands for, following aliases of
+// aliases, and any other node as it is.
+func resolved(node *yaml.Node) *yaml.Node {
+	for node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	return node
 }
 
 // isEmpty reports whether value is a scalar naming nothing: empty text, or null.

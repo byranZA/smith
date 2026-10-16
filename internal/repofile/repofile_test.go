@@ -111,3 +111,50 @@ func TestParseRefusesTwoLabelsSharingANameNamingTheLaterLine(t *testing.T) {
 		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
 	}
 }
+
+func TestParseRefusesAnEmptyLabelGivenThroughAnAlias(t *testing.T) {
+	t.Parallel()
+	data := "model: &empty \"\"\nlabels:\n  agent: *empty\n"
+
+	_, err := repofile.Parse([]byte(data))
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+	}
+	want := []blueprint.Finding{{Line: 3, Path: "labels.agent", Message: "a label needs a name: set one, or leave the key out for the default"}}
+	if !reflect.DeepEqual(verr.Findings, want) {
+		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+	}
+}
+
+func TestParseRefusesTwoLabelsSharingANameThroughAnAlias(t *testing.T) {
+	t.Parallel()
+	data := "labels:\n  agent: &shared triaged\n  human: *shared\n"
+
+	_, err := repofile.Parse([]byte(data))
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+	}
+	want := []blueprint.Finding{{Line: 3, Path: "labels.human", Message: `label "triaged" is already labels.agent, on line 2: each label needs a name of its own`}}
+	if !reflect.DeepEqual(verr.Findings, want) {
+		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+	}
+}
+
+func TestParseReadsALabelGivenThroughAnAlias(t *testing.T) {
+	t.Parallel()
+	data := "model: &name go\nlabels:\n  agent: *name\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	want := repofile.File{Model: "go", Labels: repofile.Labels{Agent: "go"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
+	}
+}
