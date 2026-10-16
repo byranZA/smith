@@ -31,7 +31,8 @@ type Settings struct {
 
 // ResolveSettings resolves each setting field by field as flag, then repo
 // file, then built-in default, refusing an unknown agent, an effort off the
-// scale, or two triage labels sharing a name, and naming where each came from.
+// scale, a triage label named for one of the loop's own marks, or two triage
+// labels sharing a name, and naming where each came from.
 // The triage labels are read from the repo file alone, whatever flags holds.
 func ResolveSettings(flags, file repofile.File) (Settings, error) {
 	defaults := tracker.DefaultLabels()
@@ -80,11 +81,17 @@ func (s Settings) namedLabels() []namedLabel {
 	return []namedLabel{{agentKey, s.AgentLabel}, {humanKey, s.HumanLabel}, {specKey, s.SpecLabel}}
 }
 
-// distinctLabels refuses two triage labels resolved to the same name, naming
-// the one set in the repo file first: a task carrying both the agent and the
-// human label goes to the human, so a shared name would quietly misroute work.
+// distinctLabels refuses a triage label named for one of the loop's own marks,
+// and two triage labels resolved to the same name, naming the one set in the
+// repo file first: a task carrying both the agent and the human label goes to
+// the human, so a shared name would quietly misroute work.
 func (s Settings) distinctLabels() error {
 	labels := s.namedLabels()
+	for _, l := range labels {
+		if tracker.IsMark(l.label.Value) {
+			return fmt.Errorf("%s (%s) is %q, the label smith marks its own work with: name another", l.key, l.label.Origin, l.label.Value)
+		}
+	}
 	for j, later := range labels {
 		for _, earlier := range labels[:j] {
 			if earlier.label.Value != later.label.Value {

@@ -152,3 +152,29 @@ func TestResolveSettingsRefusesALabelSharingADefaultsName(t *testing.T) {
 		t.Errorf("ResolveSettings(labels %+v) error = %v, want %q", file.Labels, err, want)
 	}
 }
+
+func TestResolveSettingsRefusesALabelNamedForOneOfSmithsOwnMarks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		labels repofile.Labels
+		want   string
+	}{
+		{"agent as working", repofile.Labels{Agent: "smith:working"}, `labels.agent (repo file) is "smith:working", the label smith marks its own work with: name another`},
+		{"agent as failed", repofile.Labels{Agent: "smith:failed"}, `labels.agent (repo file) is "smith:failed", the label smith marks its own work with: name another`},
+		{"human as working", repofile.Labels{Human: "smith:working"}, `labels.human (repo file) is "smith:working", the label smith marks its own work with: name another`},
+		{"human as failed", repofile.Labels{Human: "smith:failed"}, `labels.human (repo file) is "smith:failed", the label smith marks its own work with: name another`},
+		{"spec as working", repofile.Labels{Spec: "smith:working"}, `labels.spec (repo file) is "smith:working", the label smith marks its own work with: name another`},
+		{"spec as failed", repofile.Labels{Spec: "smith:failed"}, `labels.spec (repo file) is "smith:failed", the label smith marks its own work with: name another`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := loop.ResolveSettings(repofile.File{}, repofile.File{Labels: tt.labels})
+
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("ResolveSettings(labels %+v) error = %v, want %q", tt.labels, err, tt.want)
+			}
+		})
+	}
+}

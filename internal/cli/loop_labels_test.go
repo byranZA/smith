@@ -134,3 +134,16 @@ func TestLoopRunRefusesTwoLabelsSharingANameBeforeAnyAgentRuns(t *testing.T) {
 		t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming %q, no agent and no gh", code, stderr, idle.runs, gh.ran, want)
 	}
 }
+
+func TestLoopRunRefusesALabelNamedForASmithMarkBeforeAnyAgentRuns(t *testing.T) {
+	gh := labelledSpec()
+	idle := &idleAgent{}
+	w, _ := repoWith(t, gh, idle, "labels:\n  human: smith:working\n")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	want := `labels.human (repo file) is "smith:working", the label smith marks its own work with`
+	if code == 0 || !strings.Contains(stderr, want) || idle.runs != 0 || len(gh.ran) != 0 {
+		t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming %q, no agent and no gh", code, stderr, idle.runs, gh.ran, want)
+	}
+}

@@ -21,6 +21,12 @@ const (
 	failedLabel = "smith:failed"
 )
 
+// IsMark reports whether name is one of the labels the loop marks its own
+// work with, which no triage label may share.
+func IsMark(name string) bool {
+	return name == workingLabel || name == failedLabel
+}
+
 // The issue fields read for a spec and for a task.
 const (
 	specFields = "number,title,state,labels,body,subIssues,url,parent"

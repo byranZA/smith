@@ -144,7 +144,7 @@ Each key is optional, and one left out keeps its default. A name set to nothing 
 labels: agent go (repo file), human ready-for-human (built-in default), spec epic (repo file)
 ```
 
-`smith:working` and `smith:failed` keep their names.
+`smith:working` and `smith:failed` keep their names, and no triage label may take either one: the loop marks its own work with them, so they never say who a task is for.
 
 Before any agent runs, `run` reads the repo's labels once and writes a `smith: warning: …` line to stderr for each label the repo file sets that the repo does not have, then carries on:
 
