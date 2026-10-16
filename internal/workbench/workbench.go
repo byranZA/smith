@@ -127,7 +127,7 @@ func (w Workbench) Open(ctx context.Context, task int) (string, error) {
 	dir := w.worktree(task)
 	_, err := os.Lstat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.taskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
+		if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.TaskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
 			return "", fmt.Errorf("add worktree %s: %w", dir, err)
 		}
 		return dir, nil
@@ -148,14 +148,14 @@ func (w Workbench) owns(ctx context.Context, task int, dir string) error {
 	if err != nil {
 		return err
 	}
-	want := branchRefPrefix + w.taskBranch(task)
+	want := branchRefPrefix + w.TaskBranch(task)
 	i := slices.IndexFunc(trees, func(t tree) bool { return t.dir == dir })
 	if i < 0 {
-		return fmt.Errorf("%s is not a worktree of this repo, so cannot hold task branch %s: move it aside, then run again", dir, w.taskBranch(task))
+		return fmt.Errorf("%s is not a worktree of this repo, so cannot hold task branch %s: move it aside, then run again", dir, w.TaskBranch(task))
 	}
 	if trees[i].ref != want {
 		return fmt.Errorf("worktree %s has %s checked out, not task branch %s: an execution on another work branch left it, so finish or remove it there, then run again",
-			dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.taskBranch(task))
+			dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.TaskBranch(task))
 	}
 	return nil
 }
@@ -179,10 +179,24 @@ func (w Workbench) Land(ctx context.Context, task int) error {
 	if _, err := w.run(ctx, w.dir, "worktree", "remove", dir); err != nil {
 		return fmt.Errorf("remove worktree %s: %w", dir, err)
 	}
-	if _, err := w.run(ctx, w.dir, "branch", "-D", w.taskBranch(task)); err != nil {
-		return fmt.Errorf("remove task branch %s: %w", w.taskBranch(task), err)
+	if _, err := w.run(ctx, w.dir, "branch", "-D", w.TaskBranch(task)); err != nil {
+		return fmt.Errorf("remove task branch %s: %w", w.TaskBranch(task), err)
 	}
 	return nil
+}
+
+// Ahead counts the commits task's branch has that the work branch does not,
+// and is an error when either branch cannot be read.
+func (w Workbench) Ahead(ctx context.Context, task int) (int, error) {
+	out, err := w.run(ctx, w.dir, "rev-list", "--count", branchRefPrefix+w.branch+".."+branchRefPrefix+w.TaskBranch(task))
+	if err != nil {
+		return 0, fmt.Errorf("count the commits of task branch %s: %w", w.TaskBranch(task), err)
+	}
+	n, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("count the commits of task branch %s: %w", w.TaskBranch(task), err)
+	}
+	return n, nil
 }
 
 // fastForward moves the work branch to task's branch tip, guarded on the
@@ -192,22 +206,22 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 	if err != nil {
 		return fmt.Errorf("read work branch %s: %w", w.branch, err)
 	}
-	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", branchRefPrefix+w.taskBranch(task))
+	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", branchRefPrefix+w.TaskBranch(task))
 	if err != nil {
-		return fmt.Errorf("read task branch %s: %w", w.taskBranch(task), err)
+		return fmt.Errorf("read task branch %s: %w", w.TaskBranch(task), err)
 	}
 	if old == tip {
 		return nil
 	}
 	if _, err := w.run(ctx, w.dir, "merge-base", "--is-ancestor", old, tip); err != nil {
-		return fmt.Errorf("work branch %s cannot fast-forward to %s: %w", w.branch, w.taskBranch(task), err)
+		return fmt.Errorf("work branch %s cannot fast-forward to %s: %w", w.branch, w.TaskBranch(task), err)
 	}
 	checkout, err := w.cleanCheckout(ctx)
 	if err != nil {
 		return err
 	}
 	if checkout != "" {
-		if _, err := w.run(ctx, checkout, "merge", "--ff-only", "--quiet", branchRefPrefix+w.taskBranch(task)); err != nil {
+		if _, err := w.run(ctx, checkout, "merge", "--ff-only", "--quiet", branchRefPrefix+w.TaskBranch(task)); err != nil {
 			return fmt.Errorf("fast-forward work branch %s in %s: %w", w.branch, checkout, err)
 		}
 		return nil
@@ -445,9 +459,9 @@ func (w Workbench) worktree(task int) string {
 	return filepath.Join(w.common, "smith", "worktrees", strconv.Itoa(task))
 }
 
-// taskBranch names task's branch, in a namespace of smith's own beside the
+// TaskBranch names task's branch, in a namespace of smith's own beside the
 // work branch it is cut from.
-func (w Workbench) taskBranch(task int) string {
+func (w Workbench) TaskBranch(task int) string {
 	return "smith/tasks/" + w.branch + "/" + strconv.Itoa(task)
 }
 

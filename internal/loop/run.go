@@ -13,8 +13,9 @@ import (
 )
 
 // Tracker is where the loop reads an execution and its tasks, and marks the
-// task an agent is working or the loop gave up on, for people to see. The loop
-// never reads the marks to choose a task, only to clear those a dead run left.
+// task an agent is working or the loop gave up on, for people to see, with a
+// comment on a skipped one. The loop never reads the marks to choose a task,
+// only to clear those a dead run left, and never reads its comments back.
 type Tracker interface {
 	// Execution reads issue number as an execution: a spec and its tasks, or
 	// a task alone, as they stand now.
@@ -29,6 +30,8 @@ type Tracker interface {
 	// Fail removes the mark Start made on task number and hands it to a
 	// human, marked as failed.
 	Fail(ctx context.Context, number int) error
+	// Comment posts body, as the loop wrote it, on issue number.
+	Comment(ctx context.Context, number int, body string) error
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -48,6 +51,10 @@ type Bench interface {
 	// Land brings task's commits into the work branch and removes its
 	// worktree and branch.
 	Land(ctx context.Context, task int) error
+	// TaskBranch names the branch task's worktree has checked out.
+	TaskBranch(task int) string
+	// Ahead counts the commits task's branch has beyond the work branch.
+	Ahead(ctx context.Context, task int) (int, error)
 }
 
 // Pusher is the seam through which the loop pushes the work branch.
@@ -76,6 +83,9 @@ type Loop struct {
 	Limits  Limits
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
+	// Hostname names the machine the loop runs on, for the comment on a
+	// skipped task; nil leaves it unknown.
+	Hostname func() (string, error)
 }
 
 // Limits bound an unattended run so it can be left alone.
@@ -107,7 +117,8 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 // Run first clears the worked marks a run that died left on spec's tasks, then
 // works spec until no task is available for an agent, handing a task left open
 // out again up to MaxAttempts and stopping after MaxIterations agent runs. A
-// task left open after its last attempt is skipped and handed to a human.
+// task left open after its last attempt is skipped and handed to a human,
+// with a comment on its issue saying where its work was left.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -141,8 +152,14 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 			return Outcome{}, errors.Join(err, l.unmarkDetached(ctx, next))
 		}
 		closed := closedIn(current, next)
-		if err := l.release(ctx, next, skipped[next.Number] && !closed); err != nil {
+		skip := skipped[next.Number] && !closed
+		if err := l.release(ctx, next, skip); err != nil {
 			return Outcome{}, err
+		}
+		if skip {
+			if err := l.noteSkip(ctx, next, dir, attempts[next.Number]); err != nil {
+				return Outcome{}, err
+			}
 		}
 		if closed {
 			if err := l.land(ctx, next); err != nil {

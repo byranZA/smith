@@ -733,3 +733,56 @@ func TestSetupKeepsTheCauseOfAFailedAncestryCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskBranchNamesTheBranchOpenChecksOut(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	if got, want := bench.TaskBranch(431), git(t, dir, "symbolic-ref", "--short", "HEAD"); got != want {
+		t.Errorf("TaskBranch(431) = %q, want %q", got, want)
+	}
+}
+
+func TestAheadCountsTheTaskBranchsCommitsBeyondTheWorkBranch(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	commitIn(t, dir, "one.txt")
+	commitIn(t, dir, "two.txt")
+
+	if got, err := bench.Ahead(t.Context(), 431); err != nil || got != 2 {
+		t.Errorf("Ahead(431) = %d, %v, want 2", got, err)
+	}
+}
+
+func TestAheadOfAFreshTaskBranchIsZero(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	if _, err := bench.Open(t.Context(), 431); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	if got, err := bench.Ahead(t.Context(), 431); err != nil || got != 0 {
+		t.Errorf("Ahead(431) = %d, %v, want 0", got, err)
+	}
+}
+
+func TestAheadOfATaskWithNoBranchIsAnError(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+
+	if got, err := bench.Ahead(t.Context(), 431); err == nil {
+		t.Errorf("Ahead(431) = %d, nil, want an error for a task branch that does not exist", got)
+	}
+}
