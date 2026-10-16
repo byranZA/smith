@@ -44,6 +44,9 @@ func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Re
 	if name == "gh" && len(args) > 1 && args[0] == "label" && args[1] == "list" {
 		return f.labelList(stdout, stderr)
 	}
+	if name == "gh" && len(args) > 1 && args[0] == "issue" && args[1] == "comment" {
+		return nil
+	}
 	if name != "gh" || len(args) < 3 || args[0] != "issue" || args[1] != "view" {
 		return fmt.Errorf("unexpected command %s %v", name, args)
 	}
@@ -131,11 +134,11 @@ func (o originAt) Push(_ context.Context, branch string) error {
 }
 
 // fakeBench sets up a bench of benchAt for req, refusing to when the request names no spec.
-func fakeBench(_ context.Context, _ string, req workbench.Request) (loop.Bench, error) {
+func fakeBench(_ context.Context, _ string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 	if req.Number == 0 {
-		return nil, errors.New("no spec to name a work branch after")
+		return nil, workbench.Lag{}, errors.New("no spec to name a work branch after")
 	}
-	return benchAt{branch: workbench.Branch(req.Number, req.Title)}, nil
+	return benchAt{branch: workbench.Branch(req.Number, req.Title)}, workbench.Lag{}, nil
 }
 
 // benchAt is a bench on branch whose task worktrees sit under /bench and land without fault.
@@ -148,6 +151,10 @@ func (benchAt) Open(_ context.Context, task int) (string, error) {
 }
 
 func (benchAt) Land(context.Context, int) error { return nil }
+
+func (b benchAt) TaskBranch(task int) string { return fmt.Sprintf("smith/tasks/%s/%d", b.branch, task) }
+
+func (benchAt) Ahead(context.Context, int) (int, error) { return 0, nil }
 
 // workBranch is the final report's line naming spec #42's work branch.
 const workBranch = "work branch: smith/42-the-loop\n"
@@ -361,7 +368,7 @@ func TestLoopRunRefusesAQualifiedIssueInAnotherRepoBeforeAnyBenchIsSetUp(t *test
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	claude := &fakeAgent{gh: gh}
 	var benched []int
-	bench := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+	bench := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 		benched = append(benched, req.Number)
 		return fakeBench(ctx, dir, req)
 	}
@@ -419,6 +426,21 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
+	}
+}
+
+func TestLoopRunCommentsOnASkippedTaskNamingThisMachine(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+	}}
+	w := loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath, hostname: func() (string, error) { return "box-1", nil }}
+
+	runLoopRun(t, w, "42", "--max-attempts", "1")
+
+	comments := slices.DeleteFunc(slices.Clone(gh.ran), func(ran string) bool { return !strings.HasPrefix(ran, "gh issue comment 43 ") })
+	if len(comments) != 1 || !strings.Contains(comments[0], "- **Machine:** box-1\n") {
+		t.Errorf("gh ran %q, want one comment on #43 naming the machine box-1", gh.ran)
 	}
 }
 
@@ -854,8 +876,8 @@ func TestLoopRunRefusesBeforeAnyAgentRunsWhenTheWorkBranchCannotBeSetUp(t *testi
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 	idle := &idleAgent{}
-	refusing := func(context.Context, string, workbench.Request) (loop.Bench, error) {
-		return nil, errors.New("origin names no default branch")
+	refusing := func(context.Context, string, workbench.Request) (loop.Bench, workbench.Lag, error) {
+		return nil, workbench.Lag{}, errors.New("origin names no default branch")
 	}
 
 	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath, bench: refusing}, "42")
@@ -878,7 +900,7 @@ func TestLoopRunSetsUpTheWorkBranchFromTheBaseFlagNames(t *testing.T) {
 			t.Parallel()
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 			var bases []string
-			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 				bases = append(bases, req.Base)
 				return fakeBench(ctx, dir, req)
 			}
@@ -905,7 +927,7 @@ func TestLoopRunSetsUpTheWorkBranchTheBranchFlagNames(t *testing.T) {
 			t.Parallel()
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 			var branches []string
-			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 				branches = append(branches, req.Branch)
 				return fakeBench(ctx, dir, req)
 			}

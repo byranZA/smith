@@ -448,11 +448,11 @@ The branch an execution starts from, and the one its work is eventually proposed
 _Avoid_: target branch, main (one common base, not the term).
 
 **Work branch**:
-The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to review. An existing work branch is adopted, local or on `origin`; a missing one is cut from the base branch. It is what a reviewer sees.
+The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to review. An existing work branch is adopted, local or on `origin`, and the loop warns before any agent runs when the base branch has commits it lacks, then carries on; a missing one is cut from the base branch. It is what a reviewer sees.
 _Avoid_: feature branch, execution branch.
 
 **Task branch**:
-The branch one task is worked on, checked out in that task's task worktree and cut from the work branch's tip. It and its worktree outlive a failed attempt, so a retry continues where the last one stopped; they are removed once merged. A skipped task's are left for a human.
+The branch one task is worked on, checked out in that task's task worktree and cut from the work branch's tip. It and its worktree outlive a failed attempt, so a retry continues where the last one stopped; they are removed once merged. A skipped task's are left for a human, and the loop's comment on the task's issue names the machine they are on, where they are, and how many commits the branch has beyond the work branch.
 _Avoid_: agent branch, scratch branch.
 
 **Spec**:
@@ -460,7 +460,7 @@ The tracker item an execution is derived from: a PRD whose children are the exec
 _Avoid_: PRD (as the domain term), epic, parent issue.
 
 **Task**:
-One iteration of the loop: an agent gets exactly one task per run. A task is usually a child of a spec, but one may stand alone, and a task named on its own is an execution of length one, worked only if it is available. A task is meant either for an agent or for a human, as its **triage labels** say, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it: it hands the task to a human and labels it failed ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)).
+One iteration of the loop: an agent gets exactly one task per run. A task is usually a child of a spec, but one may stand alone, and a task named on its own is an execution of length one, worked only if it is available. A task is meant either for an agent or for a human, as its **triage labels** say, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it: it hands the task to a human, labels it failed, and comments on its issue with the machine, task worktree and task branch it left, the attempts it made, and how many commits the task branch got beyond the work branch ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md), [ADR-0016](./docs/adr/0016-the-loop-comments-on-a-task-it-skips.md)).
 _Avoid_: ticket, job, step.
 
 **Triage label**:

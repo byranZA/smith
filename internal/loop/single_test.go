@@ -46,6 +46,8 @@ func (s *sprouting) Stop(context.Context, int) error { return nil }
 
 func (s *sprouting) Fail(context.Context, int) error { return nil }
 
+func (s *sprouting) Comment(context.Context, int, string) error { return nil }
+
 func (s *sprouting) task() tracker.Task {
 	task := tracker.Task{Number: 80, Title: "Fix X", Open: s.open, For: tracker.Agent}
 	if s.changed && s.becomes != staysATask {
@@ -63,6 +65,10 @@ func (s *sprouting) Launch(_ context.Context, cmd agent.Command) error {
 }
 
 func (s *sprouting) WorkBranch() string { return "smith/80-fix-x" }
+
+func (s *sprouting) TaskBranch(int) string { return "smith/tasks/smith/80-fix-x/80" }
+
+func (s *sprouting) Ahead(context.Context, int) (int, error) { return 0, nil }
 
 func (s *sprouting) Open(context.Context, int) (string, error) { return "/bench/80", nil }
 

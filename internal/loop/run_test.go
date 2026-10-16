@@ -28,6 +28,27 @@ type board struct {
 	refuse error
 	// deadlines holds how long each logged label write had left to run, zero for no limit.
 	deadlines []time.Duration
+	// comments holds each comment posted, in order.
+	comments []posted
+	// refuseComment, when set, is what every comment write fails with.
+	refuseComment error
+}
+
+// posted is a comment posted on issue number.
+type posted struct {
+	number int
+	body   string
+}
+
+func (b *board) Comment(ctx context.Context, number int, body string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if b.refuseComment != nil {
+		return b.refuseComment
+	}
+	b.comments = append(b.comments, posted{number: number, body: body})
+	return nil
 }
 
 func (b *board) Start(ctx context.Context, number int) error {
@@ -332,10 +353,17 @@ func loopOn(t *testing.T, b *board, launcher loop.Launcher) loop.Loop {
 	return loop.Loop{Tracker: b, Launcher: launcher, Bench: trees{}, Agent: claude, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard, Limits: loop.DefaultLimits()}
 }
 
-// trees is a bench whose every task worktree opens and lands without fault.
-type trees struct{}
+// trees is a bench whose every task worktree opens and lands without fault, each task branch ahead of the work branch by ahead commits, or unreadable with aheadErr.
+type trees struct {
+	ahead    int
+	aheadErr error
+}
 
 func (trees) WorkBranch() string { return "smith/42-spec" }
+
+func (trees) TaskBranch(task int) string { return "smith/tasks/smith/42-spec/" + strconv.Itoa(task) }
+
+func (t trees) Ahead(context.Context, int) (int, error) { return t.ahead, t.aheadErr }
 
 func (trees) Open(_ context.Context, task int) (string, error) { return worktreeOf(task), nil }
 

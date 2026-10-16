@@ -20,16 +20,18 @@ import (
 
 // loopWiring is what the loop verbs reach the outside world through: gh for
 // the tracker, the launcher that starts an agent, the bench that sets up an
-// execution's work branch and task worktrees in the repo a directory is in,
-// the pusher that pushes the work branch from a directory, the PATH search
-// that finds an agent, and git, the config home and the working directory
-// that locate the repo file.
+// execution's work branch and task worktrees in the repo a directory is in
+// and finds how far an adopted one is behind its base, the pusher that pushes
+// the work branch from a directory, the PATH search that finds an agent, the
+// hostname that names this machine on a skipped task, and git, the config home
+// and the working directory that locate the repo file.
 type loopWiring struct {
 	gh       tracker.Runner
 	launcher loop.Launcher
-	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error)
+	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error)
 	pusher   func(dir string) loop.Pusher
 	lookPath func(name string) (string, error)
+	hostname func() (string, error)
 	git      repofile.Runner
 	home     homeResolver
 	workdir  workdirResolver
@@ -37,7 +39,7 @@ type loopWiring struct {
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
 // agents started as processes on smith's own terminal, the real git keeping
-// the workbench and pushing to origin, and the real PATH.
+// the workbench and pushing to origin, the real PATH and the real hostname.
 func systemLoop() loopWiring {
 	return loopWiring{
 		gh:       connection.System(),
@@ -45,6 +47,7 @@ func systemLoop() loopWiring {
 		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: exec.LookPath,
+		hostname: os.Hostname,
 		git:      connection.System(),
 		home:     userConfigHome,
 		workdir:  currentDir,
@@ -52,13 +55,13 @@ func systemLoop() loopWiring {
 }
 
 // systemBench sets up the workbench for req in the repo dir is in, with the
-// real git.
-func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+// real git, and returns how far an adopted work branch is behind its base.
+func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 	bench, err := workbench.Setup(ctx, connection.System(), dir, req)
 	if err != nil {
-		return nil, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
+		return nil, workbench.Lag{}, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
 	}
-	return bench, nil
+	return bench, bench.Lag(), nil
 }
 
 // newLoopCmd builds `smith loop`, the verbs that work a spec's tasks, or a
@@ -141,11 +144,11 @@ func (w loopWiring) origin(settings loop.Settings) (loop.Pusher, error) {
 // workbench sets up the work branch for execution in the repo smith is run
 // in, the one branch names or, when it is empty, the execution's own, cutting a
 // missing one from base, or from origin's default branch when base is empty,
-// before any agent runs.
-func (w loopWiring) workbench(ctx context.Context, execution tracker.Execution, branch, base string) (loop.Bench, error) {
+// before any agent runs, and returns how far an adopted one is behind its base.
+func (w loopWiring) workbench(ctx context.Context, execution tracker.Execution, branch, base string) (loop.Bench, workbench.Lag, error) {
 	dir, err := w.workdir()
 	if err != nil {
-		return nil, fmt.Errorf("find the repo to work in: %w", err)
+		return nil, workbench.Lag{}, fmt.Errorf("find the repo to work in: %w", err)
 	}
 	return w.bench(ctx, dir, workbench.Request{Number: execution.Number, Title: execution.Title, Branch: branch, Base: base})
 }
@@ -159,6 +162,22 @@ func warnOfLabels(cmd *cobra.Command, repo loop.LabelLister, s loop.Settings) er
 		}
 	}
 	return nil
+}
+
+// lagWarning renders the warning line for a work branch with lag behind its
+// base, or that its lag could not be found, and is empty when neither holds.
+func lagWarning(branch string, lag workbench.Lag) string {
+	if lag.Err != nil {
+		return fmt.Sprintf("smith: warning: could not check whether work branch %s is behind origin/%s: %v\n", branch, lag.Base, lag.Err)
+	}
+	if lag.Commits == 0 {
+		return ""
+	}
+	commits := "commits"
+	if lag.Commits == 1 {
+		commits = "commit"
+	}
+	return fmt.Sprintf("smith: warning: work branch %s is %d %s behind origin/%s: merge or rebase origin/%s into it\n", branch, lag.Commits, commits, lag.Base, lag.Base)
 }
 
 // settingsReport renders each resolved setting with where it came from,
@@ -275,9 +294,12 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err := loop.Admit(execution, settings.Labels()); err != nil {
 				return reportInvalid(cmd, err)
 			}
-			bench, err := w.workbench(cmd.Context(), execution, branch, base)
+			bench, lag, err := w.workbench(cmd.Context(), execution, branch, base)
 			if err != nil {
 				return reportInvalid(cmd, err)
+			}
+			if _, err := fmt.Fprint(cmd.ErrOrStderr(), lagWarning(bench.WorkBranch(), lag)); err != nil {
+				return fmt.Errorf("write warning: %w", err)
 			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
 				return fmt.Errorf("write report: %w", err)
@@ -292,6 +314,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				Prompt:   prompt,
 				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
+				Hostname: w.hostname,
 			}
 			report, succeeded, err := runLoop(cmd.Context(), l, execution, interactive)
 			if err != nil {

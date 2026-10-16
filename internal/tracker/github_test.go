@@ -61,6 +61,9 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if args[0] == "issue" && args[1] == "edit" {
 		return f.edit(args, stderr)
 	}
+	if args[0] == "issue" && args[1] == "comment" {
+		return nil
+	}
 	reply, ok := f.replies[strings.Join(args, " ")]
 	if !ok {
 		if _, err := io.WriteString(stderr, "GraphQL: Could not resolve to an issue or pull request with the number of "+args[2]+". (repository.issue)\n"); err != nil {
@@ -857,5 +860,30 @@ func TestLabelsReportsAnUnusableGH(t *testing.T) {
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || unavailable.Detail != "HTTP 401: Bad credentials\n" {
 		t.Errorf("Labels() error = %v, want an *tracker.UnavailableError carrying what gh said", err)
+	}
+}
+
+func TestCommentPostsTheBodyOnTheIssue(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{}
+
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Comment(t.Context(), 12, "smith skipped this task."); err != nil {
+		t.Fatalf("Comment(12) error = %v", err)
+	}
+
+	if want := []string{"issue comment 12 --body smith skipped this task."}; !slices.Equal(gh.ran, want) {
+		t.Errorf("Comment(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestCommentReportsARefusedComment(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{stderr: "HTTP 403: Resource not accessible by integration\n"}
+
+	err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Comment(t.Context(), 12, "smith skipped this task.")
+
+	var unavailable *tracker.UnavailableError
+	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Error(), "HTTP 403") {
+		t.Errorf("Comment(12) error = %v, want an UnavailableError carrying what gh said", err)
 	}
 }

@@ -57,16 +57,30 @@ type Workbench struct {
 	dir    string
 	common string
 	branch string
+	lag    Lag
+}
+
+// Lag is how far an adopted work branch was behind the tip of its base on
+// origin when Setup adopted it. Its zero value is no check run: the work
+// branch was freshly cut, or there was no base to compare it with.
+type Lag struct {
+	// Base names the branch on origin the work branch was compared with.
+	Base string
+	// Commits counts the base's commits the work branch lacks.
+	Commits int
+	// Err is why the comparison could not run; nil when it ran.
+	Err error
 }
 
 // Setup readies the work branch for req in the repo dir is inside: it adopts
 // the branch req.Branch names, or else the one branch named smith/<n> or
-// smith/<n>-<slug> for req's number, local or on origin, and otherwise cuts
-// the branch WorkBranch names from the tip of req's base on origin, or of
-// origin's default branch when req names none. It refuses a work branch that
-// is origin's default branch or the base, more than one numbered branch, and
-// one whose local and origin copies have diverged or that is checked out in a
-// worktree with uncommitted changes, and never touches dir's own checkout.
+// smith/<n>-<slug> for req's number, local or on origin, comparing it with the
+// tip of its base on origin for Lag, and otherwise cuts the branch WorkBranch
+// names from the tip of req's base on origin, or of origin's default branch
+// when req names none. It refuses a work branch that is origin's default branch
+// or the base, more than one numbered branch, and one whose local and origin
+// copies have diverged or that is checked out in a worktree with uncommitted
+// changes, and never touches dir's own checkout.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -89,7 +103,11 @@ func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench,
 		return Workbench{}, err
 	}
 	if found != nil {
-		return w, w.adopt(ctx, *found)
+		if err := w.adopt(ctx, *found); err != nil {
+			return Workbench{}, err
+		}
+		w.lag = w.behind(ctx, base)
+		return w, nil
 	}
 	if err := w.cut(ctx, base); err != nil {
 		return Workbench{}, fmt.Errorf("cut work branch %s: %w", w.branch, err)
@@ -119,6 +137,10 @@ func (w Workbench) base(ctx context.Context, named string) (string, error) {
 // WorkBranch names the work branch.
 func (w Workbench) WorkBranch() string { return w.branch }
 
+// Lag reports how far the work branch was behind its base when Setup adopted
+// it.
+func (w Workbench) Lag() Lag { return w.lag }
+
 // Open returns the directory of task's worktree, creating it on a new task
 // branch cut from the work branch's tip, or returning the one an earlier
 // attempt left as it is. It refuses, leaving it in place, anything at that
@@ -127,7 +149,7 @@ func (w Workbench) Open(ctx context.Context, task int) (string, error) {
 	dir := w.worktree(task)
 	_, err := os.Lstat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.taskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
+		if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.TaskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
 			return "", fmt.Errorf("add worktree %s: %w", dir, err)
 		}
 		return dir, nil
@@ -148,14 +170,14 @@ func (w Workbench) owns(ctx context.Context, task int, dir string) error {
 	if err != nil {
 		return err
 	}
-	want := branchRefPrefix + w.taskBranch(task)
+	want := branchRefPrefix + w.TaskBranch(task)
 	i := slices.IndexFunc(trees, func(t tree) bool { return t.dir == dir })
 	if i < 0 {
-		return fmt.Errorf("%s is not a worktree of this repo, so cannot hold task branch %s: move it aside, then run again", dir, w.taskBranch(task))
+		return fmt.Errorf("%s is not a worktree of this repo, so cannot hold task branch %s: move it aside, then run again", dir, w.TaskBranch(task))
 	}
 	if trees[i].ref != want {
 		return fmt.Errorf("worktree %s has %s checked out, not task branch %s: an execution on another work branch left it, so finish or remove it there, then run again",
-			dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.taskBranch(task))
+			dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.TaskBranch(task))
 	}
 	return nil
 }
@@ -179,10 +201,24 @@ func (w Workbench) Land(ctx context.Context, task int) error {
 	if _, err := w.run(ctx, w.dir, "worktree", "remove", dir); err != nil {
 		return fmt.Errorf("remove worktree %s: %w", dir, err)
 	}
-	if _, err := w.run(ctx, w.dir, "branch", "-D", w.taskBranch(task)); err != nil {
-		return fmt.Errorf("remove task branch %s: %w", w.taskBranch(task), err)
+	if _, err := w.run(ctx, w.dir, "branch", "-D", w.TaskBranch(task)); err != nil {
+		return fmt.Errorf("remove task branch %s: %w", w.TaskBranch(task), err)
 	}
 	return nil
+}
+
+// Ahead counts the commits task's branch has that the work branch does not,
+// and is an error when either branch cannot be read.
+func (w Workbench) Ahead(ctx context.Context, task int) (int, error) {
+	out, err := w.run(ctx, w.dir, "rev-list", "--count", branchRefPrefix+w.branch+".."+branchRefPrefix+w.TaskBranch(task))
+	if err != nil {
+		return 0, fmt.Errorf("count the commits of task branch %s: %w", w.TaskBranch(task), err)
+	}
+	n, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("count the commits of task branch %s: %w", w.TaskBranch(task), err)
+	}
+	return n, nil
 }
 
 // fastForward moves the work branch to task's branch tip, guarded on the
@@ -192,22 +228,22 @@ func (w Workbench) fastForward(ctx context.Context, task int) error {
 	if err != nil {
 		return fmt.Errorf("read work branch %s: %w", w.branch, err)
 	}
-	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", branchRefPrefix+w.taskBranch(task))
+	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", branchRefPrefix+w.TaskBranch(task))
 	if err != nil {
-		return fmt.Errorf("read task branch %s: %w", w.taskBranch(task), err)
+		return fmt.Errorf("read task branch %s: %w", w.TaskBranch(task), err)
 	}
 	if old == tip {
 		return nil
 	}
 	if _, err := w.run(ctx, w.dir, "merge-base", "--is-ancestor", old, tip); err != nil {
-		return fmt.Errorf("work branch %s cannot fast-forward to %s: %w", w.branch, w.taskBranch(task), err)
+		return fmt.Errorf("work branch %s cannot fast-forward to %s: %w", w.branch, w.TaskBranch(task), err)
 	}
 	checkout, err := w.cleanCheckout(ctx)
 	if err != nil {
 		return err
 	}
 	if checkout != "" {
-		if _, err := w.run(ctx, checkout, "merge", "--ff-only", "--quiet", branchRefPrefix+w.taskBranch(task)); err != nil {
+		if _, err := w.run(ctx, checkout, "merge", "--ff-only", "--quiet", branchRefPrefix+w.TaskBranch(task)); err != nil {
 			return fmt.Errorf("fast-forward work branch %s in %s: %w", w.branch, checkout, err)
 		}
 		return nil
@@ -396,6 +432,29 @@ func (w Workbench) adopt(ctx context.Context, m match) error {
 	return fmt.Errorf("work branch %s has diverged from origin's copy: reconcile the two, then run again", m.name)
 }
 
+// behind compares the work branch with the tip of base on origin, fetched for
+// the purpose, without moving it. An empty base is no check run.
+func (w Workbench) behind(ctx context.Context, base string) Lag {
+	if base == "" {
+		return Lag{}
+	}
+	lag := Lag{Base: base}
+	tip, err := w.fetch(ctx, base)
+	if err != nil {
+		lag.Err = err
+		return lag
+	}
+	out, err := w.run(ctx, w.dir, "rev-list", "--count", branchRefPrefix+w.branch+".."+tip)
+	if err != nil {
+		lag.Err = fmt.Errorf("count origin's %s commits work branch %s lacks: %w", base, w.branch, err)
+		return lag
+	}
+	if lag.Commits, err = strconv.Atoi(out); err != nil {
+		lag.Err = fmt.Errorf("count origin's %s commits work branch %s lacks: %w", base, w.branch, err)
+	}
+	return lag
+}
+
 // isAncestor reports whether commit a is an ancestor of, or the same as,
 // commit b. Only git's exit status 1 is a no; any other failure is an error.
 func (w Workbench) isAncestor(ctx context.Context, a, b string) (bool, error) {
@@ -445,9 +504,9 @@ func (w Workbench) worktree(task int) string {
 	return filepath.Join(w.common, "smith", "worktrees", strconv.Itoa(task))
 }
 
-// taskBranch names task's branch, in a namespace of smith's own beside the
+// TaskBranch names task's branch, in a namespace of smith's own beside the
 // work branch it is cut from.
-func (w Workbench) taskBranch(task int) string {
+func (w Workbench) TaskBranch(task int) string {
 	return "smith/tasks/" + w.branch + "/" + strconv.Itoa(task)
 }
 
