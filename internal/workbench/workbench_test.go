@@ -733,3 +733,119 @@ func TestSetupKeepsTheCauseOfAFailedAncestryCheck(t *testing.T) {
 		})
 	}
 }
+
+// behindMain returns a clone whose work branch smith/430-x sits at the seed, kept as where says (local, origin or both), and the seed, while origin's main has moved two commits past it.
+func behindMain(t *testing.T, where string) (clone, seed string) {
+	t.Helper()
+	clone, remote := cloned(t)
+	seed = git(t, clone, "rev-parse", "main")
+	if where != "origin" {
+		git(t, clone, "branch", "smith/430-x", "main")
+	}
+	if where != "local" {
+		git(t, clone, "push", "origin", "main:refs/heads/smith/430-x")
+	}
+	other := filepath.Join(t.TempDir(), "other")
+	git(t, filepath.Dir(other), "clone", remote, other)
+	commitIn(t, other, "one.txt")
+	commitIn(t, other, "two.txt")
+	git(t, other, "push", "origin", "main")
+	return clone, seed
+}
+
+func TestSetupFindsAnAdoptedWorkBranchBehindItsBase(t *testing.T) {
+	t.Parallel()
+	for _, where := range []string{"local", "origin", "both"} {
+		t.Run(where, func(t *testing.T) {
+			t.Parallel()
+			clone, _ := behindMain(t, where)
+
+			bench := setup(t, clone)
+
+			if got, want := bench.Lag(), (workbench.Lag{Base: "main", Commits: 2}); got != want {
+				t.Errorf("Lag() = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSetupFindsAnAdoptedWorkBranchLevelWithOrAheadOfItsBaseNotBehind(t *testing.T) {
+	t.Parallel()
+	for _, ahead := range []bool{false, true} {
+		t.Run(map[bool]string{false: "level", true: "ahead"}[ahead], func(t *testing.T) {
+			t.Parallel()
+			clone, _ := cloned(t)
+			git(t, clone, "switch", "-c", "smith/430-x")
+			if ahead {
+				commitIn(t, clone, "ahead.txt")
+			}
+			git(t, clone, "switch", "main")
+
+			bench := setup(t, clone)
+
+			if got, want := bench.Lag(), (workbench.Lag{Base: "main"}); got != want {
+				t.Errorf("Lag() = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSetupComparesAFreshlyCutWorkBranchWithNothing(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+
+	bench := setup(t, clone)
+
+	if got := bench.Lag(); got != (workbench.Lag{}) {
+		t.Errorf("Lag() = %+v, want the zero Lag", got)
+	}
+}
+
+func TestSetupWithNoBaseComparesAnAdoptedWorkBranchWithNothing(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
+	git(t, root, "init", "--bare", "-b", "main", remote)
+	git(t, root, "clone", remote, clone)
+	git(t, clone, "commit", "--allow-empty", "-m", "seed")
+	git(t, clone, "branch", "smith/430-x")
+
+	bench := setup(t, clone)
+
+	if got := bench.Lag(); got != (workbench.Lag{}) {
+		t.Errorf("Lag() = %+v, want the zero Lag", got)
+	}
+}
+
+func TestSetupReportsABaseItCannotFetch(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "branch", "smith/430-x", "main")
+	req := spec430
+	req.Base = "no-such-branch"
+
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	if got := bench.Lag(); got.Base != "no-such-branch" || got.Commits != 0 || got.Err == nil || !strings.Contains(got.Err.Error(), "no-such-branch") {
+		t.Errorf("Lag() = %+v, want base no-such-branch, no commits and an error naming it", got)
+	}
+}
+
+func TestSetupLeavesTheWorkBranchWhereItWasWhenComparingIt(t *testing.T) {
+	t.Parallel()
+	for _, where := range []string{"local", "origin", "both"} {
+		t.Run(where, func(t *testing.T) {
+			t.Parallel()
+			clone, seed := behindMain(t, where)
+
+			setup(t, clone)
+
+			if got := git(t, clone, "rev-parse", "refs/heads/smith/430-x"); got != seed {
+				t.Errorf("smith/430-x after Setup() = %s, want it still at %s", got, seed)
+			}
+		})
+	}
+}

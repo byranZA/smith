@@ -57,6 +57,19 @@ type Workbench struct {
 	dir    string
 	common string
 	branch string
+	lag    Lag
+}
+
+// Lag is how far an adopted work branch was behind the tip of its base on
+// origin when Setup adopted it. Its zero value is no check run: the work
+// branch was freshly cut, or there was no base to compare it with.
+type Lag struct {
+	// Base names the branch on origin the work branch was compared with.
+	Base string
+	// Commits counts the base's commits the work branch lacks.
+	Commits int
+	// Err is why the comparison could not run; nil when it ran.
+	Err error
 }
 
 // Setup readies the work branch for req in the repo dir is inside: it adopts
@@ -66,7 +79,9 @@ type Workbench struct {
 // origin's default branch when req names none. It refuses a work branch that
 // is origin's default branch or the base, more than one numbered branch, and
 // one whose local and origin copies have diverged or that is checked out in a
-// worktree with uncommitted changes, and never touches dir's own checkout.
+// worktree with uncommitted changes, and never touches dir's own checkout. An
+// adopted branch is compared with the tip of its base on origin, and Lag
+// reports what that found.
 func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
 	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -89,7 +104,11 @@ func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench,
 		return Workbench{}, err
 	}
 	if found != nil {
-		return w, w.adopt(ctx, *found)
+		if err := w.adopt(ctx, *found); err != nil {
+			return Workbench{}, err
+		}
+		w.lag = w.behind(ctx, base)
+		return w, nil
 	}
 	if err := w.cut(ctx, base); err != nil {
 		return Workbench{}, fmt.Errorf("cut work branch %s: %w", w.branch, err)
@@ -118,6 +137,10 @@ func (w Workbench) base(ctx context.Context, named string) (string, error) {
 
 // WorkBranch names the work branch.
 func (w Workbench) WorkBranch() string { return w.branch }
+
+// Lag reports how far the work branch was behind its base when Setup adopted
+// it.
+func (w Workbench) Lag() Lag { return w.lag }
 
 // Open returns the directory of task's worktree, creating it on a new task
 // branch cut from the work branch's tip, or returning the one an earlier
@@ -394,6 +417,29 @@ func (w Workbench) adopt(ctx context.Context, m match) error {
 		}
 	}
 	return fmt.Errorf("work branch %s has diverged from origin's copy: reconcile the two, then run again", m.name)
+}
+
+// behind compares the work branch with the tip of base on origin, fetched for
+// the purpose, without moving it. An empty base is no check run.
+func (w Workbench) behind(ctx context.Context, base string) Lag {
+	if base == "" {
+		return Lag{}
+	}
+	lag := Lag{Base: base}
+	tip, err := w.fetch(ctx, base)
+	if err != nil {
+		lag.Err = err
+		return lag
+	}
+	out, err := w.run(ctx, w.dir, "rev-list", "--count", branchRefPrefix+w.branch+".."+tip)
+	if err != nil {
+		lag.Err = fmt.Errorf("count origin's %s commits work branch %s lacks: %w", base, w.branch, err)
+		return lag
+	}
+	if lag.Commits, err = strconv.Atoi(out); err != nil {
+		lag.Err = fmt.Errorf("count origin's %s commits work branch %s lacks: %w", base, w.branch, err)
+	}
+	return lag
 }
 
 // isAncestor reports whether commit a is an ancestor of, or the same as,

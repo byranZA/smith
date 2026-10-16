@@ -51,7 +51,7 @@ func TestLoopRunSetsUpAStandaloneTaskOnTheBranchFlagNames(t *testing.T) {
 	t.Parallel()
 	gh := standaloneTask()
 	var requests []workbench.Request
-	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 		requests = append(requests, req)
 		return fakeBench(ctx, dir, req)
 	}
@@ -94,7 +94,7 @@ func TestLoopRunRefusesAnUnavailableTaskBeforeAnyWorkBranchIsSetUp(t *testing.T)
 			gh := &fakeTracker{issues: map[string]string{"80": tc.issue}}
 			claude := &fakeAgent{gh: gh}
 			var requests []workbench.Request
-			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 				requests = append(requests, req)
 				return fakeBench(ctx, dir, req)
 			}
@@ -139,7 +139,7 @@ func TestLoopRunWorksAChildTaskAloneOnItsParentsWorkBranch(t *testing.T) {
 	gh := specWithChildren()
 	claude := &fakeAgent{gh: gh}
 	var requests []workbench.Request
-	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 		requests = append(requests, req)
 		return fakeBench(ctx, dir, req)
 	}
@@ -215,7 +215,7 @@ func TestLoopRunRefusesASpecWithNoTasks(t *testing.T) {
 	}}
 	claude := &fakeAgent{gh: gh}
 	var requests []workbench.Request
-	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+	recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 		requests = append(requests, req)
 		return fakeBench(ctx, dir, req)
 	}

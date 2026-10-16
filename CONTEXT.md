@@ -448,7 +448,7 @@ The branch an execution starts from, and the one its work is eventually proposed
 _Avoid_: target branch, main (one common base, not the term).
 
 **Work branch**:
-The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to review. An existing work branch is adopted, local or on `origin`; a missing one is cut from the base branch. It is what a reviewer sees.
+The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to review. An existing work branch is adopted, local or on `origin`, and the loop warns before any agent runs when the base branch has commits it lacks, then carries on; a missing one is cut from the base branch. It is what a reviewer sees.
 _Avoid_: feature branch, execution branch.
 
 **Task branch**:
