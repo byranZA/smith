@@ -1,6 +1,8 @@
 # The loop marks tasks on the tracker as a signal, not a claim
 
 > Amends [ADR-0012](./0012-the-repo-file.md), which had the loop only read the tracker.
+>
+> **Amended by [ADR-0016](./0016-the-loop-comments-on-a-task-it-skips.md).** The loop also comments on a task it skips, saying where the work was left; a failed comment write is a warning.
 
 ## Context
 

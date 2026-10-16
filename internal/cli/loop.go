@@ -21,15 +21,17 @@ import (
 // loopWiring is what the loop verbs reach the outside world through: gh for
 // the tracker, the launcher that starts an agent, the bench that sets up an
 // execution's work branch and task worktrees in the repo a directory is in
-// and finds how far an adopted one is behind its base, the pusher that pushes the work branch from a directory, the PATH search
-// that finds an agent, and git, the config home and the working directory
-// that locate the repo file.
+// and finds how far an adopted one is behind its base, the pusher that pushes
+// the work branch from a directory, the PATH search that finds an agent, the
+// hostname that names this machine on a skipped task, and git, the config home
+// and the working directory that locate the repo file.
 type loopWiring struct {
 	gh       tracker.Runner
 	launcher loop.Launcher
 	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error)
 	pusher   func(dir string) loop.Pusher
 	lookPath func(name string) (string, error)
+	hostname func() (string, error)
 	git      repofile.Runner
 	home     homeResolver
 	workdir  workdirResolver
@@ -37,7 +39,7 @@ type loopWiring struct {
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
 // agents started as processes on smith's own terminal, the real git keeping
-// the workbench and pushing to origin, and the real PATH.
+// the workbench and pushing to origin, the real PATH and the real hostname.
 func systemLoop() loopWiring {
 	return loopWiring{
 		gh:       connection.System(),
@@ -45,6 +47,7 @@ func systemLoop() loopWiring {
 		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: exec.LookPath,
+		hostname: os.Hostname,
 		git:      connection.System(),
 		home:     userConfigHome,
 		workdir:  currentDir,
@@ -283,6 +286,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				Prompt:   prompt,
 				Limits:   limits,
 				Progress: cmd.ErrOrStderr(),
+				Hostname: w.hostname,
 			}
 			report, succeeded, err := runLoop(cmd.Context(), l, execution, interactive)
 			if err != nil {
