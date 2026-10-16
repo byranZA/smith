@@ -111,11 +111,11 @@ func (o originAt) Push(_ context.Context, branch string) error {
 }
 
 // fakeBench sets up a bench of benchAt for req, refusing to when the request names no spec.
-func fakeBench(_ context.Context, _ string, req workbench.Request) (loop.Bench, error) {
+func fakeBench(_ context.Context, _ string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 	if req.Number == 0 {
-		return nil, errors.New("no spec to name a work branch after")
+		return nil, workbench.Lag{}, errors.New("no spec to name a work branch after")
 	}
-	return benchAt{branch: workbench.Branch(req.Number, req.Title)}, nil
+	return benchAt{branch: workbench.Branch(req.Number, req.Title)}, workbench.Lag{}, nil
 }
 
 // benchAt is a bench on branch whose task worktrees sit under /bench and land without fault.
@@ -345,7 +345,7 @@ func TestLoopRunRefusesAQualifiedIssueInAnotherRepoBeforeAnyBenchIsSetUp(t *test
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	claude := &fakeAgent{gh: gh}
 	var benched []int
-	bench := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+	bench := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 		benched = append(benched, req.Number)
 		return fakeBench(ctx, dir, req)
 	}
@@ -853,8 +853,8 @@ func TestLoopRunRefusesBeforeAnyAgentRunsWhenTheWorkBranchCannotBeSetUp(t *testi
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 	idle := &idleAgent{}
-	refusing := func(context.Context, string, workbench.Request) (loop.Bench, error) {
-		return nil, errors.New("origin names no default branch")
+	refusing := func(context.Context, string, workbench.Request) (loop.Bench, workbench.Lag, error) {
+		return nil, workbench.Lag{}, errors.New("origin names no default branch")
 	}
 
 	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath, bench: refusing}, "42")
@@ -877,7 +877,7 @@ func TestLoopRunSetsUpTheWorkBranchFromTheBaseFlagNames(t *testing.T) {
 			t.Parallel()
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 			var bases []string
-			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 				bases = append(bases, req.Base)
 				return fakeBench(ctx, dir, req)
 			}
@@ -904,7 +904,7 @@ func TestLoopRunSetsUpTheWorkBranchTheBranchFlagNames(t *testing.T) {
 			t.Parallel()
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 			var branches []string
-			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, error) {
+			recording := func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 				branches = append(branches, req.Branch)
 				return fakeBench(ctx, dir, req)
 			}
