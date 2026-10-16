@@ -101,3 +101,17 @@ func (e *UnavailableError) Error() string {
 
 // Unwrap returns the underlying failure.
 func (e *UnavailableError) Unwrap() error { return e.Err }
+
+// Labels are the names of the triage labels that say what an issue is for:
+// Agent and Human mark who a task is for, and Spec marks a spec not yet
+// split into tasks.
+type Labels struct {
+	Agent string
+	Human string
+	Spec  string
+}
+
+// DefaultLabels returns the triage labels a repo uses unless it names its own.
+func DefaultLabels() Labels {
+	return Labels{Agent: "ready-for-agent", Human: "ready-for-human", Spec: "spec"}
+}

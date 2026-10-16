@@ -153,6 +153,17 @@ func (w loopWiring) workbench(ctx context.Context, execution tracker.Execution, 
 	return w.bench(ctx, dir, workbench.Request{Number: execution.Number, Title: execution.Title, Branch: branch, Base: base})
 }
 
+// warnOfLabels writes a warning for each triage label the repo file sets that
+// the repo lacks, or for a label check that could not run, and goes on.
+func warnOfLabels(cmd *cobra.Command, repo loop.LabelLister, s loop.Settings) error {
+	for _, warning := range loop.LabelWarnings(cmd.Context(), repo, s) {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "smith: warning: %s\n", warning); err != nil {
+			return fmt.Errorf("write warning: %w", err)
+		}
+	}
+	return nil
+}
+
 // lagWarning renders the warning line for a work branch with lag behind its
 // base, or that its lag could not be found, and is empty when neither holds.
 func lagWarning(branch string, lag workbench.Lag) string {
@@ -170,7 +181,8 @@ func lagWarning(branch string, lag workbench.Lag) string {
 }
 
 // settingsReport renders each resolved setting with where it came from,
-// naming an unset model or effort as the agent's own default.
+// naming an unset model or effort as the agent's own default. The triage
+// labels are reported only when the repo file sets one of them.
 func settingsReport(s loop.Settings) string {
 	var b strings.Builder
 	for _, setting := range []struct {
@@ -186,6 +198,19 @@ func settingsReport(s loop.Settings) string {
 			setting.value.Value = "the agent's own default"
 		}
 		fmt.Fprintf(&b, "%-7s %s\n", setting.name+":", setting.value)
+	}
+	labels := []struct {
+		name  string
+		value config.Value
+	}{{"agent", s.AgentLabel}, {"human", s.HumanLabel}, {"spec", s.SpecLabel}}
+	var named []string
+	set := false
+	for _, label := range labels {
+		named = append(named, label.name+" "+label.value.String())
+		set = set || label.value.Origin == config.FromRepoFile
+	}
+	if set {
+		fmt.Fprintf(&b, "labels: %s\n", strings.Join(named, ", "))
 	}
 	return b.String()
 }
@@ -254,7 +279,10 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			github := tracker.NewGitHub(w.gh)
+			github := tracker.NewGitHub(w.gh, settings.Labels())
+			if err := warnOfLabels(cmd, github, settings); err != nil {
+				return err
+			}
 			number, err := github.Local(cmd.Context(), ref)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -263,7 +291,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if err := loop.Admit(execution); err != nil {
+			if err := loop.Admit(execution, settings.Labels()); err != nil {
 				return reportInvalid(cmd, err)
 			}
 			bench, lag, err := w.workbench(cmd.Context(), execution, branch, base)
@@ -416,7 +444,7 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			github := tracker.NewGitHub(w.gh)
+			github := tracker.NewGitHub(w.gh, settings.Labels())
 			number, err := github.Local(cmd.Context(), ref)
 			if err != nil {
 				return reportInvalid(cmd, err)

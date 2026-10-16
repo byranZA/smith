@@ -29,8 +29,8 @@ func (e *EmptyError) Error() string { return fmt.Sprintf("#%d has no tasks", e.N
 // Admit returns nil when execution may run: a spec with at least one task,
 // whatever they hold, and a single task only when it is available. Otherwise
 // it returns an *EmptyError for a spec with no tasks, or a *RefusedError naming
-// why the task would not run.
-func Admit(execution tracker.Execution) error {
+// why the task would not run, in the words of labels.
+func Admit(execution tracker.Execution, labels tracker.Labels) error {
 	if !execution.Single {
 		if len(execution.Tasks) == 0 {
 			return &EmptyError{Number: execution.Number}
@@ -38,7 +38,7 @@ func Admit(execution tracker.Execution) error {
 		return nil
 	}
 	for _, task := range execution.Tasks {
-		if reason := unavailable(task); reason != "" {
+		if reason := unavailable(task, labels); reason != "" {
 			return &RefusedError{Task: task, Reason: reason}
 		}
 	}
@@ -46,15 +46,15 @@ func Admit(execution tracker.Execution) error {
 }
 
 // unavailable returns why task is not available, in the order Survey sorts
-// tasks, and "" when it is.
-func unavailable(task tracker.Task) string {
+// tasks and naming the agent label of labels, and "" when it is.
+func unavailable(task tracker.Task, labels tracker.Labels) string {
 	switch {
 	case !task.Open:
 		return "is closed"
 	case task.For == tracker.Human:
 		return "is meant for a human"
 	case task.For != tracker.Agent:
-		return `is not labelled "ready-for-agent"`
+		return fmt.Sprintf("is not labelled %q", labels.Agent)
 	case blocked(task):
 		return "is blocked by " + strings.Join(openBlockers(task), ", ")
 	default:

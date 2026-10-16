@@ -1,7 +1,7 @@
 # The repo file: the loop settings everyone running `smith loop` on this repo
 # shares. Commit it. A setting left commented out uses smith's built-in
-# default, and a flag on `smith loop run` overrides any setting for one run
-# without editing this file.
+# default, and a flag on `smith loop run` overrides any setting but the
+# labels for one run without editing this file.
 
 # The coding agent the loop hands each task to: claude (the default), codex or pi.
 # agent: claude
@@ -18,3 +18,13 @@
 # each task it lands. Unset, it pushes; `smith loop run --no-push` turns it off
 # for one run.
 # push: false
+
+# The tracker's triage labels: the one that marks a task for an agent, the one
+# that marks it for a human (where a task the loop skips goes), and the one
+# that marks a spec not yet split into tasks. Set only those this repo names
+# differently; the rest keep the defaults shown. `smith loop run` warns of any
+# label set here that the repo does not have.
+# labels:
+#   agent: ready-for-agent
+#   human: ready-for-human
+#   spec: spec

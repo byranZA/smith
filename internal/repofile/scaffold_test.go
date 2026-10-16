@@ -74,12 +74,15 @@ func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	example := regexp.MustCompile(`(?m)^# ([a-z]+: )`).ReplaceAll(data, []byte("$1"))
+	example := regexp.MustCompile(`(?m)^# ((?:  )?[a-z]+:(?: |$))`).ReplaceAll(data, []byte("$1"))
 
 	got, err := repofile.Parse(example)
 
 	off := false
-	want := repofile.File{Agent: "claude", Model: "opus", Effort: "high", Push: &off}
+	want := repofile.File{
+		Agent: "claude", Model: "opus", Effort: "high", Push: &off,
+		Labels: repofile.Labels{Agent: "ready-for-agent", Human: "ready-for-human", Spec: "spec"},
+	}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse(starter with its examples uncommented) = %+v, %v; want %+v", got, err, want)
 	}

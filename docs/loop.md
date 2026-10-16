@@ -20,7 +20,7 @@ The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed an
 - **The issue** the loop is given is named as `42`, `#42`, `owner/name#42` or its issue URL, and is a spec or a single task. A qualified reference or URL for an issue in a different repo from the one `gh` sees in the working directory is refused.
 - **A spec** is an issue with sub-issues, whatever its labels, or one labelled `spec`, which marks a spec not yet split into tasks. An issue with sub-issues is a spec even when it is labelled `ready-for-agent`, and is never handed to an agent itself. Any other issue is a task, worked alone as a run of one task. A **child task**, one with a parent, runs on its immediate parent's work branch, and no sibling task is worked. A **standalone task**, with no parent, runs on a work branch of its own.
 - **Its tasks** are its sub-issues. The ones its `## Tasks` checklist lists come first, in that order, then any other sub-issue in the order GitHub holds them.
-- **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue that is itself a spec, labelled `spec` or with sub-issues of its own, is a nested spec, never a task.
+- **Who a task is for** comes from its labels: `ready-for-agent` tasks go to the agent, and `ready-for-human` tasks are never handed out. A task with both labels is kept for the human. A task with neither is not ready yet, and a sub-issue that is itself a spec, labelled `spec` or with sub-issues of its own, is a nested spec, never a task. These are the default names of the **triage labels**: a repo can name its own (see [Triage labels](#triage-labels)), and every message names the labels the repo uses.
 - **Blockers** are a task's GitHub "blocked by" links, plus any issue named in its `## Blocked by` section. A task is **available** when it is open, for an agent, and every blocker is closed.
 
 A task named on its own must be available. Otherwise `run` launches no agent, sets up no work branch or worktree, and exits 1 naming why: `#N is closed`, `#N is meant for a human`, `#N is not labelled "ready-for-agent"` or `#N is blocked by #M`. There is no override. `list` still shows the task under where it stands, such as `blocked: #N (by #M)`, and exits 0.
@@ -110,6 +110,10 @@ agent: claude
 model: opus
 effort: high
 push: true
+labels:
+  agent: ready-for-agent
+  human: ready-for-human
+  spec: spec
 ```
 
 `smith repo init` writes a commented starter, filling in any value you give as a flag, and reports `created <path>`. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`.
@@ -118,9 +122,36 @@ Each setting resolves on its own, most specific first:
 
 1. A flag on `smith loop run`, for that run only.
 2. The repo file.
-3. The built-in default: `claude`, the agent's own model and effort, and push on.
+3. The built-in default: `claude`, the agent's own model and effort, push on, and the triage labels shown above.
 
-The file is validated strictly: an unknown key is refused with its line. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The triage labels have no flags: they are set in the repo file or left to their defaults.
+
+The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+
+### Triage labels
+
+`labels:` names the three labels the loop reads and writes on GitHub, for a repo whose triage uses other names:
+
+| key | default | marks |
+| --- | --- | --- |
+| `agent` | `ready-for-agent` | a task for the agent |
+| `human` | `ready-for-human` | a task for a human, and where a skipped task goes |
+| `spec` | `spec` | a spec not yet split into tasks |
+
+Each key is optional, and one left out keeps its default. A name set to nothing (`agent: ""`) is refused, never taken as the default. No two keys may share a name, the default ones included: a task carrying both the agent and the human label goes to the human, so `human: ready-for-agent` would send every task to a human. The loop uses the names everywhere it reads, writes or reports a label, such as `#N is not labelled "<agent label>"`, and `list` and `run` add a line to the settings block naming all three:
+
+```text
+labels: agent go (repo file), human ready-for-human (built-in default), spec epic (repo file)
+```
+
+`smith:working` and `smith:failed` keep their names, and no triage label may take either one: the loop marks its own work with them, so they never say who a task is for.
+
+Before any agent runs, `run` reads the repo's labels once and writes a `smith: warning: …` line to stderr for each label the repo file sets that the repo does not have, then carries on:
+
+- **`agent` or `spec`**: no issue will match it, and smith never creates it, because the loop only reads these.
+- **`human`**: smith creates it the first time it skips a task, as it does the default.
+
+A label left to its default is never checked, so a repo file with no `labels:` reads no labels at all. If the labels cannot be read, `run` warns that it could not check them and carries on.
 
 ## The loop prompt
 

@@ -27,15 +27,32 @@ type File struct {
 	// Push says whether the loop pushes the branch after each task the agent
 	// closes. Nil is unset, which the loop takes as on.
 	Push *bool `yaml:"push"`
+	// Labels name the triage labels the loop reads and writes on the tracker.
+	Labels Labels `yaml:"labels"`
 }
 
-// Parse decodes a repo file strictly: any key it does not define is refused
-// with its line, in a *blueprint.ValidationError. An empty document is valid
-// and leaves every field unset.
+// Labels are the names of the tracker's triage labels. A name left empty is
+// unset, and the loop falls back to its built-in default for it.
+type Labels struct {
+	// Agent marks a task ready for an agent.
+	Agent string `yaml:"agent"`
+	// Human marks a task ready for a human, and is where a skipped task goes.
+	Human string `yaml:"human"`
+	// Spec marks an issue as a spec not yet split into tasks.
+	Spec string `yaml:"spec"`
+}
+
+// Parse decodes a repo file strictly: any key it does not define, and any
+// label set to no name, is refused with its line, in a
+// *blueprint.ValidationError. An empty document is valid and leaves every
+// field unset.
 func Parse(data []byte) (File, error) {
 	var f File
 	if err := blueprint.DecodeStrict(data, subject, &f); err != nil {
 		return File{}, fmt.Errorf("parse repo file: %w", err)
+	}
+	if err := validationError(labelFindings(data)); err != nil {
+		return File{}, err
 	}
 	return f, nil
 }

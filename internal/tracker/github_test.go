@@ -49,6 +49,9 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 		_, err := io.WriteString(stdout, `{"nameWithOwner":"o/r"}`)
 		return err
 	}
+	if args[0] == "label" && args[1] == "list" {
+		return f.list(stdout)
+	}
 	if args[0] == "label" {
 		if !f.lostLabels {
 			f.labels = append(f.labels, args[2])
@@ -93,6 +96,16 @@ func (f *fakeGH) page(args []string, stdout, stderr io.Writer) error {
 		return errors.New("exit status 1")
 	}
 	_, err := io.WriteString(stdout, reply)
+	return err
+}
+
+// list writes the repo's labels as gh's label list JSON gives them.
+func (f *fakeGH) list(stdout io.Writer) error {
+	names := make([]string, 0, len(f.labels))
+	for _, l := range f.labels {
+		names = append(names, fmt.Sprintf(`{"name":%q}`, l))
+	}
+	_, err := io.WriteString(stdout, "["+strings.Join(names, ",")+"]")
 	return err
 }
 
@@ -168,7 +181,7 @@ func TestExecutionReadsTheSpecAndItsTasksInListedOrder(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{replies: recorded()}
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
@@ -188,7 +201,7 @@ func TestExecutionOnlyReadsTheTracker(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{replies: recorded()}
 
-	if _, err := tracker.NewGitHub(gh).Execution(t.Context(), 42); err != nil {
+	if _, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42); err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
 
@@ -207,7 +220,7 @@ func TestExecutionOfAStandaloneTaskIsTheTaskAlone(t *testing.T) {
 		"issue view 7 --json number,state": `{"number":7,"state":"CLOSED"}`,
 	}}
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 80)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 80)
 	if err != nil {
 		t.Fatalf("Execution(80) error = %v", err)
 	}
@@ -231,7 +244,7 @@ func childOf(parent int, title string) *fakeGH {
 func TestExecutionOfAChildTaskIsTheTaskAloneUnderItsParent(t *testing.T) {
 	t.Parallel()
 
-	got, err := tracker.NewGitHub(childOf(74, "Spec: Widgets")).Execution(t.Context(), 82)
+	got, err := tracker.NewGitHub(childOf(74, "Spec: Widgets"), tracker.DefaultLabels()).Execution(t.Context(), 82)
 	if err != nil {
 		t.Fatalf("Execution(82) error = %v", err)
 	}
@@ -247,7 +260,7 @@ func TestExecutionOfAChildTaskIsTheTaskAloneUnderItsParent(t *testing.T) {
 func TestExecutionOfATaskUnderANestedSpecIsUnderItsImmediateParent(t *testing.T) {
 	t.Parallel()
 
-	got, err := tracker.NewGitHub(childOf(76, "Gadgets")).Execution(t.Context(), 82)
+	got, err := tracker.NewGitHub(childOf(76, "Gadgets"), tracker.DefaultLabels()).Execution(t.Context(), 82)
 	if err != nil {
 		t.Fatalf("Execution(82) error = %v", err)
 	}
@@ -265,7 +278,7 @@ func TestExecutionRefusesATaskWhoseParentIsInAnotherRepo(t *testing.T) {
 	gh := childOf(74, "Spec: Widgets")
 	gh.replies[specView(82)] = strings.Replace(gh.replies[specView(82)], "o/r/issues/74", "o/x/issues/74", 1)
 
-	_, err := tracker.NewGitHub(gh).Execution(t.Context(), 82)
+	_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 82)
 
 	var foreign *tracker.ForeignError
 	if !errors.As(err, &foreign) || foreign.Ref != (tracker.Ref{Repo: "o/x", Number: 74}) {
@@ -277,7 +290,7 @@ func TestExecutionReportsAMissingIssueAsNotFound(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{replies: map[string]string{}}
 
-	_, err := tracker.NewGitHub(gh).Execution(t.Context(), 9999)
+	_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 9999)
 
 	var notFound *tracker.NotFoundError
 	if !errors.As(err, &notFound) || notFound.Number != 9999 {
@@ -293,7 +306,7 @@ func TestExecutionReportsAnUnusableGH(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+			_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 
 			var unavailable *tracker.UnavailableError
 			if !errors.As(err, &unavailable) {
@@ -307,7 +320,7 @@ func TestUnavailableErrorCarriesWhatGHSaid(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{stderr: "To get started with GitHub CLI, please run:  gh auth login\n"}
 
-	_, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 
 	if err == nil || !strings.Contains(err.Error(), "gh auth login") {
 		t.Errorf("Execution(42) error = %v, want it to carry gh's own message", err)
@@ -318,7 +331,7 @@ func TestExecutionReadsChildrenPastTheFirstHundred(t *testing.T) {
 	t.Parallel()
 	gh := manyChildren()
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
@@ -333,7 +346,7 @@ func TestExecutionOrdersChildrenAcrossPages(t *testing.T) {
 	t.Parallel()
 	gh := manyChildren()
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
@@ -365,7 +378,7 @@ func TestExecutionReadsBlockersPastTheFirstFifty(t *testing.T) {
 	gh.pages[pageKey("blockedBy", "43", "")] = graphQLPage("blockedBy", first, "c50")
 	gh.pages[pageKey("blockedBy", "43", "c50")] = graphQLPage("blockedBy", []string{node(351, "OPEN")}, "")
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
@@ -380,7 +393,7 @@ func TestExecutionFailsWhenALaterPageCannotBeRead(t *testing.T) {
 	gh := manyChildren()
 	delete(gh.pages, pageKey("subIssues", "42", "c100"))
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || !reflect.DeepEqual(got, tracker.Execution{}) {
@@ -393,7 +406,7 @@ func TestLocalNamesAnIssueInTheCurrentRepo(t *testing.T) {
 	for _, ref := range []tracker.Ref{{Number: 42}, {Repo: "o/r", Number: 42}, {Repo: "O/R", Number: 42}} {
 		t.Run(ref.String(), func(t *testing.T) {
 			t.Parallel()
-			got, err := tracker.NewGitHub(&fakeGH{}).Local(t.Context(), ref)
+			got, err := tracker.NewGitHub(&fakeGH{}, tracker.DefaultLabels()).Local(t.Context(), ref)
 			if err != nil || got != 42 {
 				t.Errorf("Local(%v) = %d, %v; want 42", ref, got, err)
 			}
@@ -405,7 +418,7 @@ func TestLocalRefusesAnIssueInAnotherRepo(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{replies: recorded()}
 
-	got, err := tracker.NewGitHub(gh).Local(t.Context(), tracker.Ref{Repo: "other/repo", Number: 42})
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Local(t.Context(), tracker.Ref{Repo: "other/repo", Number: 42})
 
 	want := tracker.ForeignError{Ref: tracker.Ref{Repo: "other/repo", Number: 42}, Repo: "o/r"}
 	var foreign *tracker.ForeignError
@@ -426,7 +439,7 @@ func sameNumbers(blockedBy, body string) *fakeGH {
 
 func blockersOf(t *testing.T, gh *fakeGH, number int) []tracker.Blocker {
 	t.Helper()
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
@@ -480,7 +493,7 @@ func TestExecutionRefusesATaskInAnotherRepo(t *testing.T) {
 	gh := sameNumbers(`{"nodes":[],"totalCount":0}`, "")
 	gh.replies[specView(42)] = `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/other/repo/issues/43"}],"totalCount":1},"title":"Spec"}`
 
-	_, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 
 	want := tracker.ForeignError{Ref: tracker.Ref{Repo: "other/repo", Number: 43}, Repo: "o/r"}
 	var foreign *tracker.ForeignError
@@ -511,7 +524,7 @@ func TestExecutionOfAnIssueWithSubIssuesIsASpec(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := tracker.NewGitHub(parentOf(tc.number, tc.labels)).Execution(t.Context(), tc.number)
+			got, err := tracker.NewGitHub(parentOf(tc.number, tc.labels), tracker.DefaultLabels()).Execution(t.Context(), tc.number)
 			if err != nil {
 				t.Fatalf("Execution(%d) error = %v", tc.number, err)
 			}
@@ -533,7 +546,7 @@ func TestExecutionOfASpecWithNoSubIssuesHasNoTasks(t *testing.T) {
 		specView(76): `{"body":"","labels":[{"name":"spec"},{"name":"ready-for-agent"}],"number":76,"state":"OPEN","url":"https://github.com/o/r/issues/76","subIssues":{"nodes":[],"totalCount":0},"title":"Gadgets"}`,
 	}}
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 76)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 76)
 	if err != nil {
 		t.Fatalf("Execution(76) error = %v", err)
 	}
@@ -555,7 +568,7 @@ func TestExecutionNeverHandsANestedSpecToAnyone(t *testing.T) {
 			gh := parentOf(74, `{"name":"spec"}`)
 			gh.replies[taskView(79)] = fmt.Sprintf(`{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":%s,"number":79,"state":"OPEN","subIssues":{"nodes":[{"number":90,"state":"OPEN"}],"totalCount":1},"title":"Task 79"}`, labels)
 
-			got, err := tracker.NewGitHub(gh).Execution(t.Context(), 74)
+			got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 74)
 			if err != nil {
 				t.Fatalf("Execution(74) error = %v", err)
 			}
@@ -586,7 +599,7 @@ func TestTaskReadsATaskThatBecameASpecAsThatTask(t *testing.T) {
 				taskView(80): fmt.Sprintf(`{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[%s],"number":80,"state":"CLOSED","subIssues":%s,"title":"Fix X","url":"https://github.com/o/r/issues/80"}`, tc.labels, tc.subIssues),
 			}}
 
-			got, err := tracker.NewGitHub(gh).Task(t.Context(), 80)
+			got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Task(t.Context(), 80)
 			if err != nil {
 				t.Fatalf("Task(80) error = %v", err)
 			}
@@ -605,7 +618,7 @@ func TestTaskReadsAnOpenTasksBlockers(t *testing.T) {
 		"issue view 7 --json number,state": `{"number":7,"state":"CLOSED"}`,
 	}}
 
-	got, err := tracker.NewGitHub(gh).Task(t.Context(), 80)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Task(t.Context(), 80)
 	if err != nil {
 		t.Fatalf("Task(80) error = %v", err)
 	}
@@ -620,7 +633,7 @@ func TestStartLabelsTheTaskAsWorkedAndClearsItsFailedMarkInOneEdit(t *testing.T)
 	t.Parallel()
 	gh := &fakeGH{labels: []string{"smith:working", "smith:failed"}}
 
-	if err := tracker.NewGitHub(gh).Start(t.Context(), 12); err != nil {
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Start(t.Context(), 12); err != nil {
 		t.Fatalf("Start(12) error = %v", err)
 	}
 
@@ -633,7 +646,7 @@ func TestStopRemovesTheWorkedLabelInOneEdit(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{labels: []string{"smith:working"}}
 
-	if err := tracker.NewGitHub(gh).Stop(t.Context(), 12); err != nil {
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Stop(t.Context(), 12); err != nil {
 		t.Fatalf("Stop(12) error = %v", err)
 	}
 
@@ -646,7 +659,7 @@ func TestStartCreatesAMissingLabelAndRetriesOnce(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{labels: []string{"smith:failed"}}
 
-	if err := tracker.NewGitHub(gh).Start(t.Context(), 12); err != nil {
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Start(t.Context(), 12); err != nil {
 		t.Fatalf("Start(12) error = %v", err)
 	}
 
@@ -664,7 +677,7 @@ func TestStartReportsARefusedEdit(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{stderr: "HTTP 403: Resource not accessible by integration\n"}
 
-	err := tracker.NewGitHub(gh).Start(t.Context(), 12)
+	err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Start(t.Context(), 12)
 
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || len(gh.ran) != 1 {
@@ -676,7 +689,7 @@ func TestStartRetriesAnEditOnlyOnce(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{lostLabels: true}
 
-	err := tracker.NewGitHub(gh).Start(t.Context(), 12)
+	err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Start(t.Context(), 12)
 
 	if err == nil || len(gh.ran) != 3 {
 		t.Errorf("Start(12) error = %v after gh %q, want an error after one create and one retry", err, gh.ran)
@@ -687,7 +700,7 @@ func TestFailHandsTheTaskToAHumanInOneEdit(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{labels: []string{"smith:working", "smith:failed", "ready-for-agent", "ready-for-human"}}
 
-	if err := tracker.NewGitHub(gh).Fail(t.Context(), 12); err != nil {
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Fail(t.Context(), 12); err != nil {
 		t.Fatalf("Fail(12) error = %v", err)
 	}
 
@@ -701,7 +714,7 @@ func TestFailCreatesEachMissingLabel(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{labels: []string{"smith:working", "ready-for-agent"}}
 
-	if err := tracker.NewGitHub(gh).Fail(t.Context(), 12); err != nil {
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Fail(t.Context(), 12); err != nil {
 		t.Fatalf("Fail(12) error = %v", err)
 	}
 
@@ -720,7 +733,7 @@ func TestExecutionReportsATaskLabelledAsWorked(t *testing.T) {
 		taskView(44): agentTask(44, "OPEN", `{"nodes":[],"totalCount":0}`),
 	}}
 
-	got, err := tracker.NewGitHub(gh).Execution(t.Context(), 42)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 	if err != nil {
 		t.Fatalf("Execution(42) error = %v", err)
 	}
@@ -740,7 +753,7 @@ func TestTaskReportsATaskLabelledAsWorked(t *testing.T) {
 		taskView(80): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"ready-for-agent"},{"name":"smith:working"}],"number":80,"state":"OPEN","subIssues":{"nodes":[],"totalCount":0},"title":"Fix X","url":"https://github.com/o/r/issues/80"}`,
 	}}
 
-	got, err := tracker.NewGitHub(gh).Task(t.Context(), 80)
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Task(t.Context(), 80)
 	if err != nil {
 		t.Fatalf("Task(80) error = %v", err)
 	}
@@ -750,11 +763,111 @@ func TestTaskReportsATaskLabelledAsWorked(t *testing.T) {
 	}
 }
 
+// configured are the triage labels a repo file can name in place of the defaults.
+var configured = tracker.Labels{Agent: "go", Human: "stop", Spec: "epic"}
+
+func TestExecutionReadsTasksByTheConfiguredLabels(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		specView(42): `{"body":"","labels":[],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN"},{"number":44,"state":"OPEN"},{"number":45,"state":"OPEN"}],"totalCount":3},"title":"Spec: labels"}`,
+		taskView(43): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"go"}],"number":43,"state":"OPEN","title":"Task 43"}`,
+		taskView(44): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"stop"}],"number":44,"state":"OPEN","title":"Task 44"}`,
+		taskView(45): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"ready-for-agent"}],"number":45,"state":"OPEN","title":"Task 45"}`,
+	}}
+
+	got, err := tracker.NewGitHub(gh, configured).Execution(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("Execution(42) error = %v", err)
+	}
+
+	want := tracker.Execution{Number: 42, Title: "Spec: labels", Tasks: []tracker.Task{
+		{Number: 43, Title: "Task 43", Open: true, For: tracker.Agent},
+		{Number: 44, Title: "Task 44", Open: true, For: tracker.Human},
+		{Number: 45, Title: "Task 45", Open: true, For: tracker.Nobody},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Execution(42) =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestExecutionTakesAnIssueWithTheConfiguredSpecLabelForASpec(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		specView(76): `{"body":"","labels":[{"name":"epic"},{"name":"go"}],"number":76,"state":"OPEN","url":"https://github.com/o/r/issues/76","subIssues":{"nodes":[],"totalCount":0},"title":"Gadgets"}`,
+	}}
+
+	got, err := tracker.NewGitHub(gh, configured).Execution(t.Context(), 76)
+	if err != nil {
+		t.Fatalf("Execution(76) error = %v", err)
+	}
+
+	want := tracker.Execution{Number: 76, Title: "Gadgets", Tasks: []tracker.Task{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Execution(76) = %+v, want %+v", got, want)
+	}
+}
+
+func TestFailHandsTheTaskFromTheConfiguredAgentLabelToTheConfiguredHumanOne(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"smith:working", "smith:failed", "go", "stop"}}
+
+	if err := tracker.NewGitHub(gh, configured).Fail(t.Context(), 12); err != nil {
+		t.Fatalf("Fail(12) error = %v", err)
+	}
+
+	want := []string{"issue edit 12 --add-label stop --add-label smith:failed --remove-label smith:working --remove-label go"}
+	if !slices.Equal(gh.ran, want) {
+		t.Errorf("Fail(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestFailCreatesAMissingConfiguredHumanLabel(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"smith:working", "smith:failed", "go"}}
+
+	if err := tracker.NewGitHub(gh, configured).Fail(t.Context(), 12); err != nil {
+		t.Fatalf("Fail(12) error = %v", err)
+	}
+
+	edit := "issue edit 12 --add-label stop --add-label smith:failed --remove-label smith:working --remove-label go"
+	want := []string{edit, "label create stop", edit}
+	if !slices.Equal(gh.ran, want) {
+		t.Errorf("Fail(12) ran gh %q, want %q", gh.ran, want)
+	}
+}
+
+func TestLabelsListsTheLabelsTheRepoHas(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{labels: []string{"go", "smith:working", "ready-for-human"}}
+
+	got, err := tracker.NewGitHub(gh, configured).Labels(t.Context())
+	if err != nil {
+		t.Fatalf("Labels() error = %v", err)
+	}
+
+	want := []string{"go", "smith:working", "ready-for-human"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Labels() = %q, want %q", got, want)
+	}
+}
+
+func TestLabelsReportsAnUnusableGH(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{stderr: "HTTP 401: Bad credentials\n"}
+
+	_, err := tracker.NewGitHub(gh, configured).Labels(t.Context())
+
+	var unavailable *tracker.UnavailableError
+	if !errors.As(err, &unavailable) || unavailable.Detail != "HTTP 401: Bad credentials\n" {
+		t.Errorf("Labels() error = %v, want an *tracker.UnavailableError carrying what gh said", err)
+	}
+}
+
 func TestCommentPostsTheBodyOnTheIssue(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{}
 
-	if err := tracker.NewGitHub(gh).Comment(t.Context(), 12, "smith skipped this task."); err != nil {
+	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Comment(t.Context(), 12, "smith skipped this task."); err != nil {
 		t.Fatalf("Comment(12) error = %v", err)
 	}
 
@@ -767,7 +880,7 @@ func TestCommentReportsARefusedComment(t *testing.T) {
 	t.Parallel()
 	gh := &fakeGH{stderr: "HTTP 403: Resource not accessible by integration\n"}
 
-	err := tracker.NewGitHub(gh).Comment(t.Context(), 12, "smith skipped this task.")
+	err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Comment(t.Context(), 12, "smith skipped this task.")
 
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Error(), "HTTP 403") {

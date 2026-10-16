@@ -456,12 +456,16 @@ The branch one task is worked on, checked out in that task's task worktree and c
 _Avoid_: agent branch, scratch branch.
 
 **Spec**:
-The tracker item an execution is derived from: a PRD whose children are the execution's tasks, in the order the spec lists them. An item is a spec when it is marked as one or has children, so a spec not yet split into tasks is still a spec. The loop never hands a spec itself to an agent.
+The tracker item an execution is derived from: a PRD whose children are the execution's tasks, in the order the spec lists them. An item is a spec when it carries the spec **triage label** or has children, so a spec not yet split into tasks is still a spec. The loop never hands a spec itself to an agent.
 _Avoid_: PRD (as the domain term), epic, parent issue.
 
 **Task**:
-One iteration of the loop: an agent gets exactly one task per run. A task is usually a child of a spec, but one may stand alone, and a task named on its own is an execution of length one, worked only if it is available. A task is meant either for an agent or for a human, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it: it hands the task to a human, labels it failed, and comments on its issue with the machine, task worktree and task branch it left, the attempts it made, and how many commits the task branch got beyond the work branch ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md), [ADR-0016](./docs/adr/0016-the-loop-comments-on-a-task-it-skips.md)).
+One iteration of the loop: an agent gets exactly one task per run. A task is usually a child of a spec, but one may stand alone, and a task named on its own is an execution of length one, worked only if it is available. A task is meant either for an agent or for a human, as its **triage labels** say, and it is *available* when it is open, meant for an agent, and every task blocking it is closed. A task the agent leaves open is a failed attempt, and after a bounded number of them the loop skips the task rather than spinning on it: it hands the task to a human, labels it failed, and comments on its issue with the machine, task worktree and task branch it left, the attempts it made, and how many commits the task branch got beyond the work branch ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md), [ADR-0016](./docs/adr/0016-the-loop-comments-on-a-task-it-skips.md)).
 _Avoid_: ticket, job, step.
+
+**Triage label**:
+One of the three tracker labels that say what an issue is for: the agent label (`ready-for-agent`) and the human label (`ready-for-human`) say who a task is meant for, and the spec label (`spec`) marks a spec not yet split into tasks. A repo names its own in its **repo file**, each one defaulting to the name shown. A task carrying both the agent and the human label is the human's, so no two may share a name. The loop's own marks, `smith:working` and `smith:failed`, are signals for people, not triage labels, and cannot be renamed ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)).
+_Avoid_: status label, tag.
 
 **Tracker**:
 Where specs and tasks live and where the loop reads their state. v1 knows exactly one tracker, GitHub Issues through the `gh` CLI, and uses `gh`'s own authentication, so smith still holds no credential. Knowing GitHub's issue model by name is a deliberate exception to *credential-agnostic* that covers the loop alone and sits behind one seam ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
@@ -476,7 +480,7 @@ smith's own small scale for how hard an agent should think, which each agent ada
 _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 
 **Repo file**:
-`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone running the loop on that repo should share (agent, model, effort, and whether to push). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone running the loop on that repo should share (agent, model, effort, whether to push, and the triage labels). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
 _Avoid_: project config, repo config, local config, config file.
 
 **Loop prompt**:
