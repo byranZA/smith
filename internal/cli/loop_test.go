@@ -37,6 +37,9 @@ func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Re
 		_, err := io.WriteString(stdout, `{"nameWithOwner":"byranZA/smith"}`)
 		return err
 	}
+	if name == "gh" && len(args) > 1 && args[0] == "issue" && args[1] == "comment" {
+		return nil
+	}
 	if name != "gh" || len(args) < 3 || args[0] != "issue" || args[1] != "view" {
 		return fmt.Errorf("unexpected command %s %v", name, args)
 	}
@@ -125,6 +128,10 @@ func (benchAt) Open(_ context.Context, task int) (string, error) {
 }
 
 func (benchAt) Land(context.Context, int) error { return nil }
+
+func (b benchAt) TaskBranch(task int) string { return fmt.Sprintf("smith/tasks/%s/%d", b.branch, task) }
+
+func (benchAt) Ahead(context.Context, int) (int, error) { return 0, nil }
 
 // workBranch is the final report's line naming spec #42's work branch.
 const workBranch = "work branch: smith/42-the-loop\n"
@@ -396,6 +403,21 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
 		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 3 runs, and\n%s", code, idle.runs, stdout, want)
+	}
+}
+
+func TestLoopRunCommentsOnASkippedTaskNamingThisMachine(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+	}}
+	w := loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath, hostname: func() (string, error) { return "box-1", nil }}
+
+	runLoopRun(t, w, "42", "--max-attempts", "1")
+
+	comments := slices.DeleteFunc(slices.Clone(gh.ran), func(ran string) bool { return !strings.HasPrefix(ran, "gh issue comment 43 ") })
+	if len(comments) != 1 || !strings.Contains(comments[0], "- **Machine:** box-1\n") {
+		t.Errorf("gh ran %q, want one comment on #43 naming the machine box-1", gh.ran)
 	}
 }
 

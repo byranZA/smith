@@ -64,7 +64,8 @@ type Runner interface {
 
 // GitHub is the tracker over GitHub Issues, reached through the gh CLI in the
 // repo smith is run from. It reads specs and their tasks, and writes only the
-// labels that mark the task an agent is working or the loop gave up on.
+// labels that mark the task an agent is working or the loop gave up on, and
+// the comments the loop asks it to post.
 type GitHub struct {
 	gh Runner
 }
@@ -260,6 +261,14 @@ func (g GitHub) Stop(ctx context.Context, number int) error {
 // worked or ready for an agent, but ready for a human.
 func (g GitHub) Fail(ctx context.Context, number int) error {
 	return g.edit(ctx, number, []string{humanLabel, failedLabel}, []string{workingLabel, agentLabel})
+}
+
+// Comment posts body as a comment on issue number, as it is given.
+func (g GitHub) Comment(ctx context.Context, number int, body string) error {
+	if stderr, err := g.run(ctx, []string{"issue", "comment", strconv.Itoa(number), "--body", body}); err != nil {
+		return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+	}
+	return nil
 }
 
 // edit adds and removes labels on issue number in one gh issue edit. Each time

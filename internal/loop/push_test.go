@@ -29,6 +29,12 @@ func (j *journal) Launch(ctx context.Context, cmd agent.Command) error {
 
 func (j *journal) WorkBranch() string { return "smith/42-spec" }
 
+func (j *journal) TaskBranch(task int) string {
+	return "smith/tasks/smith/42-spec/" + strconv.Itoa(task)
+}
+
+func (j *journal) Ahead(context.Context, int) (int, error) { return 0, nil }
+
 func (j *journal) Open(_ context.Context, task int) (string, error) {
 	j.events = append(j.events, "open "+strconv.Itoa(task))
 	return worktreeOf(task), nil
