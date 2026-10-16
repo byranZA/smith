@@ -12,13 +12,6 @@ import (
 	"strings"
 )
 
-// The labels that say what an issue is for on GitHub.
-const (
-	specLabel  = "spec"
-	agentLabel = "ready-for-agent"
-	humanLabel = "ready-for-human"
-)
-
 // The labels that mark what the loop did with a task, signals for people the
 // loop never reads to choose a task.
 const (
@@ -47,6 +40,9 @@ const linkedQuery = `query($owner: String!, $repo: String!, $number: Int!, $endC
   }
 }`
 
+// labelLimit is the most labels Labels reads, far past any repo's triage set.
+const labelLimit = 1000
+
 // notFoundMark is how gh says an issue number resolves to nothing.
 const notFoundMark = "Could not resolve to an issue"
 
@@ -66,12 +62,14 @@ type Runner interface {
 // repo smith is run from. It reads specs and their tasks, and writes only the
 // labels that mark the task an agent is working or the loop gave up on.
 type GitHub struct {
-	gh Runner
+	gh     Runner
+	labels Labels
 }
 
-// NewGitHub returns the GitHub tracker reaching gh through runner.
-func NewGitHub(runner Runner) GitHub {
-	return GitHub{gh: runner}
+// NewGitHub returns the GitHub tracker reaching gh through runner, telling
+// specs and who a task is for apart by labels.
+func NewGitHub(runner Runner, labels Labels) GitHub {
+	return GitHub{gh: runner, labels: labels}
 }
 
 // issue is the part of gh's issue JSON the tracker reads.
@@ -154,8 +152,8 @@ func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
 	return ref.Number, nil
 }
 
-// Execution reads issue number as an execution: a spec, labelled "spec" or
-// with sub-issues, and its sub-issues, those its "## Tasks" checklist lists first and in that order,
+// Execution reads issue number as an execution: a spec, carrying the spec
+// label or with sub-issues, and its sub-issues, those its "## Tasks" checklist lists first and in that order,
 // then the rest as GitHub holds them; or any other issue as a task alone, under
 // its immediate parent when it has one and under itself otherwise. A task's blockers are its blocked-by links and the issues its
 // "## Blocked by" section names.
@@ -164,7 +162,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	if err != nil {
 		return Execution{}, err
 	}
-	if !spec.isSpec() {
+	if !spec.isSpec(g.labels) {
 		return g.single(ctx, spec)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
@@ -194,7 +192,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		if err != nil {
 			return Execution{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(), Blockers: blockers, Working: issues[n].labelled(workingLabel)})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel)})
 	}
 	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }
@@ -229,7 +227,7 @@ func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(), Blockers: blockers, Working: task.labelled(workingLabel)}, nil
+	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Working: task.labelled(workingLabel)}, nil
 }
 
 // task reads task number with every issue linked as blocking it.
@@ -257,9 +255,28 @@ func (g GitHub) Stop(ctx context.Context, number int) error {
 }
 
 // Fail hands task number to a human, marked as failed: it is no longer
-// worked or ready for an agent, but ready for a human.
+// worked or carrying the agent label, but carries the human label.
 func (g GitHub) Fail(ctx context.Context, number int) error {
-	return g.edit(ctx, number, []string{humanLabel, failedLabel}, []string{workingLabel, agentLabel})
+	return g.edit(ctx, number, []string{g.labels.Human, failedLabel}, []string{workingLabel, g.labels.Agent})
+}
+
+// Labels returns the names of the labels the repo gh resolves for the working
+// directory has, up to labelLimit of them.
+func (g GitHub) Labels(ctx context.Context) ([]string, error) {
+	var stdout, stderr bytes.Buffer
+	args := []string{"label", "list", "--limit", strconv.Itoa(labelLimit), "--json", "name"}
+	if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
+		return nil, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+	}
+	var listed []label
+	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
+		return nil, fmt.Errorf("read gh's answer for the repo's labels: %w", err)
+	}
+	names := make([]string, 0, len(listed))
+	for _, l := range listed {
+		names = append(names, l.Name)
+	}
+	return names, nil
 }
 
 // edit adds and removes labels on issue number in one gh issue edit. Each time
@@ -402,21 +419,21 @@ func (i issue) labelled(name string) bool {
 	return slices.Contains(i.Labels, label{Name: name})
 }
 
-// isSpec reports whether the issue is a spec: labelled "spec", or with
-// sub-issues whatever its labels.
-func (i issue) isSpec() bool {
-	return i.labelled(specLabel) || len(i.SubIssues.Nodes) > 0 || i.SubIssues.TotalCount > 0
+// isSpec reports whether the issue is a spec: carrying the spec label among
+// labels, or with sub-issues whatever its labels.
+func (i issue) isSpec(labels Labels) bool {
+	return i.labelled(labels.Spec) || len(i.SubIssues.Nodes) > 0 || i.SubIssues.TotalCount > 0
 }
 
-// audience is who the issue is meant for. A nested spec is never a task for
-// either, and an issue labelled for both is kept for the human.
-func (i issue) audience() Audience {
+// audience is who the issue is meant for, by labels. A nested spec is never
+// a task for either, and an issue labelled for both is kept for the human.
+func (i issue) audience(labels Labels) Audience {
 	switch {
-	case i.isSpec():
+	case i.isSpec(labels):
 		return Nobody
-	case i.labelled(humanLabel):
+	case i.labelled(labels.Human):
 		return Human
-	case i.labelled(agentLabel):
+	case i.labelled(labels.Agent):
 		return Agent
 	}
 	return Nobody

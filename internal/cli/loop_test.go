@@ -22,7 +22,11 @@ import (
 type fakeTracker struct {
 	issues map[string]string
 	stderr string
-	ran    []string
+	// labels are the labels the repo has, as gh's label list gives them.
+	labels []string
+	// labelErr fails gh's label list with what gh said, when set.
+	labelErr string
+	ran      []string
 }
 
 func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
@@ -37,6 +41,9 @@ func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Re
 		_, err := io.WriteString(stdout, `{"nameWithOwner":"byranZA/smith"}`)
 		return err
 	}
+	if name == "gh" && len(args) > 1 && args[0] == "label" && args[1] == "list" {
+		return f.labelList(stdout, stderr)
+	}
 	if name != "gh" || len(args) < 3 || args[0] != "issue" || args[1] != "view" {
 		return fmt.Errorf("unexpected command %s %v", name, args)
 	}
@@ -48,6 +55,22 @@ func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Re
 		return errors.New("exit status 1")
 	}
 	_, err := io.WriteString(stdout, reply)
+	return err
+}
+
+// labelList answers gh's label list with the repo's labels, or fails it with labelErr.
+func (f *fakeTracker) labelList(stdout, stderr io.Writer) error {
+	if f.labelErr != "" {
+		if _, err := io.WriteString(stderr, f.labelErr); err != nil {
+			return err
+		}
+		return errors.New("exit status 1")
+	}
+	names := make([]string, 0, len(f.labels))
+	for _, l := range f.labels {
+		names = append(names, fmt.Sprintf(`{"name":%q}`, l))
+	}
+	_, err := io.WriteString(stdout, "["+strings.Join(names, ",")+"]")
 	return err
 }
 
