@@ -33,6 +33,7 @@ func (o *orderedAgent) Launch(ctx context.Context, cmd agent.Command) error {
 }
 
 func TestLoopRunWorksTasksByTheConfiguredLabels(t *testing.T) {
+	t.Parallel()
 	gh := labelledSpec()
 	gh.labels = []string{"go", "stop", "epic"}
 	claude := &fakeAgent{gh: gh}
@@ -47,6 +48,7 @@ func TestLoopRunWorksTasksByTheConfiguredLabels(t *testing.T) {
 }
 
 func TestLoopRunWarnsOfEachSetLabelTheRepoLacksBeforeAnyAgentRuns(t *testing.T) {
+	t.Parallel()
 	gh := labelledSpec()
 	gh.labels = []string{"epic"}
 	claude := &orderedAgent{fakeAgent{gh: gh}}
@@ -63,6 +65,7 @@ func TestLoopRunWarnsOfEachSetLabelTheRepoLacksBeforeAnyAgentRuns(t *testing.T) 
 }
 
 func TestLoopRunWithDefaultLabelsChecksNoLabels(t *testing.T) {
+	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "agent: claude\n")
 
@@ -79,6 +82,7 @@ func TestLoopRunWithDefaultLabelsChecksNoLabels(t *testing.T) {
 }
 
 func TestLoopRunCarriesOnWhenTheLabelCheckFails(t *testing.T) {
+	t.Parallel()
 	gh := labelledSpec()
 	gh.labelErr = "HTTP 401: Bad credentials\n"
 	claude := &fakeAgent{gh: gh}
@@ -93,6 +97,7 @@ func TestLoopRunCarriesOnWhenTheLabelCheckFails(t *testing.T) {
 }
 
 func TestLoopRunRefusesATaskWithoutTheConfiguredAgentLabelNamingIt(t *testing.T) {
+	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}, labels: []string{"go"}}
 	claude := &fakeAgent{gh: gh}
 	w, _ := repoWith(t, gh, claude, "labels:\n  agent: go\n")
@@ -106,6 +111,7 @@ func TestLoopRunRefusesATaskWithoutTheConfiguredAgentLabelNamingIt(t *testing.T)
 }
 
 func TestLoopListReportsTheConfiguredLabels(t *testing.T) {
+	t.Parallel()
 	gh := labelledSpec()
 	w, _ := repoWith(t, gh, &idleAgent{}, "labels:\n  agent: go\n  spec: epic\n")
 
@@ -123,6 +129,7 @@ func TestLoopListReportsTheConfiguredLabels(t *testing.T) {
 }
 
 func TestLoopRunRefusesTwoLabelsSharingANameBeforeAnyAgentRuns(t *testing.T) {
+	t.Parallel()
 	gh := labelledSpec()
 	idle := &idleAgent{}
 	w, _ := repoWith(t, gh, idle, "labels:\n  human: ready-for-agent\n")
@@ -136,6 +143,7 @@ func TestLoopRunRefusesTwoLabelsSharingANameBeforeAnyAgentRuns(t *testing.T) {
 }
 
 func TestLoopRunRefusesALabelNamedForASmithMarkBeforeAnyAgentRuns(t *testing.T) {
+	t.Parallel()
 	gh := labelledSpec()
 	idle := &idleAgent{}
 	w, _ := repoWith(t, gh, idle, "labels:\n  human: smith:working\n")
