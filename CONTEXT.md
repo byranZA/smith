@@ -383,15 +383,7 @@ materializes at `machine setup`. File-level only in v1.
 _Avoid_: template, sync, copy.
 
 **Toolchain selection**:
-How a box gets its runtimes: `apt` installs the unversioned OS substrate, **`mise`** ensures the
-blueprint's version-pinned `tools`. smith declares versions by writing config files it **fully
-owns** and then running `mise install` — it never runs `mise use`, which would write into the
-operator's own `~/.config/mise/config.toml`. Box-level `tools` and `env` land in
-`~/.config/mise/conf.d/smith.toml`; per-repo overrides land in `~/workspace/<repo>/mise.toml`,
-**above every worktree**, so smith never dirties a checkout and a generated file holding resolved
-secret values cannot be committed by accident. Invocation is **`mise exec`, never `mise
-activate`** — activate does not fire in the non-interactive and daemon-started shells smith and
-agents run in.
+How a box gets its runtimes: `apt` installs the unversioned OS substrate, **`mise`** ensures the blueprint's version-pinned `tools`. smith declares versions by writing config files it **fully owns** and then running `mise install` — it never runs `mise use`, which would write into the operator's own `~/.config/mise/config.toml`. Box-level `tools` and `env` land in `~/.config/mise/conf.d/smith.toml`; per-repo overrides land in `~/workspace/<repo>/mise.toml`, **above every worktree**, so smith never dirties a checkout and a generated file holding resolved secret values cannot be committed by accident. Invocation is **`mise exec`, never `mise activate`** — activate does not fire in the non-interactive and daemon-started shells smith and agents run in. Every **session**'s process runs under `mise exec` in its worktree, so a session shell, a loop-driven session's root process and the agent it launches all hold the declared tools and the exported `env`, fixed as they were when the session started. A plain SSH shell gets **shims** instead: each declared tool runs with the `env` in scope, but nothing is exported into the shell itself, so a provisioned secret reaches only the tools declared to need it ([issue #302](https://github.com/byranZA/smith/issues/302)).
 _Avoid_: version manager, runtime install.
 
 **Nearer wins**:
