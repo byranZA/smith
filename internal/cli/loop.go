@@ -24,11 +24,12 @@ import (
 // the tracker, the launcher that starts an agent, the bench that sets up an
 // execution's work branch and task worktrees in the repo a directory is in
 // and finds how far an adopted one is behind its base, the pusher that pushes
-// the work branch from a directory, the PATH search that finds an agent, the
+// the work branch from a directory, the PATH search that finds an agent here, the
 // hostname that names this machine on a skipped task, and git, the config home
 // and the working directory that locate the repo file. On a box it also reaches
 // gh run in a repo's clone, the configuration the box was built from, the
-// state directory its placements were staged under, and tmux. To relay a run to
+// state directory its placements were staged under, tmux, and the mise that
+// finds an agent for a session. To relay a run to
 // a box it reaches ssh, declares this smith's version, and reacts to a box that
 // refuses it for version skew.
 type loopWiring struct {
@@ -41,6 +42,7 @@ type loopWiring struct {
 	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error)
 	pusher   func(dir string) loop.Pusher
 	lookPath func(name string) (string, error)
+	mise     session.Runner
 	hostname func() (string, error)
 	git      repofile.Runner
 	home     homeResolver
@@ -64,6 +66,7 @@ func systemLoop() loopWiring {
 		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: exec.LookPath,
+		mise:     connection.System(),
 		hostname: os.Hostname,
 		git:      connection.System(),
 		home:     userConfigHome,
@@ -296,6 +299,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			if err := installed(cmd, settings.Agent.Value, w.lookPath); err != nil {
+				return err
+			}
 			admitted, err := w.admit(cmd, ref, settings, w.gh)
 			if err != nil {
 				return err
@@ -370,17 +376,24 @@ type admission struct {
 	execution tracker.Execution
 }
 
+// installed refuses, reported on cmd, an agent that lookPath cannot find, so
+// a run fails before it starts rather than on its first task.
+func installed(cmd *cobra.Command, name string, lookPath func(name string) (string, error)) error {
+	if _, err := lookPath(name); err != nil {
+		return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", name, err))
+	}
+	return nil
+}
+
 // admit runs the preflight a loop run shares wherever it runs: it looks the
-// agent settings name up and finds it installed, warns of triage labels the
-// repo lacks, and reads and admits the execution ref names through gh. Each
-// refusal is already reported on cmd.
+// agent settings name up, warns of triage labels the repo lacks, and reads and
+// admits the execution ref names through gh. Each refusal is already reported
+// on cmd. Whether the agent is installed is the caller's to check, with
+// installed, against the PATH the run will have.
 func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
 	adapter, err := agent.Lookup(settings.Agent.Value)
 	if err != nil {
 		return admission{}, reportInvalid(cmd, err)
-	}
-	if _, err := w.lookPath(settings.Agent.Value); err != nil {
-		return admission{}, reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", settings.Agent.Value, err))
 	}
 	github := tracker.NewGitHub(gh, settings.Labels())
 	if err := warnOfLabels(cmd, github, settings); err != nil {

@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,16 +20,37 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// sessionLoop is loop wiring on a box whose workspace holds the bare clone of "smith", driving the tmux server tmux.
+// boxMise stands in for mise on a box, recording the argv it was handed and
+// finding under mise exec only the programs in installed.
+type boxMise struct {
+	installed []string
+	calls     [][]string
+}
+
+func (m *boxMise) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	m.calls = append(m.calls, append([]string{name}, args...))
+	program := args[len(args)-1]
+	if !slices.Contains(m.installed, program) {
+		return errors.New("exit status 1")
+	}
+	_, err := io.WriteString(stdout, "/home/smith/.local/share/mise/shims/"+program+"\n")
+	return err
+}
+
+// sessionLoop is loop wiring on a box whose workspace holds the bare clone of
+// "smith", driving the tmux server tmux, where mise finds claude and codex and
+// the relayed PATH finds no agent at all.
 func sessionLoop(t *testing.T, gh *fakeTracker, tmux *tmuxBox) (loopWiring, string) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	return loopWiring{
 		gh:       gh,
 		ghIn:     func(string) tracker.Runner { return gh },
 		launcher: &idleAgent{},
-		lookPath: onPath,
+		lookPath: offPath,
+		mise:     &boxMise{installed: []string{"claude", "codex"}},
 		git:      connection.System(),
 		tmux:     tmux,
 		box:      resolvedBox(workspace, "smith"),
@@ -63,7 +87,7 @@ func TestLoopRunOnABoxStartsASessionWhoseRootProcessIsTheLoop(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop")
-	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-smith-42-the-loop", "-c", dir,
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-smith-42-the-loop", "-c", dir, "mise", "exec", "--",
 		"/usr/local/bin/smith", "loop", "run", "42", "--agent=codex", "--max-iterations=3", "--branch=smith/42-the-loop", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
@@ -111,7 +135,7 @@ func TestLoopRunOnABoxOnAChosenBranchNamesTheSessionAfterIt(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "feat-x")
-	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-feat-x", "-c", dir,
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-feat-x", "-c", dir, "mise", "exec", "--",
 		"/usr/local/bin/smith", "loop", "run", "42", "--branch=feat/x", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
@@ -155,25 +179,25 @@ func TestLoopRunOnABoxReusesAStoppedSessionsWorktree(t *testing.T) {
 
 func TestLoopRunOnABoxThatFailsItsPreflightStartsNothing(t *testing.T) {
 	tests := []struct {
-		name     string
-		issue    string
-		repo     string
-		gh       *fakeTracker
-		lookPath func(string) (string, error)
-		want     string
+		name   string
+		issue  string
+		repo   string
+		gh     *fakeTracker
+		onMise []string
+		want   string
 	}{
-		{"agent not installed", "42", "smith", readySpec(), func(string) (string, error) { return "", errors.New("not found") }, "agent claude is not installed"},
-		{"issue unreadable", "999", "smith", readySpec(), onPath, "#999"},
-		{"spec with no tasks", "42", "smith", &fakeTracker{issues: map[string]string{"42": specJSON()}}, onPath, "#42 has no tasks"},
-		{"task for a human", "43", "smith", &fakeTracker{issues: map[string]string{"43": taskJSON(43, "OPEN", "ready-for-human")}}, onPath, "#43 is meant for a human"},
-		{"repo not on the box", "42", "nope", readySpec(), onPath, `repo "nope" is not declared`},
-		{"tracker unreachable", "42", "smith", &fakeTracker{stderr: "gh: To get started with GitHub CLI, please run:  gh auth login\n"}, onPath, "gh auth login"},
+		{"agent not installed", "42", "smith", readySpec(), nil, "agent claude is not installed"},
+		{"issue unreadable", "999", "smith", readySpec(), []string{"claude"}, "#999"},
+		{"spec with no tasks", "42", "smith", &fakeTracker{issues: map[string]string{"42": specJSON()}}, []string{"claude"}, "#42 has no tasks"},
+		{"task for a human", "43", "smith", &fakeTracker{issues: map[string]string{"43": taskJSON(43, "OPEN", "ready-for-human")}}, []string{"claude"}, "#43 is meant for a human"},
+		{"repo not on the box", "42", "nope", readySpec(), []string{"claude"}, `repo "nope" is not declared`},
+		{"tracker unreachable", "42", "smith", &fakeTracker{stderr: "gh: To get started with GitHub CLI, please run:  gh auth login\n"}, []string{"claude"}, "gh auth login"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmux := &tmuxBox{}
 			w, workspace := sessionLoop(t, tc.gh, tmux)
-			w.lookPath = tc.lookPath
+			w.mise = &boxMise{installed: tc.onMise}
 
 			_, stderr, code := runLoopRun(t, w, tc.issue, "--repo", tc.repo)
 
@@ -216,7 +240,7 @@ func TestLoopRunWithoutARepoRunsInTheForegroundAndStartsNoSession(t *testing.T) 
 	tmux := &tmuxBox{}
 	gh := readySpec()
 	claude := &fakeAgent{gh: gh}
-	w := loopWiring{gh: gh, launcher: claude, lookPath: onPath, tmux: tmux}
+	w := loopWiring{gh: gh, launcher: claude, lookPath: onPath, mise: &boxMise{}, tmux: tmux}
 
 	stdout, stderr, code := runLoopRun(t, w, "42")
 
@@ -239,16 +263,64 @@ func TestLoopRunOnABoxResolvesSettingsFromTheReposCommittedRepoFile(t *testing.T
 	runGit(t, work, "add", ".smith")
 	runGit(t, work, "-c", "user.email=smith@example.com", "-c", "user.name=smith", "commit", "-m", "repo file")
 	runGit(t, work, "push", "origin", "main")
-	w.lookPath = func(name string) (string, error) {
-		if name == "codex" {
-			return "", errors.New("not found")
-		}
-		return onPath(name)
-	}
+	w.mise = &boxMise{installed: []string{"claude"}}
 
 	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
 
 	if code == 0 || !strings.Contains(stderr, "agent codex is not installed") || len(tmux.calls) != 0 {
 		t.Errorf("exit %d, stderr %q; want non-zero naming the agent the repo file sets", code, stderr)
 	}
+}
+
+func TestLoopRunOnABoxFindsAnAgentOnlyMiseHasAndStartsTheSession(t *testing.T) {
+	tmux := &tmuxBox{}
+	w, _ := sessionLoop(t, readySpec(), tmux)
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+	if code != 0 || len(started(tmux)) != 1 {
+		t.Errorf("exit %d, stderr %q, sessions started %d; want 0 and one session for an agent only mise finds", code, stderr, len(started(tmux)))
+	}
+}
+
+func TestLoopRunOnABoxLooksTheAgentUpUnderTheMiseItsSessionRunsUnder(t *testing.T) {
+	tmux := &tmuxBox{}
+	w, workspace := sessionLoop(t, readySpec(), tmux)
+	installed := filepath.Join(os.Getenv("HOME"), ".local", "bin", "mise")
+	if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolve := resolvedBox(workspace, "smith")
+	standUp(t, resolve, tmux, "smith", "smith/42-the-loop")
+	stopSession(t, resolve, tmux, "smith-smith-42-the-loop")
+	mise := &boxMise{installed: []string{"claude"}}
+	w.mise = mise
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+	launches := started(tmux)
+	if code != 0 || len(mise.calls) != 1 || len(launches) == 0 {
+		t.Fatalf("exit %d, stderr %q, mise %q, tmux %q; want 0, one lookup and a launch", code, stderr, mise.calls, launches)
+	}
+	dir := realDir(t, filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop"))
+	lookup, launch := mise.calls[0], launches[len(launches)-1]
+	if got, want := []string{lookup[0], lookup[1], realDir(t, lookup[2])}, []string{installed, "-C", dir}; !reflect.DeepEqual(got, want) {
+		t.Errorf("agent lookup ran %q, want it to start %q", lookup, want)
+	}
+	if got, want := []string{realDir(t, launch[6]), launch[7], launch[8]}, []string{dir, installed, "exec"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("session launch ran %q, want it in %q under %q", launch, dir, installed)
+	}
+}
+
+// realDir is dir with its symlinks resolved, as git reports a worktree.
+func realDir(t *testing.T, dir string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
 }

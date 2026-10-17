@@ -40,7 +40,9 @@ type sessionRun struct {
 // starts a loop-driven session in the repo's worktree for the work branch,
 // whose root process is the same loop run without --repo, and reports how to
 // watch it. Every refusal comes before anything is on disk, and a live session
-// on the work branch is one.
+// on the work branch is one. The agent is looked up under the mise exec the
+// session's root process runs under, since a relayed smith's own PATH is
+// stripped.
 func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessionRun) error {
 	inv := invocation(cmd, "loop run", typed(cmd, []string{run.issue}))
 	if run.interactive {
@@ -73,6 +75,12 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	}
 	number, title := admitted.execution.Issue()
 	branch := cmp.Or(run.branch, workbench.Branch(number, title))
+	lookPath := func(name string) (string, error) {
+		return session.LookPath(cmd.Context(), env, w.mise, run.repo, branch, name)
+	}
+	if err := installed(cmd, settings.Agent.Value, lookPath); err != nil {
+		return err
+	}
 	if err := refuseLive(cmd, env, run.repo, branch); err != nil {
 		return reportInvalid(cmd, err)
 	}
