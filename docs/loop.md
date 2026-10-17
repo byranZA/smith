@@ -6,7 +6,7 @@ The **loop** works a spec's tasks, or a single task, with a coding agent, one ta
 smith loop list <issue>
 smith loop run  <issue> [--agent <name>] [--model <name>] [--effort low|medium|high]
                         [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push]
-                        [--branch <name>] [--base <branch>]
+                        [--branch <name>] [--base <branch>] [--repo <name>]
 smith loop prompt
 smith repo init [--agent <name>] [--model <name>] [--effort low|medium|high]
 ```
@@ -95,6 +95,25 @@ Pushing is on unless the repo file sets `push: false`; `--no-push` turns it off 
 Hands the next available task to one agent run attached to your terminal, in the task's worktree like any other run, then stops. The prompt gains a note asking the agent to check its plan with you, ask rather than guess, and show you the result before it commits and closes the task. Approvals are the agent's own, so you answer them as you would in any session. The limits play no part. It reports `task #N closed` and exits 0, or `task #N still open` and exits 1. With no task available it runs no agent, prints the same stop report as `run`, and exits 0 only if the spec is complete.
 
 Use it for the first run on a new repo or prompt, or for a task you want to steer.
+
+### On a box: `--repo`
+
+On a box, `smith loop run <issue> --repo <name>` runs the loop in a **loop-driven session** instead of in your terminal, so the run outlives your SSH connection ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). `<name>` is a repo the box's blueprint declares. It works in four steps:
+
+1. **Preflight, in your terminal.** smith resolves the settings from the flags and the repo file committed on the base (`--base`, else the base the blueprint declares, else the clone's default branch), checks the ejected prompt, finds the agent on `PATH`, and reads and admits the issue through `gh` in the repo's clone. Any refusal is reported here, exactly as a foreground run reports it, and nothing is created: no session, no worktree, no work branch.
+2. **The work branch** is `--branch`, else `smith/<n>-<slug>` from the issue (see [The work branch](#the-work-branch)). The session is named after it the way every session is: `<repo>-<branch>`, so spec #305 in repo `smith` runs in session `smith-smith-305-<slug>`, and `--branch feat/x` in `smith-feat-x`.
+3. **One session per branch.** A live session on the work branch, human-driven or loop-driven, refuses the run, naming the session and the commands to attach to it or stop it. A stopped one hands over its worktree: the loop-driven session starts in it, and the loop adopts the branch.
+4. **The session starts and smith returns.** The session's root process is `smith loop run <issue>` with the same flags, no `--repo`, and `--branch` set to the work branch, so the session ends when the loop does. smith prints the session's name and the commands to watch it, and exits 0:
+
+```text
+session smith-smith-305-run-the-loop-on-a-box is live on branch smith/305-run-the-loop-on-a-box of smith, driven by the loop
+attach: smith session attach smith-smith-305-run-the-loop-on-a-box
+list:   smith session list
+```
+
+`smith session attach` watches the run read-only, and the stop report lands on the issue as a comment (see [`smith loop run`](#smith-loop-run)). When only tasks for a human are left, start a human session on the same work branch with `smith session start --repo <name> --branch smith/<n>-<slug>`, which reuses the worktree, work those tasks, stop it, and run `loop run --repo` again.
+
+`--repo` is refused off a box, where the loop runs in the repo you invoke it from. `--interactive` is refused with `--repo`: an interactive run needs you at its terminal, so start a human session and run `loop run --interactive` in it. Without `--repo`, a run on a box works in the foreground in the directory you invoke it from, as it does anywhere.
 
 ## Agents
 

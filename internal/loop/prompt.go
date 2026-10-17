@@ -41,9 +41,15 @@ func LoadPrompt(path string) (Prompt, error) {
 	if err != nil {
 		return "", fmt.Errorf("read loop prompt: %w", err)
 	}
+	return ParsePrompt(path, data)
+}
+
+// ParsePrompt takes data as an ejected loop prompt read from source, refusing
+// a placeholder smith does not fill and naming source.
+func ParsePrompt(source string, data []byte) (Prompt, error) {
 	for _, found := range placeholderPattern.FindAllString(string(data), -1) {
 		if !slices.Contains(placeholders, found) {
-			return "", fmt.Errorf("%s: unknown placeholder %s: known placeholders are %s", path, found, strings.Join(placeholders, ", "))
+			return "", fmt.Errorf("%s: unknown placeholder %s: known placeholders are %s", source, found, strings.Join(placeholders, ", "))
 		}
 	}
 	return Prompt(data), nil

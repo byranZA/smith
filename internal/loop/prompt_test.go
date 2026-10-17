@@ -114,3 +114,20 @@ func TestAnEjectedPromptHoldingTheSpecPlaceholderIsRefused(t *testing.T) {
 		t.Errorf("LoadPrompt() error = %v, want %q", err, want)
 	}
 }
+
+func TestParsePromptRefusesAnUnknownPlaceholderNamingItsSource(t *testing.T) {
+	_, err := loop.ParsePrompt("main:.smith/prompt.md", []byte("Do {{TASK}}.\n"))
+
+	want := "main:.smith/prompt.md: unknown placeholder {{TASK}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}"
+	if err == nil || err.Error() != want {
+		t.Errorf("ParsePrompt() err = %v, want %q", err, want)
+	}
+}
+
+func TestParsePromptKeepsTheEjectedText(t *testing.T) {
+	got, err := loop.ParsePrompt("main:.smith/prompt.md", []byte("Do #{{TASK_NUMBER}}.\n"))
+
+	if err != nil || got != "Do #{{TASK_NUMBER}}.\n" {
+		t.Errorf("ParsePrompt() = %q, %v; want the text as given", got, err)
+	}
+}

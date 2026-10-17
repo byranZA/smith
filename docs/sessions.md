@@ -367,11 +367,14 @@ never implicit — you compose it, and you can read it first by running the
 composition plus a human reading the inventory in between is the deliberate
 answer.
 
+## Loop-driven sessions
+
+A session's **driver** comes from the verb that starts it, never from a flag: `session start` starts a human-driven session, whose root process is a shell, and `smith loop run <issue> --repo <name>` on the box starts a loop-driven one, whose root process is the loop ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). There is no `--driver` on `session start`.
+
+A loop-driven session is a session like any other: named `<repo>-<branch>` after its work branch, in a worktree below the repo's worktrees directory, and attached, listed, stopped and removed with the verbs above. It ends when the loop does. `loop run` refuses a branch whose session is live, whoever drives it, and reuses a stopped session's worktree, which is how a spec passes between the loop and a human for its tasks meant for a human. See [the loop](./loop.md#on-a-box---repo) for the run itself.
+
 ## What is not here in v1
 
-- **`--driver agent`**, or anything that launches an agent into a session.
-  Sessions are human-driven. Agents run through [the loop](./loop.md), which
-  works in the repo it is invoked from.
 - **Keystrokes.** Everything smith does to a session it does by starting or
   stopping it. There is no `send-keys`.
 - **Outcomes.** Liveness only — smith reports that a session is running, never

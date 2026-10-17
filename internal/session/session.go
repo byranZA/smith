@@ -128,6 +128,10 @@ type StartRequest struct {
 	// naming a base has a rebase or a reset in mind and smith's git surface
 	// is worktree add and worktree remove.
 	Base string
+	// Command is the session's root process, run in the worktree, so the
+	// session ends when it does. Left empty, the session runs the shell, for a
+	// human to work in.
+	Command []string
 }
 
 // Start ensures a session is running and returns it. It is not a create verb:
@@ -194,7 +198,7 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	if err := env.place(repo, dir); err != nil {
 		return Session{}, err
 	}
-	if err := launch(ctx, env.Tmux, stand.name, dir); err != nil {
+	if err := launch(ctx, env.Tmux, stand.name, dir, req.Command); err != nil {
 		return Session{}, err
 	}
 	return stood, nil
@@ -380,10 +384,11 @@ func resolved(path string) string {
 }
 
 // launch starts the detached tmux session a session runs under, with its
-// working directory in the worktree. It is the one place a tmux session is
-// created.
-func launch(ctx context.Context, tmux Runner, name, dir string) error {
-	if _, err := run(ctx, tmux, "tmux", "new-session", "-d", "-s", TmuxSession(name), "-c", dir); err != nil {
+// working directory in the worktree and command as its root process, or the
+// shell when command is empty. It is the one place a tmux session is created.
+func launch(ctx context.Context, tmux Runner, name, dir string, command []string) error {
+	args := append([]string{"new-session", "-d", "-s", TmuxSession(name), "-c", dir}, command...)
+	if _, err := run(ctx, tmux, "tmux", args...); err != nil {
 		return fmt.Errorf("launch the tmux session for %q at %s: %w", name, dir, err)
 	}
 	return nil
@@ -400,6 +405,17 @@ func (e Env) repo(name string) (Repo, error) {
 		}
 	}
 	return Repo{}, fmt.Errorf("repo %q is not declared in the blueprint this box was built from%s", name, declared(e.Repos))
+}
+
+// Clone returns the directory of the declared repo's bare clone, the git
+// repo every worktree of it is cut from, refusing a repo the blueprint does
+// not declare.
+func (e Env) Clone(name string) (string, error) {
+	repo, err := e.repo(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(e.Workspace, repo.Name, bareDir), nil
 }
 
 // place converges the repo's declared placements into the worktree at dir. It

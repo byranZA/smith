@@ -14,6 +14,8 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/repofile"
+	"github.com/byranZA/smith/internal/session"
+	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
 	"github.com/byranZA/smith/internal/workbench"
 )
@@ -24,9 +26,15 @@ import (
 // and finds how far an adopted one is behind its base, the pusher that pushes
 // the work branch from a directory, the PATH search that finds an agent, the
 // hostname that names this machine on a skipped task, and git, the config home
-// and the working directory that locate the repo file.
+// and the working directory that locate the repo file. On a box it also reaches
+// gh run in a repo's clone, the configuration the box was built from, the
+// state directory its placements were staged under, and tmux.
 type loopWiring struct {
 	gh       tracker.Runner
+	ghIn     func(dir string) tracker.Runner
+	box      boxResolver
+	root     string
+	tmux     session.Runner
 	launcher loop.Launcher
 	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error)
 	pusher   func(dir string) loop.Pusher
@@ -43,6 +51,10 @@ type loopWiring struct {
 func systemLoop() loopWiring {
 	return loopWiring{
 		gh:       connection.System(),
+		ghIn:     func(dir string) tracker.Runner { return dirExec{dir: dir} },
+		box:      stagedBoxConfig,
+		root:     staging.Root,
+		tmux:     connection.System(),
 		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
 		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
@@ -65,9 +77,9 @@ func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.B
 }
 
 // newLoopCmd builds `smith loop`, the verbs that work a spec's tasks, or a
-// single task, in the
-// repo smith is run from, reading the tracker through gh. None is relayed to a
-// box: each runs where smith is invoked.
+// single task, in the repo smith is run from, reading the tracker through gh.
+// Each runs where smith is invoked; on a box, `loop run --repo` starts the run
+// in a loop-driven session instead.
 func newLoopCmd(w loopWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "loop",
@@ -238,12 +250,13 @@ func newLoopPromptCmd() *cobra.Command {
 // with --interactive. Each task is worked in a worktree of its own and landed
 // on the execution's work branch, never in the checkout smith is run from. It
 // exits 0 only when the execution is complete or the interactive run's task
-// was closed.
+// was closed. On a box, --repo starts the run in a loop-driven session instead
+// and returns once it is live.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
 	var interactive, noPush bool
-	var branch, base string
+	var branch, base, repo string
 	cmd := &cobra.Command{
 		Use:   "run <issue>",
 		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
@@ -260,6 +273,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				off := false
 				flags.Push = &off
 			}
+			if repo != "" {
+				return w.startSession(cmd, ref, sessionRun{issue: args[0], repo: repo, branch: branch, base: base, interactive: interactive, flags: flags})
+			}
 			settings, err := w.settings(cmd.Context(), flags)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -268,30 +284,13 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			adapter, err := agent.Lookup(settings.Agent.Value)
+			admitted, err := w.admit(cmd, ref, settings, w.gh)
 			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			if _, err := w.lookPath(settings.Agent.Value); err != nil {
-				return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", settings.Agent.Value, err))
-			}
-			pusher, err := w.origin(settings)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			github := tracker.NewGitHub(w.gh, settings.Labels())
-			if err := warnOfLabels(cmd, github, settings); err != nil {
 				return err
 			}
-			number, err := github.Local(cmd.Context(), ref)
+			adapter, github, execution := admitted.adapter, admitted.github, admitted.execution
+			pusher, err := w.origin(settings)
 			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			execution, err := github.Execution(cmd.Context(), number)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			if err := loop.Admit(execution, settings.Labels()); err != nil {
 				return reportInvalid(cmd, err)
 			}
 			bench, lag, err := w.workbench(cmd.Context(), execution, branch, base)
@@ -338,7 +337,46 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a new work branch is cut from (default: origin's default branch)")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
+	cmd.Flags().StringVar(&repo, "repo", "", "on a box, the repo to start a loop-driven session in, rather than running here")
 	return cmd
+}
+
+// admission is what a loop run's preflight found: the agent adapter each task
+// is handed to, the tracker, and the execution it admitted.
+type admission struct {
+	adapter   agent.Adapter
+	github    tracker.GitHub
+	execution tracker.Execution
+}
+
+// admit runs the preflight a loop run shares wherever it runs: it looks the
+// agent settings name up and finds it installed, warns of triage labels the
+// repo lacks, and reads and admits the execution ref names through gh. Each
+// refusal is already reported on cmd.
+func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
+	adapter, err := agent.Lookup(settings.Agent.Value)
+	if err != nil {
+		return admission{}, reportInvalid(cmd, err)
+	}
+	if _, err := w.lookPath(settings.Agent.Value); err != nil {
+		return admission{}, reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", settings.Agent.Value, err))
+	}
+	github := tracker.NewGitHub(gh, settings.Labels())
+	if err := warnOfLabels(cmd, github, settings); err != nil {
+		return admission{}, err
+	}
+	number, err := github.Local(cmd.Context(), ref)
+	if err != nil {
+		return admission{}, reportInvalid(cmd, err)
+	}
+	execution, err := github.Execution(cmd.Context(), number)
+	if err != nil {
+		return admission{}, reportInvalid(cmd, err)
+	}
+	if err := loop.Admit(execution, settings.Labels()); err != nil {
+		return admission{}, reportInvalid(cmd, err)
+	}
+	return admission{adapter: adapter, github: github, execution: execution}, nil
 }
 
 // runLoop works execution with l, unattended to completion or, when
