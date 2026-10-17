@@ -3,6 +3,7 @@ package loop_test
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -176,5 +177,75 @@ func TestAFailedRecordIsAWarning(t *testing.T) {
 	want := []string{"smith: warning: could not record how the run ended: read-only file system"}
 	if err != nil || !outcome.Complete() || !containsLines(progress.String(), want) {
 		t.Errorf("Run() = %+v, %v with progress\n%s\nwant the spec complete and the lines %q", outcome, err, progress.String(), want)
+	}
+}
+
+// down is a tracker whose every spec read fails with errUnreadable, as during an outage.
+type down struct {
+	*board
+}
+
+func (down) Execution(context.Context, int) (tracker.Execution, error) {
+	return tracker.Execution{}, errUnreadable
+}
+
+func TestARunWhoseFirstReadFailsRecordsItFailed(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	r := &recorder{}
+	l := loopOn(t, b, b)
+	l.Tracker, l.Recorder = down{board: b}, r
+
+	_, err := l.Run(t.Context(), 42)
+
+	if want := []loop.Ending{loop.Failed}; !errors.Is(err, errUnreadable) || !reflect.DeepEqual(r.endings, want) {
+		t.Errorf("Run() = %v, recorded %q; want the read's error and %q recorded", err, r.endings, want)
+	}
+}
+
+func TestARunWhoseFirstReadFailsPostsItsStopReportOnTheIssue(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l := loopOn(t, b, b)
+	l.Tracker = down{board: b}
+
+	if _, err := l.Run(t.Context(), 42); !errors.Is(err, errUnreadable) {
+		t.Fatalf("Run() error = %v, want the read's error", err)
+	}
+
+	want := []string{"smith stopped its run of #42: **failed**.\n\n```text\n#42 failed: read #42: HTTP 502\n```\n"}
+	if got := commentsOn(b, 42); !reflect.DeepEqual(got, want) {
+		t.Errorf("Run() commented %q, want %q", got, want)
+	}
+}
+
+func TestAbortWithNoTrackerRecordsTheRunFailed(t *testing.T) {
+	t.Parallel()
+	r := &recorder{}
+	l := loop.Loop{Recorder: r, Progress: io.Discard}
+
+	if err := l.Abort(t.Context(), 42, errors.New("resolve loop settings: bad agent")); err != nil {
+		t.Fatalf("Abort() error = %v", err)
+	}
+
+	want := []string{"#42 failed: resolve loop settings: bad agent\n"}
+	if !reflect.DeepEqual(r.endings, []loop.Ending{loop.Failed}) || !reflect.DeepEqual(r.reports, want) {
+		t.Errorf("Abort() recorded %q with reports %q, want %q and %q", r.endings, r.reports, loop.Failed, want)
+	}
+}
+
+func TestAFailedAbortReportIsAWarning(t *testing.T) {
+	t.Parallel()
+	b := &board{refuseComment: errors.New("HTTP 403")}
+	var progress strings.Builder
+	l := loop.Loop{Tracker: b, Progress: &progress}
+
+	if err := l.Abort(t.Context(), 42, errors.New("set up the work branch")); err != nil {
+		t.Fatalf("Abort() error = %v", err)
+	}
+
+	want := []string{"smith: warning: could not post the stop report on #42: HTTP 403"}
+	if !containsLines(progress.String(), want) {
+		t.Errorf("Abort() wrote progress\n%s\nwant the lines %q", progress.String(), want)
 	}
 }

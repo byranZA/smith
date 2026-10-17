@@ -157,6 +157,27 @@ func (l Loop) conclude(ctx context.Context, execution tracker.Execution, outcome
 	return l.warnIf(l.Tracker.Comment(ctx, number, stopComment(execution, ending, report)), "could not post the stop report on #%d", number)
 }
 
+// Abort concludes a run of issue that failed with failed before it could
+// start working: it records the run as Failed with the Recorder when there is
+// one and, when there is a Tracker, posts the stop report on issue, on a
+// context detached from ctx, warning when either fails.
+func (l Loop) Abort(ctx context.Context, issue int, failed error) error {
+	name := fmt.Sprintf("#%d", issue)
+	report := fmt.Sprintf("%s failed: %v\n", name, failed)
+	if l.Recorder != nil {
+		if err := l.warnIf(l.Recorder.Record(Failed, report), "could not record how the run ended"); err != nil {
+			return err
+		}
+	}
+	if l.Tracker == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedStopTimeout)
+	defer cancel()
+	body := fmt.Sprintf("smith stopped its run of %s: **%s**.\n\n```text\n%s```\n", name, Failed, report)
+	return l.warnIf(l.Tracker.Comment(ctx, issue, body), "could not post the stop report on #%d", issue)
+}
+
 // stopReport returns the outcome and the report of the run of the execution
 // called name that ended with outcome, or with the error failed: stopped
 // when ctx, the run's, was cancelled, and failed otherwise.

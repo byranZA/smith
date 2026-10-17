@@ -125,11 +125,13 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 // task left open after its last attempt is skipped and handed to a human,
 // with a comment on its issue saying where its work was left. Once spec is
 // read, however the run stops, its outcome and stop report go to the
-// Recorder and as a comment on spec's issue.
+// Recorder and as a comment on spec's issue; a run that cannot read spec at
+// all is aborted.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
+		failed := fmt.Errorf("read #%d: %w", spec, err)
+		return Outcome{}, errors.Join(failed, l.Abort(ctx, spec, failed))
 	}
 	outcome, err := l.work(ctx, spec, current)
 	if reported := l.conclude(ctx, current, outcome, err); reported != nil {

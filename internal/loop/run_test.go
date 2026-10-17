@@ -824,7 +824,8 @@ func TestRunOnATrackerThatCannotAuthenticateStopsBeforeMarkingAnyTask(t *testing
 	_, err := l.Run(t.Context(), 42)
 
 	want := "read #42: the tracker can't authenticate with gh: HTTP 401: Bad credentials (https://api.github.com/graphql)"
-	if err == nil || err.Error() != want || len(gh.ran) != 1 || len(b.launched) != 0 {
-		t.Errorf("Run() error = %v after gh %q and %d launches, want %q after one read and no launch", err, gh.ran, len(b.launched), want)
+	marked := slices.ContainsFunc(gh.ran, func(args string) bool { return strings.HasPrefix(args, "issue edit") })
+	if err == nil || err.Error() != want || marked || len(b.launched) != 0 {
+		t.Errorf("Run() error = %v after gh %q and %d launches, want %q with no label write and no launch", err, gh.ran, len(b.launched), want)
 	}
 }

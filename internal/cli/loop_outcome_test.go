@@ -50,3 +50,39 @@ func TestALoopRunAsASessionsRootProcessRecordsItsOutcomeForSessionList(t *testin
 		t.Errorf("session list row = %q, want %q", got, "stopped - 0 loop complete")
 	}
 }
+
+// rootRun runs the root process of the session loopSession started in dir, reading the tracker through gh, with flags after its own.
+func rootRun(t *testing.T, gh *fakeTracker, dir string, flags ...string) int {
+	t.Helper()
+	w := inRepo(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath, git: connection.System(), workdir: func() (string, error) { return dir, nil }})
+	_, _, code := runLoopRun(t, w, "42", append([]string{"--branch=smith/42-the-loop", "--in-session"}, flags...)...)
+	return code
+}
+
+func TestARootProcessWhoseTrackerFailsAfterPreflightRecordsItFailed(t *testing.T) {
+	tmux, resolve, dir := loopSession(t)
+	if code := rootRun(t, &fakeTracker{stderr: "HTTP 502: Bad Gateway\n"}, dir); code == 0 {
+		t.Fatal("loop run --in-session exit 0 on a tracker outage, want nonzero")
+	}
+	stopSession(t, resolve, tmux, "smith-smith-42-the-loop")
+
+	row := listedRow(t, resolve, tmux, "smith-smith-42-the-loop")
+
+	if got := strings.Join(row[1:], " "); got != "stopped - 0 loop failed" {
+		t.Errorf("session list row = %q, want %q", got, "stopped - 0 loop failed")
+	}
+}
+
+func TestARootProcessRefusingItsSettingsRecordsItFailed(t *testing.T) {
+	tmux, resolve, dir := loopSession(t)
+	if code := rootRun(t, readySpec(), dir, "--agent=nope"); code == 0 {
+		t.Fatal("loop run --in-session --agent=nope exit 0, want nonzero")
+	}
+	stopSession(t, resolve, tmux, "smith-smith-42-the-loop")
+
+	row := listedRow(t, resolve, tmux, "smith-smith-42-the-loop")
+
+	if got := strings.Join(row[1:], " "); got != "stopped - 0 loop failed" {
+		t.Errorf("session list row = %q, want %q", got, "stopped - 0 loop failed")
+	}
+}

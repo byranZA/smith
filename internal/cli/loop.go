@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -303,52 +304,14 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if repo != "" {
 				return w.startSession(cmd, ref, sessionRun{issue: args[0], repo: repo, branch: branch, base: base, interactive: interactive, flags: flags})
 			}
-			settings, err := w.settings(cmd.Context(), flags)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			prompt, err := w.prompt(cmd.Context())
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			if err := installed(cmd, settings.Agent.Value, w.lookPath); err != nil {
-				return err
-			}
-			admitted, err := w.admit(cmd, ref, settings, w.gh)
-			if err != nil {
-				return err
-			}
-			adapter, github, execution := admitted.adapter, admitted.github, admitted.execution
-			pusher, err := w.origin(settings)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			bench, lag, err := w.workbench(cmd.Context(), execution, branch, base)
-			if err != nil {
-				return reportInvalid(cmd, err)
-			}
-			if _, err := fmt.Fprint(cmd.ErrOrStderr(), lagWarning(bench.WorkBranch(), lag)); err != nil {
-				return fmt.Errorf("write warning: %w", err)
-			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
-				return fmt.Errorf("write report: %w", err)
-			}
 			recorder, err := w.recorder(cmd.Context(), inSession)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			l := loop.Loop{
-				Recorder: recorder,
-				Tracker:  github,
-				Launcher: w.launcher,
-				Bench:    bench,
-				Pusher:   pusher,
-				Agent:    adapter,
-				Options:  settings.Options(),
-				Prompt:   prompt,
-				Limits:   limits,
-				Progress: cmd.ErrOrStderr(),
-				Hostname: w.hostname,
+			l := loop.Loop{Recorder: recorder, Progress: cmd.ErrOrStderr(), Limits: limits, Launcher: w.launcher, Hostname: w.hostname}
+			execution, err := w.prepare(cmd, ref, &l, flags, branch, base)
+			if err != nil {
+				return abort(cmd, l, ref, execution, interactive, err)
 			}
 			report, succeeded, err := runLoop(cmd.Context(), l, execution, interactive)
 			if err != nil {
@@ -378,6 +341,68 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 		panic(fmt.Sprintf("hide --%s: %v", inSessionFlag, err))
 	}
 	return cmd
+}
+
+// prepare runs a loop run's preflight here and sets up its work branch,
+// filling l in as it goes, and returns the execution it admitted. On a
+// refusal, which may already be reported on cmd, l holds as much as was set
+// up and the execution is what was admitted, if anything, so the run can be
+// aborted.
+func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags repofile.File, branch, base string) (tracker.Execution, error) {
+	settings, err := w.settings(cmd.Context(), flags)
+	if err != nil {
+		return tracker.Execution{}, err
+	}
+	prompt, err := w.prompt(cmd.Context())
+	if err != nil {
+		return tracker.Execution{}, err
+	}
+	if err := installed(cmd, settings.Agent.Value, w.lookPath); err != nil {
+		return tracker.Execution{}, err
+	}
+	admitted, err := w.admit(cmd, ref, settings, w.gh)
+	if err != nil {
+		return tracker.Execution{}, err
+	}
+	l.Tracker, l.Agent, l.Options, l.Prompt = admitted.github, admitted.adapter, settings.Options(), prompt
+	if l.Pusher, err = w.origin(settings); err != nil {
+		return admitted.execution, err
+	}
+	bench, lag, err := w.workbench(cmd.Context(), admitted.execution, branch, base)
+	if err != nil {
+		return admitted.execution, err
+	}
+	l.Bench = bench
+	if _, err := fmt.Fprint(cmd.ErrOrStderr(), lagWarning(bench.WorkBranch(), lag)); err != nil {
+		return admitted.execution, fmt.Errorf("write warning: %w", err)
+	}
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
+		return admitted.execution, fmt.Errorf("write report: %w", err)
+	}
+	return admitted.execution, nil
+}
+
+// abort reports on cmd why a loop run with l failed before it could start,
+// when that is not reported yet. An unattended run is then concluded as
+// failed: in the session record when it is a session's root process, and on
+// the issue of execution once it was admitted, else of ref.
+func abort(cmd *cobra.Command, l loop.Loop, ref tracker.Ref, execution tracker.Execution, interactive bool, failed error) error {
+	reported := failed
+	var exit *exitError
+	if !errors.As(failed, &exit) {
+		reported = reportInvalid(cmd, failed)
+	}
+	if interactive {
+		return reported
+	}
+	issue := ref.Number
+	if number, _ := execution.Issue(); number != 0 {
+		issue = number
+	}
+	if err := l.Abort(cmd.Context(), issue, failed); err != nil {
+		return errors.Join(reported, err)
+	}
+	return reported
 }
 
 // admission is what a loop run's preflight found: the agent adapter each task
