@@ -23,8 +23,8 @@ terminal: tmux
 workspace: ~/workspace
 
 # The identity the box commits as. Declare this or place your own ~/.gitconfig
-# — never both, because git reads one file and two writers on it means the one
-# you did not think about wins.
+# — never both, because both write that one file and the one you did not think
+# about wins. A placement at ~/.config/git/config sits beside it without conflict.
 git:
   user_name: Ada Lovelace
   user_email: ada@acme.example

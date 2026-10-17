@@ -192,6 +192,7 @@ declaration site for every credential on the box.
   pointer would be a lie about what the box contains. What is protected is *the same set of keys,
   never the same values* — `env:GH_TOKEN` already resolves differently on each laptop — and that
   is still worth protecting.
+- **smith knows the forge on a box** — rejected after the first real box run, where `machine setup` succeeded on a box whose `GITHUB_TOKEN` was invalid. The proposal was for smith to point git's credential helper at `gh` and check `gh` auth at setup, on the grounds that the loop already knows GitHub ([ADR-0012](./0012-the-repo-file.md)). It lost for three reasons. The wiring worked and the token failed, so wiring in code would not have caught the fault, and the helper stays a placement the starter blueprint and docs show. The loop reads its execution through the tracker before it touches a task, so a token it cannot authenticate with already stops the run, inside the exception ADR-0012 grants. And the one source that would make smith's knowledge pay, staging the token from `gh auth token` on the operator's machine, is ruled out: it would put the operator's broad token on a box in place of a narrow PAT chosen on purpose. The loop does not check the coding agent's credential either: `claude auth status` reports only that a credential is configured and passes a revoked one, and a real check spends a model request ([issue #297](https://github.com/byranZA/smith/issues/297)).
 
 ## Consequences
 
