@@ -175,8 +175,9 @@ const fragmentMode = 0o600
 const installer = "https://mise.run"
 
 // convergeToolchain gives the box its toolchain: mise installed, the generated
-// fragment holding what the blueprint declares, and the pinned versions
-// installed.
+// fragment holding what the blueprint declares, the pinned versions installed
+// and, for the box's own fragment, the login profile putting mise's shims on
+// PATH.
 //
 // The staged values are read before anything is installed, so a variable with
 // no staged value fails having changed nothing rather than half way through an
@@ -202,13 +203,20 @@ func convergeToolchain(ctx context.Context, env Env, m *mise, f Fragment, progre
 		return "", err
 	}
 	done = append(done, wrote)
-	if len(f.Tools) == 0 {
+	if len(f.Tools) > 0 {
+		if err := env.Command.Run(ctx, exe, installArgs(f.Dir), nil, progress, progress); err != nil {
+			return "", fmt.Errorf("install the pinned versions with mise: %w", err)
+		}
+		done = append(done, "installed "+pinned(f.Tools))
+	}
+	if f.Dir != "" {
 		return strings.Join(done, "; "), nil
 	}
-	if err := env.Command.Run(ctx, exe, installArgs(f.Dir), nil, progress, progress); err != nil {
-		return "", fmt.Errorf("install the pinned versions with mise: %w", err)
+	wrote, err = writeProfile(ctx, env.Command, env.profile(), progress)
+	if err != nil {
+		return "", err
 	}
-	return strings.Join(append(done, "installed "+pinned(f.Tools)), "; "), nil
+	return strings.Join(append(done, wrote), "; "), nil
 }
 
 // installArgs is the mise invocation that installs what a fragment pins. mise

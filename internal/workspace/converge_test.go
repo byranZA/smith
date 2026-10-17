@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func newBox() *fakeBox {
 	return &fakeBox{installed: map[string]bool{}, remotes: map[string]string{}, unreachable: map[string]bool{}, gitConfig: map[string]string{}, included: map[string]string{}}
 }
 
-func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
+func (f *fakeBox) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	argv := append([]string{name}, args...)
 	f.calls = append(f.calls, argv)
 	line := strings.Join(argv, " ")
@@ -108,6 +109,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 			return fmt.Errorf("fatal: could not read from remote repository %s", f.remotes[gitDir(argv)])
 		}
 		return f.gitErr
+	case strings.HasPrefix(line, "sudo install"):
+		return f.install(argv[len(argv)-1], stdin)
 	case strings.Contains(line, "mise.run"):
 		f.miseAt = installPath(line)
 		return f.miseErr
@@ -126,6 +129,21 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return f.aptErr
 	}
 	return fmt.Errorf("unexpected command %q", line)
+}
+
+// install writes what stdin carries at path the way `sudo install -m 0644` does.
+func (f *fakeBox) install(path string, stdin io.Reader) error {
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		return fmt.Errorf("read what install was handed: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("make the directory of %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("install %s: %w", path, err)
+	}
+	return nil
 }
 
 // config answers a `git config --global` read or write against the box's global git config.

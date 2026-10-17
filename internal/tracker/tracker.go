@@ -102,6 +102,25 @@ func (e *UnavailableError) Error() string {
 // Unwrap returns the underlying failure.
 func (e *UnavailableError) Unwrap() error { return e.Err }
 
+// AuthError reports that the tracker was reached but refused the credentials
+// the tool reaching it holds, with what the tool said.
+type AuthError struct {
+	Tool   string
+	Detail string
+	Err    error
+}
+
+// Error implements error.
+func (e *AuthError) Error() string {
+	if detail := strings.TrimSpace(e.Detail); detail != "" {
+		return fmt.Sprintf("the tracker can't authenticate with %s: %s", e.Tool, detail)
+	}
+	return fmt.Sprintf("the tracker can't authenticate with %s: %v", e.Tool, e.Err)
+}
+
+// Unwrap returns the underlying failure.
+func (e *AuthError) Unwrap() error { return e.Err }
+
 // Labels are the names of the triage labels that say what an issue is for:
 // Agent and Human mark who a task is for, and Spec marks a spec not yet
 // split into tasks.

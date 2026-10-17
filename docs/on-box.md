@@ -33,6 +33,24 @@ Neither of these is a bug, and both look like one at first:
   are driven from your machine. `upgrade` is local for a second, unrelated
   reason: a box cannot replace the binary that the running command *is*.
 
+## What a shell on the box gets
+
+Every shell on a box gets the blueprint's declared tools, but not every shell gets them the same way, and only some get its `env`:
+
+| | declared tools | `env` (`GITHUB_TOKEN`, …) |
+| --- | --- | --- |
+| plain `ssh smith@box` login shell | yes, through mise's shims | **not exported** |
+| session shell, and the loop and agent in it | yes | yes |
+| relayed smith (`ssh box smith …`) | only under `mise exec` | only under `mise exec` |
+
+- **A plain SSH shell** gets mise's shims on `PATH` ahead of the system directories, from `/etc/profile.d/smith.sh`, which the [workspace stage](./workspace.md#the-toolchain) writes. Bash reads `/etc/profile` for every login shell, even when a `~/.bash_profile` stops `~/.profile` being read. The secrets stay out of the shell's environment, but a shim runs its tool with the `env` in scope, so `gh`, and the `gh auth git-credential` helper a `git push` runs, still gets its token.
+- **A session** runs its process under `mise exec` in its worktree: `bash -l` for a session you attach to, the root command for a loop-driven one. The shell, the loop and any agent it launches hold the declared tools and the exported `env`, fixed when the session started. A rotated secret reaches a session on `stop` and `start`.
+- **Relayed smith** runs over a non-interactive SSH, with a stripped `PATH` and no profile. Anything it does that needs a declared tool runs under `mise exec` in the worktree it concerns.
+
+A tool you installed yourself, outside the blueprint, has no shim. If it needs a token, run it in a session or as `mise exec -- <tool>`.
+
+A box set up before smith wrote the profile gets it on the next `smith machine setup`, and a session started before smith wrapped sessions in `mise exec` gets the wrapper on `stop` and `start`.
+
 ## The install stage
 
 `machine setup` runs an ordered pipeline of named **stages** after every

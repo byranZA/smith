@@ -87,7 +87,7 @@ func TestConvergeClonesAfterThePlacementsThatAuthenticateIt(t *testing.T) {
 	b.Placements = []blueprint.Placement{{From: "file:/home/op/gitconfig", To: "~/.gitconfig", Mode: "converge"}}
 
 	var progress bytes.Buffer
-	env := Env{Command: watcher, StateRoot: root}
+	env := Env{Command: watcher, StateRoot: root, Profile: filepath.Join(t.TempDir(), "smith.sh")}
 	if _, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress); err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
@@ -120,7 +120,7 @@ func TestConvergeClonesUnderTheResolvedWorkspaceRoot(t *testing.T) {
 	box := newBox()
 	box.hasMise = true
 	code := staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/code"}
-	env := Env{Command: box, StateRoot: t.TempDir()}
+	env := Env{Command: box, StateRoot: t.TempDir(), Profile: filepath.Join(t.TempDir(), "smith.sh")}
 
 	if _, err := Converge(context.Background(), env, Plan(declaresRepo("acme"), code, home), io.Discard); err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)

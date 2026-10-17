@@ -71,6 +71,55 @@ func TestStartCreatesTheWorktreeAndTheTmuxSession(t *testing.T) {
 	}
 }
 
+func TestStartRunsAHumanSessionsLoginShellUnderMise(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	tmux := &fakeTmux{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+		Mise:      "/home/smith/.local/bin/mise",
+	}
+
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-spec-42", "-c", dir, "/home/smith/.local/bin/mise", "exec", "--", "bash", "-l"}}
+	if !slices.EqualFunc(tmux.calls, want, slices.Equal) {
+		t.Errorf("Start() ran tmux %q, want %q", tmux.calls, want)
+	}
+}
+
+func TestStartRunsARootCommandUnderMise(t *testing.T) {
+	t.Parallel()
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith", "main")
+	tmux := &fakeTmux{}
+	env := session.Env{
+		Workspace: workspace,
+		Repos:     []session.Repo{{Name: "smith"}},
+		Git:       connection.System(),
+		Tmux:      tmux,
+		Mise:      "/home/smith/.local/bin/mise",
+	}
+	req := session.StartRequest{Repo: "smith", Branch: "spec-42", Command: []string{"smith", "loop", "run", "docs/spec.md"}}
+
+	if _, err := session.Start(t.Context(), env, req); err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+
+	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-spec-42", "-c", dir, "/home/smith/.local/bin/mise", "exec", "--", "smith", "loop", "run", "docs/spec.md"}}
+	if !slices.EqualFunc(tmux.calls, want, slices.Equal) {
+		t.Errorf("Start() ran tmux %q, want %q", tmux.calls, want)
+	}
+}
+
 // writeBareRepo clones a one-commit repo to <workspace>/<repo>/repo.git the way converge does.
 func writeBareRepo(t *testing.T, workspace, repo, defaultBranch string) {
 	t.Helper()

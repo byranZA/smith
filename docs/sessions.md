@@ -148,6 +148,12 @@ box.
 A **write-once** placement is still not overwritten on the way through — that
 is what write-once means, and resume does not make an exception of it.
 
+### What a session's shell holds
+
+A session's process runs under `mise exec` in its worktree, so its shell holds the blueprint's declared tools and its `env`, `GITHUB_TOKEN` included, with no prefix to type. A plain SSH shell has the tools but not the `env`. [smith on the box](./on-box.md#what-a-shell-on-the-box-gets) sets the two side by side.
+
+The `env` in a session's shell is fixed when the session starts, so a rotated secret reaches a live session on `stop` and `start`.
+
 ### Cutting, fetching and `--base`
 
 - A **new** branch is cut from `--base`, else from the base the blueprint
