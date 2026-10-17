@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/relay"
@@ -170,4 +171,28 @@ func (d dirExec) Run(ctx context.Context, name string, args []string, stdin io.R
 		return fmt.Errorf("run %s in %s: %w", name, d.dir, err)
 	}
 	return nil
+}
+
+// relayRun relays a loop run to box, as the on-box `loop run --repo` with
+// every flag the operator set, streaming back its preflight output and exit
+// status and never attaching. A run naming no repo, or asking to be
+// interactive, is refused before anything travels, and a box refusing the
+// relay for version skew is reacted to as for the session verbs.
+func (w loopWiring) relayRun(cmd *cobra.Command, box string, run sessionRun) error {
+	if run.interactive {
+		return reportInvalid(cmd, fmt.Errorf("--interactive cannot run on a box: start a human session with `smith session start %s --repo %s --branch <branch>` and run `smith loop run %s --interactive` in it",
+			box, cmp.Or(run.repo, "<repo>"), run.issue))
+	}
+	if run.repo == "" {
+		return reportInvalid(cmd, fmt.Errorf("loop run on box %s needs --repo naming the repo on the box to run in", box))
+	}
+	target, err := relayTarget(w.home, box)
+	if err != nil {
+		return reportInvalid(cmd, err)
+	}
+	verb := relay.Verb{Target: target, Box: box, Version: w.version, Args: append([]string{"loop", "run"}, typed(cmd, []string{run.issue})...)}
+	send := func() error {
+		return relay.Send(cmd.Context(), connection.New(verb.Target, w.ssh), verb, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	}
+	return reportRelay(cmd, w.skew.react(cmd, box, send))
 }

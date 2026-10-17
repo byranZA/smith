@@ -4,7 +4,7 @@ The **loop** works a spec's tasks, or a single task, with a coding agent, one ta
 
 ```text
 smith loop list <issue>
-smith loop run  <issue> [--agent <name>] [--model <name>] [--effort low|medium|high]
+smith loop run  [<box>] <issue> [--agent <name>] [--model <name>] [--effort low|medium|high]
                         [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push]
                         [--branch <name>] [--base <branch>] [--repo <name>]
 smith loop prompt
@@ -114,6 +114,12 @@ list:   smith session list
 `smith session attach` watches the run read-only, and the stop report lands on the issue as a comment (see [`smith loop run`](#smith-loop-run)). When only tasks for a human are left, start a human session on the same work branch with `smith session start --repo <name> --branch smith/<n>-<slug>`, which reuses the worktree, work those tasks, stop it, and run `loop run --repo` again.
 
 `--repo` is refused off a box, where the loop runs in the repo you invoke it from. `--interactive` is refused with `--repo`: an interactive run needs you at its terminal, so start a human session and run `loop run --interactive` in it. Without `--repo`, a run on a box works in the foreground in the directory you invoke it from, as it does anywhere.
+
+### From your machine: `loop run <box>`
+
+`smith loop run <box> <issue> --repo <name>` from your own machine relays the run over SSH to the box's smith, the way the `session` verbs do. The box runs `smith loop run <issue> --repo <name>` with every loop flag you set (`--agent`, `--model`, `--effort`, `--max-iterations`, `--max-attempts`, `--branch`, `--base`, `--no-push`), so it starts the same loop-driven session as above. The preflight output and the exit status come back to your terminal, and smith returns once the session is live. It never attaches: run the printed `smith session attach <box> <name>` to watch.
+
+A box running a different version of smith is handled as for the `session` verbs: asked about at a terminal, refused with the `smith machine upgrade <box>` to run otherwise. `--repo` is required with a box, and `--interactive` is refused with one before anything is relayed.
 
 ## Agents
 

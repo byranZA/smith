@@ -28,7 +28,9 @@ import (
 // hostname that names this machine on a skipped task, and git, the config home
 // and the working directory that locate the repo file. On a box it also reaches
 // gh run in a repo's clone, the configuration the box was built from, the
-// state directory its placements were staged under, and tmux.
+// state directory its placements were staged under, and tmux. To relay a run to
+// a box it reaches ssh, declares this smith's version, and reacts to a box that
+// refuses it for version skew.
 type loopWiring struct {
 	gh       tracker.Runner
 	ghIn     func(dir string) tracker.Runner
@@ -43,6 +45,9 @@ type loopWiring struct {
 	git      repofile.Runner
 	home     homeResolver
 	workdir  workdirResolver
+	ssh      connection.Exec
+	version  string
+	skew     skew
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
@@ -63,6 +68,9 @@ func systemLoop() loopWiring {
 		git:      connection.System(),
 		home:     userConfigHome,
 		workdir:  currentDir,
+		ssh:      connection.System(),
+		version:  resolveVersion(),
+		skew:     operatorSkew(),
 	}
 }
 
@@ -79,7 +87,7 @@ func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.B
 // newLoopCmd builds `smith loop`, the verbs that work a spec's tasks, or a
 // single task, in the repo smith is run from, reading the tracker through gh.
 // Each runs where smith is invoked; on a box, `loop run --repo` starts the run
-// in a loop-driven session instead.
+// in a loop-driven session instead, and `loop run <box>` relays it there.
 func newLoopCmd(w loopWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "loop",
@@ -251,17 +259,18 @@ func newLoopPromptCmd() *cobra.Command {
 // on the execution's work branch, never in the checkout smith is run from. It
 // exits 0 only when the execution is complete or the interactive run's task
 // was closed. On a box, --repo starts the run in a loop-driven session instead
-// and returns once it is live.
+// and returns once it is live; a leading box relays the run to that box.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
 	var interactive, noPush bool
 	var branch, base, repo string
 	cmd := &cobra.Command{
-		Use:   "run <issue>",
+		Use:   "run [<box>] <issue>",
 		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			box, args := leading(args, 1)
 			ref, err := tracker.ParseRef(args[0])
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -272,6 +281,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if noPush {
 				off := false
 				flags.Push = &off
+			}
+			if box != "" {
+				return w.relayRun(cmd, box, sessionRun{issue: args[0], repo: repo, interactive: interactive})
 			}
 			if repo != "" {
 				return w.startSession(cmd, ref, sessionRun{issue: args[0], repo: repo, branch: branch, base: base, interactive: interactive, flags: flags})
