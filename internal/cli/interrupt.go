@@ -16,8 +16,8 @@ import (
 // cannot reach, such as a terminal prompt, still ends soon after the interrupt.
 const interruptGrace = 7 * time.Second
 
-// execute runs root under a context the operator's first interrupt (SIGINT or
-// SIGTERM) cancels, and returns the process exit code. Cancelling, rather than
+// execute runs root under a context the operator's first interrupt (SIGINT,
+// SIGTERM or SIGHUP) cancels, and returns the process exit code. Cancelling, rather than
 // dying on the signal, lets the running command return through its deferred
 // cleanup, so a shipped script is still removed from the box.
 //
@@ -63,12 +63,14 @@ func execute(root *cobra.Command, grace time.Duration) int {
 	return codeFromError(err)
 }
 
-// caughtSignals is the interrupts execute turns into a cancelled command. A
-// signal smith was started ignoring, as a background job's SIGINT is, stays
-// ignored: catching it would let an interrupt meant for someone else stop smith.
+// caughtSignals is the interrupts execute turns into a cancelled command: Ctrl-C,
+// a termination, and a hangup from a closed terminal or a dropped connection. A
+// signal smith was started ignoring, as a background job's SIGINT or a nohup
+// run's SIGHUP is, stays ignored, so an interrupt meant for someone else does
+// not stop smith.
 func caughtSignals() []os.Signal {
 	var caught []os.Signal
-	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
 		if !signal.Ignored(sig) {
 			caught = append(caught, sig)
 		}
