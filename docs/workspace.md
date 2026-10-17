@@ -162,7 +162,8 @@ version without fighting a generated file.
 
 Invocation is **`mise exec`, never `mise activate`** — `activate` does not fire
 in the non-interactive and daemon-started shells smith and its agents run in.
-Shims on `PATH` are the courtesy for a human who SSHes in.
+
+For a human who SSHes in, the step also writes **`/etc/profile.d/smith.sh`** (`0644`, through `sudo`), which puts mise's shims on a login shell's `PATH` ahead of the system directories. smith owns that file whole and rewrites it only when its bytes differ. It adds the shims directory only if it exists, so a half-set-up box still logs in, and a box with no toolchain gets no file. Your own dotfiles are not touched. What each kind of shell on the box gets is in [smith on the box](./on-box.md#what-a-shell-on-the-box-gets).
 
 ## Repos
 

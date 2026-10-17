@@ -298,7 +298,7 @@ func TestConvergeWritesPlacementsBeforeTheCommandsThatNeedThem(t *testing.T) {
 	}
 
 	var progress bytes.Buffer
-	if _, err := Converge(context.Background(), Env{Command: watcher, StateRoot: root}, Plan(b, resolved, home), &progress); err != nil {
+	if _, err := Converge(context.Background(), Env{Command: watcher, StateRoot: root, Profile: filepath.Join(t.TempDir(), "smith.sh")}, Plan(b, resolved, home), &progress); err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 

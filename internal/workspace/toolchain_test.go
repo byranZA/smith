@@ -363,7 +363,7 @@ func TestConvergeRefusesAVariableWithNoStagedValue(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_fromtheboxenv")
 
 	var progress bytes.Buffer
-	env := Env{Command: box, StateRoot: t.TempDir()}
+	env := Env{Command: box, StateRoot: t.TempDir(), Profile: filepath.Join(t.TempDir(), "smith.sh")}
 	result, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
@@ -680,7 +680,7 @@ func TestConvergeSharesOneInstallStoreAcrossRepos(t *testing.T) {
 	}
 	var installs [][]string
 	for _, argv := range box.calls {
-		if len(argv) > 0 && argv[0] != "sh" && strings.Contains(strings.Join(argv, " "), "install") {
+		if len(argv) > 0 && isMise(argv[0]) && strings.Contains(strings.Join(argv, " "), "install") {
 			installs = append(installs, argv)
 		}
 	}

@@ -23,6 +23,7 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"io"
 
@@ -47,9 +48,10 @@ const (
 	// Packages installs the blueprint's apt packages — the OS substrate and
 	// build prerequisites, unversioned by design.
 	Packages Step = "packages"
-	// Toolchain installs mise and writes the generated config pinning the
-	// blueprint's tools and exporting its env. It precedes the clones because
-	// a token exported through that config is what authenticates one.
+	// Toolchain installs mise, writes the generated config pinning the
+	// blueprint's tools and exporting its env, and puts mise's shims on a
+	// login shell's PATH. It precedes the clones because a token exported
+	// through that config is what authenticates one.
 	Toolchain Step = "toolchain"
 	// Repos clones every declared repo bare into the workspace, under the env
 	// the toolchain step put in scope.
@@ -136,9 +138,18 @@ type Env struct {
 	// blueprint, its placement bytes and its resolved env under — /etc/smith
 	// on a real box.
 	StateRoot string
+	// Profile is where the login profile putting mise's shims on PATH lands.
+	// A run that leaves it unset writes /etc/profile.d/smith.sh.
+	Profile string
 	// Hint is the command the run answers, which a refusal's suggested
 	// command is spelled for.
 	Hint hint.Invocation
+}
+
+// profile is where the run writes the login profile: the one the caller
+// named, and /etc/profile.d/smith.sh when it named none.
+func (e Env) profile() string {
+	return cmp.Or(e.Profile, defaultProfile)
 }
 
 // owner is the account a run claims placed files for: the one the caller

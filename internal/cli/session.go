@@ -17,6 +17,7 @@ import (
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
+	"github.com/byranZA/smith/internal/workspace"
 )
 
 // boxConfig is what a session verb running here acts on: the repos the staged
@@ -524,18 +525,23 @@ func writeOneRemoved(cmd *cobra.Command, removed session.Removal) error {
 
 // sessionEnv turns the box's staged configuration into what a session verb
 // runs against: an absolute workspace root and the repos the blueprint
-// declares, paired with the commands smith drives the box with and the command
-// inv its suggestions are spelled for.
+// declares, the mise every session runs under, and the commands smith drives
+// the box with and the command inv its suggestions are spelled for.
 func sessionEnv(box boxConfig, root string, git, tmux session.Runner, connect session.Execer, inv hint.Invocation) (session.Env, error) {
-	workspace, err := boxPath(box.Resolution.Workspace)
+	ws, err := boxPath(box.Resolution.Workspace)
+	if err != nil {
+		return session.Env{}, err
+	}
+	home, err := boxPath("~")
 	if err != nil {
 		return session.Env{}, err
 	}
 	return session.Env{
-		Workspace: workspace,
+		Workspace: ws,
 		Repos:     declaredRepos(box.Repos),
 		Git:       git,
 		Tmux:      tmux,
+		Mise:      workspace.SessionMise(home),
 		Exec:      connect,
 		Placer:    stagedPlacer{root: root, repos: box.Repos, hint: inv},
 		Hint:      inv,
