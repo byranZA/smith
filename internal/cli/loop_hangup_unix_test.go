@@ -127,7 +127,6 @@ func waitForPids(t *testing.T, pidfile string) []int {
 	return nil
 }
 
-// TestHelperHungUpLoop is hangUpLoop's child process body, a no-op when run directly.
 func TestHelperHungUpLoop(t *testing.T) {
 	dir := os.Getenv(hangupDirEnv)
 	if dir == "" {

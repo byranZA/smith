@@ -21,18 +21,12 @@ import (
 	"github.com/byranZA/smith/internal/workbench"
 )
 
-// loopWiring is what the loop verbs reach the outside world through: gh for
-// the tracker, the launcher that starts an agent, the bench that sets up an
-// execution's work branch and task worktrees in the repo a directory is in
-// and finds how far an adopted one is behind its base, the pusher that pushes
-// the work branch from a directory, the PATH search that finds an agent here, the
-// hostname that names this machine on a skipped task, and git, the config home
-// and the working directory that locate the repo file. On a box it also reaches
-// gh run in a repo's clone, the configuration the box was built from, the
-// state directory its placements were staged under, tmux, and the mise that
-// finds an agent for a session. To relay a run to
-// a box it reaches ssh, declares this smith's version, and reacts to a box that
-// refuses it for version skew.
+// loopWiring is what the loop verbs reach the outside world through: the
+// tracker, agent launches and lookup, the workbench and pushes, the hostname,
+// and the git, config home and working directory that locate the repo file.
+// On a box it also reaches gh in a repo's clone, the box's configuration and
+// staging root, tmux and mise, and to relay a run to a box it reaches ssh,
+// declares this smith's version and reacts to a box refusing it for skew.
 type loopWiring struct {
 	gh       tracker.Runner
 	ghIn     func(dir string) tracker.Runner
