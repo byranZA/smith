@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -51,6 +52,13 @@ const labelLimit = 1000
 
 // notFoundMark is how gh says an issue number resolves to nothing.
 const notFoundMark = "Could not resolve to an issue"
+
+// authExitCode is gh's documented exit status for a command that needs
+// authentication it does not have.
+const authExitCode = 4
+
+// authMarks are how gh says GitHub refused the token it sent.
+var authMarks = []string{"Bad credentials", "HTTP 401"}
 
 // missingLabelMark matches how gh says an issue edit names a label the repo
 // does not have, capturing the label's name.
@@ -147,7 +155,7 @@ func (g GitHub) Local(ctx context.Context, ref Ref) (int, error) {
 	}
 	var stdout, stderr bytes.Buffer
 	if err := g.gh.Run(ctx, "gh", []string{"repo", "view", "--json", "nameWithOwner"}, nil, &stdout, &stderr); err != nil {
-		return 0, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+		return 0, failure(stderr.String(), err)
 	}
 	var here repoView
 	if err := json.Unmarshal(stdout.Bytes(), &here); err != nil {
@@ -273,7 +281,7 @@ func (g GitHub) Labels(ctx context.Context) ([]string, error) {
 	var stdout, stderr bytes.Buffer
 	args := []string{"label", "list", "--limit", strconv.Itoa(labelLimit), "--json", "name"}
 	if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
-		return nil, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+		return nil, failure(stderr.String(), err)
 	}
 	var listed []label
 	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
@@ -289,7 +297,7 @@ func (g GitHub) Labels(ctx context.Context) ([]string, error) {
 // Comment posts body as a comment on issue number, as it is given.
 func (g GitHub) Comment(ctx context.Context, number int, body string) error {
 	if stderr, err := g.run(ctx, []string{"issue", "comment", strconv.Itoa(number), "--body", body}); err != nil {
-		return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+		return failure(stderr, err)
 	}
 	return nil
 }
@@ -313,10 +321,10 @@ func (g GitHub) edit(ctx context.Context, number int, add, remove []string) erro
 		}
 		missing := missingLabelMark.FindStringSubmatch(stderr)
 		if missing == nil || slices.Contains(created, missing[1]) {
-			return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+			return failure(stderr, err)
 		}
 		if stderr, err := g.run(ctx, []string{"label", "create", missing[1]}); err != nil {
-			return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
+			return failure(stderr, err)
 		}
 		created = append(created, missing[1])
 	}
@@ -328,6 +336,22 @@ func (g GitHub) run(ctx context.Context, args []string) (string, error) {
 	var stderr bytes.Buffer
 	err := g.gh.Run(ctx, "gh", args, nil, io.Discard, &stderr)
 	return stderr.String(), err
+}
+
+// failure is the error for a gh run that failed with err after saying stderr:
+// an AuthError when gh could not authenticate, and an UnavailableError
+// otherwise.
+func failure(stderr string, err error) error {
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) && exit.ExitCode() == authExitCode {
+		return &AuthError{Tool: "gh", Detail: stderr, Err: err}
+	}
+	for _, mark := range authMarks {
+		if strings.Contains(stderr, mark) {
+			return &AuthError{Tool: "gh", Detail: stderr, Err: err}
+		}
+	}
+	return &UnavailableError{Tool: "gh", Detail: stderr, Err: err}
 }
 
 // blockers returns what blocks task in repo: its blocked-by links, then the
@@ -374,7 +398,7 @@ func (g GitHub) view(ctx context.Context, ref Ref, fields string) (issue, error)
 		if strings.Contains(stderr.String(), notFoundMark) {
 			return issue{}, &NotFoundError{Number: ref.Number}
 		}
-		return issue{}, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+		return issue{}, failure(stderr.String(), err)
 	}
 	var got issue
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
@@ -420,7 +444,7 @@ func (g GitHub) linkedPage(ctx context.Context, number int, name, cursor string)
 	}
 	var stdout, stderr bytes.Buffer
 	if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
-		return linkedPage{}, &UnavailableError{Tool: "gh", Detail: stderr.String(), Err: err}
+		return linkedPage{}, failure(stderr.String(), err)
 	}
 	var page linkedPage
 	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {

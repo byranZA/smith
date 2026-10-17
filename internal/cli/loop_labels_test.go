@@ -84,13 +84,13 @@ func TestLoopRunWithDefaultLabelsChecksNoLabels(t *testing.T) {
 func TestLoopRunCarriesOnWhenTheLabelCheckFails(t *testing.T) {
 	t.Parallel()
 	gh := labelledSpec()
-	gh.labelErr = "HTTP 401: Bad credentials\n"
+	gh.labelErr = "HTTP 502: Bad Gateway\n"
 	claude := &fakeAgent{gh: gh}
 	w, _ := repoWith(t, gh, claude, configuredLabels)
 
 	_, stderr, _ := runLoopRun(t, w, "42")
 
-	want := "smith: warning: could not check the repo has the labels the repo file sets: gh could not be used: HTTP 401: Bad credentials\n"
+	want := "smith: warning: could not check the repo has the labels the repo file sets: gh could not be used: HTTP 502: Bad Gateway\n"
 	if !strings.HasPrefix(stderr, want) || !slices.Equal(claude.handed, []string{"43"}) {
 		t.Errorf("stderr %q, handed %v; want it to open with %q and #43 still handed out", stderr, claude.handed, want)
 	}

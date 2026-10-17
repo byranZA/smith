@@ -24,8 +24,10 @@ type fakeGH struct {
 	// lostLabels drops each label gh is asked to create, as if it were deleted again at once.
 	lostLabels bool
 	stderr     string
-	launch     error
-	ran        []string
+	// exit is what a run that wrote stderr fails with, a plain failure when nil.
+	exit   error
+	launch error
+	ran    []string
 }
 
 func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
@@ -39,6 +41,9 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if f.stderr != "" {
 		if _, err := io.WriteString(stderr, f.stderr); err != nil {
 			return err
+		}
+		if f.exit != nil {
+			return f.exit
 		}
 		return errors.New("exit status 1")
 	}
@@ -301,8 +306,8 @@ func TestExecutionReportsAMissingIssueAsNotFound(t *testing.T) {
 func TestExecutionReportsAnUnusableGH(t *testing.T) {
 	t.Parallel()
 	for name, gh := range map[string]*fakeGH{
-		"not authenticated": {stderr: "To get started with GitHub CLI, please run:  gh auth login\n"},
-		"not installed":     {launch: exec.ErrNotFound},
+		"unreachable":   {stderr: "error connecting to api.github.com\n"},
+		"not installed": {launch: exec.ErrNotFound},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -318,12 +323,67 @@ func TestExecutionReportsAnUnusableGH(t *testing.T) {
 
 func TestUnavailableErrorCarriesWhatGHSaid(t *testing.T) {
 	t.Parallel()
-	gh := &fakeGH{stderr: "To get started with GitHub CLI, please run:  gh auth login\n"}
+	gh := &fakeGH{stderr: "error connecting to api.github.com\n"}
 
 	_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
 
-	if err == nil || !strings.Contains(err.Error(), "gh auth login") {
-		t.Errorf("Execution(42) error = %v, want it to carry gh's own message", err)
+	if want := "gh could not be used: error connecting to api.github.com"; err == nil || err.Error() != want {
+		t.Errorf("Execution(42) error = %v, want %q", err, want)
+	}
+}
+
+// exitStatus is a process failure that exited with its value.
+type exitStatus int
+
+func (e exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+func (e exitStatus) ExitCode() int { return int(e) }
+
+func TestExecutionNamesAGHAuthenticationFailure(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		gh   *fakeGH
+		want string
+	}{
+		{
+			"bad credentials",
+			&fakeGH{stderr: "HTTP 401: Bad credentials (https://api.github.com/graphql)\n"},
+			"the tracker can't authenticate with gh: HTTP 401: Bad credentials (https://api.github.com/graphql)",
+		},
+		{
+			"unauthorized without the credentials text",
+			&fakeGH{stderr: "HTTP 401: Unauthorized\n"},
+			"the tracker can't authenticate with gh: HTTP 401: Unauthorized",
+		},
+		{
+			"not logged in",
+			&fakeGH{stderr: "To get started with GitHub CLI, please run:  gh auth login\n", exit: exitStatus(4)},
+			"the tracker can't authenticate with gh: To get started with GitHub CLI, please run:  gh auth login",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := tracker.NewGitHub(tt.gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
+
+			var auth *tracker.AuthError
+			if !errors.As(err, &auth) || err.Error() != tt.want {
+				t.Errorf("Execution(42) error = %v, want an AuthError reading %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLocalNamesAGHAuthenticationFailure(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{stderr: "HTTP 401: Bad credentials (https://api.github.com/graphql)\n"}
+
+	_, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Local(t.Context(), tracker.Ref{Repo: "o/r", Number: 42})
+
+	var auth *tracker.AuthError
+	if !errors.As(err, &auth) {
+		t.Errorf("Local(o/r#42) error = %v, want an AuthError", err)
 	}
 }
 
@@ -853,12 +913,12 @@ func TestLabelsListsTheLabelsTheRepoHas(t *testing.T) {
 
 func TestLabelsReportsAnUnusableGH(t *testing.T) {
 	t.Parallel()
-	gh := &fakeGH{stderr: "HTTP 401: Bad credentials\n"}
+	gh := &fakeGH{stderr: "HTTP 502: Bad Gateway\n"}
 
 	_, err := tracker.NewGitHub(gh, configured).Labels(t.Context())
 
 	var unavailable *tracker.UnavailableError
-	if !errors.As(err, &unavailable) || unavailable.Detail != "HTTP 401: Bad credentials\n" {
+	if !errors.As(err, &unavailable) || unavailable.Detail != "HTTP 502: Bad Gateway\n" {
 		t.Errorf("Labels() error = %v, want an *tracker.UnavailableError carrying what gh said", err)
 	}
 }
