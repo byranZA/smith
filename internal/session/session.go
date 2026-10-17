@@ -113,6 +113,9 @@ type Session struct {
 	// Unpushed counts the branch's commits that no remote-tracking ref
 	// reaches.
 	Unpushed int
+	// Driver is who drove the session when it was last started, read from
+	// its session record.
+	Driver Driver
 }
 
 // StartRequest is the pair a session is stood up from: the repo the blueprint
@@ -174,7 +177,7 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		branch: branch,
 		base:   strings.TrimSpace(req.Base),
 	}
-	stood := Session{Name: stand.name, Repo: repo.Name, Branch: branch, Live: true}
+	stood := Session{Name: stand.name, Repo: repo.Name, Branch: branch, Live: true, Driver: driverOf(req.Command)}
 
 	worktrees, err := listWorktrees(ctx, env.Git, stand.bare)
 	if err != nil {
@@ -193,9 +196,13 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		return Session{}, err
 	}
 	if live {
-		return stood, nil
+		stood.Driver, err = readDriver(ctx, env.Git, dir)
+		return stood, err
 	}
 	if err := env.place(repo, dir); err != nil {
+		return Session{}, err
+	}
+	if err := writeRecord(ctx, env.Git, dir, stood.Driver); err != nil {
 		return Session{}, err
 	}
 	if err := launch(ctx, env.Tmux, stand.name, dir, req.Command); err != nil {

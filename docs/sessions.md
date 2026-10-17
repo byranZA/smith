@@ -107,10 +107,10 @@ smith session list dev
 ```
 
 ```
-NAME             STATE    DIRTY  UNPUSHED
-smith-main       live     -      0
-smith-spec-42    stopped  dirty  3
-web-hotfix       stopped  -      0
+NAME             STATE    DIRTY  UNPUSHED  DRIVER
+smith-main       live     -      0         human
+smith-spec-42    stopped  dirty  3         loop
+web-hotfix       stopped  -      0         human
 
 3 sessions · 1 dirty · 1 with unpushed commits
 ```
@@ -283,19 +283,21 @@ smith session list dev
 ```
 
 ```
-NAME             STATE    DIRTY  UNPUSHED
-smith-main       live     -      0
-smith-spec-42    stopped  dirty  3
-web-hotfix       stopped  -      0
+NAME             STATE    DIRTY  UNPUSHED  DRIVER
+smith-main       live     -      0         human
+smith-spec-42    stopped  dirty  3         loop
+web-hotfix       stopped  -      0         human
 
 3 sessions · 1 dirty · 1 with unpushed commits
 ```
 
-Four columns, and nothing else. `STATE` is `live` or `stopped`, probed on every
+Five columns, and nothing else. `STATE` is `live` or `stopped`, probed on every
 call — never remembered, so a `tmux` server killed outside smith reads as
 `stopped` immediately. `DIRTY` is `dirty` or `-`. `UNPUSHED` counts the commits
 no remote-tracking ref reaches, or `-` for a detached worktree, which has no
-branch to count on.
+branch to count on. `DRIVER` is `human` or `loop`: who drove the
+session when it was last started (see [loop-driven
+sessions](#loop-driven-sessions)).
 
 **The summary line is always printed** — a reassuring read only reassures if it
 cannot be absent:
@@ -371,7 +373,13 @@ answer.
 
 A session's **driver** comes from the verb that starts it, never from a flag: `session start` starts a human-driven session, whose root process is a shell, and `smith loop run <issue> --repo <name>` on the box starts a loop-driven one, whose root process is the loop ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). There is no `--driver` on `session start`.
 
-A loop-driven session is a session like any other: named `<repo>-<branch>` after its work branch, in a worktree below the repo's worktrees directory, and attached, listed, stopped and removed with the verbs above. It ends when the loop does. `loop run` refuses a branch whose session is live, whoever drives it, and reuses a stopped session's worktree, which is how a spec passes between the loop and a human for its tasks meant for a human. See [the loop](./loop.md#on-a-box---repo) for the run itself.
+A loop-driven session is a session like any other: named `<repo>-<branch>` after its work branch, in a worktree below the repo's worktrees directory, and attached, listed, stopped and removed with the verbs above. It ends when the loop does. `list` shows its `DRIVER` as `loop`.
+
+Starting a session writes a **session record** in its worktree's own git dir,
+naming its driver, so a stopped session still reads as the driver it had. Each
+start overwrites the record, so a human `session start` on a loop's stopped
+worktree reads as `human` from then on. A worktree with no record, one started
+before sessions recorded their driver, reads as `human`. `loop run` refuses a branch whose session is live, whoever drives it, and reuses a stopped session's worktree, which is how a spec passes between the loop and a human for its tasks meant for a human. See [the loop](./loop.md#on-a-box---repo) for the run itself.
 
 ## What is not here in v1
 

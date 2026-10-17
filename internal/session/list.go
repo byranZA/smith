@@ -89,6 +89,10 @@ func List(ctx context.Context, env Env, filter Filter) ([]Session, error) {
 		if err != nil {
 			return nil, err
 		}
+		driver, err := readDriver(ctx, env.Git, p.wt.path)
+		if err != nil {
+			return nil, err
+		}
 		sessions = append(sessions, Session{
 			Name:     name,
 			Repo:     p.repo.Name,
@@ -96,6 +100,7 @@ func List(ctx context.Context, env Env, filter Filter) ([]Session, error) {
 			Live:     live,
 			Dirty:    dirty.any(),
 			Unpushed: unpushed,
+			Driver:   driver,
 		})
 	}
 	sort.Slice(sessions, func(i, j int) bool {

@@ -8,15 +8,15 @@ import (
 	"github.com/byranZA/smith/internal/session"
 )
 
-// TestReadoutCarriesTheFourColumnsAndNoOther locks in the table's shape: the
+// TestReadoutCarriesTheFiveColumnsAndNoOther locks in the table's shape: the
 // header an operator scans, and nothing beside it.
-func TestReadoutCarriesTheFourColumnsAndNoOther(t *testing.T) {
+func TestReadoutCarriesTheFiveColumnsAndNoOther(t *testing.T) {
 	out := session.Readout([]session.Session{
 		{Name: "smith-main", Repo: "smith", Branch: "main", Live: true},
 	}, hint.Invocation{})
 
 	header := strings.Fields(strings.SplitN(out, "\n", 2)[0])
-	want := []string{"NAME", "STATE", "DIRTY", "UNPUSHED"}
+	want := []string{"NAME", "STATE", "DIRTY", "UNPUSHED", "DRIVER"}
 	if strings.Join(header, " ") != strings.Join(want, " ") {
 		t.Errorf("Readout() header = %v, want exactly %v", header, want)
 	}
@@ -99,8 +99,8 @@ func TestReadoutRendersTheWorkState(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			row := strings.Fields(strings.Split(session.Readout([]session.Session{tt.session}, hint.Invocation{}), "\n")[1])
 
-			if len(row) != 4 {
-				t.Fatalf("Readout() row = %v, want four columns", row)
+			if len(row) != 5 {
+				t.Fatalf("Readout() row = %v, want five columns", row)
 			}
 			if row[2] != tt.dirty || row[3] != tt.unpushed {
 				t.Errorf("Readout() dirty, unpushed = %q, %q, want %q, %q", row[2], row[3], tt.dirty, tt.unpushed)

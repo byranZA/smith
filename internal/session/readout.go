@@ -23,7 +23,7 @@ const notApplicable = "-"
 
 // Readout renders the operator-facing listing of sessions: one flat row each,
 // in the order they were handed, under the four columns the work-state
-// question is answered in.
+// question is answered in and the DRIVER column saying who drove it.
 //
 // It is never grouped, paginated or truncated — a group header breaks grep,
 // awk, and pasting a name into the next command, and the identity column
@@ -44,9 +44,9 @@ func Readout(sessions []Session, inv hint.Invocation) string {
 	for _, s := range sessions {
 		width = max(width, len(s.Name))
 	}
-	writeRow(&b, width, "NAME", "STATE", "DIRTY", "UNPUSHED")
+	writeRow(&b, width, "NAME", "STATE", "DIRTY", "UNPUSHED", "DRIVER")
 	for _, s := range sessions {
-		writeRow(&b, width, s.Name, state(s), dirty(s), unpushed(s))
+		writeRow(&b, width, s.Name, state(s), dirty(s), unpushed(s), s.Driver.String())
 	}
 	fmt.Fprintf(&b, "\n%s\n", summary(sessions))
 	return b.String()
@@ -82,8 +82,8 @@ func unpushed(s Session) string {
 
 // writeRow writes one listing row, padding the identity column so the columns
 // line up under their headers.
-func writeRow(b *strings.Builder, width int, name, state, dirty, unpushed string) {
-	fmt.Fprintf(b, "%-*s  %-7s  %-5s  %s\n", width, name, state, dirty, unpushed)
+func writeRow(b *strings.Builder, width int, name, state, dirty, unpushed, driver string) {
+	fmt.Fprintf(b, "%-*s  %-7s  %-5s  %-8s  %s\n", width, name, state, dirty, unpushed, driver)
 }
 
 // summary renders the line an operator reads before tearing a box down by
