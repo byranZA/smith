@@ -34,6 +34,8 @@ type board struct {
 	comments []posted
 	// refuseComment, when set, is what every comment write fails with.
 	refuseComment error
+	// single, when set, makes the board a task named on its own.
+	single bool
 }
 
 // posted is a comment posted on issue number.
@@ -94,7 +96,7 @@ func deadlineOf(ctx context.Context) time.Duration {
 
 func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Execution{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
+	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks)}, nil
 }
 
 func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {

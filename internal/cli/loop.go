@@ -346,36 +346,20 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 // how it ended and whether it succeeded: the execution complete, or the
 // interactive task closed.
 func runLoop(ctx context.Context, l loop.Loop, execution tracker.Execution, interactive bool) (string, bool, error) {
-	name := executionName(execution)
+	name := loop.Name(execution)
 	number, _ := execution.Issue()
 	if !interactive {
 		outcome, err := l.Run(ctx, number)
 		if err != nil {
 			return "", false, fmt.Errorf("work %s: %w", name, err)
 		}
-		return runReport(name, l.Limits, outcome) + workBranchReport(outcome.WorkBranch), outcome.Complete(), nil
+		return outcome.Report(name, l.Limits) + loop.WorkBranchReport(outcome.WorkBranch), outcome.Complete(), nil
 	}
 	outcome, err := l.RunInteractive(ctx, number)
 	if err != nil {
 		return "", false, fmt.Errorf("work %s interactively: %w", name, err)
 	}
-	return interactiveReport(name, outcome) + workBranchReport(outcome.WorkBranch), outcome.Succeeded(), nil
-}
-
-// executionName names execution in a report as what it is: "task #80" for a
-// task named on its own, "spec #42" otherwise.
-func executionName(execution tracker.Execution) string {
-	number, _ := execution.Issue()
-	if execution.Single {
-		return fmt.Sprintf("task #%d", number)
-	}
-	return fmt.Sprintf("spec #%d", number)
-}
-
-// workBranchReport renders the line naming the work branch a run's closed
-// tasks land on.
-func workBranchReport(branch string) string {
-	return fmt.Sprintf("work branch: %s\n", branch)
+	return interactiveReport(name, outcome) + loop.WorkBranchReport(outcome.WorkBranch), outcome.Succeeded(), nil
 }
 
 // interactiveReport renders how an interactive run ended: whether the task it
@@ -383,7 +367,7 @@ func workBranchReport(branch string) string {
 func interactiveReport(name string, outcome loop.InteractiveOutcome) string {
 	switch {
 	case !outcome.Handed:
-		return runReport(name, loop.Limits{}, loop.Outcome{Remaining: outcome.Remaining})
+		return loop.Outcome{Remaining: outcome.Remaining}.Report(name, loop.Limits{})
 	case outcome.Closed():
 		return fmt.Sprintf("task #%d closed\n", outcome.Task.Number)
 	default:
@@ -400,34 +384,6 @@ func checkLimits(limits loop.Limits) error {
 		return fmt.Errorf("--max-attempts must be at least 1, got %d", limits.MaxAttempts)
 	}
 	return nil
-}
-
-// runReport renders how the run of the execution called name ended: complete,
-// or why it stopped and what remains open, naming the tasks it skipped, the
-// attempts each had, the task worktree each was left in, and whether its agent
-// was killed on its last attempt.
-func runReport(name string, limits loop.Limits, outcome loop.Outcome) string {
-	if outcome.Complete() {
-		return name + " complete\n"
-	}
-	var b strings.Builder
-	switch {
-	case outcome.Capped:
-		fmt.Fprintf(&b, "%s stopped: reached the cap of %d agent runs\n", name, limits.MaxIterations)
-	case len(outcome.Remaining.Skipped) > 0:
-		fmt.Fprintf(&b, "%s stopped: the agent left a task open on every attempt\n", name)
-	default:
-		fmt.Fprintf(&b, "%s stopped: no task is available for an agent\n", name)
-	}
-	writeKinds(&b, outcome.Remaining, limits, false)
-	for _, task := range outcome.Remaining.Skipped {
-		fmt.Fprintf(&b, "  #%d left in %s", task.Number, outcome.Left[task.Number])
-		if outcome.Killed[task.Number] {
-			b.WriteString(": the agent was " + loop.KilledCause)
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
 }
 
 // newLoopListCmd builds `smith loop list <issue>`, which names the next
@@ -471,7 +427,7 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 func listReport(execution tracker.Execution, remaining loop.Remaining) string {
 	var b strings.Builder
 	_, title := execution.Issue()
-	fmt.Fprintf(&b, "%s %s\n", executionName(execution), title)
+	fmt.Fprintf(&b, "%s %s\n", loop.Name(execution), title)
 	switch next, ok := remaining.Next(); {
 	case ok:
 		fmt.Fprintf(&b, "next: #%d %s\n", next.Number, next.Title)
@@ -480,51 +436,6 @@ func listReport(execution tracker.Execution, remaining loop.Remaining) string {
 	default:
 		b.WriteString("next: none\n")
 	}
-	writeKinds(&b, remaining, loop.Limits{}, true)
+	b.WriteString(loop.Kinds(remaining, loop.Limits{}, true))
 	return b.String()
-}
-
-// writeKinds writes one line for each kind of task that remains, leaving out
-// the kinds it has none of, and the closed tasks unless withClosed is set.
-// Skipped tasks are named with the attempts limits allowed them.
-func writeKinds(b *strings.Builder, remaining loop.Remaining, limits loop.Limits, withClosed bool) {
-	var closed []tracker.Task
-	if withClosed {
-		closed = remaining.Closed
-	}
-	for _, kind := range []struct {
-		name  string
-		tasks []tracker.Task
-	}{
-		{"available", remaining.Available},
-		{fmt.Sprintf("skipped after %d attempts", limits.MaxAttempts), remaining.Skipped},
-		{"blocked", remaining.Blocked},
-		{"waiting on a human", remaining.Human},
-		{"not ready for an agent or a human", remaining.Unready},
-		{"closed", closed},
-	} {
-		if len(kind.tasks) > 0 {
-			fmt.Fprintf(b, "  %s: %s\n", kind.name, taskList(kind.tasks))
-		}
-	}
-}
-
-// taskList renders tasks as "#43, #44", naming each blocked task's open
-// blockers after it.
-func taskList(tasks []tracker.Task) string {
-	refs := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		ref := fmt.Sprintf("#%d", task.Number)
-		var open []string
-		for _, b := range task.Blockers {
-			if b.Open {
-				open = append(open, tracker.Ref{Repo: b.Repo, Number: b.Number}.String())
-			}
-		}
-		if len(open) > 0 {
-			ref += " (by " + strings.Join(open, ", ") + ")"
-		}
-		refs = append(refs, ref)
-	}
-	return strings.Join(refs, ", ")
 }

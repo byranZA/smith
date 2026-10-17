@@ -56,6 +56,17 @@ Prints the same settings block as `list`, then works the spec or task unattended
 - **The agent left a task open on every attempt**: see attempts below. Exit 1.
 - **Reached the cap of N agent runs**: see iterations below. Exit 1.
 
+However the run stops, the loop also posts its stop report as a comment from smith on the issue it was given: the spec, or the task for a run of one task. The comment names the run's **outcome**, then carries the report and its `work branch:` line, so you can read how a run ended from anywhere, and GitHub notifies whoever follows the issue ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). The outcome is one of:
+
+- **`complete`**: every task is closed.
+- **`waiting on human`**: no task is available for an agent.
+- **`attempts exhausted`**: the agent left a task open on every attempt.
+- **`cap reached`**: the run reached its cap of agent runs.
+- **`stopped`**: you interrupted the run, such as with Ctrl-C. The report says `interrupted`.
+- **`failed`**: the run stopped on an error, such as a failed push. The report names the error.
+
+A stop report that fails to post is a `smith: warning: …` line, and changes neither the outcome nor the exit status. A run whose issue cannot be read at all posts nothing. `--interactive` posts no stop report.
+
 Two limits bound a run so it can be left alone:
 
 - **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.

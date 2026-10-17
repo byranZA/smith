@@ -86,6 +86,8 @@ type Loop struct {
 	// Hostname names the machine the loop runs on, for the comment on a
 	// skipped task; nil leaves it unknown.
 	Hostname func() (string, error)
+	// Recorder keeps how each unattended run ended; nil keeps it nowhere.
+	Recorder Recorder
 }
 
 // Limits bound an unattended run so it can be left alone.
@@ -121,17 +123,28 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 // works spec until no task is available for an agent, handing a task left open
 // out again up to MaxAttempts and stopping after MaxIterations agent runs. A
 // task left open after its last attempt is skipped and handed to a human,
-// with a comment on its issue saying where its work was left.
+// with a comment on its issue saying where its work was left. Once spec is
+// read, however the run stops, its outcome and stop report go to the
+// Recorder and as a comment on spec's issue.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
+	current, err := l.Tracker.Execution(ctx, spec)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
+	}
+	outcome, err := l.work(ctx, spec, current)
+	if reported := l.conclude(ctx, current, outcome, err); reported != nil {
+		return outcome, errors.Join(err, reported)
+	}
+	return outcome, err
+}
+
+// work works spec, read as current, as Run says, and returns how it ended.
+func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
 	killed := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
-	current, err := l.Tracker.Execution(ctx, spec)
-	if err != nil {
-		return Outcome{}, fmt.Errorf("read #%d: %w", spec, err)
-	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
