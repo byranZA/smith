@@ -109,6 +109,9 @@ type Outcome struct {
 	WorkBranch string
 	// Left maps each skipped task to the task worktree left for the operator.
 	Left map[int]string
+	// Killed holds each skipped task whose agent was killed by SIGKILL on
+	// its last attempt.
+	Killed map[int]bool
 }
 
 // Complete reports whether the run ended with every task of the spec closed.
@@ -122,6 +125,7 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
+	killed := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
 	current, err := l.Tracker.Execution(ctx, spec)
@@ -135,16 +139,17 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
+			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
 		}
 		if runs >= l.Limits.MaxIterations {
-			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees)}, nil
+			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
 		}
-		dir, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
+		dir, kill, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
 		if err != nil {
 			return Outcome{}, err
 		}
 		worktrees[next.Number] = dir
+		killed[next.Number] = kill
 		runs++
 		attempts[next.Number]++
 		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
@@ -157,7 +162,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 			return Outcome{}, err
 		}
 		if skip {
-			if err := l.noteSkip(ctx, next, dir, attempts[next.Number]); err != nil {
+			if err := l.noteSkip(ctx, next, dir, attempts[next.Number], kill); err != nil {
 				return Outcome{}, err
 			}
 		}
@@ -208,7 +213,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, nil
 	}
-	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
+	if _, _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -246,34 +251,50 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 }
 
 // hand marks task as worked and gives it to one agent run of cmd in task's
-// worktree, returning that worktree's directory, and reports an agent that
-// exits with a failure, leaving it to the tracker to judge. The caller releases
+// worktree, returning that worktree's directory and whether the agent was
+// killed by SIGKILL, and reports an agent that exits with a failure, leaving
+// it to the tracker to judge. The caller releases
 // the mark, except on an error from an interrupted run or a failed report of
 // that failure, when hand has already removed it.
-func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, error) {
+func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, bool, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
-		return "", fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
+		return "", false, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
-		return "", err
+		return "", false, err
 	}
 	err = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
-		return "", errors.Join(interrupted, l.unmarkDetached(ctx, task))
+		return "", false, errors.Join(interrupted, l.unmarkDetached(ctx, task))
 	}
-	if err != nil {
-		if failed := l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err); failed != nil {
-			return "", errors.Join(failed, l.unmarkDetached(ctx, task))
-		}
+	if err == nil {
+		return dir, false, nil
 	}
-	return dir, nil
+	kill := errors.Is(err, ErrKilled)
+	if failed := l.reportFailure(task, err, kill); failed != nil {
+		return "", false, errors.Join(failed, l.unmarkDetached(ctx, task))
+	}
+	return dir, kill, nil
 }
+
+// reportFailure reports that the agent on task exited with err, naming the
+// likely cause instead when the agent was killed.
+func (l Loop) reportFailure(task tracker.Task, err error, killed bool) error {
+	if killed {
+		return l.report("smith: the agent on #%d was %s\n", task.Number, KilledCause)
+	}
+	return l.report("smith: the agent on #%d ended with a failure: %v\n", task.Number, err)
+}
+
+// KilledCause says how an agent killed by SIGKILL ended, and why it likely
+// was, for whatever reports it.
+const KilledCause = "killed (likely out of memory)"
 
 // sweep removes the mark from each of execution's tasks marked as worked,
 // which a run that died left behind, before any agent runs.
@@ -324,6 +345,18 @@ func left(remaining Remaining, worktrees map[int]string) map[int]string {
 		dirs[task.Number] = worktrees[task.Number]
 	}
 	return dirs
+}
+
+// killedOf returns whether the agent was killed on the last attempt at each
+// task remaining skipped, from killed, by task number, leaving out the rest.
+func killedOf(remaining Remaining, killed map[int]bool) map[int]bool {
+	tasks := map[int]bool{}
+	for _, task := range remaining.Skipped {
+		if killed[task.Number] {
+			tasks[task.Number] = true
+		}
+	}
+	return tasks
 }
 
 // land brings closed task's work onto the work branch and pushes that, when

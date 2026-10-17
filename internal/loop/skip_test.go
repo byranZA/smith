@@ -156,3 +156,26 @@ func TestRunWarnsOfWhatItCouldNotReadForASkippedTasksComment(t *testing.T) {
 		t.Errorf("Run() = %v with progress\n%s\nwant the lines %q", err, progress.String(), want)
 	}
 }
+
+func TestRunCommentsOnASkippedTaskWhoseAgentWasKilled(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	l := skipLoop(t, b, trees{})
+	l.Launcher = killing{board: b}
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []posted{{number: 43, body: "smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
+		"- **Machine:** box-1\n" +
+		"- **Task worktree:** `/bench/43`\n" +
+		"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
+		"- **Attempts:** 1 in this run\n" +
+		"- **Last attempt:** the agent was killed (likely out of memory)\n" +
+		"- **Progress:** nothing committed beyond the work branch `smith/42-spec`\n"}}
+	if !reflect.DeepEqual(b.comments, want) {
+		t.Errorf("Run() commented %+v, want %+v", b.comments, want)
+	}
+}

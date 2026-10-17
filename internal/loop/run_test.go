@@ -3,7 +3,9 @@ package loop_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -728,5 +730,71 @@ func TestRunInteractiveUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testi
 
 	if want := []string{"start 43", "launch 43", "stop 43"}; !errors.Is(err, io.ErrClosedPipe) || !slices.Equal(b.events, want) {
 		t.Errorf("RunInteractive() made %q with error %v; want %q and the progress error", b.events, err, want)
+	}
+}
+
+// killing is a launcher whose agent does its work and then is killed by SIGKILL.
+type killing struct{ board *board }
+
+func (k killing) Launch(ctx context.Context, cmd agent.Command) error {
+	if err := k.board.Launch(ctx, cmd); err != nil {
+		return err
+	}
+	return fmt.Errorf("run claude: %w: signal: killed", loop.ErrKilled)
+}
+
+func TestRunReportsAnAgentKilledBySIGKILLWithItsLikelyCause(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	var progress strings.Builder
+	l := loopOn(t, b, killing{board: b})
+	l.Progress = &progress
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := []string{"smith: the agent on #43 was killed (likely out of memory)"}; !containsLines(progress.String(), want) {
+		t.Errorf("Run() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunReportsAnyOtherAgentFailureWithItsError(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	var progress strings.Builder
+	l := loopOn(t, b, failing{board: b})
+	l.Progress = &progress
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := []string{"smith: the agent on #43 ended with a failure: exit status 1"}; !containsLines(progress.String(), want) {
+		t.Errorf("Run() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunCountsAKilledAgentAsAnAttempt(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43, 44}}
+
+	outcome, err := loopOn(t, b, killing{board: b}).Run(t.Context(), 42)
+
+	want := map[int]bool{43: true, 44: true}
+	if err != nil || !slices.Equal(b.handed(), []string{"43", "43", "44", "44"}) || !reflect.DeepEqual(outcome.Killed, want) {
+		t.Errorf("Run() = %+v, %v, handed %v; want each task handed twice, then skipped as killed %v", outcome, err, b.handed(), want)
+	}
+}
+
+func TestRunMarksNoTaskKilledWhoseLastAttemptWasNot(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+
+	outcome, err := loopOn(t, b, failing{board: b}).Run(t.Context(), 42)
+
+	if err != nil || len(outcome.Remaining.Skipped) != 1 || len(outcome.Killed) != 0 {
+		t.Errorf("Run() = %+v, %v; want #43 skipped and no task killed", outcome, err)
 	}
 }

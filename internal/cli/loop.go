@@ -404,7 +404,8 @@ func checkLimits(limits loop.Limits) error {
 
 // runReport renders how the run of the execution called name ended: complete,
 // or why it stopped and what remains open, naming the tasks it skipped, the
-// attempts each had and the task worktree each was left in.
+// attempts each had, the task worktree each was left in, and whether its agent
+// was killed on its last attempt.
 func runReport(name string, limits loop.Limits, outcome loop.Outcome) string {
 	if outcome.Complete() {
 		return name + " complete\n"
@@ -420,7 +421,11 @@ func runReport(name string, limits loop.Limits, outcome loop.Outcome) string {
 	}
 	writeKinds(&b, outcome.Remaining, limits, false)
 	for _, task := range outcome.Remaining.Skipped {
-		fmt.Fprintf(&b, "  #%d left in %s\n", task.Number, outcome.Left[task.Number])
+		fmt.Fprintf(&b, "  #%d left in %s", task.Number, outcome.Left[task.Number])
+		if outcome.Killed[task.Number] {
+			b.WriteString(": the agent was " + loop.KilledCause)
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
 }

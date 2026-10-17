@@ -13,9 +13,10 @@ const unknown = "unknown"
 
 // noteSkip comments on skipped task's issue with where its work was left: the
 // machine, the task worktree dir, the task branch, the attempts it got in this
-// run, and how far its branch got beyond the work branch. A value it cannot
+// run, whether its agent was killed on the last of them, and how far its
+// branch got beyond the work branch. A value it cannot
 // read is marked unknown, and that or a failed comment write is a warning.
-func (l Loop) noteSkip(ctx context.Context, task tracker.Task, dir string, attempts int) error {
+func (l Loop) noteSkip(ctx context.Context, task tracker.Task, dir string, attempts int, killed bool) error {
 	host, err := l.hostname()
 	if err := l.warnIf(err, "could not read this machine's hostname"); err != nil {
 		return err
@@ -34,6 +35,9 @@ func (l Loop) noteSkip(ctx context.Context, task tracker.Task, dir string, attem
 	fmt.Fprintf(&b, "- **Task worktree:** `%s`\n", dir)
 	fmt.Fprintf(&b, "- **Task branch:** `%s`\n", l.Bench.TaskBranch(task.Number))
 	fmt.Fprintf(&b, "- **Attempts:** %d in this run\n", attempts)
+	if killed {
+		fmt.Fprintf(&b, "- **Last attempt:** the agent was %s\n", KilledCause)
+	}
 	fmt.Fprintf(&b, "- **Progress:** %s\n", progress)
 	return l.warnIf(l.Tracker.Comment(ctx, task.Number, b.String()), "could not comment on #%d", task.Number)
 }
