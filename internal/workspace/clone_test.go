@@ -70,7 +70,7 @@ func convergeRepo(t *testing.T, home, url string) string {
 	t.Helper()
 	b := blueprint.Blueprint{Repos: []blueprint.Repo{{Name: "acme", URL: url}}}
 	r := staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"}
-	env := workspace.Env{Command: gitBox{}, StateRoot: t.TempDir()}
+	env := workspace.Env{Command: gitBox{}, StateRoot: t.TempDir(), Profile: filepath.Join(t.TempDir(), "smith.sh")}
 	result, err := workspace.Converge(t.Context(), env, workspace.Plan(b, r, home), io.Discard)
 	if err != nil {
 		t.Fatalf("Converge() error = %v", err)

@@ -55,6 +55,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		return nil
 	case strings.Contains(line, "apt-get"):
 		return f.err
+	case name == "sudo" && strings.HasPrefix(line, "install"):
+		return nil
 	case strings.Contains(line, "mise.run"):
 		f.hasMise = true
 		return f.err

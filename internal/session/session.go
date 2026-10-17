@@ -13,6 +13,7 @@ package session
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -31,6 +32,14 @@ const bareDir = "repo.git"
 // worktreesDir is the directory holding a repo's worktrees, one level below
 // which every session's checkout lives.
 const worktreesDir = "worktrees"
+
+// miseFile is the name mise answers to on the tmux server's PATH, which a
+// session runs under when the caller named no executable.
+const miseFile = "mise"
+
+// loginShell is the process a session runs when it was given no root command:
+// a login shell for a human to attach to.
+var loginShell = []string{"bash", "-l"}
 
 // Runner launches a local command. It is the system boundary smith reaches git
 // and tmux through, injected so a test can drive real git against a temp
@@ -82,6 +91,10 @@ type Env struct {
 	Git Runner
 	// Tmux runs tmux.
 	Tmux Runner
+	// Mise is the mise executable every session's process runs under, so the
+	// shell, the loop and the agent it launches hold the box's declared tools
+	// and env. Left empty, mise is found on the tmux server's PATH.
+	Mise string
 	// Exec replaces smith's own process, which is how attach hands the
 	// terminal to tmux.
 	Exec Execer
@@ -128,6 +141,10 @@ type StartRequest struct {
 	// naming a base has a rebase or a reset in mind and smith's git surface
 	// is worktree add and worktree remove.
 	Base string
+	// Command is the root process the session runs, a loop-driven session's
+	// loop. Left empty, the session runs a login shell for a human to attach
+	// to.
+	Command []string
 }
 
 // Start ensures a session is running and returns it. It is not a create verb:
@@ -143,8 +160,9 @@ type StartRequest struct {
 // returned as it was found, because swapping a file out from under a running
 // process is never wanted, which is what makes stop then start the way to pick
 // up changed config. Everything else converges the blueprint's repo placements
-// into the worktree and launches a tmux session named smith/<name> in it, so
-// start is an ensure-desired-state verb the way `machine setup` is.
+// into the worktree and launches a tmux session named smith/<name> in it,
+// with its process under mise exec, so start is an ensure-desired-state verb
+// the way `machine setup` is.
 //
 // A new branch is cut from the requested base, else from the base the
 // blueprint declares for the repo, else from the repo's default branch.
@@ -194,7 +212,7 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	if err := env.place(repo, dir); err != nil {
 		return Session{}, err
 	}
-	if err := launch(ctx, env.Tmux, stand.name, dir); err != nil {
+	if err := launch(ctx, env, stand.name, dir, req.Command); err != nil {
 		return Session{}, err
 	}
 	return stood, nil
@@ -379,11 +397,16 @@ func resolved(path string) string {
 	return filepath.Clean(path)
 }
 
-// launch starts the detached tmux session a session runs under, with its
-// working directory in the worktree. It is the one place a tmux session is
-// created.
-func launch(ctx context.Context, tmux Runner, name, dir string) error {
-	if _, err := run(ctx, tmux, "tmux", "new-session", "-d", "-s", TmuxSession(name), "-c", dir); err != nil {
+// launch is the one place a tmux session is created: detached, in the worktree,
+// running the root command or else a login shell under mise exec. mise wraps
+// that command and never the tmux call, because a wrapped tmux would leak the
+// env of the session that started the server into every later one.
+func launch(ctx context.Context, env Env, name, dir string, command []string) error {
+	if len(command) == 0 {
+		command = loginShell
+	}
+	args := append([]string{"new-session", "-d", "-s", TmuxSession(name), "-c", dir, cmp.Or(env.Mise, miseFile), "exec", "--"}, command...)
+	if _, err := run(ctx, env.Tmux, "tmux", args...); err != nil {
 		return fmt.Errorf("launch the tmux session for %q at %s: %w", name, dir, err)
 	}
 	return nil
