@@ -126,6 +126,12 @@ func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Set
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
+	return settingsIn(repo, flags)
+}
+
+// settingsIn resolves the loop settings for repo as its checkout holds them,
+// flags over its repo file over the built-in defaults.
+func settingsIn(repo repofile.Repo, flags repofile.File) (loop.Settings, error) {
 	file, err := repofile.Load(repo)
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
@@ -144,6 +150,12 @@ func (w loopWiring) prompt(ctx context.Context) (loop.Prompt, error) {
 	if err != nil {
 		return "", fmt.Errorf("load loop prompt: %w", err)
 	}
+	return promptIn(repo)
+}
+
+// promptIn loads the loop prompt as repo's checkout holds it: its ejected copy
+// when it has one, otherwise the built-in.
+func promptIn(repo repofile.Repo) (loop.Prompt, error) {
 	prompt, err := loop.LoadPrompt(repo.PromptPath())
 	if err != nil {
 		return "", fmt.Errorf("load loop prompt: %w", err)

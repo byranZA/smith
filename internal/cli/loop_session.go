@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
@@ -40,7 +39,9 @@ type sessionRun struct {
 // starts a loop-driven session in the repo's worktree for the work branch,
 // whose root process is the same loop run without --repo, and reports how to
 // watch it. Every refusal comes before anything is on disk, and a live session
-// on the work branch is one. The agent is looked up under the mise exec the
+// on the work branch is one. Settings and prompt are checked where the root
+// process will read them, and a new branch is cut from the commit they were
+// checked at. The agent is looked up under the mise exec the
 // session's root process runs under, since a relayed smith's own PATH is
 // stripped.
 func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessionRun) error {
@@ -65,7 +66,8 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
-	settings, err := w.committed(cmd, clone, cmp.Or(run.base, declaredBase(box.Repos, run.repo), "HEAD"), run.flags)
+	req := session.StartRequest{Repo: run.repo, Branch: run.branch, Base: run.base}
+	settings, source, err := w.effective(cmd, env, clone, req, run.flags)
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
@@ -75,6 +77,19 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	}
 	number, title := admitted.execution.Issue()
 	branch := cmp.Or(run.branch, workbench.Branch(number, title))
+	if req.Branch == "" {
+		req.Branch = branch
+		derived, at, err := w.effective(cmd, env, clone, req, run.flags)
+		if err != nil {
+			return reportInvalid(cmd, err)
+		}
+		if derived != settings {
+			if _, err := w.admit(cmd, ref, derived, w.ghIn(clone)); err != nil {
+				return err
+			}
+		}
+		settings, source = derived, at
+	}
 	lookPath := func(name string) (string, error) {
 		return session.LookPath(cmd.Context(), env, w.mise, run.repo, branch, name)
 	}
@@ -87,7 +102,11 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}
-	started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: run.repo, Branch: branch, Base: run.base, Command: rootCommand(cmd, run.issue, branch)})
+	if source.Cut {
+		req.Base = source.Ref
+	}
+	req.Command = rootCommand(cmd, run.issue, branch)
+	started, err := session.Start(cmd.Context(), env, req)
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
@@ -170,6 +189,45 @@ func writeLoopStarted(cmd *cobra.Command, inv hint.Invocation, s session.Session
 	return nil
 }
 
+// effective resolves the loop settings, flags over the repo file over the
+// built-in defaults, and checks the loop prompt, as the root process of the
+// session req stands up will find them: in the branch's checkout when it has
+// one, else at the commit its checkout will hold. It answers with where it
+// read them, and creates no worktree and no branch.
+func (w loopWiring) effective(cmd *cobra.Command, env session.Env, clone string, req session.StartRequest, flags repofile.File) (loop.Settings, session.Source, error) {
+	source, err := session.SourceOf(cmd.Context(), env, req)
+	if err != nil {
+		return loop.Settings{}, session.Source{}, fmt.Errorf("find the loop settings a session would run: %w", err)
+	}
+	if source.Dir == "" {
+		settings, err := w.committed(cmd, clone, source.Ref, flags)
+		return settings, source, err
+	}
+	settings, err := w.checkedOut(cmd.Context(), source.Dir, flags)
+	return settings, source, err
+}
+
+// checkedOut resolves the loop settings, and checks the loop prompt, as the
+// checkout at dir holds them, committed or not.
+func (w loopWiring) checkedOut(ctx context.Context, dir string, flags repofile.File) (loop.Settings, error) {
+	home, err := w.home()
+	if err != nil {
+		return loop.Settings{}, err
+	}
+	repo, err := repofile.Locate(ctx, w.git, dir, home)
+	if err != nil {
+		return loop.Settings{}, fmt.Errorf("resolve loop settings in %s: %w", dir, err)
+	}
+	settings, err := settingsIn(repo, flags)
+	if err != nil {
+		return loop.Settings{}, err
+	}
+	if _, err := promptIn(repo); err != nil {
+		return loop.Settings{}, err
+	}
+	return settings, nil
+}
+
 // committed resolves the loop settings, flags over the repo file over the
 // built-in defaults, and checks the loop prompt, as ref holds them in the git
 // repo at clone, reading no checkout.
@@ -189,16 +247,6 @@ func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags repof
 		return loop.Settings{}, fmt.Errorf("load loop prompt: %w", err)
 	}
 	return settings, nil
-}
-
-// declaredBase is the base the blueprint declares for the named repo, empty
-// when it declares none.
-func declaredBase(repos []blueprint.Repo, name string) string {
-	i := slices.IndexFunc(repos, func(r blueprint.Repo) bool { return r.Name == name })
-	if i < 0 {
-		return ""
-	}
-	return repos[i].Base
 }
 
 // dirExec launches commands from dir, the way gh finds the repo whose issues

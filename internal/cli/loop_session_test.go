@@ -249,26 +249,58 @@ func TestLoopRunWithoutARepoRunsInTheForegroundAndStartsNoSession(t *testing.T) 
 	}
 }
 
-func TestLoopRunOnABoxResolvesSettingsFromTheReposCommittedRepoFile(t *testing.T) {
+func TestLoopRunOnABoxResolvesSettingsFromTheFetchedBaseTheBranchIsCutFrom(t *testing.T) {
 	tmux := &tmuxBox{}
 	w, workspace := sessionLoop(t, readySpec(), tmux)
-	work := t.TempDir()
-	runGit(t, work, "clone", filepath.Join(workspace, "smith", "repo.git"), ".")
-	if err := os.MkdirAll(filepath.Join(work, ".smith"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(work, ".smith", "repo.yaml"), []byte("agent: codex\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, work, "add", ".smith")
-	runGit(t, work, "-c", "user.email=smith@example.com", "-c", "user.name=smith", "commit", "-m", "repo file")
-	runGit(t, work, "push", "origin", "main")
+	upstream := gitStdout(t, filepath.Join(workspace, "smith", "repo.git"), "remote", "get-url", "origin")
+	writeRepoFile(t, upstream, "repo.yaml", "agent: codex\n")
+	runGit(t, upstream, "add", ".smith")
+	runGit(t, upstream, "commit", "-m", "repo file")
 	w.mise = &boxMise{installed: []string{"claude"}}
 
 	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
 
-	if code == 0 || !strings.Contains(stderr, "agent codex is not installed") || len(tmux.calls) != 0 {
-		t.Errorf("exit %d, stderr %q; want non-zero naming the agent the repo file sets", code, stderr)
+	_, statErr := os.Stat(filepath.Join(workspace, "smith", "worktrees"))
+	if code == 0 || !strings.Contains(stderr, "agent codex is not installed") || len(tmux.calls) != 0 || !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("exit %d, stderr %q, tmux %q, worktrees %v; want non-zero naming the agent the fetched base sets, no session and no worktree", code, stderr, tmux.calls, statErr)
+	}
+}
+
+func TestLoopRunOnABoxResumingACheckoutPreflightsWhatTheCheckoutHolds(t *testing.T) {
+	tests := []struct {
+		name, file, content, want string
+	}{
+		{"its repo file", "repo.yaml", "agent: codex\n", "agent codex is not installed"},
+		{"its loop prompt", "prompt.md", "work {{NOPE}}\n", "unknown placeholder {{NOPE}}"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmux := &tmuxBox{}
+			w, workspace := sessionLoop(t, readySpec(), tmux)
+			resolve := resolvedBox(workspace, "smith")
+			standUp(t, resolve, tmux, "smith", "smith/42-the-loop")
+			stopSession(t, resolve, tmux, "smith-smith-42-the-loop")
+			writeRepoFile(t, filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop"), tc.file, tc.content)
+			w.mise = &boxMise{installed: []string{"claude"}}
+			before := len(started(tmux))
+
+			_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+			if code == 0 || !strings.Contains(stderr, tc.want) || len(started(tmux)) != before {
+				t.Errorf("exit %d, stderr %q, new sessions %d; want non-zero naming %q and none started", code, stderr, len(started(tmux))-before, tc.want)
+			}
+		})
+	}
+}
+
+// writeRepoFile writes content to the named file under dir's .smith directory.
+func writeRepoFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".smith"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

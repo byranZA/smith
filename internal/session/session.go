@@ -185,15 +185,7 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		return Session{}, fmt.Errorf("no branch named for repo %q: want the branch to work on", repo.Name)
 	}
 
-	root := filepath.Join(env.Workspace, repo.Name)
-	stand := standUp{
-		repo:   repo,
-		bare:   filepath.Join(root, bareDir),
-		trees:  filepath.Join(root, worktreesDir),
-		name:   DeriveName(repo.Name, branch),
-		branch: branch,
-		base:   strings.TrimSpace(req.Base),
-	}
+	stand := newStandUp(env, repo, branch, req.Base)
 	stood := Session{Name: stand.name, Repo: repo.Name, Branch: branch, Live: true, Driver: driverOf(req.Command)}
 
 	worktrees, err := listWorktrees(ctx, env.Git, stand.bare)
@@ -251,6 +243,20 @@ type standUp struct {
 	base string
 }
 
+// newStandUp resolves a request for branch of the declared repo, cut from
+// base when it is new, against the box's workspace.
+func newStandUp(env Env, repo Repo, branch, base string) standUp {
+	root := filepath.Join(env.Workspace, repo.Name)
+	return standUp{
+		repo:   repo,
+		bare:   filepath.Join(root, bareDir),
+		trees:  filepath.Join(root, worktreesDir),
+		name:   DeriveName(repo.Name, branch),
+		branch: branch,
+		base:   strings.TrimSpace(base),
+	}
+}
+
 // refuse reports the reasons this session must not be stood up. It runs before
 // anything is on disk, so a refusal leaves the box exactly as it found it.
 func (s standUp) refuse(worktrees []worktree, exists bool) error {
@@ -297,20 +303,7 @@ func (s standUp) worktree(ctx context.Context, env Env, worktrees []worktree, ex
 func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool) error {
 	args := []string{"-C", s.bare, "worktree", "add", dir, s.branch}
 	if !exists {
-		if err := fetch(ctx, env.Git, s.bare, s.repo.Name); err != nil {
-			return err
-		}
-		base := s.base
-		if base == "" {
-			base = s.repo.Base
-		}
-		if base == "" {
-			var err error
-			if base, err = defaultBranch(ctx, env.Git, s.bare); err != nil {
-				return err
-			}
-		}
-		from, err := remoteBase(ctx, env.Git, s.bare, base)
+		from, err := s.cutFrom(ctx, env)
 		if err != nil {
 			return err
 		}
@@ -320,6 +313,23 @@ func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool)
 		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", s.branch, s.repo.Name, dir, err)
 	}
 	return nil
+}
+
+// cutFrom fetches and answers with the ref a new branch is cut from: the
+// requested base, else the base the blueprint declares for the repo, else the
+// repo's default branch, as origin holds it when origin has it.
+func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
+	if err := fetch(ctx, env.Git, s.bare, s.repo.Name); err != nil {
+		return "", err
+	}
+	base := cmp.Or(s.base, s.repo.Base)
+	if base == "" {
+		var err error
+		if base, err = defaultBranch(ctx, env.Git, s.bare); err != nil {
+			return "", err
+		}
+	}
+	return remoteBase(ctx, env.Git, s.bare, base)
 }
 
 // fetch refreshes the repo from its remote. It runs only where a branch is
