@@ -86,14 +86,58 @@ func writeRecord(ctx context.Context, git Runner, dir string, d Driver) error {
 	return writeEntry(path, entry{Driver: d.String()})
 }
 
-// writeEntry writes e as the session record at path.
+// writeEntry replaces the session record at path with e atomically, so a
+// reader sees the old record or the new one whole and a failed write keeps the
+// old one.
 func writeEntry(path string, e entry) error {
 	data, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("encode the session record %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := replace(path, data); err != nil {
 		return fmt.Errorf("write the session record %s: %w", path, err)
+	}
+	return nil
+}
+
+// replace writes data over the file at path through a temp file beside it,
+// renamed into place. The temp file is removed when the write fails.
+func replace(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("create a temporary file in %s: %w", dir, err)
+	}
+	name := tmp.Name()
+	if err := writeAndClose(tmp, data); err != nil {
+		return errors.Join(fmt.Errorf("write %s: %w", name, err), removeTemp(name))
+	}
+	if err := os.Rename(name, path); err != nil {
+		return errors.Join(fmt.Errorf("rename %s into place: %w", name, err), removeTemp(name))
+	}
+	return nil
+}
+
+// writeAndClose writes data to f, gives it the record's owner-only
+// permissions, and closes it.
+func writeAndClose(f *os.File, data []byte) error {
+	if _, err := f.Write(data); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if err := f.Chmod(0o600); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	return nil
+}
+
+// removeTemp deletes an abandoned temp file, reporting a failure that would
+// leave it behind.
+func removeTemp(name string) error {
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("remove the temporary file %s: %w", name, err)
 	}
 	return nil
 }
