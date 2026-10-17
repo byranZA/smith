@@ -5,6 +5,7 @@ package loop_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -77,4 +78,30 @@ func gone(t *testing.T, pidfile string) bool {
 		}
 	}
 	return false
+}
+
+func TestProcessReportsAnAgentKilledBySIGKILL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		script string
+		want   bool
+	}{
+		{"killed by SIGKILL", "kill -9 $$", true},
+		{"exited 137 as a shell does for a killed child", "exit 137", true},
+		{"killed by SIGTERM", "kill -15 $$", false},
+		{"exited 1", "exit 1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := agent.Command{Name: "sh", Args: []string{"-c", tt.script}}
+
+			err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(t.Context(), cmd)
+
+			if err == nil || errors.Is(err, loop.ErrKilled) != tt.want {
+				t.Errorf("Launch(%q) = %v, want an error that is ErrKilled: %v", tt.script, err, tt.want)
+			}
+		})
+	}
 }

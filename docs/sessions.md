@@ -107,10 +107,10 @@ smith session list dev
 ```
 
 ```
-NAME             STATE    DIRTY  UNPUSHED
-smith-main       live     -      0
-smith-spec-42    stopped  dirty  3
-web-hotfix       stopped  -      0
+NAME             STATE    DIRTY  UNPUSHED  DRIVER  OUTCOME
+smith-main       live     -      0         human   -
+smith-spec-42    stopped  dirty  3         loop    waiting on human
+web-hotfix       stopped  -      0         human   -
 
 3 sessions · 1 dirty · 1 with unpushed commits
 ```
@@ -227,6 +227,8 @@ loses work. Stopping an already-stopped session succeeds and changes nothing.
 A name no session holds is refused, the same way `attach` and `rm` refuse it —
 `tmux` having nothing to end is what a typo looks like too.
 
+Stopping a loop-driven session ends its run as cleanly as Ctrl-C ends one in your terminal: the loop takes the hangup, stops its agent, takes the working label off the task, and records the outcome `stopped`.
+
 `rm` reclaims the **worktree** — the directory — and keeps the branch.
 
 ### What `rm` destroys, and what it does not
@@ -289,19 +291,21 @@ smith session list dev
 ```
 
 ```
-NAME             STATE    DIRTY  UNPUSHED
-smith-main       live     -      0
-smith-spec-42    stopped  dirty  3
-web-hotfix       stopped  -      0
+NAME             STATE    DIRTY  UNPUSHED  DRIVER  OUTCOME
+smith-main       live     -      0         human   -
+smith-spec-42    stopped  dirty  3         loop    waiting on human
+web-hotfix       stopped  -      0         human   -
 
 3 sessions · 1 dirty · 1 with unpushed commits
 ```
 
-Four columns, and nothing else. `STATE` is `live` or `stopped`, probed on every
+Six columns, and nothing else. `STATE` is `live` or `stopped`, probed on every
 call — never remembered, so a `tmux` server killed outside smith reads as
 `stopped` immediately. `DIRTY` is `dirty` or `-`. `UNPUSHED` counts the commits
 no remote-tracking ref reaches, or `-` for a detached worktree, which has no
-branch to count on.
+branch to count on. `DRIVER` is `human` or `loop`: who drove the
+session when it was last started (see [loop-driven
+sessions](#loop-driven-sessions)). `OUTCOME` is how a stopped loop-driven session's run ended: `complete`, `waiting on human`, `cap reached`, `attempts exhausted`, `stopped` or `failed`, the outcome the loop names in its stop report ([the loop](./loop.md#smith-loop-run)). It is `unknown` when the loop recorded none, because it was killed or the box rebooted before it could, and `-` for a live session or a human-driven one.
 
 **The summary line is always printed** — a reassuring read only reassures if it
 cannot be absent:
@@ -373,11 +377,24 @@ never implicit — you compose it, and you can read it first by running the
 composition plus a human reading the inventory in between is the deliberate
 answer.
 
+## Loop-driven sessions
+
+A session's **driver** comes from the verb that starts it, never from a flag: `session start` starts a human-driven session, whose root process is a shell, and `smith loop run <issue> --repo <name>` on the box starts a loop-driven one, whose root process is the loop ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). There is no `--driver` on `session start`.
+
+A loop-driven session is a session like any other: named `<repo>-<branch>` after its work branch, in a worktree below the repo's worktrees directory, and attached, listed, stopped and removed with the verbs above. It ends when the loop does. `list` shows its `DRIVER` as `loop`.
+
+Starting a session writes a **session record** in its worktree's own git dir,
+naming its driver, so a stopped session still reads as the driver it had. Each
+start overwrites the record, so a human `session start` on a loop's stopped
+worktree reads as `human` from then on. A worktree with no record, one started
+before sessions recorded their driver, reads as `human`.
+
+When the loop stops, it writes its **outcome** into the same record, and `list` shows it under `OUTCOME` once the session has ended. Starting a session again clears it, and `rm` takes the record, outcome and all, with the worktree. The full stop report is not kept on the box: it is on the issue, as the loop's comment.
+
+`loop run` refuses a branch whose session is live, whoever drives it, and reuses a stopped session's worktree, which is how a spec passes between the loop and a human for its tasks meant for a human. See [the loop](./loop.md#on-a-box---repo) for the run itself.
+
 ## What is not here in v1
 
-- **`--driver agent`**, or anything that launches an agent into a session.
-  Sessions are human-driven. Agents run through [the loop](./loop.md), which
-  works in the repo it is invoked from.
 - **Keystrokes.** Everything smith does to a session it does by starting or
   stopping it. There is no `send-keys`.
 - **Outcomes.** Liveness only — smith reports that a session is running, never

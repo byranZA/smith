@@ -3,7 +3,9 @@ package loop_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,6 +34,8 @@ type board struct {
 	comments []posted
 	// refuseComment, when set, is what every comment write fails with.
 	refuseComment error
+	// single, when set, makes the board a task named on its own.
+	single bool
 }
 
 // posted is a comment posted on issue number.
@@ -92,7 +96,7 @@ func deadlineOf(ctx context.Context) time.Duration {
 
 func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Execution{Number: number, Title: "spec", Tasks: slices.Clone(b.tasks)}, nil
+	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks)}, nil
 }
 
 func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {
@@ -731,6 +735,72 @@ func TestRunInteractiveUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testi
 	}
 }
 
+// killing is a launcher whose agent does its work and then is killed by SIGKILL.
+type killing struct{ board *board }
+
+func (k killing) Launch(ctx context.Context, cmd agent.Command) error {
+	if err := k.board.Launch(ctx, cmd); err != nil {
+		return err
+	}
+	return fmt.Errorf("run claude: %w: signal: killed", loop.ErrKilled)
+}
+
+func TestRunReportsAnAgentKilledBySIGKILLWithItsLikelyCause(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	var progress strings.Builder
+	l := loopOn(t, b, killing{board: b})
+	l.Progress = &progress
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := []string{"smith: the agent on #43 was killed (likely out of memory)"}; !containsLines(progress.String(), want) {
+		t.Errorf("Run() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunReportsAnyOtherAgentFailureWithItsError(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	var progress strings.Builder
+	l := loopOn(t, b, failing{board: b})
+	l.Progress = &progress
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := []string{"smith: the agent on #43 ended with a failure: exit status 1"}; !containsLines(progress.String(), want) {
+		t.Errorf("Run() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunCountsAKilledAgentAsAnAttempt(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43, 44}}
+
+	outcome, err := loopOn(t, b, killing{board: b}).Run(t.Context(), 42)
+
+	want := map[int]bool{43: true, 44: true}
+	if err != nil || !slices.Equal(b.handed(), []string{"43", "43", "44", "44"}) || !reflect.DeepEqual(outcome.Killed, want) {
+		t.Errorf("Run() = %+v, %v, handed %v; want each task handed twice, then skipped as killed %v", outcome, err, b.handed(), want)
+	}
+}
+
+func TestRunMarksNoTaskKilledWhoseLastAttemptWasNot(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+
+	outcome, err := loopOn(t, b, failing{board: b}).Run(t.Context(), 42)
+
+	if err != nil || len(outcome.Remaining.Skipped) != 1 || len(outcome.Killed) != 0 {
+		t.Errorf("Run() = %+v, %v; want #43 skipped and no task killed", outcome, err)
+	}
+}
+
 // refusedGH is a gh whose token GitHub refuses, logging each command it is asked to run.
 type refusedGH struct {
 	ran []string
@@ -754,7 +824,8 @@ func TestRunOnATrackerThatCannotAuthenticateStopsBeforeMarkingAnyTask(t *testing
 	_, err := l.Run(t.Context(), 42)
 
 	want := "read #42: the tracker can't authenticate with gh: HTTP 401: Bad credentials (https://api.github.com/graphql)"
-	if err == nil || err.Error() != want || len(gh.ran) != 1 || len(b.launched) != 0 {
-		t.Errorf("Run() error = %v after gh %q and %d launches, want %q after one read and no launch", err, gh.ran, len(b.launched), want)
+	marked := slices.ContainsFunc(gh.ran, func(args string) bool { return strings.HasPrefix(args, "issue edit") })
+	if err == nil || err.Error() != want || marked || len(b.launched) != 0 {
+		t.Errorf("Run() error = %v after gh %q and %d launches, want %q with no label write and no launch", err, gh.ran, len(b.launched), want)
 	}
 }

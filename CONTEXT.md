@@ -345,12 +345,7 @@ _Avoid_: client, remote execution, agent.
 ### Working on the box
 
 **Session**:
-A running `tmux` session in a worktree, with a driver (human or agent), that the operator
-attaches to read-only or writable. The unit of work on a box; many run at once. "HITL" and
-"AFK" are informal labels for its two common shapes, not domain types. Named `<repo>-<branch>`
-(sanitized), which is the string every verb takes; the tmux session is `smith/<name>`. Verbs are
-`start` / `attach` / `list` / `stop` / `rm`, they **execute on the box**, and running-state is a
-live `tmux has-session` probe — no daemon.
+A running `tmux` session in a worktree on one branch, with one driver: a human (`session start`) or the loop (`loop run <box>`). The operator attaches to either to watch or to step in, so attaching to a loop-driven session shows smith running the loop live. The unit of work on a box; many run at once. One session per branch at a time, and a branch can pass from one driver to the other between sessions: the HITL tasks of a spec are worked in a human session on the same worktree and work branch the loop used. "HITL" and "AFK" are informal labels for its two common shapes, not domain types. Named `<repo>-<branch>` (sanitized), which is the string every verb takes; the tmux session is `smith/<name>`. Verbs are `start` / `attach` / `list` / `stop` / `rm`, they **execute on the box**, and running-state is a live `tmux has-session` probe — no daemon.
 _Avoid_: terminal, tab, pane.
 
 **Worktree**:
@@ -410,14 +405,7 @@ else; `session list` displays all three
 _Avoid_: status, cleanliness.
 
 **Driver**:
-Who acts in a session — a human at a terminal, or a coding agent. Orthogonal to attach mode: an
-agent-driven session can be observed or, when it needs a hand, jumped into. The driver process is
-the tmux session's **root process** — the first process tmux starts in it, running as the smith
-user like everything else in the session; nothing to do with the root user — so its exit ends the
-session and session-end *is* the completion signal; smith reports liveness only, never the
-driver's exit status, and never sends it keystrokes. **v1 creates human-driven sessions only.**
-The **loop** and its **agent adapters** exist, but run in the repo they are invoked from rather
-than as a session's root process, so `--driver agent` is still deferred.
+Who acts in a session — a human at a shell, or the loop. Set by the verb that creates the session, never by a flag: `session start` makes a human-driven session, `loop run <box>` a loop-driven one. Orthogonal to attach mode: a loop-driven session can be observed or, when it needs a hand, jumped into. The driver process is the tmux session's **root process** — the first process tmux starts in it, running as the smith user like everything else in the session; nothing to do with the root user — so its exit ends the session and session-end *is* the completion signal; smith reports liveness and, for a loop-driven session that has ended, the outcome the loop recorded — never a process's exit status — and never sends the driver keystrokes.
 _Avoid_: actor, runner, operator (reserved for the human running smith).
 
 **Attach mode**:
@@ -432,7 +420,7 @@ _Avoid_: view mode, permission.
 ### The loop
 
 **Loop**:
-The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. It reads the execution before anything else, so a tracker it cannot reach or authenticate to stops the run before any task is touched. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs, in the repo it is invoked from. Locally that is the operator's machine acting as its own box. On a box, an agent-driven session's root process will be this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). No agent works in the checkout the loop is invoked from: the loop creates or adopts the execution's work branch from a base branch, and works each task in its own task worktree on its own task branch. It runs the tasks one after another, so each closed task's branch fast-forwards the work branch (in whichever clean worktree has it checked out), and a task branch that cannot is an error that stops the run. After each merge the loop pushes the work branch to `origin` under the same name, never forcing, and a failed push stops the run, so closed work is never left on one machine only. Task branches are never pushed ([ADR-0013](./docs/adr/0013-the-loop-works-in-task-worktrees.md)).
+The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. It reads the execution before anything else, so a tracker it cannot reach or authenticate to stops the run before any task is touched. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs. Locally it runs in the foreground, in the repo it is invoked from. Pointed at a box (`loop run <box>`), it does the same work there as the root process of a new loop-driven session, so it outlives the operator's connection; it is this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). No agent works in the checkout the loop is invoked from: the loop creates or adopts the execution's work branch from a base branch, and works each task in its own task worktree on its own task branch. It runs the tasks one after another, so each closed task's branch fast-forwards the work branch (in whichever clean worktree has it checked out), and a task branch that cannot is an error that stops the run. After each merge the loop pushes the work branch to `origin` under the same name, never forcing, and a failed push stops the run, so closed work is never left on one machine only. Task branches are never pushed ([ADR-0013](./docs/adr/0013-the-loop-works-in-task-worktrees.md)).
 _Avoid_: ralph, runner, orchestrator, delegation loop (the old name for it).
 
 **Base branch**:

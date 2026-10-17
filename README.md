@@ -117,9 +117,9 @@ read-only unless you ask for `--interact`, and `list` is the work-state readout
 you check before destroying a box by hand:
 
 ```
-NAME             STATE    DIRTY  UNPUSHED
-smith-main       live     -      0
-smith-spec-42    stopped  dirty  3
+NAME             STATE    DIRTY  UNPUSHED  DRIVER  OUTCOME
+smith-main       live     -      0         human   -
+smith-spec-42    stopped  dirty  3         loop    waiting on human
 
 2 sessions · 1 dirty · 1 with unpushed commits
 ```

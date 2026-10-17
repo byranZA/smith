@@ -292,6 +292,9 @@ func TestLoopListFailsNamingTheCause(t *testing.T) {
 // onPath finds every program, as a machine with all agents installed would.
 func onPath(name string) (string, error) { return "/usr/local/bin/" + name, nil }
 
+// offPath finds no program, as a relayed smith's stripped PATH finds no agent.
+func offPath(name string) (string, error) { return "", fmt.Errorf("%s: not found", name) }
+
 // fakeAgent is a launcher whose agent closes the task its prompt names.
 type fakeAgent struct {
 	gh     *fakeTracker

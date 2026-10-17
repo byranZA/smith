@@ -126,6 +126,12 @@ type Session struct {
 	// Unpushed counts the branch's commits that no remote-tracking ref
 	// reaches.
 	Unpushed int
+	// Driver is who drove the session when it was last started, read from
+	// its session record.
+	Driver Driver
+	// Outcome is how a loop-driven session's run ended, as the loop recorded
+	// it when it stopped, and empty when nothing was recorded.
+	Outcome string
 }
 
 // StartRequest is the pair a session is stood up from: the repo the blueprint
@@ -179,16 +185,8 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		return Session{}, fmt.Errorf("no branch named for repo %q: want the branch to work on", repo.Name)
 	}
 
-	root := filepath.Join(env.Workspace, repo.Name)
-	stand := standUp{
-		repo:   repo,
-		bare:   filepath.Join(root, bareDir),
-		trees:  filepath.Join(root, worktreesDir),
-		name:   DeriveName(repo.Name, branch),
-		branch: branch,
-		base:   strings.TrimSpace(req.Base),
-	}
-	stood := Session{Name: stand.name, Repo: repo.Name, Branch: branch, Live: true}
+	stand := newStandUp(env, repo, branch, req.Base)
+	stood := Session{Name: stand.name, Repo: repo.Name, Branch: branch, Live: true, Driver: driverOf(req.Command)}
 
 	worktrees, err := listWorktrees(ctx, env.Git, stand.bare)
 	if err != nil {
@@ -207,9 +205,13 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		return Session{}, err
 	}
 	if live {
-		return stood, nil
+		stood.Driver, stood.Outcome, err = readRecord(ctx, env.Git, dir)
+		return stood, err
 	}
 	if err := env.place(repo, dir); err != nil {
+		return Session{}, err
+	}
+	if err := writeRecord(ctx, env.Git, dir, stood.Driver); err != nil {
 		return Session{}, err
 	}
 	if err := launch(ctx, env, stand.name, dir, req.Command); err != nil {
@@ -239,6 +241,20 @@ type standUp struct {
 	// base is the ref the operator asked a new branch be cut from, empty
 	// when they named none.
 	base string
+}
+
+// newStandUp resolves a request for branch of the declared repo, cut from
+// base when it is new, against the box's workspace.
+func newStandUp(env Env, repo Repo, branch, base string) standUp {
+	root := filepath.Join(env.Workspace, repo.Name)
+	return standUp{
+		repo:   repo,
+		bare:   filepath.Join(root, bareDir),
+		trees:  filepath.Join(root, worktreesDir),
+		name:   DeriveName(repo.Name, branch),
+		branch: branch,
+		base:   strings.TrimSpace(base),
+	}
 }
 
 // refuse reports the reasons this session must not be stood up. It runs before
@@ -287,20 +303,7 @@ func (s standUp) worktree(ctx context.Context, env Env, worktrees []worktree, ex
 func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool) error {
 	args := []string{"-C", s.bare, "worktree", "add", dir, s.branch}
 	if !exists {
-		if err := fetch(ctx, env.Git, s.bare, s.repo.Name); err != nil {
-			return err
-		}
-		base := s.base
-		if base == "" {
-			base = s.repo.Base
-		}
-		if base == "" {
-			var err error
-			if base, err = defaultBranch(ctx, env.Git, s.bare); err != nil {
-				return err
-			}
-		}
-		from, err := remoteBase(ctx, env.Git, s.bare, base)
+		from, err := s.cutFrom(ctx, env)
 		if err != nil {
 			return err
 		}
@@ -310,6 +313,23 @@ func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool)
 		return fmt.Errorf("create a worktree for branch %q of repo %q at %s: %w", s.branch, s.repo.Name, dir, err)
 	}
 	return nil
+}
+
+// cutFrom fetches and answers with the ref a new branch is cut from: the
+// requested base, else the base the blueprint declares for the repo, else the
+// repo's default branch, as origin holds it when origin has it.
+func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
+	if err := fetch(ctx, env.Git, s.bare, s.repo.Name); err != nil {
+		return "", err
+	}
+	base := cmp.Or(s.base, s.repo.Base)
+	if base == "" {
+		var err error
+		if base, err = defaultBranch(ctx, env.Git, s.bare); err != nil {
+			return "", err
+		}
+	}
+	return remoteBase(ctx, env.Git, s.bare, base)
 }
 
 // fetch refreshes the repo from its remote. It runs only where a branch is
@@ -423,6 +443,17 @@ func (e Env) repo(name string) (Repo, error) {
 		}
 	}
 	return Repo{}, fmt.Errorf("repo %q is not declared in the blueprint this box was built from%s", name, declared(e.Repos))
+}
+
+// Clone returns the directory of the declared repo's bare clone, the git
+// repo every worktree of it is cut from, refusing a repo the blueprint does
+// not declare.
+func (e Env) Clone(name string) (string, error) {
+	repo, err := e.repo(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(e.Workspace, repo.Name, bareDir), nil
 }
 
 // place converges the repo's declared placements into the worktree at dir. It

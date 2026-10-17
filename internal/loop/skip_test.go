@@ -44,14 +44,14 @@ func TestRunCommentsOnASkippedTaskWhereItsWorkWasLeft(t *testing.T) {
 				t.Fatalf("Run() error = %v", err)
 			}
 
-			want := []posted{{number: 43, body: "smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
+			want := []string{"smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
 				"- **Machine:** box-1\n" +
 				"- **Task worktree:** `/bench/43`\n" +
 				"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
 				"- **Attempts:** 2 in this run\n" +
-				tt.progress + "\n"}}
-			if !reflect.DeepEqual(b.comments, want) {
-				t.Errorf("Run() commented %+v, want %+v", b.comments, want)
+				tt.progress + "\n"}
+			if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
+				t.Errorf("Run() commented %q on #43, want %q", got, want)
 			}
 		})
 	}
@@ -77,8 +77,8 @@ func TestRunCommentsOnNoTaskItCloses(t *testing.T) {
 
 			outcome, err := l.Run(t.Context(), 42)
 
-			if err != nil || !outcome.Complete() || len(b.comments) != 0 {
-				t.Errorf("Run() = %+v, %v and commented %+v; want the spec complete and no comment", outcome, err, b.comments)
+			if err != nil || !outcome.Complete() || len(commentsOn(b, 43)) != 0 {
+				t.Errorf("Run() = %+v, %v and commented %q on #43; want the spec complete and no comment on #43", outcome, err, commentsOn(b, 43))
 			}
 		})
 	}
@@ -126,14 +126,14 @@ func TestRunCommentsOnASkippedTaskMarkingWhatItCouldNotRead(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := []posted{{number: 43, body: "smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
+	want := []string{"smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
 		"- **Machine:** unknown\n" +
 		"- **Task worktree:** `/bench/43`\n" +
 		"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
 		"- **Attempts:** 1 in this run\n" +
-		"- **Progress:** unknown\n"}}
-	if !reflect.DeepEqual(b.comments, want) {
-		t.Errorf("Run() commented %+v, want %+v", b.comments, want)
+		"- **Progress:** unknown\n"}
+	if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
+		t.Errorf("Run() commented %q on #43, want %q", got, want)
 	}
 }
 
@@ -154,5 +154,28 @@ func TestRunWarnsOfWhatItCouldNotReadForASkippedTasksComment(t *testing.T) {
 	}
 	if err != nil || !containsLines(progress.String(), want) {
 		t.Errorf("Run() = %v with progress\n%s\nwant the lines %q", err, progress.String(), want)
+	}
+}
+
+func TestRunCommentsOnASkippedTaskWhoseAgentWasKilled(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	l := skipLoop(t, b, trees{})
+	l.Launcher = killing{board: b}
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{"smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
+		"- **Machine:** box-1\n" +
+		"- **Task worktree:** `/bench/43`\n" +
+		"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
+		"- **Attempts:** 1 in this run\n" +
+		"- **Last attempt:** the agent was killed (likely out of memory)\n" +
+		"- **Progress:** nothing committed beyond the work branch `smith/42-spec`\n"}
+	if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
+		t.Errorf("Run() commented %q on #43, want %q", got, want)
 	}
 }
