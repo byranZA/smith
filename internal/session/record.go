@@ -35,11 +35,36 @@ func (d Driver) String() string {
 // recordFile is the session record's file name in a worktree's own git dir.
 const recordFile = "smith-session"
 
-// record is what a session leaves in its worktree's own git dir, so a stopped
-// session still says who drove it.
-type record struct {
+// entry is what a session leaves in its worktree's own git dir, so a stopped
+// session still says who drove it and, when the loop did, how its run ended.
+type entry struct {
 	// Driver is "human" or "loop".
 	Driver string `json:"driver"`
+	// Outcome is how the loop's run ended, empty until the loop stops.
+	Outcome string `json:"outcome,omitempty"`
+}
+
+// Record is the session record of one worktree, open for the loop running
+// as its session's root process to record how its run ended.
+type Record struct {
+	path string
+}
+
+// OpenRecord opens the session record of the worktree at dir. It finds where
+// the record lives now, so Conclude needs no git and still works once the
+// run's context is cancelled.
+func OpenRecord(ctx context.Context, git Runner, dir string) (Record, error) {
+	path, err := recordPath(ctx, git, dir)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{path: path}, nil
+}
+
+// Conclude records outcome as how the loop-driven session's run ended,
+// keeping the record's driver as the loop.
+func (r Record) Conclude(outcome string) error {
+	return writeEntry(r.path, entry{Driver: Loop.String(), Outcome: outcome})
 }
 
 // driverOf returns the driver a session started with command has: the loop
@@ -58,39 +83,44 @@ func writeRecord(ctx context.Context, git Runner, dir string, d Driver) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(record{Driver: d.String()})
+	return writeEntry(path, entry{Driver: d.String()})
+}
+
+// writeEntry writes e as the session record at path.
+func writeEntry(path string, e entry) error {
+	data, err := json.Marshal(e)
 	if err != nil {
-		return fmt.Errorf("encode the session record for %s: %w", dir, err)
+		return fmt.Errorf("encode the session record %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write the session record for %s: %w", dir, err)
+		return fmt.Errorf("write the session record %s: %w", path, err)
 	}
 	return nil
 }
 
-// readDriver returns the driver recorded for the worktree at dir. A worktree
-// with no record, one started before sessions recorded their driver, reads as
-// Human.
-func readDriver(ctx context.Context, git Runner, dir string) (Driver, error) {
+// readRecord returns the driver recorded for the worktree at dir and the
+// outcome its loop recorded, empty when none was. A worktree with no record,
+// one started before sessions recorded their driver, reads as Human.
+func readRecord(ctx context.Context, git Runner, dir string) (Driver, string, error) {
 	path, err := recordPath(ctx, git, dir)
 	if err != nil {
-		return Human, err
+		return Human, "", err
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Human, nil
+		return Human, "", nil
 	}
 	if err != nil {
-		return Human, fmt.Errorf("read the session record for %s: %w", dir, err)
+		return Human, "", fmt.Errorf("read the session record for %s: %w", dir, err)
 	}
-	var r record
-	if err := json.Unmarshal(data, &r); err != nil {
-		return Human, fmt.Errorf("malformed session record %s: %w", path, err)
+	var e entry
+	if err := json.Unmarshal(data, &e); err != nil {
+		return Human, "", fmt.Errorf("malformed session record %s: %w", path, err)
 	}
-	if r.Driver == Loop.String() {
-		return Loop, nil
+	if e.Driver == Loop.String() {
+		return Loop, e.Outcome, nil
 	}
-	return Human, nil
+	return Human, "", nil
 }
 
 // recordPath returns where the session record of the worktree at dir lives:

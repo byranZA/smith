@@ -116,6 +116,9 @@ type Session struct {
 	// Driver is who drove the session when it was last started, read from
 	// its session record.
 	Driver Driver
+	// Outcome is how a loop-driven session's run ended, as the loop recorded
+	// it when it stopped, and empty when nothing was recorded.
+	Outcome string
 }
 
 // StartRequest is the pair a session is stood up from: the repo the blueprint
@@ -196,7 +199,7 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 		return Session{}, err
 	}
 	if live {
-		stood.Driver, err = readDriver(ctx, env.Git, dir)
+		stood.Driver, stood.Outcome, err = readRecord(ctx, env.Git, dir)
 		return stood, err
 	}
 	if err := env.place(repo, dir); err != nil {

@@ -263,7 +263,7 @@ func newLoopPromptCmd() *cobra.Command {
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags repofile.File
-	var interactive, noPush bool
+	var interactive, noPush, inSession bool
 	var branch, base, repo string
 	cmd := &cobra.Command{
 		Use:   "run [<box>] <issue>",
@@ -315,7 +315,12 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
+			recorder, err := w.recorder(cmd.Context(), inSession)
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
 			l := loop.Loop{
+				Recorder: recorder,
 				Tracker:  github,
 				Launcher: w.launcher,
 				Bench:    bench,
@@ -350,6 +355,10 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a new work branch is cut from (default: origin's default branch)")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
 	cmd.Flags().StringVar(&repo, "repo", "", "on a box, the repo to start a loop-driven session in, rather than running here")
+	cmd.Flags().BoolVar(&inSession, inSessionFlag, false, "the run is a loop-driven session's root process, recording how it ends in the session record")
+	if err := cmd.Flags().MarkHidden(inSessionFlag); err != nil {
+		panic(fmt.Sprintf("hide --%s: %v", inSessionFlag, err))
+	}
 	return cmd
 }
 

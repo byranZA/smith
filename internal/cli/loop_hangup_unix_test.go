@@ -15,11 +15,15 @@ import (
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
 )
 
 // hangupDirEnv names the directory a re-executed test binary, run as a hung-up loop, writes its records to.
 const hangupDirEnv = "SMITH_HANGUP_DIR"
+
+// hangupSessionEnv names the worktree of the loop-driven session a re-executed test binary runs as the root process of, when set.
+const hangupSessionEnv = "SMITH_HANGUP_SESSION"
 
 // sleepingAgent runs a stand-in agent in place of cmd's, one that writes its own pid and its sleeping child's to pidfile and waits.
 type sleepingAgent struct {
@@ -40,12 +44,12 @@ type hungUpLoop struct {
 	ran    []string
 }
 
-// hangUpLoop starts a child `smith loop run` whose agent sleeps, hangs it up once the agent is running, and waits for it.
-func hangUpLoop(t *testing.T) hungUpLoop {
+// hangUpLoop starts a child `smith loop run` whose agent sleeps, hangs it up once the agent is running, and waits for it. The child runs with env added to its environment.
+func hangUpLoop(t *testing.T, env ...string) hungUpLoop {
 	t.Helper()
 	dir := t.TempDir()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHungUpLoop$") // #nosec G204 -- re-executes this test binary.
-	cmd.Env = append(os.Environ(), hangupDirEnv+"="+dir)
+	cmd.Env = append(append(os.Environ(), hangupDirEnv+"="+dir), env...)
 	output, err := os.Create(filepath.Join(dir, "output"))
 	if err != nil {
 		t.Fatalf("create the child's output: %v", err)
@@ -131,8 +135,13 @@ func TestHelperHungUpLoop(t *testing.T) {
 	}
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, sleepingAgent{pidfile: filepath.Join(dir, "agent.pid")}, "agent: claude\n")
+	args := []string{"run", "42"}
+	if worktree := os.Getenv(hangupSessionEnv); worktree != "" {
+		w.git, w.workdir = connection.System(), func() (string, error) { return worktree, nil }
+		args = append(args, "--branch=smith/42-the-loop", "--in-session")
+	}
 	root := newLoopCmd(inRepo(t, w))
-	root.SetArgs([]string{"run", "42"})
+	root.SetArgs(args)
 	root.SilenceUsage, root.SilenceErrors = true, true
 
 	code := execute(root, time.Minute)
@@ -155,5 +164,17 @@ func TestHangupRemovesTheWorkingLabelFromTheTask(t *testing.T) {
 
 	if want := "gh issue edit 43 --remove-label smith:working"; !slices.Contains(run.ran, want) {
 		t.Errorf("hung-up loop ran gh %q; want it to include %q", run.ran, want)
+	}
+}
+
+func TestHangupOfALoopDrivenSessionShowsItStopped(t *testing.T) {
+	tmux, resolve, dir := loopSession(t)
+	hangUpLoop(t, hangupSessionEnv+"="+dir)
+	stopSession(t, resolve, tmux, "smith-smith-42-the-loop")
+
+	row := listedRow(t, resolve, tmux, "smith-smith-42-the-loop")
+
+	if got := strings.Join(row[1:], " "); got != "stopped - 0 loop stopped" {
+		t.Errorf("session list row = %q, want %q", got, "stopped - 0 loop stopped")
 	}
 }

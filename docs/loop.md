@@ -111,7 +111,7 @@ attach: smith session attach smith-smith-305-run-the-loop-on-a-box
 list:   smith session list
 ```
 
-`smith session attach` watches the run read-only, and the stop report lands on the issue as a comment (see [`smith loop run`](#smith-loop-run)). When only tasks for a human are left, start a human session on the same work branch with `smith session start --repo <name> --branch smith/<n>-<slug>`, which reuses the worktree, work those tasks, stop it, and run `loop run --repo` again.
+`smith session attach` watches the run read-only, and the stop report lands on the issue as a comment (see [`smith loop run`](#smith-loop-run)). When the run stops, `smith session list` shows its outcome under `OUTCOME` (see [sessions](./sessions.md#loop-driven-sessions)), and `smith session stop` ends it as cleanly as Ctrl-C, with the outcome `stopped`. When only tasks for a human are left, start a human session on the same work branch with `smith session start --repo <name> --branch smith/<n>-<slug>`, which reuses the worktree, work those tasks, stop it, and run `loop run --repo` again.
 
 `--repo` is refused off a box, where the loop runs in the repo you invoke it from. `--interactive` is refused with `--repo`: an interactive run needs you at its terminal, so start a human session and run `loop run --interactive` in it. Without `--repo`, a run on a box works in the foreground in the directory you invoke it from, as it does anywhere.
 

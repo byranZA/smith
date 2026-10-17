@@ -23,7 +23,8 @@ const notApplicable = "-"
 
 // Readout renders the operator-facing listing of sessions: one flat row each,
 // in the order they were handed, under the four columns the work-state
-// question is answered in and the DRIVER column saying who drove it.
+// question is answered in, the DRIVER column saying who drove it and the
+// OUTCOME column saying how a loop-driven run ended.
 //
 // It is never grouped, paginated or truncated — a group header breaks grep,
 // awk, and pasting a name into the next command, and the identity column
@@ -44,9 +45,9 @@ func Readout(sessions []Session, inv hint.Invocation) string {
 	for _, s := range sessions {
 		width = max(width, len(s.Name))
 	}
-	writeRow(&b, width, "NAME", "STATE", "DIRTY", "UNPUSHED", "DRIVER")
+	writeRow(&b, width, "NAME", "STATE", "DIRTY", "UNPUSHED", "DRIVER", "OUTCOME")
 	for _, s := range sessions {
-		writeRow(&b, width, s.Name, state(s), dirty(s), unpushed(s), s.Driver.String())
+		writeRow(&b, width, s.Name, state(s), dirty(s), unpushed(s), s.Driver.String(), outcome(s))
 	}
 	fmt.Fprintf(&b, "\n%s\n", summary(sessions))
 	return b.String()
@@ -80,10 +81,27 @@ func unpushed(s Session) string {
 	return strconv.Itoa(s.Unpushed)
 }
 
+// unknownOutcome is the OUTCOME of a stopped loop-driven session whose loop
+// recorded nothing: it was killed, or the box rebooted, before it stopped.
+const unknownOutcome = "unknown"
+
+// outcome renders the OUTCOME column: how a stopped loop-driven session's run
+// ended, unknown when the loop recorded nothing, and a dash for a live
+// session or a human-driven one, which have no run that ended.
+func outcome(s Session) string {
+	if s.Live || s.Driver != Loop {
+		return notApplicable
+	}
+	if s.Outcome == "" {
+		return unknownOutcome
+	}
+	return s.Outcome
+}
+
 // writeRow writes one listing row, padding the identity column so the columns
 // line up under their headers.
-func writeRow(b *strings.Builder, width int, name, state, dirty, unpushed, driver string) {
-	fmt.Fprintf(b, "%-*s  %-7s  %-5s  %-8s  %s\n", width, name, state, dirty, unpushed, driver)
+func writeRow(b *strings.Builder, width int, name, state, dirty, unpushed, driver, outcome string) {
+	fmt.Fprintf(b, "%-*s  %-7s  %-5s  %-8s  %-6s  %s\n", width, name, state, dirty, unpushed, driver, outcome)
 }
 
 // summary renders the line an operator reads before tearing a box down by

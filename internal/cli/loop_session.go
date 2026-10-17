@@ -101,17 +101,55 @@ func refuseLive(cmd *cobra.Command, env session.Env, repo, branch string) error 
 		name, branch, env.Hint.Command("session attach", name), env.Hint.Command("session stop", name))
 }
 
+// inSessionFlag is the hidden flag that tells a loop run it is a loop-driven
+// session's root process.
+const inSessionFlag = "in-session"
+
 // rootCommand is the loop run a loop-driven session's root process is: this
 // box's smith running the issue with every flag the operator set but --repo,
-// on exactly the work branch the session is for.
+// on exactly the work branch the session is for, recording how it ends in the
+// session record.
 func rootCommand(cmd *cobra.Command, issue, branch string) []string {
 	argv := []string{relay.BoxSmith, "loop", "run", issue}
 	cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Changed && f.Name != "repo" && f.Name != "branch" {
+		if f.Changed && f.Name != "repo" && f.Name != "branch" && f.Name != inSessionFlag {
 			argv = append(argv, "--"+f.Name+"="+f.Value.String())
 		}
 	})
-	return append(argv, "--branch="+branch)
+	return append(argv, "--branch="+branch, "--"+inSessionFlag)
+}
+
+// recorder returns where a loop run records how it ended: the session record
+// of the worktree smith runs in when the run is a loop-driven session's root
+// process, and nowhere otherwise.
+func (w loopWiring) recorder(ctx context.Context, inSession bool) (loop.Recorder, error) {
+	if !inSession {
+		return nil, nil
+	}
+	dir, err := w.workdir()
+	if err != nil {
+		return nil, fmt.Errorf("find the session's worktree: %w", err)
+	}
+	record, err := session.OpenRecord(ctx, w.git, dir)
+	if err != nil {
+		return nil, fmt.Errorf("open the session record: %w", err)
+	}
+	return sessionRecorder{record: record}, nil
+}
+
+// sessionRecorder records how a loop-driven session's run ended in its
+// session record.
+type sessionRecorder struct {
+	record session.Record
+}
+
+// Record keeps ending as the session's outcome. The report is the stop
+// comment's to keep; the session record holds the outcome alone.
+func (r sessionRecorder) Record(ending loop.Ending, _ string) error {
+	if err := r.record.Conclude(string(ending)); err != nil {
+		return fmt.Errorf("record the session's outcome: %w", err)
+	}
+	return nil
 }
 
 // writeLoopStarted reports the loop-driven session that was started and the

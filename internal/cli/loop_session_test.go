@@ -64,7 +64,7 @@ func TestLoopRunOnABoxStartsASessionWhoseRootProcessIsTheLoop(t *testing.T) {
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop")
 	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-smith-42-the-loop", "-c", dir,
-		"/usr/local/bin/smith", "loop", "run", "42", "--agent=codex", "--max-iterations=3", "--branch=smith/42-the-loop"}}
+		"/usr/local/bin/smith", "loop", "run", "42", "--agent=codex", "--max-iterations=3", "--branch=smith/42-the-loop", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
 	}
@@ -112,7 +112,7 @@ func TestLoopRunOnABoxOnAChosenBranchNamesTheSessionAfterIt(t *testing.T) {
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "feat-x")
 	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-feat-x", "-c", dir,
-		"/usr/local/bin/smith", "loop", "run", "42", "--branch=feat/x"}}
+		"/usr/local/bin/smith", "loop", "run", "42", "--branch=feat/x", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
 	}
