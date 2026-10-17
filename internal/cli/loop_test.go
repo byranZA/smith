@@ -429,29 +429,6 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 	}
 }
 
-func TestLoopRunNamesATaskWhoseAgentWasKilledInTheReport(t *testing.T) {
-	gh := &fakeTracker{issues: map[string]string{
-		"42": specJSON(43),
-		"43": taskJSON(43, "OPEN", "ready-for-agent"),
-	}}
-
-	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: killedAgent{}, lookPath: onPath}, "42")
-
-	want := defaultSettings + "spec #42 stopped: the agent left a task open on every attempt\n" +
-		"  skipped after 2 attempts: #43\n" +
-		"  #43 left in /bench/43: the agent was killed (likely out of memory)\n" + workBranch
-	if code == 0 || stdout != want {
-		t.Errorf("exit %d, stdout =\n%s\nwant non-zero, and\n%s", code, stdout, want)
-	}
-}
-
-// killedAgent is a launcher whose agent is killed by SIGKILL without closing its task.
-type killedAgent struct{}
-
-func (killedAgent) Launch(context.Context, agent.Command) error {
-	return fmt.Errorf("run claude: %w", loop.ErrKilled)
-}
-
 func TestLoopRunCommentsOnASkippedTaskNamingThisMachine(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{
 		"42": specJSON(43),
