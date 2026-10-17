@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,22 +11,20 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 )
 
-// convergeProfile runs the stage over what a blueprint declares against a box
-// and a home of the test's own, writing the login profile at profile.
+// convergeProfile converges b against box and home, writing the login profile at profile.
 func convergeProfile(t *testing.T, box *fakeBox, home, profile string, b blueprint.Blueprint) Result {
 	t.Helper()
 	root := t.TempDir()
 	stageEnv(t, root, b)
 	env := Env{Command: box, StateRoot: root, Profile: profile}
-	result, err := Converge(context.Background(), env, Plan(b, resolved, home), io.Discard)
+	result, err := Converge(t.Context(), env, Plan(b, resolved, home), io.Discard)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 	return result
 }
 
-// loginPath is the PATH a login shell holds after sourcing profile, with home
-// as its HOME and path as the PATH it started with.
+// loginPath is the PATH a shell starting with HOME home and PATH path holds after sourcing profile.
 func loginPath(t *testing.T, profile, home, path string) string {
 	t.Helper()
 	var out, errOut strings.Builder
@@ -49,6 +46,7 @@ func shims(t *testing.T, home string) string {
 }
 
 func TestConvergeWritesAProfilePuttingTheShimsFirstOnPath(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "smith.sh")
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
@@ -64,7 +62,32 @@ func TestConvergeWritesAProfilePuttingTheShimsFirstOnPath(t *testing.T) {
 	}
 }
 
+func TestConvergeWritesAProfileMovingTheShimsFirstOnPath(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	profile := filepath.Join(t.TempDir(), "smith.sh")
+	convergeProfile(t, &fakeBox{installed: map[string]bool{}, hasMise: true}, home, profile, blueprint.Blueprint{Tools: map[string]string{"gh": "2.60"}})
+	dir := shims(t, home)
+	tests := []struct {
+		name, path string
+	}{
+		{"shims last", "/usr/bin:/bin:" + dir},
+		{"shims in the middle", "/usr/bin:" + dir + ":/bin"},
+		{"shims already first", dir + ":/usr/bin:/bin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			want := dir + ":/usr/bin:/bin"
+			if got := loginPath(t, profile, home, tt.path); got != want {
+				t.Errorf("PATH after sourcing %s over %q = %q, want %q", profile, tt.path, got, want)
+			}
+		})
+	}
+}
+
 func TestConvergeLeavesThePathAloneOnABoxWithNoShims(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "smith.sh")
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true}
@@ -77,6 +100,7 @@ func TestConvergeLeavesThePathAloneOnABoxWithNoShims(t *testing.T) {
 }
 
 func TestConvergeLeavesAnUnchangedProfileAlone(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "smith.sh")
 	b := blueprint.Blueprint{Tools: map[string]string{"gh": "2.60"}}
@@ -94,6 +118,7 @@ func TestConvergeLeavesAnUnchangedProfileAlone(t *testing.T) {
 }
 
 func TestConvergeRewritesAProfileThatDiffers(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "smith.sh")
 	if err := os.WriteFile(profile, []byte("PATH=/stale:$PATH\n"), 0o644); err != nil {
@@ -110,6 +135,7 @@ func TestConvergeRewritesAProfileThatDiffers(t *testing.T) {
 }
 
 func TestConvergeWritesNoProfileOnABoxWithNoToolchain(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	profile := filepath.Join(t.TempDir(), "smith.sh")
 	box := newBox()
@@ -143,5 +169,33 @@ func TestSessionMiseFallsBackToMiseOnPath(t *testing.T) {
 
 	if got := SessionMise(home); got != "mise" {
 		t.Errorf("SessionMise(%q) = %q, want %q", home, got, "mise")
+	}
+}
+
+func TestSessionMiseFallsBackToMiseOnPathOverAnUnusableInstall(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		place func(path string) error
+	}{
+		{"nonexecutable file", func(path string) error { return os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600) }},
+		{"directory", func(path string) error { return os.Mkdir(path, 0o700) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			installed := filepath.Join(home, ".local", "bin", "mise")
+			if err := os.MkdirAll(filepath.Dir(installed), 0o700); err != nil {
+				t.Fatalf("make the install directory: %v", err)
+			}
+			if err := tt.place(installed); err != nil {
+				t.Fatalf("place the unusable mise: %v", err)
+			}
+
+			if got := SessionMise(home); got != "mise" {
+				t.Errorf("SessionMise(%q) = %q, want %q", home, got, "mise")
+			}
+		})
 	}
 }

@@ -161,7 +161,8 @@ type StartRequest struct {
 // process is never wanted, which is what makes stop then start the way to pick
 // up changed config. Everything else converges the blueprint's repo placements
 // into the worktree and launches a tmux session named smith/<name> in it,
-// with its process under mise exec, so start is an ensure-desired-state verb the way `machine setup` is.
+// with its process under mise exec, so start is an ensure-desired-state verb
+// the way `machine setup` is.
 //
 // A new branch is cut from the requested base, else from the base the
 // blueprint declares for the repo, else from the repo's default branch.
@@ -396,14 +397,10 @@ func resolved(path string) string {
 	return filepath.Clean(path)
 }
 
-// launch starts the detached tmux session a session runs under, with its
-// working directory in the worktree and its process under mise exec: the root
-// command when there is one, a login shell otherwise. It is the one place a
-// tmux session is created.
-//
-// mise wraps tmux's shell command and never the tmux call: a session inherits
-// the tmux server's environment, so a wrapped tmux would leak the env of the
-// session that started the server into every later one.
+// launch is the one place a tmux session is created: detached, in the worktree,
+// running the root command or else a login shell under mise exec. mise wraps
+// that command and never the tmux call, because a wrapped tmux would leak the
+// env of the session that started the server into every later one.
 func launch(ctx context.Context, env Env, name, dir string, command []string) error {
 	if len(command) == 0 {
 		command = loginShell

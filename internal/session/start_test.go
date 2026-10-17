@@ -72,6 +72,7 @@ func TestStartCreatesTheWorktreeAndTheTmuxSession(t *testing.T) {
 }
 
 func TestStartRunsAHumanSessionsLoginShellUnderMise(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith", "main")
 	tmux := &fakeTmux{}
@@ -83,7 +84,7 @@ func TestStartRunsAHumanSessionsLoginShellUnderMise(t *testing.T) {
 		Mise:      "/home/smith/.local/bin/mise",
 	}
 
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
@@ -95,6 +96,7 @@ func TestStartRunsAHumanSessionsLoginShellUnderMise(t *testing.T) {
 }
 
 func TestStartRunsARootCommandUnderMise(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith", "main")
 	tmux := &fakeTmux{}
@@ -107,7 +109,7 @@ func TestStartRunsARootCommandUnderMise(t *testing.T) {
 	}
 	req := session.StartRequest{Repo: "smith", Branch: "spec-42", Command: []string{"smith", "loop", "run", "docs/spec.md"}}
 
-	if _, err := session.Start(context.Background(), env, req); err != nil {
+	if _, err := session.Start(t.Context(), env, req); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
