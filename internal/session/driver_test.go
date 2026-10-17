@@ -1,7 +1,6 @@
 package session_test
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ var loopCommand = []string{"/usr/local/bin/smith", "loop", "run", "42"}
 // driverOf lists the sessions in env and returns the driver of the one named.
 func driverOf(t *testing.T, env session.Env, name string) session.Driver {
 	t.Helper()
-	got, err := session.List(context.Background(), env, session.Filter{})
+	got, err := session.List(t.Context(), env, session.Filter{})
 	if err != nil {
 		t.Fatalf("List() err = %v", err)
 	}
@@ -45,7 +44,7 @@ func smithEnv(t *testing.T, tmux *tmuxServer) session.Env {
 
 func TestASessionStartedWithACommandIsLoopDriven(t *testing.T) {
 	env := smithEnv(t, &tmuxServer{})
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
@@ -56,7 +55,7 @@ func TestASessionStartedWithACommandIsLoopDriven(t *testing.T) {
 
 func TestASessionStartedWithoutACommandIsHumanDriven(t *testing.T) {
 	env := smithEnv(t, &tmuxServer{})
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 
@@ -68,7 +67,7 @@ func TestASessionStartedWithoutACommandIsHumanDriven(t *testing.T) {
 func TestAStoppedLoopDrivenSessionKeepsItsDriver(t *testing.T) {
 	tmux := &tmuxServer{}
 	env := smithEnv(t, tmux)
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 	tmux.kill(session.TmuxSession("smith-spec-42"))
@@ -81,11 +80,11 @@ func TestAStoppedLoopDrivenSessionKeepsItsDriver(t *testing.T) {
 func TestAHumanSessionOnALoopsWorktreeIsHumanDriven(t *testing.T) {
 	tmux := &tmuxServer{}
 	env := smithEnv(t, tmux)
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
 		t.Fatalf("Start() loop err = %v", err)
 	}
 	tmux.kill(session.TmuxSession("smith-spec-42"))
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() human err = %v", err)
 	}
 

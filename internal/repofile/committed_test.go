@@ -1,7 +1,6 @@
 package repofile_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -38,7 +37,7 @@ func bareWith(t *testing.T, files map[string]string) string {
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	var errOut strings.Builder
-	if err := connection.System().Run(context.Background(), "git", append([]string{"-C", dir}, args...), nil, &strings.Builder{}, &errOut); err != nil {
+	if err := connection.System().Run(t.Context(), "git", append([]string{"-C", dir}, args...), nil, &strings.Builder{}, &errOut); err != nil {
 		t.Fatalf("git %s: %v (%s)", strings.Join(args, " "), err, errOut.String())
 	}
 }

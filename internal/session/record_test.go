@@ -1,7 +1,6 @@
 package session_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,7 +24,7 @@ func gitDirOf(t *testing.T, dir string) string {
 // openRecord opens the session record of the worktree at dir.
 func openRecord(t *testing.T, dir string) session.Record {
 	t.Helper()
-	record, err := session.OpenRecord(context.Background(), connection.System(), dir)
+	record, err := session.OpenRecord(t.Context(), connection.System(), dir)
 	if err != nil {
 		t.Fatalf("OpenRecord(%q) err = %v", dir, err)
 	}
@@ -63,7 +62,7 @@ func TestSessionListStaysUsableWhileARunRecordsItsOutcome(t *testing.T) {
 	}()
 
 	for range 200 {
-		if _, err := session.List(context.Background(), env, session.Filter{}); err != nil {
+		if _, err := session.List(t.Context(), env, session.Filter{}); err != nil {
 			t.Errorf("List() while a run records its outcome err = %v, want none", err)
 			break
 		}

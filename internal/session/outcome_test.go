@@ -1,7 +1,6 @@
 package session_test
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +13,7 @@ import (
 // listed lists the sessions in env and returns the one named.
 func listed(t *testing.T, env session.Env, name string) session.Session {
 	t.Helper()
-	got, err := session.List(context.Background(), env, session.Filter{})
+	got, err := session.List(t.Context(), env, session.Filter{})
 	if err != nil {
 		t.Fatalf("List() err = %v", err)
 	}
@@ -30,7 +29,7 @@ func listed(t *testing.T, env session.Env, name string) session.Session {
 // startLoop starts a loop-driven session on branch spec-42 of "smith" in env and returns its worktree.
 func startLoop(t *testing.T, env session.Env) string {
 	t.Helper()
-	if _, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
+	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: loopCommand}); err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 	return filepath.Join(env.Workspace, "smith", "worktrees", "spec-42")
@@ -39,7 +38,7 @@ func startLoop(t *testing.T, env session.Env) string {
 // conclude records outcome in the session record of the worktree at dir, as the loop does when it stops.
 func conclude(t *testing.T, dir, outcome string) {
 	t.Helper()
-	record, err := session.OpenRecord(context.Background(), connection.System(), dir)
+	record, err := session.OpenRecord(t.Context(), connection.System(), dir)
 	if err != nil {
 		t.Fatalf("OpenRecord(%q) err = %v", dir, err)
 	}
@@ -79,7 +78,7 @@ func TestARemovedSessionTakesItsOutcomeWithIt(t *testing.T) {
 	dir := startLoop(t, env)
 	conclude(t, dir, "complete")
 	tmux.kill(session.TmuxSession("smith-spec-42"))
-	if _, err := session.Remove(context.Background(), env, []string{"smith-spec-42"}, false); err != nil {
+	if _, err := session.Remove(t.Context(), env, []string{"smith-spec-42"}, false); err != nil {
 		t.Fatalf("Remove() err = %v", err)
 	}
 	git(t, filepath.Join(env.Workspace, "smith", "repo.git"), "worktree", "add", dir, "spec-42")
