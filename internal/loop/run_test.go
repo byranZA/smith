@@ -730,3 +730,31 @@ func TestRunInteractiveUnmarksTheTaskWhenReportingItsAgentsFailureFails(t *testi
 		t.Errorf("RunInteractive() made %q with error %v; want %q and the progress error", b.events, err, want)
 	}
 }
+
+// refusedGH is a gh whose token GitHub refuses, logging each command it is asked to run.
+type refusedGH struct {
+	ran []string
+}
+
+func (r *refusedGH) Run(_ context.Context, _ string, args []string, _ io.Reader, _, stderr io.Writer) error {
+	r.ran = append(r.ran, strings.Join(args, " "))
+	if _, err := io.WriteString(stderr, "HTTP 401: Bad credentials (https://api.github.com/graphql)\n"); err != nil {
+		return err
+	}
+	return errors.New("exit status 1")
+}
+
+func TestRunOnATrackerThatCannotAuthenticateStopsBeforeMarkingAnyTask(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	gh := &refusedGH{}
+	l := loopOn(t, b, b)
+	l.Tracker = tracker.NewGitHub(gh, tracker.DefaultLabels())
+
+	_, err := l.Run(t.Context(), 42)
+
+	want := "read #42: the tracker can't authenticate with gh: HTTP 401: Bad credentials (https://api.github.com/graphql)"
+	if err == nil || err.Error() != want || len(gh.ran) != 1 || len(b.launched) != 0 {
+		t.Errorf("Run() error = %v after gh %q and %d launches, want %q after one read and no launch", err, gh.ran, len(b.launched), want)
+	}
+}
