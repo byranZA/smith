@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,6 +23,9 @@ const (
 	CapReached Ending = "cap reached"
 	// AttemptsExhausted is a run that skipped tasks until none was available.
 	AttemptsExhausted Ending = "attempts exhausted"
+	// AgentBroken is a run stopped on a task the agent failed on every
+	// attempt at, or could not be started on, so likely broken itself.
+	AgentBroken Ending = "agent broken"
 	// Stopped is a run interrupted by a signal.
 	Stopped Ending = "stopped"
 	// Failed is a run stopped on an error.
@@ -39,6 +43,8 @@ func (o Outcome) Ending() Ending {
 	switch {
 	case o.Complete():
 		return Complete
+	case o.Broken != nil:
+		return AgentBroken
 	case o.Capped:
 		return CapReached
 	case len(o.Remaining.Skipped) > 0:
@@ -51,13 +57,16 @@ func (o Outcome) Ending() Ending {
 // Report renders how the run of the execution called name ended: complete,
 // or why it stopped and what remains open, naming the tasks it skipped, the
 // attempts limits allowed each, the task worktree each was left in, and
-// whether its agent was killed on its last attempt.
+// whether its agent was killed on its last attempt. A run stopped as agent
+// broken names the task, the agent's last failure and the machine to check.
 func (o Outcome) Report(name string, limits Limits) string {
 	if o.Complete() {
 		return name + " complete\n"
 	}
 	var b strings.Builder
 	switch {
+	case o.Broken != nil:
+		fmt.Fprintf(&b, "%s stopped: %s; check that the agent runs on %s\n", name, o.Broken.cause(), o.Broken.Machine)
 	case o.Capped:
 		fmt.Fprintf(&b, "%s stopped: reached the cap of %d agent runs\n", name, limits.MaxIterations)
 	case len(o.Remaining.Skipped) > 0:
@@ -74,6 +83,15 @@ func (o Outcome) Report(name string, limits Limits) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// cause says how the agent failed on the task the run stopped on, with its
+// last error.
+func (b Broken) cause() string {
+	if errors.Is(b.Failure, ErrNotStarted) {
+		return fmt.Sprintf("the agent could not be started on #%d (%v)", b.Task.Number, b.Failure)
+	}
+	return fmt.Sprintf("the agent failed on every attempt at #%d (%v)", b.Task.Number, b.Failure)
 }
 
 // WorkBranchReport renders the line naming the work branch a run's closed

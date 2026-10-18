@@ -312,7 +312,7 @@ call — never remembered, so a `tmux` server killed outside smith reads as
 no remote-tracking ref reaches, or `-` for a detached worktree, which has no
 branch to count on. `DRIVER` is `human` or `loop`: who drove the
 session when it was last started (see [loop-driven
-sessions](#loop-driven-sessions)). `OUTCOME` is how a stopped loop-driven session's run ended: `complete`, `waiting on human`, `cap reached`, `attempts exhausted`, `stopped` or `failed`, the outcome the loop names in its stop report ([the loop](./loop.md#smith-loop-run)). It is `unknown` when the loop recorded none, because it was killed or the box rebooted before it could, and `-` for a live session or a human-driven one.
+sessions](#loop-driven-sessions)). `OUTCOME` is how a stopped loop-driven session's run ended: `complete`, `waiting on human`, `cap reached`, `attempts exhausted`, `agent broken`, `stopped` or `failed`, the outcome the loop names in its stop report ([the loop](./loop.md#smith-loop-run)). It is `unknown` when the loop recorded none, because it was killed or the box rebooted before it could, and `-` for a live session or a human-driven one.
 
 **The summary line is always printed** — a reassuring read only reassures if it
 cannot be absent:

@@ -54,6 +54,7 @@ Prints the same settings block as `list`, then works the spec or task unattended
 - **`spec #N complete`**, or **`task #N complete`** for a standalone task: every task is closed. Exit 0.
 - **No task is available for an agent**: what remains is blocked, for a human, or not ready. Exit 1.
 - **The agent left a task open on every attempt**: see attempts below. Exit 1.
+- **The agent failed on every attempt at a task**, or **could not be started**: see agent failures below. Exit 1.
 - **Reached the cap of N agent runs**: see iterations below. Exit 1.
 
 However the run stops, the loop also posts its stop report as a comment from smith on the issue it was given: the spec, or the task for a run of one task. The comment names the run's **outcome**, then carries the report and its `work branch:` line, so you can read how a run ended from anywhere, and GitHub notifies whoever follows the issue ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). The outcome is one of:
@@ -62,6 +63,7 @@ However the run stops, the loop also posts its stop report as a comment from smi
 - **`waiting on human`**: no task is available for an agent.
 - **`attempts exhausted`**: the agent left a task open on every attempt.
 - **`cap reached`**: the run reached its cap of agent runs.
+- **`agent broken`**: the agent failed on every attempt at a task, or could not be started. The report names the task, the agent's last error and the machine.
 - **`stopped`**: you interrupted the run, such as with Ctrl-C. The report says `interrupted`.
 - **`failed`**: the run stopped on an error, such as a failed push. The report names the error.
 
@@ -74,7 +76,11 @@ Two limits bound a run so it can be left alone:
 - **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.
 - **`--max-iterations`** (default 10): the most agent runs the whole loop makes.
 
-An agent that exits with a failure is reported and the loop carries on: whether the task is done is the tracker's call, not the exit code's. Ctrl-C stops the running agent and starts no further task.
+An agent that exits with a failure is reported and the loop carries on: whether the task is done is the tracker's call, not the exit code's.
+
+A run the agent CLI ends with a non-zero exit is an **agent failure**: it says the agent may be broken, not the task. When every attempt at a task is an agent failure, the run stops as `agent broken` instead of skipping it, so a dead credential or a broken agent install stops the run on its first task rather than handing every task of the spec to you. A launch that cannot start the agent at all, such as a binary missing from `PATH`, stops the run the same way on its first launch, counting no attempt. The task the run stops on is left as the next run should find it: its `smith:working` label is removed, it is not labelled `smith:failed`, handed to you or commented on, and its task worktree is kept. The stop report reads like `spec #42 stopped: the agent failed on every attempt at #44 (run claude: exit status 1); check that the agent runs on <hostname>`, the hostname marked unknown when it cannot be read. A task with even one attempt that was not an agent failure, a clean exit that left it open or a SIGKILL, is skipped as usual. Tasks closed earlier in the run stay landed and pushed. `--interactive` is unchanged: it makes one attempt and never skips ([ADR-0020](./adr/0020-the-loop-stops-on-a-broken-agent.md)).
+
+Ctrl-C stops the running agent and starts no further task.
 
 While an agent runs on a task, the loop labels the task `smith:working` on GitHub, and removes the label after every attempt, whether the agent closed the task, left it open or used its last attempt, when you interrupt the run, and when the tracker cannot be read after the agent exits, so you can see on the tracker which task is being worked. A run that is killed, or whose machine is lost, can leave the label behind, so an unattended run first removes `smith:working` from every task it is about to work, the spec's or the one task named, and from no other issue. The labels are signals for people: the loop never reads them to choose a task ([ADR-0015](./adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)). A repo without one of these labels gets it created the first time it is needed. A label write that fails costs no work, so it is a `smith: warning: …` line on stderr naming the task, and the run carries on. `--interactive` marks its task the same way, but never hands a task to a human: a task it leaves open stays `ready-for-agent`.
 

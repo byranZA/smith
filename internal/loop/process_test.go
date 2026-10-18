@@ -3,6 +3,7 @@ package loop_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,11 +44,19 @@ func TestProcessRunsTheAgentInItsDirectory(t *testing.T) {
 	}
 }
 
-func TestProcessReportsAnAgentThatFails(t *testing.T) {
+func TestProcessReportsAnAgentThatFailsAsOneThatStarted(t *testing.T) {
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "exit 3"}}
 
-	if err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(context.Background(), cmd); err == nil {
-		t.Error("Launch() error = nil, want the failed exit reported")
+	if err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(context.Background(), cmd); err == nil || errors.Is(err, loop.ErrNotStarted) {
+		t.Errorf("Launch(exit 3) error = %v, want the failed exit reported, not ErrNotStarted", err)
+	}
+}
+
+func TestProcessReportsAnAgentThatCannotStart(t *testing.T) {
+	cmd := agent.Command{Name: "smith-no-such-agent"}
+
+	if err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(context.Background(), cmd); !errors.Is(err, loop.ErrNotStarted) {
+		t.Errorf("Launch(%q) error = %v, want ErrNotStarted", cmd.Name, err)
 	}
 }
 

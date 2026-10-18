@@ -25,6 +25,10 @@ type Process struct {
 // most likely by the kernel for running out of memory.
 var ErrKilled = errors.New("agent killed by SIGKILL")
 
+// ErrNotStarted is what Launch's error is when the agent's process could not
+// be started at all, such as when its binary is not on PATH.
+var ErrNotStarted = errors.New("agent not started")
+
 // stopDelay bounds how long Launch waits, once an interrupted agent is
 // killed, for its output to close.
 const stopDelay = 3 * time.Second
@@ -33,7 +37,8 @@ const stopDelay = 3 * time.Second
 // cancelled: an unattended agent reads no input and is stopped with the
 // processes it started, while an attached one reads Stdin and keeps smith's
 // process group, and with it the terminal. An agent killed by SIGKILL, or
-// exiting 137 as a shell does for a child so killed, fails with ErrKilled.
+// exiting 137 as a shell does for a child so killed, fails with ErrKilled, and
+// one whose process cannot be started fails with ErrNotStarted.
 func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 	proc := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
 	proc.Env = append(os.Environ(), cmd.Env...)
@@ -46,7 +51,10 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 	} else {
 		stopTogether(proc)
 	}
-	err := proc.Run()
+	if err := proc.Start(); err != nil {
+		return fmt.Errorf("run %s: %w: %w", cmd.Name, ErrNotStarted, err)
+	}
+	err := proc.Wait()
 	if killed(err) {
 		return fmt.Errorf("run %s: %w: %w", cmd.Name, ErrKilled, err)
 	}
