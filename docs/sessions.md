@@ -82,11 +82,11 @@ smith session start dev --repo smith --branch spec-42 --detach
 session smith-spec-42 is live on branch spec-42 of smith
 ```
 
-Come back to it later to watch, or to type:
+Come back to it later:
 
 ```sh
-smith session attach dev smith-spec-42              # read-only
-smith session attach dev smith-spec-42 --interact   # writable
+smith session attach dev smith-spec-42              # writable to a human-driven session, read-only to a loop-driven one
+smith session attach dev smith-spec-42 --interact   # writable either way
 ```
 
 Disconnecting does not end anything. A session ends when its root process
@@ -179,10 +179,15 @@ allows one worktree per branch.
 
 ## Attaching: two access levels, one `tmux` session
 
-`attach` connects **read-only by default**; `--interact` connects writable.
-Both are the same `tmux` session — observing an agent at work and taking over
-from it differ by one flag, not by a different mechanism. `start` connects
-writable, because you asked for a session to work in.
+`attach` takes its default from the session's driver: it connects **writable to a human-driven session** and **read-only to a loop-driven one**, so you do not type into an agent's session by reflex. `--interact` connects writable to either. A worktree with no session record counts as human-driven, as it does in `list`. Both access levels are the same `tmux` session — observing an agent at work and taking over from it differ by one flag, not by a different mechanism. `start` connects writable, because you asked for a session to work in ([ADR-0018](./adr/0018-attach-defaults-by-driver.md)).
+
+A read-only attach always says so. Before handing the terminal to `tmux` it prints one line, spelled for where you ran it:
+
+```text
+attached read-only: detach with C-b d and reattach with `smith session attach dev smith-spec-42 --interact` to type
+```
+
+That line scrolls away under `tmux`, so the client also shows `[read-only]` at the start of its status line for as long as it is attached. The marker is per client: someone attached writable to the same session at the same time does not see it. smith puts the marker in front of whatever the session's status line already shows, including a status line you set yourself, the first time the session is attached read-only, so a session started before smith had the marker gains it too.
 
 smith `exec`s into `tmux`, so `attach` never returns: what you are talking to
 afterwards is `tmux` itself, with correct resize and signal handling and no
@@ -198,11 +203,7 @@ session "smith-spec-42" is not running: resume it with
 
 ### Read-only is advisory, not a permission boundary
 
-`--interact` is the difference between `tmux attach -r` and `tmux attach`.
-**Anyone who can SSH to the box as `smith` can run `tmux attach` themselves,
-without `-r`, and type into any session.** Read-only guards against *you*
-typing into a session you meant only to watch. It is not a permission model, it
-does not partition operators, and it must not be relied on as though it did.
+A read-only attach is `tmux attach -r`, and `--interact` drops the `-r`. **Anyone who can SSH to the box as `smith` can run `tmux attach` themselves, without `-r`, and type into any session.** Read-only guards against *you* typing into a session you meant only to watch. It is not a permission model, it does not partition operators, and it must not be relied on as though it did.
 
 ### Nothing is exposed
 

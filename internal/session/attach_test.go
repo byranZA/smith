@@ -2,10 +2,13 @@ package session_test
 
 import (
 	"context"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/session"
 )
 
@@ -21,9 +24,8 @@ func (f *fakeExec) Exec(name string, args []string) error {
 	return nil
 }
 
-// attachEnv stands a live session up and answers with the env it lives in, the
-// exec boundary attach would cross, and the session's name.
-func attachEnv(t *testing.T) (session.Env, *fakeExec, string) {
+// attachEnv stands up a live session driven by command, nil for a human.
+func attachEnv(t *testing.T, command []string) (session.Env, *fakeExec, string) {
 	t.Helper()
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith", "main")
@@ -35,41 +37,112 @@ func attachEnv(t *testing.T) (session.Env, *fakeExec, string) {
 		Tmux:      &tmuxServer{},
 		Exec:      execer,
 	}
-	started, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
+	started, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: command})
 	if err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
 	return env, execer, started.Name
 }
 
-// TestAttachObservesByDefault locks in the access level attach picks when the
-// operator asks for none: read-only, because they may be there to watch an
-// agent work rather than to type into its session.
-func TestAttachObservesByDefault(t *testing.T) {
-	env, execer, name := attachEnv(t)
+func TestAttachConnectsWritableToAHumanDrivenSessionByDefault(t *testing.T) {
+	t.Parallel()
+	env, execer, name := attachEnv(t, nil)
+	var out strings.Builder
 
-	if err := session.Attach(context.Background(), env, name, session.Observe); err != nil {
+	if err := session.Attach(t.Context(), env, name, session.ByDriver, &out); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 
-	want := []string{"tmux", "attach-session", "-r", "-t", session.TmuxSession(name)}
+	want := []string{"tmux", "attach-session", "-t", "smith/smith-spec-42"}
 	if len(execer.calls) != 1 || !equal(execer.calls[0], want) {
-		t.Fatalf("exec argv = %v, want one %v", execer.calls, want)
+		t.Errorf("exec argv = %v, want one %v", execer.calls, want)
+	}
+	if out.String() != "" {
+		t.Errorf("Attach() wrote %q, want nothing for a writable attach", out.String())
 	}
 }
 
-// TestAttachInteractsOnRequest locks in the other access level on the same
-// tmux session: asking to interact drops the read-only flag and nothing else.
-func TestAttachInteractsOnRequest(t *testing.T) {
-	env, execer, name := attachEnv(t)
+func TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault(t *testing.T) {
+	t.Parallel()
+	env, execer, name := attachEnv(t, loopCommand)
 
-	if err := session.Attach(context.Background(), env, name, session.Interact); err != nil {
+	if err := session.Attach(t.Context(), env, name, session.ByDriver, io.Discard); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 
-	want := []string{"tmux", "attach-session", "-t", session.TmuxSession(name)}
+	want := []string{"tmux",
+		"if-shell", "-F", "-t", "smith/smith-spec-42", "#{?@smith-read-only-marked,0,1}",
+		"set-option -F -t 'smith/smith-spec-42' status-left '##{?client_readonly,[read-only] ,}#{status-left}' ; set-option -t 'smith/smith-spec-42' @smith-read-only-marked 1",
+		";", "attach-session", "-r", "-t", "smith/smith-spec-42"}
 	if len(execer.calls) != 1 || !equal(execer.calls[0], want) {
-		t.Fatalf("exec argv = %v, want one %v", execer.calls, want)
+		t.Errorf("exec argv = %v, want one %v", execer.calls, want)
+	}
+}
+
+func TestAttachConnectsWritableToAWorktreeWithNoSessionRecord(t *testing.T) {
+	t.Parallel()
+	execer := &fakeExec{}
+	env := smithEnv(t, &tmuxServer{live: map[string]bool{"smith/smith-spec-42": true}})
+	env.Exec = execer
+	bare := filepath.Join(env.Workspace, "smith", "repo.git")
+	git(t, bare, "worktree", "add", "-b", "spec-42", filepath.Join(env.Workspace, "smith", "worktrees", "spec-42"), "main")
+
+	if err := session.Attach(t.Context(), env, "smith-spec-42", session.ByDriver, io.Discard); err != nil {
+		t.Fatalf("Attach() err = %v", err)
+	}
+
+	want := []string{"tmux", "attach-session", "-t", "smith/smith-spec-42"}
+	if len(execer.calls) != 1 || !equal(execer.calls[0], want) {
+		t.Errorf("exec argv = %v, want one %v", execer.calls, want)
+	}
+}
+
+func TestAttachInteractsWithALoopDrivenSessionOnRequest(t *testing.T) {
+	t.Parallel()
+	env, execer, name := attachEnv(t, loopCommand)
+	var out strings.Builder
+
+	if err := session.Attach(t.Context(), env, name, session.Interact, &out); err != nil {
+		t.Fatalf("Attach() err = %v", err)
+	}
+
+	want := []string{"tmux", "attach-session", "-t", "smith/smith-spec-42"}
+	if len(execer.calls) != 1 || !equal(execer.calls[0], want) {
+		t.Errorf("exec argv = %v, want one %v", execer.calls, want)
+	}
+	if out.String() != "" {
+		t.Errorf("Attach() wrote %q, want nothing for a writable attach", out.String())
+	}
+}
+
+func TestAReadOnlyAttachSaysSoAndNamesTheWritableReattach(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		inv  hint.Invocation
+		want string
+	}{
+		{"relayed", relayed, "attached read-only: detach with C-b d and reattach with `smith session attach smith-dev smith-spec-42 --interact` to type\n"},
+		{"typed on the box", hint.Invocation{}, "attached read-only: detach with C-b d and reattach with `smith session attach smith-spec-42 --interact` to type\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env, execer, name := attachEnv(t, loopCommand)
+			env.Hint = tt.inv
+			var out strings.Builder
+
+			if err := session.Attach(t.Context(), env, name, session.ByDriver, &out); err != nil {
+				t.Fatalf("Attach() err = %v", err)
+			}
+
+			if out.String() != tt.want {
+				t.Errorf("Attach(%s) wrote %q, want %q", name, out.String(), tt.want)
+			}
+			if len(execer.calls) != 1 {
+				t.Errorf("exec argv = %v, want the terminal handed over once after the notice", execer.calls)
+			}
+		})
 	}
 }
 
@@ -77,12 +150,12 @@ func TestAttachInteractsOnRequest(t *testing.T) {
 // operator can act on: the session is on disk but nothing is running in it, so
 // attach hands back the command that resumes it.
 func TestAttachRefusesAStoppedSessionAndNamesStart(t *testing.T) {
-	env, execer, name := attachEnv(t)
+	env, execer, name := attachEnv(t, nil)
 	if err := session.Stop(context.Background(), env, name); err != nil {
 		t.Fatalf("Stop() err = %v", err)
 	}
 
-	err := session.Attach(context.Background(), env, name, session.Observe)
+	err := session.Attach(context.Background(), env, name, session.ByDriver, io.Discard)
 
 	if err == nil {
 		t.Fatalf("Attach() err = nil, want a refusal for a stopped session")
@@ -100,9 +173,9 @@ func TestAttachRefusesAStoppedSessionAndNamesStart(t *testing.T) {
 // TestAttachRefusesAnUnknownName locks in that attach never guesses at a near
 // match: a name no session holds is said plainly and nothing is connected to.
 func TestAttachRefusesAnUnknownName(t *testing.T) {
-	env, execer, _ := attachEnv(t)
+	env, execer, _ := attachEnv(t, nil)
 
-	err := session.Attach(context.Background(), env, "smith-ghost", session.Observe)
+	err := session.Attach(context.Background(), env, "smith-ghost", session.ByDriver, io.Discard)
 
 	if err == nil {
 		t.Fatalf("Attach() err = nil, want a refusal for an unknown name")
@@ -122,9 +195,9 @@ func TestAttachRefusesAnUnknownName(t *testing.T) {
 // having: the terminal comes and goes, and the processes in the session do
 // not. Attaching and returning is the whole of a disconnect.
 func TestDisconnectingLeavesTheSessionLive(t *testing.T) {
-	env, _, name := attachEnv(t)
+	env, _, name := attachEnv(t, nil)
 
-	if err := session.Attach(context.Background(), env, name, session.Interact); err != nil {
+	if err := session.Attach(context.Background(), env, name, session.Interact, io.Discard); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 

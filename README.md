@@ -111,10 +111,7 @@ without re-running the pipeline, and it never deletes: a step it cannot converge
 is reported and what the box already holds stays put.
 → [docs/workspace.md](docs/workspace.md)
 
-**Sessions.** Five verbs — `start`, `attach`, `list`, `stop`, `rm` — over
-sessions named `<repo>-<branch>`. `start` is ensure-running, `attach` is
-read-only unless you ask for `--interact`, and `list` is the work-state readout
-you check before destroying a box by hand:
+**Sessions.** Five verbs — `start`, `attach`, `list`, `stop`, `rm` — over sessions named `<repo>-<branch>`. `start` is ensure-running, `attach` is read-only to a loop-driven session unless you ask for `--interact`, and `list` is the work-state readout you check before destroying a box by hand:
 
 ```
 NAME             STATE    DIRTY  UNPUSHED  DRIVER  OUTCOME

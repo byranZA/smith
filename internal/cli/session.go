@@ -385,7 +385,7 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 				if detach {
 					return writeStarted(cmd, started)
 				}
-				if err := session.Attach(cmd.Context(), env, started.Name, session.Interact); err != nil {
+				if err := session.Attach(cmd.Context(), env, started.Name, session.Interact, cmd.OutOrStdout()); err != nil {
 					return reportInvalid(cmd, err)
 				}
 				return nil
@@ -399,34 +399,29 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 	return cmd
 }
 
-// newSessionAttachCmd builds `smith session attach <name> [--interact]`. It
-// hands the operator's terminal to the session's tmux session — read-only
-// unless --interact is given, because an operator attaching may be there to
-// watch an agent work rather than to type into its session.
-//
-// smith execs into tmux, so this command does not return: what the operator
-// sees afterwards is tmux itself, and disconnecting leaves the session
-// running.
+// newSessionAttachCmd builds `smith session attach <name> [--interact]`, which
+// execs the terminal into a session read-only when the loop drives it and
+// writable otherwise or with --interact.
 func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 	var interact bool
 	cmd := &cobra.Command{
 		Use:   "attach [<box>] <name>",
-		Short: "Connect a terminal to a session, read-only unless asked to interact",
+		Short: "Connect a terminal to a session, read-only to a loop-driven one unless asked to interact",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return w.dispatch(cmd, args, sessionVerb{name: "attach", takes: 1, terminal: true, connects: true, local: func(names []string, env session.Env) error {
-				mode := session.Observe
+				mode := session.ByDriver
 				if interact {
 					mode = session.Interact
 				}
-				if err := session.Attach(cmd.Context(), env, names[0], mode); err != nil {
+				if err := session.Attach(cmd.Context(), env, names[0], mode, cmd.OutOrStdout()); err != nil {
 					return reportInvalid(cmd, err)
 				}
 				return nil
 			}})
 		},
 	}
-	cmd.Flags().BoolVar(&interact, "interact", false, "connect writable rather than read-only")
+	cmd.Flags().BoolVar(&interact, "interact", false, "connect writable, even to a loop-driven session")
 	return cmd
 }
 
