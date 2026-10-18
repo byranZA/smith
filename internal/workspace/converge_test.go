@@ -73,6 +73,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, stdin io.Re
 	switch {
 	case strings.HasPrefix(line, "git config --global"):
 		return f.config(args[2:], stdout, stderr)
+	case strings.HasPrefix(line, "git config --file"):
+		return f.config(args[3:], stdout, stderr)
 	case strings.Contains(line, "dpkg-query"):
 		pkg := argv[len(argv)-1]
 		if !f.installed[pkg] {
@@ -146,7 +148,7 @@ func (f *fakeBox) install(path string, stdin io.Reader) error {
 	return nil
 }
 
-// config answers a `git config --global` read or write against the box's global git config.
+// config answers a read of the box's global git config or a write to its ~/.gitconfig.
 func (f *fakeBox) config(args []string, stdout, stderr io.Writer) error {
 	includes := len(args) > 0 && args[0] == "--includes"
 	if includes {

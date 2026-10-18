@@ -19,7 +19,7 @@ var ada = staging.Identity{UserName: "Ada", UserEmail: "ada@example.com"}
 func convergeIdentity(t *testing.T, box *fakeBox, id staging.Identity) Result {
 	t.Helper()
 	var progress bytes.Buffer
-	result, err := Converge(context.Background(), Env{Command: box}, []Unit{{Step: Identity, Identity: id}}, &progress)
+	result, err := Converge(context.Background(), Env{Command: box}, []Unit{{Step: Identity, Identity: id, GitConfig: "/home/smith/.gitconfig"}}, &progress)
 	if err != nil {
 		t.Fatalf("Converge() error = %v, want nil", err)
 	}
@@ -168,7 +168,7 @@ func TestConvergeIdentityPropagatesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := setIdentity(ctx, box, ada, io.Discard)
+	_, err := setIdentity(ctx, box, ada, "/home/smith/.gitconfig", io.Discard)
 
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("setIdentity() error = %v, want %v", err, context.Canceled)
