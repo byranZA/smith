@@ -796,7 +796,7 @@ func TestRunMarksNoTaskKilledWhoseLastAttemptWasNot(t *testing.T) {
 	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
 
-	outcome, err := loopOn(t, b, failing{board: b}).Run(t.Context(), 42)
+	outcome, err := loopOn(t, b, &scripted{board: b, exits: []error{errKilled, errExit}}).Run(t.Context(), 42)
 
 	if err != nil || len(outcome.Remaining.Skipped) != 1 || len(outcome.Killed) != 0 {
 		t.Errorf("Run() = %+v, %v; want #43 skipped and no task killed", outcome, err)

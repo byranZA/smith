@@ -109,7 +109,8 @@ type Loop struct {
 type Limits struct {
 	// MaxIterations caps the agent runs the whole loop makes.
 	MaxIterations int
-	// MaxAttempts caps the agent runs one task gets before it is skipped.
+	// MaxAttempts caps the agent runs one task gets before it is skipped, or
+	// the run stops when every one of them was an agent failure.
 	MaxAttempts int
 }
 
@@ -119,7 +120,8 @@ func DefaultLimits() Limits { return Limits{MaxIterations: 10, MaxAttempts: 2} }
 
 // Outcome is how a run ended: what remained of the spec when it stopped,
 // with the tasks it skipped among it, whether the iteration cap stopped it,
-// the work branch its closed tasks landed on, and the task worktrees it left.
+// the work branch its closed tasks landed on, the task worktrees it left, and
+// the task it stopped on when its agent looked broken.
 type Outcome struct {
 	Remaining  Remaining
 	Capped     bool
@@ -129,6 +131,18 @@ type Outcome struct {
 	// Killed holds each skipped task whose agent was killed by SIGKILL on
 	// its last attempt.
 	Killed map[int]bool
+	// Broken is the task the run stopped on as agent broken; nil when it
+	// did not stop that way.
+	Broken *Broken
+}
+
+// Broken is the task a run stopped on because every attempt at it was an
+// agent failure, or its agent could not be started, with the last failure
+// and the machine the agent failed on.
+type Broken struct {
+	Task    tracker.Task
+	Failure error
+	Machine string
 }
 
 // Complete reports whether the run ended with every task of the spec closed.
@@ -138,10 +152,12 @@ func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 // works spec until no task is available for an agent, handing a task left open
 // out again up to MaxAttempts and stopping after MaxIterations agent runs. A
 // task left open after its last attempt is skipped and handed to a human,
-// with a comment on its issue saying where its work was left. Once spec is
-// read, however the run stops, its outcome and stop report go to the
-// Recorder and as a comment on spec's issue; a run that cannot read spec at
-// all is aborted.
+// with a comment on its issue saying where its work was left, unless every
+// attempt at it was an agent failure: the run then stops as agent broken,
+// leaving the task unmarked, as it does on an agent that cannot be started
+// at all (ADR-0020). Once spec is read, however the run stops, its outcome
+// and stop report go to the Recorder and as a comment on spec's issue; a run
+// that cannot read spec at all is aborted.
 func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
@@ -159,10 +175,14 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 // removing the recycled task worktree when every task has landed.
 func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Outcome, error) {
 	attempts := map[int]int{}
+	ran := map[int]bool{}
 	skipped := map[int]bool{}
 	killed := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
+	stopped := func(remaining Remaining) Outcome {
+		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
+	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
@@ -170,30 +190,40 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, l.finish(ctx, remaining)
+			return stopped(remaining), l.finish(ctx, remaining)
 		}
 		if runs >= l.Limits.MaxIterations {
-			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
+			capped := stopped(remaining)
+			capped.Capped = true
+			return capped, nil
 		}
-		dir, kill, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
+		run, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
 		if err != nil {
 			return Outcome{}, err
 		}
-		worktrees[next.Number] = dir
-		killed[next.Number] = kill
+		if errors.Is(run.failure, ErrNotStarted) {
+			return l.broken(ctx, stopped(remaining), next, run.failure)
+		}
+		worktrees[next.Number] = run.dir
+		killed[next.Number] = run.killed()
+		ran[next.Number] = ran[next.Number] || !run.agentFailure()
 		runs++
 		attempts[next.Number]++
-		skipped[next.Number] = attempts[next.Number] >= l.Limits.MaxAttempts
+		exhausted := attempts[next.Number] >= l.Limits.MaxAttempts
 		if current, err = l.refresh(ctx, spec, current); err != nil {
 			return Outcome{}, errors.Join(err, l.unmarkDetached(ctx, next))
 		}
 		closed := closedIn(current, next)
-		skip := skipped[next.Number] && !closed
+		if exhausted && !closed && !ran[next.Number] {
+			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
+		}
+		skipped[next.Number] = exhausted
+		skip := exhausted && !closed
 		if err := l.release(ctx, next, skip); err != nil {
 			return Outcome{}, err
 		}
 		if skip {
-			if err := l.noteSkip(ctx, next, dir, attempts[next.Number], kill); err != nil {
+			if err := l.noteSkip(ctx, next, run.dir, attempts[next.Number], run.killed()); err != nil {
 				return Outcome{}, err
 			}
 		}
@@ -203,6 +233,22 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			}
 		}
 	}
+}
+
+// broken ends a run that stopped as outcome on task, whose agent last failed
+// with failure: it removes task's worked mark, leaving task for the next run
+// rather than handing it to a human, and names this machine, unknown with a
+// warning when its hostname cannot be read.
+func (l Loop) broken(ctx context.Context, outcome Outcome, task tracker.Task, failure error) (Outcome, error) {
+	if err := l.unmark(ctx, task); err != nil {
+		return Outcome{}, err
+	}
+	host, err := l.hostname()
+	if err := l.warnIf(err, "could not read this machine's hostname"); err != nil {
+		return Outcome{}, err
+	}
+	outcome.Broken = &Broken{Task: task, Failure: failure, Machine: host}
+	return outcome, nil
 }
 
 // InteractiveOutcome is how an interactive run ended: the task it handed the
@@ -245,7 +291,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
-	if _, _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
+	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -283,41 +329,53 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 	return current, nil
 }
 
+// attempt is how one agent run on a task went: the task worktree it ran in,
+// and Launch's error, nil when the agent exited cleanly.
+type attempt struct {
+	dir     string
+	failure error
+}
+
+// killed reports whether the agent was killed by SIGKILL.
+func (a attempt) killed() bool { return errors.Is(a.failure, ErrKilled) }
+
+// agentFailure reports whether the agent CLI itself ended the run with a
+// failure, rather than exiting cleanly or being killed.
+func (a attempt) agentFailure() bool { return a.failure != nil && !a.killed() }
+
 // hand marks task as worked and gives it to one agent run of cmd in task's
-// worktree, returning that worktree's directory and whether the agent was
-// killed by SIGKILL, and reports an agent that exits with a failure, leaving
-// it to the tracker to judge. The worktree is prepared first, and a failed
+// worktree, returning how the attempt went, and reports an agent that fails,
+// leaving it to the caller to judge. The worktree is prepared first, and a failed
 // preparation is an error naming it before task is marked or any agent runs.
 // The caller releases the mark, except on an error from an interrupted run or
 // a failed report of that failure, when hand has already removed it.
-func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, bool, error) {
+func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (attempt, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
-		return "", false, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
+		return attempt{}, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
 	if err := l.prepare(ctx, task, dir); err != nil {
-		return "", false, err
+		return attempt{}, err
 	}
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
-		return "", false, err
+		return attempt{}, err
 	}
 	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
-		return "", false, err
+		return attempt{}, err
 	}
-	err = l.Launcher.Launch(ctx, cmd)
+	run := attempt{dir: dir, failure: l.Launcher.Launch(ctx, cmd)}
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
-		return "", false, errors.Join(interrupted, l.unmarkDetached(ctx, task))
+		return attempt{}, errors.Join(interrupted, l.unmarkDetached(ctx, task))
 	}
-	if err == nil {
-		return dir, false, nil
+	if run.failure == nil {
+		return run, nil
 	}
-	kill := errors.Is(err, ErrKilled)
-	if failed := l.reportFailure(task, err, kill); failed != nil {
-		return "", false, errors.Join(failed, l.unmarkDetached(ctx, task))
+	if err := l.reportFailure(task, run.failure, run.killed()); err != nil {
+		return attempt{}, errors.Join(err, l.unmarkDetached(ctx, task))
 	}
-	return dir, kill, nil
+	return run, nil
 }
 
 // prepare prepares task's worktree at dir with the Preparer, when there is
