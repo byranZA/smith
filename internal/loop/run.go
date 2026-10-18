@@ -56,6 +56,9 @@ type Bench interface {
 	TaskBranch(task int) string
 	// Ahead counts the commits task's branch has beyond the work branch.
 	Ahead(ctx context.Context, task int) (int, error)
+	// Finish removes the worktree landed tasks were recycled through, once
+	// every task has landed.
+	Finish(ctx context.Context) error
 }
 
 // Preparer is the seam through which the loop makes a task worktree ready to
@@ -152,7 +155,8 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	return outcome, err
 }
 
-// work works spec, read as current, as Run says, and returns how it ended.
+// work works spec, read as current, as Run says, and returns how it ended,
+// removing the recycled task worktree when every task has landed.
 func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -166,7 +170,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
+			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, l.finish(ctx, remaining)
 		}
 		if runs >= l.Limits.MaxIterations {
 			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
@@ -418,6 +422,16 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 		return fmt.Errorf("push the work on #%d: %w", task.Number, err)
 	}
 	return l.report("smith: pushed #%d on %s to origin\n", task.Number, branch)
+}
+
+// finish removes the recycled task worktree when remaining is complete, and
+// keeps it otherwise for a later run of the execution. A failed removal loses
+// no work, so it is a warning, and only a failed progress write is an error.
+func (l Loop) finish(ctx context.Context, remaining Remaining) error {
+	if !remaining.Complete() {
+		return nil
+	}
+	return l.warnIf(l.Bench.Finish(ctx), "could not remove the recycled task worktree of %s", l.Bench.WorkBranch())
 }
 
 // closedIn reports whether spec holds task as closed.

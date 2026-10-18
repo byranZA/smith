@@ -373,6 +373,8 @@ func (trees) Open(_ context.Context, task int) (string, error) { return worktree
 
 func (trees) Land(context.Context, int) error { return nil }
 
+func (trees) Finish(context.Context) error { return nil }
+
 // worktreeOf is where a fake bench puts task's worktree.
 func worktreeOf(task int) string { return "/bench/" + strconv.Itoa(task) }
 

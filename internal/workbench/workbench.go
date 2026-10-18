@@ -228,6 +228,25 @@ func (w Workbench) Land(ctx context.Context, task int) error {
 	return nil
 }
 
+// Finish removes the execution's recycled worktrees, those landed tasks left,
+// once a run has landed every task. It leaves any worktree with a task branch
+// checked out, such as a skipped task's, and refuses one holding changes.
+func (w Workbench) Finish(ctx context.Context) error {
+	trees, err := w.worktrees(ctx)
+	if err != nil {
+		return err
+	}
+	for _, t := range trees {
+		if !w.recycled(t) {
+			continue
+		}
+		if _, err := w.run(ctx, w.dir, "worktree", "remove", t.dir); err != nil {
+			return fmt.Errorf("remove recycled worktree %s: %w", t.dir, err)
+		}
+	}
+	return nil
+}
+
 // taskTree returns the directory of the worktree that has task's branch
 // checked out, and is an error when none has.
 func (w Workbench) taskTree(ctx context.Context, task int) (string, error) {

@@ -1,9 +1,12 @@
 package workbench_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -152,5 +155,78 @@ func TestOpenGivesAnotherWorkBranchItsOwnWorktreeLeavingTheFirstsAlone(t *testin
 	want := []string{"smith/tasks/work-b/431", "smith/tasks/work-a/431", "?? half.txt"}
 	if dirB == dirA || !slices.Equal(got, want) {
 		t.Errorf("Open(431) on work-b = %q beside work-a's %q, branches and work-a's status %q; want its own worktree and %q", dirB, dirA, got, want)
+	}
+}
+
+func TestFinishLeavesNoTaskWorktreeOfTheExecution(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".venv/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", ".gitignore")
+	git(t, dir, "commit", "-m", "ignore .venv")
+	if err := os.MkdirAll(filepath.Join(dir, ".venv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) error = %v", err)
+	}
+
+	if err := bench.Finish(t.Context()); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
+
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Finish() left %s: Lstat error = %v, want it removed", dir, err)
+	}
+	if got := git(t, clone, "worktree", "list", "--porcelain"); strings.Contains(got, dir) {
+		t.Errorf("Finish() left %s registered: worktree list = %q", dir, got)
+	}
+}
+
+func TestFinishLeavesASkippedTasksWorktree(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	skipped, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+
+	if err := bench.Finish(t.Context()); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
+
+	if got := git(t, skipped, "symbolic-ref", "--short", "HEAD"); got != "smith/tasks/smith/430-loop-works-in-task-worktrees/431" {
+		t.Errorf("after Finish(), skipped worktree %s has %q checked out, want its task branch", skipped, got)
+	}
+}
+
+func TestTheNextRunOfTheExecutionWorksItsFirstTaskInTheKeptWorktree(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	kept, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) error = %v", err)
+	}
+	again := setup(t, clone)
+
+	next, err := again.Open(t.Context(), 432)
+	if err != nil {
+		t.Fatalf("Open(432) on the next run error = %v", err)
+	}
+
+	if next != kept {
+		t.Errorf("Open(432) on the next run = %q, want the kept worktree %q", next, kept)
 	}
 }
