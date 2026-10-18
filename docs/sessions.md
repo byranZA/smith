@@ -187,7 +187,7 @@ A read-only attach always says so. Before handing the terminal to `tmux` it prin
 attached read-only: detach with C-b d and reattach with `smith session attach dev smith-spec-42 --interact` to type
 ```
 
-That line scrolls away under `tmux`, so the client also shows `[read-only]` at the start of its status line for as long as it is attached. The marker is per client: someone attached writable to the same session at the same time does not see it.
+That line scrolls away under `tmux`, so the client also shows `[read-only]` at the start of its status line for as long as it is attached. The marker is per client: someone attached writable to the same session at the same time does not see it. smith puts the marker in front of whatever the session's status line already shows, including a status line you set yourself, the first time the session is attached read-only, so a session started before smith had the marker gains it too.
 
 smith `exec`s into `tmux`, so `attach` never returns: what you are talking to
 afterwards is `tmux` itself, with correct resize and signal handling and no

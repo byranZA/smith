@@ -65,8 +65,8 @@ func TestAttachConnectsWritableToAHumanDrivenSessionByDefault(t *testing.T) {
 
 // TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault pins the argv of a
 // read-only attach: the session's status line gains a marker only a read-only
-// client renders, prepended once to whatever status-left already is, and then
-// the client attaches with -r.
+// client renders, prepended once to whatever status-left already is, even one
+// set on the session itself, and then the client attaches with -r.
 func TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault(t *testing.T) {
 	env, execer, name := attachEnv(t, loopCommand)
 
@@ -75,7 +75,8 @@ func TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault(t *testing.T) {
 	}
 
 	want := []string{"tmux",
-		"set-option", "-o", "-q", "-F", "-t", "smith/smith-spec-42", "status-left", "##{?client_readonly,[read-only] ,}#{status-left}",
+		"if-shell", "-F", "-t", "smith/smith-spec-42", "#{?@smith-read-only-marked,0,1}",
+		"set-option -F -t 'smith/smith-spec-42' status-left '##{?client_readonly,[read-only] ,}#{status-left}' ; set-option -t 'smith/smith-spec-42' @smith-read-only-marked 1",
 		";", "attach-session", "-r", "-t", "smith/smith-spec-42"}
 	if len(execer.calls) != 1 || !equal(execer.calls[0], want) {
 		t.Errorf("exec argv = %v, want one %v", execer.calls, want)

@@ -82,23 +82,17 @@ func Attach(ctx context.Context, env Env, name string, mode Mode, out io.Writer)
 	return nil
 }
 
-// readOnlyMarker is the status-left a read-only attach gives its session: the
-// marker, which tmux renders only for a read-only client, ahead of whatever
-// status-left already was. It is expanded once when set, so ## keeps the
-// marker's format for tmux to evaluate per client.
-const readOnlyMarker = "##{?client_readonly,[read-only] ,}#{status-left}"
+// markedOption is the session option that records smith has prepended the
+// read-only marker to the session's status-left.
+const markedOption = "@smith-read-only-marked"
 
-// readOnlyArgs returns the tmux argv that attaches to the tmux session target
-// read-only and marks the client as such in the status line.
-//
-// The marker is set at attach rather than at start, so a session started
-// before attach marked anything gains it too, and -o sets it only once per
-// session, with -q keeping a second attach from failing on it. tmux's -r is
-// advisory, not a permission boundary (ADR-0005): it guards against typing
-// into an agent's session by reflex, and is never to be relied on for more.
+// readOnlyArgs returns the tmux argv that attaches to target read-only, first
+// prepending a marker only read-only clients render to its status-left unless
+// markedOption says that was done.
 func readOnlyArgs(target string) []string {
+	mark := fmt.Sprintf("set-option -F -t '%s' status-left '##{?client_readonly,[read-only] ,}#{status-left}' ; set-option -t '%s' %s 1", target, target, markedOption)
 	return []string{
-		"set-option", "-o", "-q", "-F", "-t", target, "status-left", readOnlyMarker,
+		"if-shell", "-F", "-t", target, "#{?" + markedOption + ",0,1}", mark,
 		";", "attach-session", "-r", "-t", target,
 	}
 }
