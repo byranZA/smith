@@ -230,3 +230,101 @@ func TestTheNextRunOfTheExecutionWorksItsFirstTaskInTheKeptWorktree(t *testing.T
 		t.Errorf("Open(432) on the next run = %q, want the kept worktree %q", next, kept)
 	}
 }
+
+func TestOpenDoesNotAdoptTheRecycledWorktreeOfAWorkBranchNamedAlike(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	slashed := landedOn(t, clone, "work/a")
+	req := spec430
+	req.Branch = "work-a"
+	hyphened, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup(work-a) error = %v", err)
+	}
+
+	dir, err := hyphened.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) on work-a error = %v", err)
+	}
+
+	got := []string{git(t, dir, "symbolic-ref", "--short", "HEAD"), git(t, slashed, "rev-parse", "--abbrev-ref", "HEAD")}
+	want := []string{"smith/tasks/work-a/431", "HEAD"}
+	if dir == slashed || !slices.Equal(got, want) {
+		t.Errorf("Open(431) on work-a = %q beside work/a's recycled %q, branches %q; want its own worktree and %q", dir, slashed, got, want)
+	}
+}
+
+func TestFinishLeavesTheRecycledWorktreeOfAWorkBranchNamedAlike(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	if err := os.WriteFile(filepath.Join(clone, ".git", "info", "exclude"), []byte(".venv/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slashed := landedOn(t, clone, "work/a")
+	if err := os.MkdirAll(filepath.Join(slashed, ".venv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(slashed, ".venv", "pyvenv.cfg"), []byte("home = /usr\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hyphened := landedOn(t, clone, "work-a")
+	req := spec430
+	req.Branch = "work-a"
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup(work-a) error = %v", err)
+	}
+
+	if err := bench.Finish(t.Context()); err != nil {
+		t.Fatalf("Finish() on work-a error = %v", err)
+	}
+
+	if got, err := os.ReadFile(filepath.Join(slashed, ".venv", "pyvenv.cfg")); err != nil || string(got) != "home = /usr\n" {
+		t.Errorf("after Finish() on work-a, work/a's .venv/pyvenv.cfg = %q, %v; want %q kept", got, err, "home = /usr\n")
+	}
+	if _, err := os.Lstat(hyphened); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Finish() on work-a left its own %s: Lstat error = %v, want it removed", hyphened, err)
+	}
+}
+
+func TestTheNextRunOfAWorkBranchNamedAlikeAnotherAdoptsItsOwnKeptWorktree(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	slashed := landedOn(t, clone, "work/a")
+	hyphened := landedOn(t, clone, "work-a")
+	req := spec430
+	req.Branch = "work/a"
+	again, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup(work/a) error = %v", err)
+	}
+
+	next, err := again.Open(t.Context(), 432)
+	if err != nil {
+		t.Fatalf("Open(432) on work/a error = %v", err)
+	}
+
+	if next != slashed {
+		t.Errorf("Open(432) on work/a's next run = %q beside work-a's %q, want its kept worktree %q", next, hyphened, slashed)
+	}
+}
+
+// landedOn sets up work branch branch in clone, lands task 431 on it and
+// returns the recycled worktree the landing left.
+func landedOn(t *testing.T, clone, branch string) string {
+	t.Helper()
+	req := spec430
+	req.Branch = branch
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	if err != nil {
+		t.Fatalf("Setup(%s) error = %v", branch, err)
+	}
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) on %s error = %v", branch, err)
+	}
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) on %s error = %v", branch, err)
+	}
+	return dir
+}

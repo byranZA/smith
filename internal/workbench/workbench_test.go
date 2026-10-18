@@ -168,7 +168,7 @@ func TestOpenGivesTheTaskAWorktreeUnderTheGitDirOnABranchFromTheWorkBranchTip(t 
 
 	common := resolved(t, git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"))
 	got := []string{resolved(t, dir), git(t, dir, "rev-parse", "HEAD"), git(t, dir, "symbolic-ref", "--short", "HEAD")}
-	want := []string{filepath.Join(common, "smith", "worktrees", "smith-430-loop-works-in-task-worktrees", "431"), git(t, clone, "rev-parse", bench.WorkBranch()), "smith/tasks/smith/430-loop-works-in-task-worktrees/431"}
+	want := []string{filepath.Join(common, "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431"), git(t, clone, "rev-parse", bench.WorkBranch()), "smith/tasks/smith/430-loop-works-in-task-worktrees/431"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Open(431) worktree, HEAD and branch = %q, want %q", got, want)
 	}
@@ -589,7 +589,7 @@ func TestOpenRefusesAWorktreeOnAnotherBranchAtTheTaskWorktree(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
 	bench := setup(t, clone)
-	path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith-430-loop-works-in-task-worktrees", "431")
+	path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
 	git(t, clone, "worktree", "add", "-b", "elsewhere", path)
 
 	got, err := bench.Open(t.Context(), 431)
@@ -614,7 +614,7 @@ func TestOpenRefusesAndKeepsAnUnregisteredPathAtTheTaskWorktree(t *testing.T) {
 			t.Parallel()
 			clone, _ := cloned(t)
 			bench := setup(t, clone)
-			path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith-430-loop-works-in-task-worktrees", "431")
+			path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
 			if err := place(path); err != nil {
 				t.Fatal(err)
 			}

@@ -563,29 +563,18 @@ func (w Workbench) defaultBranch(ctx context.Context) (string, error) {
 }
 
 // executionDir returns the directory the execution's task worktrees live in,
-// named for the work branch and under the repo's git common directory so no
-// checkout is dirtied.
+// under the repo's git common directory so no checkout is dirtied, at the work
+// branch's own path there. Git refuses a branch name that is not a path of
+// plain segments, or that nests in another branch, so no two work branches
+// share a directory.
 func (w Workbench) executionDir() string {
-	return filepath.Join(w.common, "smith", "worktrees", pathSegment(w.branch))
+	return filepath.Join(w.common, "smith", "worktrees", filepath.FromSlash(w.branch))
 }
 
 // worktree returns where a new worktree cut for task lives, in the
 // execution's directory.
 func (w Workbench) worktree(task int) string {
 	return filepath.Join(w.executionDir(), strconv.Itoa(task))
-}
-
-// pathSegment reduces s to one path segment by replacing every character
-// outside [A-Za-z0-9._-] with a hyphen.
-func pathSegment(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			return r
-		default:
-			return '-'
-		}
-	}, s)
 }
 
 // TaskBranch names task's branch, in a namespace of smith's own beside the
