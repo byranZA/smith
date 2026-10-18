@@ -26,9 +26,6 @@ func TestSessionAttachHandsTheTerminalOver(t *testing.T) {
 	}
 }
 
-// TestSessionAttachInteractChangesTheConnection locks in the one thing the
-// flag is for: --interact reaches the access level the connection is made at,
-// so a loop-driven session is connected to differently than it is by default.
 func TestSessionAttachInteractChangesTheConnection(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
@@ -44,8 +41,6 @@ func TestSessionAttachInteractChangesTheConnection(t *testing.T) {
 	}
 }
 
-// TestSessionAttachSaysWhenItIsReadOnly locks in that the read-only notice
-// reaches the operator's terminal. Its wording is internal/session's to prove.
 func TestSessionAttachSaysWhenItIsReadOnly(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")

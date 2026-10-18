@@ -24,9 +24,7 @@ func (f *fakeExec) Exec(name string, args []string) error {
 	return nil
 }
 
-// attachEnv stands a live session up, driven by command (none for a human),
-// and answers with the env it lives in, the exec boundary attach would cross,
-// and the session's name.
+// attachEnv stands up a live session driven by command, nil for a human.
 func attachEnv(t *testing.T, command []string) (session.Env, *fakeExec, string) {
 	t.Helper()
 	workspace := t.TempDir()
@@ -63,10 +61,6 @@ func TestAttachConnectsWritableToAHumanDrivenSessionByDefault(t *testing.T) {
 	}
 }
 
-// TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault pins the argv of a
-// read-only attach: the session's status line gains a marker only a read-only
-// client renders, prepended once to whatever status-left already is, even one
-// set on the session itself, and then the client attaches with -r.
 func TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault(t *testing.T) {
 	env, execer, name := attachEnv(t, loopCommand)
 
@@ -100,9 +94,6 @@ func TestAttachConnectsWritableToAWorktreeWithNoSessionRecord(t *testing.T) {
 	}
 }
 
-// TestAttachInteractsWithALoopDrivenSessionOnRequest locks in the override:
-// asking to interact connects writable to the session the driver would have
-// had read-only, with no marker set and nothing said.
 func TestAttachInteractsWithALoopDrivenSessionOnRequest(t *testing.T) {
 	env, execer, name := attachEnv(t, loopCommand)
 	var out strings.Builder

@@ -399,16 +399,9 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 	return cmd
 }
 
-// newSessionAttachCmd builds `smith session attach <name> [--interact]`. It
-// hands the operator's terminal to the session's tmux session at the access
-// level the session's driver calls for: writable to a human-driven session,
-// read-only to a loop-driven one, whose operator may be there to watch an
-// agent work rather than to type into its session. --interact connects
-// writable either way.
-//
-// smith execs into tmux, so this command does not return: what the operator
-// sees afterwards is tmux itself, and disconnecting leaves the session
-// running.
+// newSessionAttachCmd builds `smith session attach <name> [--interact]`, which
+// execs the terminal into a session read-only when the loop drives it and
+// writable otherwise or with --interact.
 func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 	var interact bool
 	cmd := &cobra.Command{

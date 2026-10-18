@@ -32,20 +32,9 @@ type Execer interface {
 	Exec(name string, args []string) error
 }
 
-// Attach connects the operator's terminal to a session's tmux session, at the
-// access level mode asks for. A read-only connection first writes a line to
-// out naming its state and the command that reattaches writable, and marks
-// the client read-only in tmux's status line for as long as it is attached.
-//
-// smith execs into tmux rather than proxying it: the terminal then talks to
-// tmux directly, so resizes and signals are tmux's to handle and there is no
-// smith process in the middle copying bytes. Nothing about the session
-// changes, which is why disconnecting leaves it running — the terminal came
-// and went, and the processes in the session did not.
-//
-// It refuses on the two things it cannot connect to: a name no session holds,
-// said plainly rather than guessed at a near match, and a session whose tmux
-// session is not running, which names the start command that resumes it.
+// Attach execs the terminal into a live session's tmux session at the access
+// level mode resolves to, first writing a notice to out when that is read-only.
+// It refuses, connecting nothing, on an unknown name or a session not running.
 func Attach(ctx context.Context, env Env, name string, mode Mode, out io.Writer) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -97,8 +86,8 @@ func readOnlyArgs(target string) []string {
 	}
 }
 
-// readOnly reports whether the session found is to be connected to read-only:
-// only when mode leaves it to the driver and the loop drives the session.
+// readOnly reports whether the session found connects read-only, which is when
+// mode leaves it to the driver and the loop drives the session.
 func readOnly(ctx context.Context, env Env, found placed, mode Mode) (bool, error) {
 	if mode == Interact {
 		return false, nil
