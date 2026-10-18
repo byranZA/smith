@@ -92,11 +92,7 @@ func hangUpLoop(t *testing.T, env ...string) hungUpLoop {
 	} else {
 		run.code = status.ExitStatus()
 	}
-	for _, pid := range agents {
-		if syscall.Kill(pid, 0) == nil {
-			run.agents = append(run.agents, pid)
-		}
-	}
+	run.agents = survivors(agents)
 	ran, err := os.ReadFile(filepath.Join(dir, "gh"))
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("read the child's gh record: %v", err)
@@ -125,6 +121,16 @@ func waitForPids(t *testing.T, pidfile string) []int {
 	}
 	t.Fatal("the child loop's agent never wrote its pids")
 	return nil
+}
+
+// survivors returns those of pids still running after a grace period, which gives an orphaned agent killed with its loop time to be reaped by init.
+func survivors(pids []int) []int {
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		alive := slices.DeleteFunc(slices.Clone(pids), func(pid int) bool { return syscall.Kill(pid, 0) != nil })
+		if len(alive) == 0 || time.Now().After(deadline) {
+			return alive
+		}
+	}
 }
 
 func TestHelperHungUpLoop(t *testing.T) {
