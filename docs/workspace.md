@@ -31,7 +31,7 @@ The order is not arbitrary — each step puts something on the box the next one
 needs:
 
 1. **Placements** — box-scoped placements are materialized from their staged bytes. First, because this is what puts forge credentials on the box; a clone that runs before them fails with an authentication error that looks like a credential bug rather than the ordering bug it is.
-2. **Identity** — the resolved git identity is set in the smith user's global git config. See [Git identity](#git-identity).
+2. **Identity** — the resolved git identity is set in the smith user's `~/.gitconfig`. See [Git identity](#git-identity).
 3. **Packages** — the blueprint's `packages` are installed with `apt`.
 4. **Toolchain** — `mise` is installed, and smith writes the generated config
    pinning the blueprint's `tools` and exporting its `env`.
@@ -61,7 +61,7 @@ permissions of <path>`), without moving its modification time.
 
 ## Git identity
 
-The `git` identity `smith blueprint check` resolved — `user_name` and `user_email`, from the blueprint or your preferences — is set with one `git config --global` per declared field, so commits made on the box are authored as you declared. smith sets those two keys and does not own `~/.gitconfig`: anything else in it survives.
+The `git` identity `smith blueprint check` resolved — `user_name` and `user_email`, from the blueprint or your preferences — is set with one `git config --file ~/.gitconfig` per declared field, so commits made on the box are authored as you declared. It always lands in `~/.gitconfig`, never in `~/.config/git/config`, so a placement there sits beside it. smith sets those two keys and does not own `~/.gitconfig`: anything else in it survives.
 
 - A value that already matches is reported unchanged (`user.name, user.email already set`), and a changed one replaces the old value.
 - A field you did not declare is neither set nor unset. Dropping the identity from your config leaves the last one on the box, and a box with no declared identity runs no identity step at all.

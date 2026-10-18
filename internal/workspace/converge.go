@@ -48,7 +48,7 @@ func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writ
 	case Placements:
 		summary, err = materialize(env, unit.Placement)
 	case Identity:
-		summary, err = setIdentity(ctx, env.Command, unit.Identity, progress)
+		summary, err = setIdentity(ctx, env.Command, unit.Identity, unit.GitConfig, progress)
 	case Packages:
 		summary, err = installPackages(ctx, env.Command, unit.Packages, progress)
 	case Toolchain:

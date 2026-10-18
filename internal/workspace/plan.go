@@ -44,7 +44,7 @@ func planStep(step Step, b blueprint.Blueprint, r staging.Resolution, root, home
 	case step == Placements:
 		return planPlacements(b.Placements, home)
 	case step == Identity && r.Git != (staging.Identity{}):
-		return []Unit{{Step: Identity, Identity: r.Git}}
+		return []Unit{{Step: Identity, Identity: r.Git, GitConfig: filepath.Join(home, ".gitconfig")}}
 	case step == Packages && len(b.Packages) > 0:
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Repos:

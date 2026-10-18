@@ -29,7 +29,7 @@ type fakeBox struct {
 	// hasMise is whether the box holds mise, which its install turns on the
 	// way a real one does.
 	hasMise bool
-	// gitConfig is the smith user's global git config, as the stage wrote it.
+	// gitConfig is the smith user's ~/.gitconfig, as the stage wrote it.
 	gitConfig map[string]string
 }
 
@@ -44,14 +44,14 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		}
 		_, err := io.WriteString(stdout, value+"\n")
 		return err
-	case name == "git" && strings.HasPrefix(line, "config --global"):
+	case name == "git" && strings.HasPrefix(line, "config --file"):
 		if f.err != nil {
 			return f.err
 		}
 		if f.gitConfig == nil {
 			f.gitConfig = map[string]string{}
 		}
-		f.gitConfig[args[2]] = args[3]
+		f.gitConfig[args[3]] = args[4]
 		return nil
 	case strings.Contains(line, "apt-get"):
 		return f.err
@@ -143,6 +143,7 @@ func TestWorkspaceConvergeInstallsDeclaredPackages(t *testing.T) {
 
 func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
 	box := &fakeBox{}
+	home := t.TempDir()
 	w := workspaceWiring{
 		blueprint: staged(blueprint.Blueprint{}),
 		command:   box,
@@ -150,7 +151,7 @@ func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
 			return staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace",
 				Git: staging.Identity{UserName: "Ada", UserEmail: "ada@example.com"}}, nil
 		},
-		boxHome: boxHomeAt(t.TempDir()),
+		boxHome: boxHomeAt(home),
 	}
 	stdout, stderr, code := runWorkspace(t, w, "converge")
 
@@ -158,8 +159,8 @@ func TestWorkspaceConvergeSetsTheStagedIdentity(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, stderr)
 	}
 	for _, want := range [][]string{
-		{"git", "config", "--global", "user.name", "Ada"},
-		{"git", "config", "--global", "user.email", "ada@example.com"},
+		{"git", "config", "--file", filepath.Join(home, ".gitconfig"), "user.name", "Ada"},
+		{"git", "config", "--file", filepath.Join(home, ".gitconfig"), "user.email", "ada@example.com"},
 	} {
 		if !slices.ContainsFunc(box.calls, func(argv []string) bool { return slices.Equal(argv, want) }) {
 			t.Errorf("the stage ran %v, want %v", box.calls, want)

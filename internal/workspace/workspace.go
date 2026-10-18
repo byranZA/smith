@@ -83,6 +83,9 @@ type Unit struct {
 	// Identity is the git identity an identity unit sets, a field nobody
 	// declared left empty.
 	Identity staging.Identity
+	// GitConfig is the file an identity unit writes the identity into: the
+	// smith user's ~/.gitconfig, already resolved against their home.
+	GitConfig string
 	// Fragment is the generated mise config a toolchain unit writes.
 	Fragment Fragment
 	// Repo is the repository a repos unit clones into the workspace.
