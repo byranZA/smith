@@ -61,6 +61,15 @@ type Placer interface {
 	Place(repo, dir string) error
 }
 
+// Preparer makes a worktree ready to work in before a human session launches
+// in it. It is injected because preparation drives mise, a system boundary
+// this package reaches only through what it is handed.
+type Preparer interface {
+	// Prepare prepares the worktree at dir, streaming its output to out as it
+	// is printed.
+	Prepare(ctx context.Context, dir string, out io.Writer) error
+}
+
 // Repo is a repo the box carries, as the caller resolved it from the
 // blueprint: the workspace directory it lives in and the branch its worktrees
 // start from.
@@ -102,6 +111,12 @@ type Env struct {
 	// Placer places nothing, which is what a caller with no staged tree behind
 	// it has.
 	Placer Placer
+	// Preparer prepares a human session's worktree before the session
+	// launches. A nil Preparer prepares nothing.
+	Preparer Preparer
+	// Progress receives what a verb prints while it works: preparation's
+	// output and the warnings it ends in. A nil Progress discards them.
+	Progress io.Writer
 	// Hint is the command the verb answers, which every command a refusal or
 	// a listing suggests is spelled for.
 	Hint hint.Invocation
@@ -210,6 +225,11 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	}
 	if err := env.place(repo, dir); err != nil {
 		return Session{}, err
+	}
+	if stood.Driver == Human {
+		if err := env.prepare(ctx, dir); err != nil {
+			return Session{}, err
+		}
 	}
 	if err := writeRecord(ctx, env.Git, dir, stood.Driver); err != nil {
 		return Session{}, err
@@ -466,6 +486,28 @@ func (e Env) place(repo Repo, dir string) error {
 	}
 	if err := e.Placer.Place(repo.Name, dir); err != nil {
 		return fmt.Errorf("converge the placements of repo %q into the worktree at %s: %w", repo.Name, dir, err)
+	}
+	return nil
+}
+
+// prepare prepares the worktree at dir, streaming the output to the env's
+// progress. A failed preparation is a warning there rather than an error,
+// because the human the session is for is the one who fixes it; only failing
+// to print the warning is an error.
+func (e Env) prepare(ctx context.Context, dir string) error {
+	if e.Preparer == nil {
+		return nil
+	}
+	progress := e.Progress
+	if progress == nil {
+		progress = io.Discard
+	}
+	failed := e.Preparer.Prepare(ctx, dir, progress)
+	if failed == nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(progress, "smith: warning: could not prepare the worktree at %s: %v\n", dir, failed); err != nil {
+		return fmt.Errorf("warn of the failed preparation of %s: %w", dir, err)
 	}
 	return nil
 }

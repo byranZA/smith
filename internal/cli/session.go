@@ -14,6 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/inventory"
+	"github.com/byranZA/smith/internal/prepare"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
@@ -100,6 +101,9 @@ type sessionWiring struct {
 	connect session.Execer
 	// ssh launches the local ssh binary a relayed verb travels over.
 	ssh connection.Exec
+	// mise launches the mise a human session's worktree is prepared with
+	// before the session launches.
+	mise prepare.Runner
 	// version is this smith's version, which every relayed invocation carries
 	// so the box can refuse a command line it may not mean the same thing by.
 	version string
@@ -378,6 +382,8 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 				if repo == "" || branch == "" {
 					return reportInvalid(cmd, errors.New("session start needs --repo naming a declared repo and --branch naming the branch to work on"))
 				}
+				env.Preparer = prepare.Preparer{Command: w.mise, Mise: env.Mise}
+				env.Progress = cmd.ErrOrStderr()
 				started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch, Base: base})
 				if err != nil {
 					return reportInvalid(cmd, err)

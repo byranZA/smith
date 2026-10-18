@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -81,3 +84,66 @@ func TestSessionStartCarriesTheStagedPlacementsIntoTheVerb(t *testing.T) {
 		t.Error("no file in the workspace holds the staged bytes, want the placement carried into the stand-up")
 	}
 }
+
+// fakeMise stands in for the mise binary preparation installs a toolchain
+// with: it records the argv it was handed, writes say to stdout, and answers
+// with err.
+type fakeMise struct {
+	calls [][]string
+	say   string
+	err   error
+}
+
+func (f *fakeMise) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	f.calls = append(f.calls, append([]string{name}, args...))
+	if _, err := io.WriteString(stdout, f.say); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return f.err
+}
+
+func TestSessionStartStreamsTheToolchainInstallToStderr(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	w := onBoxWiring(t, resolvedBox(workspace, "smith"), &fakeTmux{}, &fakeExec{})
+	mise := &fakeMise{say: "mise node@22.1.0 ✓ installed\n"}
+	w.mise = mise
+
+	_, stderr, code := runSessionOn(t, w, "start", "--repo", "smith", "--branch", "spec-42", "--detach")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if want := "mise node@22.1.0 ✓ installed\n"; stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+	if len(mise.calls) != 1 || !strings.HasSuffix(strings.Join(mise.calls[0], " "), "spec-42 install") {
+		t.Errorf("mise ran %v, want one install pointed at the spec-42 worktree", mise.calls)
+	}
+}
+
+func TestSessionStartWarnsOfAFailedToolchainInstallAndStillStarts(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	w := onBoxWiring(t, resolvedBox(workspace, "smith"), &fakeTmux{}, &fakeExec{})
+	w.mise = &fakeMise{err: exitStatus(1)}
+
+	stdout, stderr, code := runSessionOn(t, w, "start", "--repo", "smith", "--branch", "spec-42", "--detach")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if want := "the toolchain step exited with status 1"; !strings.HasPrefix(stderr, "smith: warning: ") || !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want a smith warning containing %q", stderr, want)
+	}
+	if !strings.Contains(stdout, "smith-spec-42") {
+		t.Errorf("stdout = %q, want the session started anyway", stdout)
+	}
+}
+
+// exitStatus is a process that ran and exited with that status.
+type exitStatus int
+
+func (e exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+func (e exitStatus) ExitCode() int { return int(e) }
