@@ -30,19 +30,10 @@ func declaredKeys(id staging.Identity) []gitKey {
 	return keys
 }
 
-// setIdentity sets each declared identity key that differs from the one git
-// commits with for the smith user, writing it into file, and reports what it
-// set and what already held.
-//
-// It writes through `git config --file` naming ~/.gitconfig rather than
-// `--global`, which git sends to ~/.config/git/config when only that exists: a
-// placement there would then replace the identity on every run. It sets keys
-// one by one rather than writing the file, because smith does not own it:
-// anything else in it survives. A file that config includes after its own keys
-// outranks them, so each write is read back the way git commits: a key the
-// include still overrides fails the step rather than reporting an identity git
-// does not use. A read that fails other than for an unset key fails the step
-// before anything is written.
+// setIdentity writes each declared key that differs from the value git commits
+// with into file, the smith user's ~/.gitconfig, and reports what it set and
+// what already held. A failed read, or a read-back that git still answers with
+// another value, fails the step.
 func setIdentity(ctx context.Context, run Runner, id staging.Identity, file string, progress io.Writer) (string, error) {
 	var set, held []string
 	for _, k := range declaredKeys(id) {

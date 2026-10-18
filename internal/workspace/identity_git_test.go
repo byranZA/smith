@@ -14,8 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/staging"
 )
 
-// realGit runs git as a user whose home is home, with no system, XDG or
-// environment config of the test machine's leaking in.
+// realGit runs git with HOME set to home and no system, XDG or environment git config.
 type realGit struct{ home string }
 
 func (g realGit) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {

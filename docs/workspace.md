@@ -61,11 +61,12 @@ permissions of <path>`), without moving its modification time.
 
 ## Git identity
 
-The `git` identity `smith blueprint check` resolved — `user_name` and `user_email`, from the blueprint or your preferences — is set with one `git config --file ~/.gitconfig` per declared field, so commits made on the box are authored as you declared. It always lands in `~/.gitconfig`, never in `~/.config/git/config`, so a placement there sits beside it. smith sets those two keys and does not own `~/.gitconfig`: anything else in it survives.
+The `git` identity `smith blueprint check` resolved — `user_name` and `user_email`, from the blueprint or your preferences — is set with one `git config --file ~/.gitconfig` per declared field, so commits made on the box are authored as you declared. It always lands in `~/.gitconfig`, never in `~/.config/git/config`: `git config --global` writes to the XDG file when only that file exists, and a placement there would then wipe the identity on every run. smith sets those two keys and does not own `~/.gitconfig`: anything else in it survives.
 
 - A value that already matches is reported unchanged (`user.name, user.email already set`), and a changed one replaces the old value.
 - A field you did not declare is neither set nor unset. Dropping the identity from your config leaves the last one on the box, and a box with no declared identity runs no identity step at all.
 - A write git refuses fails the identity step, and the stage exits non-zero.
+- Each write is read back the way git commits. A file `~/.gitconfig` includes that still sets another value fails the identity step rather than reporting an identity git does not use.
 
 Because a box placement to `~/.gitconfig` would replace the whole file and wipe these keys, `blueprint check` refuses a git identity beside one.
 
