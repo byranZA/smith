@@ -1,5 +1,7 @@
 # The session terminal rides the SSH door; nothing is exposed
 
+> **Amended by [ADR-0018](./0018-attach-defaults-by-driver.md).** `session attach` defaults to writable for a human-driven session and read-only for a loop-driven one, and a read-only attach says so in the terminal.
+
 ## Context
 
 Bootstrap leaves the box hardened: ufw default-deny inbound, `PermitRootLogin no`,

@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestEveryVerbAddressesTheNameListReports(t *testing.T) {
 	}
 	name := listed[0].Name
 
-	if err := session.Attach(ctx, env, name, session.Interact); err != nil {
+	if err := session.Attach(ctx, env, name, session.Interact, io.Discard); err != nil {
 		t.Fatalf("Attach(%q) err = %v", name, err)
 	}
 	if err := session.Stop(ctx, env, name); err != nil {
@@ -72,7 +73,7 @@ func TestEveryVerbRefusesAnUnknownNameAlike(t *testing.T) {
 	}
 
 	refusals := map[string]error{
-		"attach": session.Attach(ctx, env, "smith-ghost", session.Observe),
+		"attach": session.Attach(ctx, env, "smith-ghost", session.ByDriver, io.Discard),
 		"stop":   session.Stop(ctx, env, "smith-ghost"),
 	}
 	_, refusals["rm"] = session.Remove(ctx, env, []string{"smith-ghost"}, false)

@@ -199,6 +199,17 @@ func standUp(t *testing.T, resolve boxResolver, tmux session.Runner, repo, branc
 	mustRunSession(t, resolve, tmux, "start", "--repo", repo, "--branch", branch, "--detach")
 }
 
+// standUpLoop stands a loop-driven session up for branch of repo, the way
+// `loop run <box>` does, which the session command has no verb for.
+func standUpLoop(t *testing.T, workspace, repo, branch string) {
+	t.Helper()
+	env := session.Env{Workspace: workspace, Repos: []session.Repo{{Name: repo}}, Git: connection.System(), Tmux: &fakeTmux{}}
+	req := session.StartRequest{Repo: repo, Branch: branch, Command: []string{"smith", "loop", "run", "42"}}
+	if _, err := session.Start(t.Context(), env, req); err != nil {
+		t.Fatalf("Start() loop-driven %s err = %v", branch, err)
+	}
+}
+
 // stopSession ends a session through the assembled command, which is how a
 // test reaches the stopped half of the live probe.
 func stopSession(t *testing.T, resolve boxResolver, tmux session.Runner, name string) {

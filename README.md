@@ -113,7 +113,7 @@ is reported and what the box already holds stays put.
 
 **Sessions.** Five verbs — `start`, `attach`, `list`, `stop`, `rm` — over
 sessions named `<repo>-<branch>`. `start` is ensure-running, `attach` is
-read-only unless you ask for `--interact`, and `list` is the work-state readout
+read-only to a loop-driven session unless you ask for `--interact`, and `list` is the work-state readout
 you check before destroying a box by hand:
 
 ```

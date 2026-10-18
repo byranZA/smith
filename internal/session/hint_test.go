@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestAttachToAStoppedSessionNamesTheStartThatResumesIt(t *testing.T) {
 			if err := session.Stop(t.Context(), env, "smith-spec-42"); err != nil {
 				t.Fatalf("Stop() err = %v", err)
 			}
-			err := session.Attach(t.Context(), env, "smith-spec-42", session.Observe)
+			err := session.Attach(t.Context(), env, "smith-spec-42", session.ByDriver, io.Discard)
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("Attach(smith-spec-42) err = %v, want %q", err, tt.want)
 			}
@@ -68,10 +69,10 @@ func TestANamelessSessionVerbNamesTheListing(t *testing.T) {
 		want string
 	}{
 		{"attach, relayed", relayed, func(ctx context.Context, env session.Env) error {
-			return session.Attach(ctx, env, " ", session.Observe)
+			return session.Attach(ctx, env, " ", session.ByDriver, io.Discard)
 		}, "no session named: want the name `smith session list smith-dev` reports"},
 		{"attach, typed on the box", hint.Invocation{}, func(ctx context.Context, env session.Env) error {
-			return session.Attach(ctx, env, " ", session.Observe)
+			return session.Attach(ctx, env, " ", session.ByDriver, io.Discard)
 		}, "no session named: want the name `smith session list` reports"},
 		{"stop, relayed", relayed, func(ctx context.Context, env session.Env) error {
 			return session.Stop(ctx, env, "")
@@ -192,7 +193,7 @@ func TestAStoppedSessionsResumeHintKeepsABranchTheShellWouldRewrite(t *testing.T
 			if err := session.Stop(t.Context(), env, started.Name); err != nil {
 				t.Fatalf("Stop() err = %v", err)
 			}
-			err = session.Attach(t.Context(), env, started.Name, session.Observe)
+			err = session.Attach(t.Context(), env, started.Name, session.ByDriver, io.Discard)
 			if err == nil || !strings.HasSuffix(err.Error(), tt.want) {
 				t.Errorf("Attach(%q) err = %v, want it to end %q", started.Name, err, tt.want)
 			}

@@ -28,12 +28,12 @@ func TestSessionAttachHandsTheTerminalOver(t *testing.T) {
 
 // TestSessionAttachInteractChangesTheConnection locks in the one thing the
 // flag is for: --interact reaches the access level the connection is made at,
-// so the same session is connected to differently than it is by default.
+// so a loop-driven session is connected to differently than it is by default.
 func TestSessionAttachInteractChangesTheConnection(t *testing.T) {
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
-	standUp(t, resolve, &fakeTmux{}, "smith", "spec-42")
+	standUpLoop(t, workspace, "smith", "spec-42")
 	observe, interact := &fakeExec{}, &fakeExec{}
 
 	mustAttach(t, resolve, observe, "smith-spec-42")
@@ -41,6 +41,24 @@ func TestSessionAttachInteractChangesTheConnection(t *testing.T) {
 
 	if observe.line(t) == interact.line(t) {
 		t.Errorf("--interact connected as %q, want it to differ from the default connection", interact.line(t))
+	}
+}
+
+// TestSessionAttachSaysWhenItIsReadOnly locks in that the read-only notice
+// reaches the operator's terminal. Its wording is internal/session's to prove.
+func TestSessionAttachSaysWhenItIsReadOnly(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	resolve := resolvedBox(workspace, "smith")
+	standUpLoop(t, workspace, "smith", "spec-42")
+
+	stdout, stderr, code := runSessionOn(t, onBoxWiring(t, resolve, &fakeTmux{}, &fakeExec{}), "attach", "smith-spec-42")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.HasPrefix(stdout, "attached read-only:") {
+		t.Errorf("stdout = %q, want the read-only notice", stdout)
 	}
 }
 

@@ -405,7 +405,7 @@ else; `session list` displays all three
 _Avoid_: status, cleanliness.
 
 **Driver**:
-Who acts in a session — a human at a shell, or the loop. Set by the verb that creates the session, never by a flag: `session start` makes a human-driven session, `loop run <box>` a loop-driven one. Orthogonal to attach mode: a loop-driven session can be observed or, when it needs a hand, jumped into. The driver process is the tmux session's **root process** — the first process tmux starts in it, running as the smith user like everything else in the session; nothing to do with the root user — so its exit ends the session and session-end *is* the completion signal; smith reports liveness and, for a loop-driven session that has ended, the outcome the loop recorded — never a process's exit status — and never sends the driver keystrokes.
+Who acts in a session — a human at a shell, or the loop. Set by the verb that creates the session, never by a flag: `session start` makes a human-driven session, `loop run <box>` a loop-driven one. It sets attach mode's default: a human-driven session attaches writable, a loop-driven one read-only, and either can be jumped into with `--interact` ([ADR-0018](./docs/adr/0018-attach-defaults-by-driver.md)). The driver process is the tmux session's **root process** — the first process tmux starts in it, running as the smith user like everything else in the session; nothing to do with the root user — so its exit ends the session and session-end *is* the completion signal; smith reports liveness and, for a loop-driven session that has ended, the outcome the loop recorded — never a process's exit status — and never sends the driver keystrokes.
 _Avoid_: actor, runner, operator (reserved for the human running smith).
 
 **Attach mode**:
@@ -414,7 +414,9 @@ and takeover are the same `tmux` session at two access levels — the mechanism 
 agent work and stepping in. Read-only is **advisory**, not enforced: it is `tmux attach -r`, so
 anyone who can SSH as `smith` can attach writable regardless. It guards against accidentally
 typing into an agent's session — it is not a permission boundary
-([ADR-0005](./docs/adr/0005-terminal-rides-the-ssh-door.md)).
+([ADR-0005](./docs/adr/0005-terminal-rides-the-ssh-door.md)). The default follows the session's
+**driver**, and a read-only client always says so in the terminal
+([ADR-0018](./docs/adr/0018-attach-defaults-by-driver.md)).
 _Avoid_: view mode, permission.
 
 ### The loop
