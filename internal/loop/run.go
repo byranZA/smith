@@ -45,16 +45,28 @@ type Launcher interface {
 type Bench interface {
 	// WorkBranch names the branch closed tasks land on.
 	WorkBranch() string
-	// Open returns the directory of task's worktree, creating it from the
-	// work branch's tip or returning the one an earlier attempt left.
+	// Open returns the directory of task's worktree on a branch cut from the
+	// work branch's tip, recycling a landed task's worktree, or returns the
+	// one an earlier attempt left.
 	Open(ctx context.Context, task int) (string, error)
 	// Land brings task's commits into the work branch and removes its
-	// worktree and branch.
+	// branch, keeping its worktree for the next task.
 	Land(ctx context.Context, task int) error
 	// TaskBranch names the branch task's worktree has checked out.
 	TaskBranch(task int) string
 	// Ahead counts the commits task's branch has beyond the work branch.
 	Ahead(ctx context.Context, task int) (int, error)
+	// Finish removes the worktree landed tasks were recycled through, once
+	// every task has landed.
+	Finish(ctx context.Context) error
+}
+
+// Preparer is the seam through which the loop makes a task worktree ready to
+// work in before each agent attempt.
+type Preparer interface {
+	// Prepare prepares the worktree at dir, streaming its output to out as it
+	// is printed.
+	Prepare(ctx context.Context, dir string, out io.Writer) error
 }
 
 // Pusher is the seam through which the loop pushes the work branch.
@@ -76,7 +88,10 @@ type Loop struct {
 	// Pusher pushes the work branch after each landed task; nil turns
 	// pushing off.
 	Pusher Pusher
-	Agent  agent.Adapter
+	// Preparer prepares the task worktree before every agent attempt; nil
+	// prepares nothing.
+	Preparer Preparer
+	Agent    agent.Adapter
 	// Options are the model and effort every agent run asks for.
 	Options agent.Options
 	Prompt  Prompt
@@ -140,7 +155,8 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	return outcome, err
 }
 
-// work works spec, read as current, as Run says, and returns how it ended.
+// work works spec, read as current, as Run says, and returns how it ended,
+// removing the recycled task worktree when every task has landed.
 func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Outcome, error) {
 	attempts := map[int]int{}
 	skipped := map[int]bool{}
@@ -154,7 +170,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
+			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, l.finish(ctx, remaining)
 		}
 		if runs >= l.Limits.MaxIterations {
 			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
@@ -217,7 +233,8 @@ func (o InteractiveOutcome) Succeeded() bool {
 }
 
 // RunInteractive hands spec's next available task to one agent run attached to
-// the operator's terminal, and runs no agent when no task is available.
+// the operator's terminal, and runs no agent when no task is available. When
+// the spec is complete once it ends, the recycled task worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
@@ -226,7 +243,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	remaining := Survey(current)
 	next, ok := remaining.Next()
 	if !ok {
-		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, nil
+		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
 	if _, _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
@@ -243,7 +260,8 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 			return InteractiveOutcome{}, err
 		}
 	}
-	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
+	remaining = Survey(after)
+	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 }
 
 // refresh reads current, the execution read for issue number, as it stands
@@ -268,15 +286,19 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 // hand marks task as worked and gives it to one agent run of cmd in task's
 // worktree, returning that worktree's directory and whether the agent was
 // killed by SIGKILL, and reports an agent that exits with a failure, leaving
-// it to the tracker to judge. The caller releases
-// the mark, except on an error from an interrupted run or a failed report of
-// that failure, when hand has already removed it.
+// it to the tracker to judge. The worktree is prepared first, and a failed
+// preparation is an error naming it before task is marked or any agent runs.
+// The caller releases the mark, except on an error from an interrupted run or
+// a failed report of that failure, when hand has already removed it.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, bool, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
 		return "", false, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
+	if err := l.prepare(ctx, task, dir); err != nil {
+		return "", false, err
+	}
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
 		return "", false, err
 	}
@@ -296,6 +318,19 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 		return "", false, errors.Join(failed, l.unmarkDetached(ctx, task))
 	}
 	return dir, kill, nil
+}
+
+// prepare prepares task's worktree at dir with the Preparer, when there is
+// one, streaming its output to Progress. A failure is an error naming
+// preparation, task and dir, since another agent attempt cannot fix it.
+func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error {
+	if l.Preparer == nil {
+		return nil
+	}
+	if err := l.Preparer.Prepare(ctx, dir, l.Progress); err != nil {
+		return fmt.Errorf("prepare the worktree of #%d in %s: %w", task.Number, dir, err)
+	}
+	return nil
 }
 
 // reportFailure reports that the agent on task exited with err, naming the
@@ -389,6 +424,16 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 		return fmt.Errorf("push the work on #%d: %w", task.Number, err)
 	}
 	return l.report("smith: pushed #%d on %s to origin\n", task.Number, branch)
+}
+
+// finish removes the recycled task worktree when remaining is complete, and
+// keeps it otherwise for a later run of the execution. A failed removal loses
+// no work, so it is a warning, and only a failed progress write is an error.
+func (l Loop) finish(ctx context.Context, remaining Remaining) error {
+	if !remaining.Complete() {
+		return nil
+	}
+	return l.warnIf(l.Bench.Finish(ctx), "could not remove the recycled task worktree of %s", l.Bench.WorkBranch())
 }
 
 // closedIn reports whether spec holds task as closed.

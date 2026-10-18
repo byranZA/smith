@@ -62,3 +62,21 @@ func writeRepoFile(t *testing.T, repo repofile.Repo, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestLoadAtAWorktreeReadsItsOwnRepoFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".smith"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte("prepare: uv sync\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repofile.Load(repofile.At(dir))
+
+	want := repofile.File{Prepare: "uv sync"}
+	if err != nil || got != want {
+		t.Errorf("Load(At(%q)) = %+v, %v; want %+v", dir, got, err, want)
+	}
+}

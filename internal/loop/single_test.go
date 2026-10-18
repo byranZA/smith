@@ -77,6 +77,8 @@ func (s *sprouting) Land(context.Context, int) error {
 	return nil
 }
 
+func (s *sprouting) Finish(context.Context) error { return nil }
+
 func (s *sprouting) Push(_ context.Context, branch string) error {
 	s.events = append(s.events, "push "+branch)
 	return nil

@@ -14,12 +14,13 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// journal is a launcher, bench and pusher that logs each worktree opened, agent run, landing and push, in order, over a board.
+// journal is a launcher, bench and pusher that logs each worktree opened, agent run, landing, push and finish, in order, over a board.
 type journal struct {
-	board   *board
-	events  []string
-	landErr error
-	pushErr error
+	board     *board
+	events    []string
+	landErr   error
+	pushErr   error
+	finishErr error
 }
 
 func (j *journal) Launch(ctx context.Context, cmd agent.Command) error {
@@ -45,6 +46,11 @@ func (j *journal) Land(_ context.Context, task int) error {
 	return j.landErr
 }
 
+func (j *journal) Finish(context.Context) error {
+	j.events = append(j.events, "finish")
+	return j.finishErr
+}
+
 func (j *journal) Push(_ context.Context, branch string) error {
 	j.events = append(j.events, "push "+branch)
 	return j.pushErr
@@ -68,7 +74,7 @@ func TestRunWorksEachTaskInItsWorktreeThenLandsAndPushesItBeforeHandingOutTheNex
 
 	want := []string{
 		"open 43", "hand 43 in /bench/43", "land 43", "push smith/42-spec",
-		"open 44", "hand 44 in /bench/44", "land 44", "push smith/42-spec",
+		"open 44", "hand 44 in /bench/44", "land 44", "push smith/42-spec", "finish",
 	}
 	if !slices.Equal(j.events, want) {
 		t.Errorf("Run() events = %q, want %q", j.events, want)
@@ -96,7 +102,7 @@ func TestRunWithPushingOffLandsEachTaskAndPushesNothing(t *testing.T) {
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"open 43", "hand 43 in /bench/43", "land 43", "open 44", "hand 44 in /bench/44", "land 44"}
+	want := []string{"open 43", "hand 43 in /bench/43", "land 43", "open 44", "hand 44 in /bench/44", "land 44", "finish"}
 	if err != nil || !outcome.Complete() || !slices.Equal(j.events, want) {
 		t.Errorf("Run() = %+v, %v, events %q; want the spec complete and events %q", outcome, err, j.events, want)
 	}

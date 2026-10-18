@@ -158,3 +158,112 @@ func TestParseReadsALabelGivenThroughAnAlias(t *testing.T) {
 		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
 	}
 }
+
+func TestParseReadsThePrepareCommand(t *testing.T) {
+	t.Parallel()
+	data := "agent: claude\nprepare: uv sync\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	want := repofile.File{Agent: "claude", Prepare: "uv sync"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
+	}
+}
+
+func TestParseRefusesAMalformedPrepareCommandNamingItsLine(t *testing.T) {
+	t.Parallel()
+	for name, data := range map[string]string{
+		"list":         "agent: claude\nprepare:\n  - uv sync\n",
+		"mapping":      "agent: claude\nprepare:\n  run: uv sync\n",
+		"quoted empty": "agent: claude\nprepare: \"\"\n",
+		"no value":     "agent: claude\nprepare:\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := repofile.Parse([]byte(data))
+
+			var verr *blueprint.ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+			}
+			want := []blueprint.Finding{{Line: 2, Path: "prepare", Message: "a prepare command is one non-empty string, such as \"uv sync\": set one, or leave the key out to run none"}}
+			if !reflect.DeepEqual(verr.Findings, want) {
+				t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+			}
+		})
+	}
+}
+
+func TestParseReadsAPrepareCommandSuppliedThroughAMerge(t *testing.T) {
+	t.Parallel()
+	for name, data := range map[string]string{
+		"mapping":           "agent: claude\n<<: {prepare: uv sync}\n",
+		"sequence":          "agent: claude\n<<: [{model: opus}, {prepare: uv sync}]\n",
+		"nested":            "agent: claude\n<<: {<<: {prepare: uv sync}}\n",
+		"direct overrides":  "agent: claude\nprepare: uv sync\n<<: {prepare: []}\n",
+		"first merge wins":  "agent: claude\n<<: [{prepare: uv sync}, {prepare: {}}]\n",
+		"own key overrides": "agent: claude\n<<: {prepare: uv sync, <<: {prepare: \"\"}}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := repofile.Parse([]byte(data))
+			if err != nil {
+				t.Fatalf("Parse(%q) error = %v", data, err)
+			}
+
+			if got.Prepare != "uv sync" {
+				t.Errorf("Parse(%q).Prepare = %q, want %q", data, got.Prepare, "uv sync")
+			}
+		})
+	}
+}
+
+func TestParseRefusesAMalformedMergedPrepareCommandNamingItsLine(t *testing.T) {
+	t.Parallel()
+	for name, data := range map[string]string{
+		"list":             "agent: claude\n<<: {prepare: []}\n",
+		"mapping":          "agent: claude\n<<: {prepare: {}}\n",
+		"quoted empty":     "agent: claude\n<<: {prepare: \"\"}\n",
+		"sequence":         "agent: claude\n<<: [{model: opus}, {prepare: []}]\n",
+		"nested":           "agent: claude\n<<: {<<: {prepare: []}}\n",
+		"first merge wins": "agent: claude\n<<: [{prepare: []}, {prepare: uv sync}]\n",
+		"direct malformed": "agent: claude\nprepare: []\n<<: {prepare: uv sync}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := repofile.Parse([]byte(data))
+
+			var verr *blueprint.ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+			}
+			want := []blueprint.Finding{{Line: 2, Path: "prepare", Message: "a prepare command is one non-empty string, such as \"uv sync\": set one, or leave the key out to run none"}}
+			if !reflect.DeepEqual(verr.Findings, want) {
+				t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+			}
+		})
+	}
+}
+
+func TestParseRefusesAMalformedPrepareCommandOnTheLineOfItsMergedKey(t *testing.T) {
+	t.Parallel()
+	data := "agent: claude\n<<:\n  prepare: []\n"
+
+	_, err := repofile.Parse([]byte(data))
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+	}
+	want := []blueprint.Finding{{Line: 3, Path: "prepare", Message: "a prepare command is one non-empty string, such as \"uv sync\": set one, or leave the key out to run none"}}
+	if !reflect.DeepEqual(verr.Findings, want) {
+		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+	}
+}

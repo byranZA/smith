@@ -123,6 +123,7 @@ func newRootCmd() *cobra.Command {
 		tmux:    connection.System(),
 		connect: connection.System(),
 		ssh:     connection.System(),
+		mise:    connection.System(),
 		version: resolveVersion(),
 		skew:    operatorSkew(),
 	}), newWorkspaceCmd(workspaceWiring{

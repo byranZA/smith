@@ -69,7 +69,7 @@ smith session start dev --repo smith --branch spec-42
 ```
 
 `start` cuts the branch, creates the worktree, converges the repo's declared
-placements into it, launches `tmux`, and connects you **writable** — because
+placements into it, [prepares it](#worktree-preparation), launches `tmux`, and connects you **writable** — because
 `start` is the verb of someone who is there to work. Add `--detach` to stand it
 up and return instead, which is what you want when you are standing up five
 sessions rather than sitting down at one:
@@ -130,11 +130,11 @@ session web-hotfix removed; branch hotfix kept
 One probe pair decides everything `start` does: does the worktree exist, and is
 its `tmux` session live.
 
-| worktree | tmux | what `start` does | placements |
-| --- | --- | --- | --- |
-| absent | — | fetch, cut the branch, `git worktree add`, launch `tmux` | converged |
-| present | dead | launch `tmux` in the existing worktree | converged |
-| present | live | connect you writable | **untouched** |
+| worktree | tmux | what `start` does | placements | preparation |
+| --- | --- | --- | --- | --- |
+| absent | — | fetch, cut the branch, `git worktree add`, launch `tmux` | converged | runs |
+| present | dead | launch `tmux` in the existing worktree | converged | runs again |
+| present | live | connect you writable | **untouched** | **skipped** |
 
 So running `start` twice is not an error, and there is no separate "resume"
 verb. The third row is load-bearing: smith will not swap a file out from under
@@ -147,6 +147,12 @@ box.
 
 A **write-once** placement is still not overwritten on the way through — that
 is what write-once means, and resume does not make an exception of it.
+
+### Worktree preparation
+
+Before a human session launches, `start` installs the toolchain the repo's own mise config pins, with `mise install` pointed at the worktree, then runs the [prepare command](./loop.md#the-prepare-command) the worktree's repo file declares, if any, under `mise exec` ([ADR-0019](./adr/0019-worktree-preparation.md)). Their output streams to stderr as it is printed, over the relay too, so you watch the install before the session exists rather than finding it half-done inside `tmux`.
+
+A failed install or prepare command prints a `smith: warning:` naming the step and its exit status, and the session launches anyway: you are the one who fixes it, and you need the shell to do so. A live session is not prepared, and neither is a loop-driven session's own worktree, where only smith runs; the loop prepares each task worktree instead (see [the loop](./loop.md#smith-loop-run)).
 
 ### What a session's shell holds
 

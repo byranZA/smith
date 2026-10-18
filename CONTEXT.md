@@ -352,6 +352,10 @@ _Avoid_: terminal, tab, pane.
 A git worktree of a repo — the unit of parallel work. A session has one, and so does each task the loop works (its **task worktree**). Lets several sessions and tasks work a repo's branches side by side without colliding.
 _Avoid_: checkout, clone.
 
+**Worktree preparation**:
+Making a worktree ready for whoever works in it, in two steps that know no programming language: install the toolchain the repo's own mise config pins, then run the repo's **prepare command** (its `prepare:` in the **repo file**, such as `uv sync`, `npm ci` or `make setup`) with that toolchain. Every worktree a driver works in is prepared: a human session's worktree each time the session launches, and a task worktree before every agent attempt. A loop-driven session's own worktree, where only smith runs, is not ([ADR-0019](./docs/adr/0019-worktree-preparation.md)). A repo that declares no prepare command still gets its toolchain. The repo declares how to prepare itself and smith never guesses from lockfiles; what lies outside the worktree stays with the blueprint, so system packages, secrets and services are not part of it.
+_Avoid_: setup (reserved for `machine setup`), bootstrap, install.
+
 **Workspace**:
 Where managed repos live on the box: `~/workspace/<repo>/repo.git` — a **bare** repo — with
 `worktrees/<sanitized-branch>` beside it. Bare kills the "one branch is the checkout" special case,
@@ -427,7 +431,7 @@ The execution's branch, and the one branch the loop pushes. The loop adds to it 
 _Avoid_: feature branch, execution branch.
 
 **Task branch**:
-The branch one task is worked on, checked out in that task's task worktree and cut from the work branch's tip. It and its worktree outlive a failed attempt, so a retry continues where the last one stopped; they are removed once merged. A skipped task's are left for a human, and the loop's comment on the task's issue names the machine they are on, where they are, and how many commits the branch has beyond the work branch.
+The branch one task is worked on, checked out in that task's task worktree and cut from the work branch's tip. It and its worktree outlive a failed attempt, so a retry continues where the last one stopped. Once merged the branch is removed but its worktree is **recycled**: the next task's branch is switched into it, so what the repo ignores (a `.venv`, `node_modules`) carries over and worktree preparation re-runs incrementally rather than from scratch. A skipped task's are left for a human, and the loop's comment on the task's issue names the machine they are on, where they are, and how many commits the branch has beyond the work branch.
 _Avoid_: agent branch, scratch branch.
 
 **Spec**:
@@ -455,7 +459,7 @@ smith's own small scale for how hard an agent should think, which each agent ada
 _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 
 **Repo file**:
-`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone running the loop on that repo should share (agent, model, effort, whether to push, and the triage labels). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone working that repo through smith should share (agent, model, effort, whether to push, the triage labels, and the prepare command). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
 _Avoid_: project config, repo config, local config, config file.
 
 **Loop prompt**:

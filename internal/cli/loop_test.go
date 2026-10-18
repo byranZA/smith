@@ -152,6 +152,8 @@ func (benchAt) Open(_ context.Context, task int) (string, error) {
 
 func (benchAt) Land(context.Context, int) error { return nil }
 
+func (benchAt) Finish(context.Context) error { return nil }
+
 func (b benchAt) TaskBranch(task int) string { return fmt.Sprintf("smith/tasks/%s/%d", b.branch, task) }
 
 func (benchAt) Ahead(context.Context, int) (int, error) { return 0, nil }

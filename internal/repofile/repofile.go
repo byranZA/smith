@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/byranZA/smith/internal/blueprint"
 )
 
@@ -29,6 +31,9 @@ type File struct {
 	Push *bool `yaml:"push"`
 	// Labels name the triage labels the loop reads and writes on the tracker.
 	Labels Labels `yaml:"labels"`
+	// Prepare is the command that prepares a worktree of the repo, run by
+	// sh -c in the worktree under its toolchain. Empty runs none.
+	Prepare string `yaml:"-"`
 }
 
 // Labels are the names of the tracker's triage labels. A name left empty is
@@ -42,18 +47,29 @@ type Labels struct {
 	Spec string `yaml:"spec"`
 }
 
-// Parse decodes a repo file strictly: any key it does not define, and any
-// label set to no name, is refused with its line, in a
-// *blueprint.ValidationError. An empty document is valid and leaves every
-// field unset.
+// document is the shape a repo file is decoded into: the File, with the
+// prepare command taken as whatever node was written, so that its own check
+// rather than the decoder reports a value of the wrong shape.
+type document struct {
+	File `yaml:",inline"`
+	// Prepare is the node written under prepareKey.
+	Prepare yaml.Node `yaml:"prepare"`
+}
+
+// Parse decodes a repo file strictly: any key it does not define, any label
+// set to no name, and a prepare command that is not one non-empty string, is
+// refused with its line, in a *blueprint.ValidationError. An empty document is
+// valid and leaves every field unset.
 func Parse(data []byte) (File, error) {
-	var f File
-	if err := blueprint.DecodeStrict(data, subject, &f); err != nil {
+	var doc document
+	if err := blueprint.DecodeStrict(data, subject, &doc); err != nil {
 		return File{}, fmt.Errorf("parse repo file: %w", err)
 	}
-	if err := validationError(labelFindings(data)); err != nil {
+	if err := validationError(append(labelFindings(data), prepareFindings(data)...)); err != nil {
 		return File{}, err
 	}
+	f := doc.File
+	f.Prepare = resolved(&doc.Prepare).Value
 	return f, nil
 }
 
