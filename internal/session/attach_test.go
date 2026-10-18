@@ -37,7 +37,7 @@ func attachEnv(t *testing.T, command []string) (session.Env, *fakeExec, string) 
 		Tmux:      &tmuxServer{},
 		Exec:      execer,
 	}
-	started, err := session.Start(context.Background(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: command})
+	started, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42", Command: command})
 	if err != nil {
 		t.Fatalf("Start() err = %v", err)
 	}
@@ -45,10 +45,11 @@ func attachEnv(t *testing.T, command []string) (session.Env, *fakeExec, string) 
 }
 
 func TestAttachConnectsWritableToAHumanDrivenSessionByDefault(t *testing.T) {
+	t.Parallel()
 	env, execer, name := attachEnv(t, nil)
 	var out strings.Builder
 
-	if err := session.Attach(context.Background(), env, name, session.ByDriver, &out); err != nil {
+	if err := session.Attach(t.Context(), env, name, session.ByDriver, &out); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 
@@ -62,9 +63,10 @@ func TestAttachConnectsWritableToAHumanDrivenSessionByDefault(t *testing.T) {
 }
 
 func TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault(t *testing.T) {
+	t.Parallel()
 	env, execer, name := attachEnv(t, loopCommand)
 
-	if err := session.Attach(context.Background(), env, name, session.ByDriver, io.Discard); err != nil {
+	if err := session.Attach(t.Context(), env, name, session.ByDriver, io.Discard); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 
@@ -78,13 +80,14 @@ func TestAttachConnectsReadOnlyToALoopDrivenSessionByDefault(t *testing.T) {
 }
 
 func TestAttachConnectsWritableToAWorktreeWithNoSessionRecord(t *testing.T) {
+	t.Parallel()
 	execer := &fakeExec{}
 	env := smithEnv(t, &tmuxServer{live: map[string]bool{"smith/smith-spec-42": true}})
 	env.Exec = execer
 	bare := filepath.Join(env.Workspace, "smith", "repo.git")
 	git(t, bare, "worktree", "add", "-b", "spec-42", filepath.Join(env.Workspace, "smith", "worktrees", "spec-42"), "main")
 
-	if err := session.Attach(context.Background(), env, "smith-spec-42", session.ByDriver, io.Discard); err != nil {
+	if err := session.Attach(t.Context(), env, "smith-spec-42", session.ByDriver, io.Discard); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 
@@ -95,10 +98,11 @@ func TestAttachConnectsWritableToAWorktreeWithNoSessionRecord(t *testing.T) {
 }
 
 func TestAttachInteractsWithALoopDrivenSessionOnRequest(t *testing.T) {
+	t.Parallel()
 	env, execer, name := attachEnv(t, loopCommand)
 	var out strings.Builder
 
-	if err := session.Attach(context.Background(), env, name, session.Interact, &out); err != nil {
+	if err := session.Attach(t.Context(), env, name, session.Interact, &out); err != nil {
 		t.Fatalf("Attach() err = %v", err)
 	}
 

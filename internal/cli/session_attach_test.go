@@ -27,6 +27,7 @@ func TestSessionAttachHandsTheTerminalOver(t *testing.T) {
 }
 
 func TestSessionAttachInteractChangesTheConnection(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
@@ -42,6 +43,7 @@ func TestSessionAttachInteractChangesTheConnection(t *testing.T) {
 }
 
 func TestSessionAttachSaysWhenItIsReadOnly(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	resolve := resolvedBox(workspace, "smith")
