@@ -176,3 +176,37 @@ func TestAnAgentBrokenRunKeepsTheTasksItClosedLandedAndPushed(t *testing.T) {
 		t.Errorf("Run() = %+v, %v with events %q, want the run stopped as agent broken after %q", outcome, err, j.events, want)
 	}
 }
+
+func TestAnAgentBrokenRunKeepsWhereEachTaskItSkippedWasLeft(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		exits  []error
+		reason string
+	}{
+		{"every attempt failed", []error{errKilled, errKilled, errExit, errExit}, "the agent failed on every attempt at #44 (run claude: exit status 1)"},
+		{"the agent could not start", []error{errKilled, errKilled, errNotStarted}, "the agent could not be started on #44 (" + errNotStarted.Error() + ")"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}, leaveOpen: []int{43, 44}}
+			r := &recorder{}
+			l := loopOn(t, b, &scripted{board: b, exits: tt.exits})
+			l.Recorder = r
+			l.Hostname = hostnamed("box-1")
+
+			outcome, err := l.Run(t.Context(), 42)
+
+			report := "spec #42 stopped: " + tt.reason + "; check that the agent runs on box-1\n" +
+				"  available: #44\n" +
+				"  skipped after 2 attempts: #43\n" +
+				"  #43 left in /bench/43: the agent was killed (likely out of memory)\n" +
+				"work branch: smith/42-spec\n"
+			left, killed := map[int]string{43: "/bench/43"}, map[int]bool{43: true}
+			if err != nil || !reflect.DeepEqual(outcome.Left, left) || !reflect.DeepEqual(outcome.Killed, killed) || !reflect.DeepEqual(r.reports, []string{report}) || len(commentsOn(b, 44)) != 0 {
+				t.Errorf("Run() = %+v, %v, recorded %q, commented %q on #44; want left %v, killed %v, the report %q and no comment on #44", outcome, err, r.reports, commentsOn(b, 44), left, killed, report)
+			}
+		})
+	}
+}

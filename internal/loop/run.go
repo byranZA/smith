@@ -180,6 +180,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	killed := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
+	stopped := func(remaining Remaining) Outcome {
+		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
+	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
@@ -187,17 +190,19 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
 		if !ok {
-			return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, l.finish(ctx, remaining)
+			return stopped(remaining), l.finish(ctx, remaining)
 		}
 		if runs >= l.Limits.MaxIterations {
-			return Outcome{Remaining: remaining, Capped: true, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}, nil
+			capped := stopped(remaining)
+			capped.Capped = true
+			return capped, nil
 		}
 		run, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
 		if err != nil {
 			return Outcome{}, err
 		}
 		if errors.Is(run.failure, ErrNotStarted) {
-			return l.broken(ctx, remaining, next, run.failure)
+			return l.broken(ctx, stopped(remaining), next, run.failure)
 		}
 		worktrees[next.Number] = run.dir
 		killed[next.Number] = run.killed()
@@ -210,7 +215,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		}
 		closed := closedIn(current, next)
 		if exhausted && !closed && !ran[next.Number] {
-			return l.broken(ctx, survey(current, skipped), next, run.failure)
+			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
 		}
 		skipped[next.Number] = exhausted
 		skip := exhausted && !closed
@@ -230,11 +235,11 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	}
 }
 
-// broken ends a run, with remaining left of its spec, on task, whose agent
-// last failed with failure: it removes task's worked mark, leaving task for
-// the next run rather than handing it to a human, and names this machine,
-// unknown with a warning when its hostname cannot be read.
-func (l Loop) broken(ctx context.Context, remaining Remaining, task tracker.Task, failure error) (Outcome, error) {
+// broken ends a run that stopped as outcome on task, whose agent last failed
+// with failure: it removes task's worked mark, leaving task for the next run
+// rather than handing it to a human, and names this machine, unknown with a
+// warning when its hostname cannot be read.
+func (l Loop) broken(ctx context.Context, outcome Outcome, task tracker.Task, failure error) (Outcome, error) {
 	if err := l.unmark(ctx, task); err != nil {
 		return Outcome{}, err
 	}
@@ -242,7 +247,8 @@ func (l Loop) broken(ctx context.Context, remaining Remaining, task tracker.Task
 	if err := l.warnIf(err, "could not read this machine's hostname"); err != nil {
 		return Outcome{}, err
 	}
-	return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Broken: &Broken{Task: task, Failure: failure, Machine: host}}, nil
+	outcome.Broken = &Broken{Task: task, Failure: failure, Machine: host}
+	return outcome, nil
 }
 
 // InteractiveOutcome is how an interactive run ended: the task it handed the
