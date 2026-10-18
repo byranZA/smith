@@ -3,6 +3,8 @@
 > Amends [ADR-0015](./0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md), which had the loop write only labels to the tracker.
 >
 > **Amended by [ADR-0017](./0017-the-loop-starts-its-own-session-on-a-box.md).** The loop also posts its stop report as a comment on the spec.
+>
+> **Amended by [ADR-0020](./0020-the-loop-stops-on-a-broken-agent.md).** A run that stops as `agent broken` skips no task, so posts no skip comment.
 
 ## Context
 
