@@ -409,14 +409,7 @@ Who acts in a session — a human at a shell, or the loop. Set by the verb that 
 _Avoid_: actor, runner, operator (reserved for the human running smith).
 
 **Attach mode**:
-How the operator connects to a session: read-only (observe) or writable (interact). Observation
-and takeover are the same `tmux` session at two access levels — the mechanism behind watching an
-agent work and stepping in. Read-only is **advisory**, not enforced: it is `tmux attach -r`, so
-anyone who can SSH as `smith` can attach writable regardless. It guards against accidentally
-typing into an agent's session — it is not a permission boundary
-([ADR-0005](./docs/adr/0005-terminal-rides-the-ssh-door.md)). The default follows the session's
-**driver**, and a read-only client always says so in the terminal
-([ADR-0018](./docs/adr/0018-attach-defaults-by-driver.md)).
+How the operator connects to a session: read-only (observe) or writable (interact). Observation and takeover are the same `tmux` session at two access levels — the mechanism behind watching an agent work and stepping in. Read-only is **advisory**, not enforced: it is `tmux attach -r`, so anyone who can SSH as `smith` can attach writable regardless. It guards against accidentally typing into an agent's session — it is not a permission boundary ([ADR-0005](./docs/adr/0005-terminal-rides-the-ssh-door.md)). The default follows the session's **driver**, and a read-only client always says so in the terminal ([ADR-0018](./docs/adr/0018-attach-defaults-by-driver.md)).
 _Avoid_: view mode, permission.
 
 ### The loop

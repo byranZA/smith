@@ -203,11 +203,7 @@ session "smith-spec-42" is not running: resume it with
 
 ### Read-only is advisory, not a permission boundary
 
-A read-only attach is `tmux attach -r`, and `--interact` drops the `-r`.
-**Anyone who can SSH to the box as `smith` can run `tmux attach` themselves,
-without `-r`, and type into any session.** Read-only guards against *you*
-typing into a session you meant only to watch. It is not a permission model, it
-does not partition operators, and it must not be relied on as though it did.
+A read-only attach is `tmux attach -r`, and `--interact` drops the `-r`. **Anyone who can SSH to the box as `smith` can run `tmux attach` themselves, without `-r`, and type into any session.** Read-only guards against *you* typing into a session you meant only to watch. It is not a permission model, it does not partition operators, and it must not be relied on as though it did.
 
 ### Nothing is exposed
 
