@@ -1,7 +1,8 @@
-// Package prepare makes a worktree ready to work in: it installs the toolchain
-// the repo's own mise config pins, in the foreground, before anyone works
-// there. It is handed the process runner and the mise executable it drives
-// and looks nothing up itself, so a test fakes mise at the command boundary.
+// Package prepare makes a worktree ready to work in, in the foreground, before
+// anyone works there: it installs the toolchain the repo's own mise config
+// pins, then runs the prepare command the worktree's own repo file declares.
+// It is handed the process runner and the mise executable it drives and looks
+// nothing up itself, so a test fakes mise at the command boundary.
 package prepare
 
 import (
@@ -10,10 +11,21 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/byranZA/smith/internal/repofile"
 )
 
 // Toolchain is the step that installs what the worktree's mise config pins.
 const Toolchain = "toolchain"
+
+// RepoCommand is the step that runs the prepare command the worktree's repo
+// file declares.
+const RepoCommand = "prepare"
+
+// inDir is the shell script that runs its second argument as a command in the
+// directory its first argument names, which is how the prepare command runs in
+// the worktree when there is no mise to change into it.
+const inDir = `cd -- "$1" && exec sh -c "$2"`
 
 // Runner launches a local command. It is the system boundary preparation
 // reaches mise through.
@@ -27,7 +39,9 @@ type Runner interface {
 type Preparer struct {
 	// Command launches the processes preparation runs.
 	Command Runner
-	// Mise is the mise executable the toolchain is installed with.
+	// Mise is the mise executable the toolchain is installed with and the
+	// prepare command runs under. Empty means there is no mise: the toolchain
+	// step is skipped and the prepare command runs directly.
 	Mise string
 }
 
@@ -39,7 +53,7 @@ type StepError struct {
 	// Status is the exit status the step's process answered with, or -1 when
 	// the process could not run at all.
 	Status int
-	// Command is the command line the step ran.
+	// Command is the command the step ran, as the operator knows it.
 	Command string
 	// Err is the process error.
 	Err error
@@ -56,21 +70,41 @@ func (e *StepError) Error() string {
 // Unwrap returns the process error.
 func (e *StepError) Unwrap() error { return e.Err }
 
-// Prepare installs the toolchain the worktree at dir pins, streaming mise's
-// output to out as it is printed. A failure is a *StepError naming the step
-// and its exit status.
+// Prepare installs the toolchain the worktree at dir pins, then runs the
+// prepare command the repo file in dir declares, if any, in dir under that
+// toolchain, streaming the output of both to out as it is printed. A failed
+// step is a *StepError naming the step and its exit status, and a failed
+// toolchain stops before the prepare command.
 func (p Preparer) Prepare(ctx context.Context, dir string, out io.Writer) error {
-	return p.step(ctx, Toolchain, out, p.Mise, "--cd", dir, "install")
+	if p.Mise != "" {
+		install := []string{p.Mise, "--cd", dir, "install"}
+		if err := p.step(ctx, Toolchain, strings.Join(install, " "), out, install); err != nil {
+			return err
+		}
+	}
+	file, err := repofile.Load(repofile.At(dir))
+	if err != nil {
+		return fmt.Errorf("read the prepare command: %w", err)
+	}
+	if file.Prepare == "" {
+		return nil
+	}
+	run := []string{"sh", "-c", inDir, "sh", dir, file.Prepare}
+	if p.Mise != "" {
+		run = []string{p.Mise, "--cd", dir, "exec", "--", "sh", "-c", file.Prepare}
+	}
+	return p.step(ctx, RepoCommand, file.Prepare, out, run)
 }
 
-// step runs one preparation step's command, streaming both its output streams
-// to out, and answers a failure as a *StepError naming step.
-func (p Preparer) step(ctx context.Context, step string, out io.Writer, name string, args ...string) error {
-	err := p.Command.Run(ctx, name, args, nil, out, out)
+// step runs one preparation step's argv, streaming both its output streams to
+// out, and answers a failure as a *StepError naming step and the command it
+// ran as shown.
+func (p Preparer) step(ctx context.Context, step, shown string, out io.Writer, argv []string) error {
+	err := p.Command.Run(ctx, argv[0], argv[1:], nil, out, out)
 	if err == nil {
 		return nil
 	}
-	failed := &StepError{Step: step, Status: -1, Command: strings.Join(append([]string{name}, args...), " "), Err: err}
+	failed := &StepError{Step: step, Status: -1, Command: shown, Err: err}
 	var exit interface{ ExitCode() int }
 	if errors.As(err, &exit) {
 		failed.Status = exit.ExitCode()

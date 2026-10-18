@@ -80,7 +80,7 @@ func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 
 	off := false
 	want := repofile.File{
-		Agent: "claude", Model: "opus", Effort: "high", Push: &off,
+		Agent: "claude", Model: "opus", Effort: "high", Push: &off, Prepare: "uv sync",
 		Labels: repofile.Labels{Agent: "ready-for-agent", Human: "ready-for-human", Spec: "spec"},
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {

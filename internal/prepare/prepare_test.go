@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/prepare"
 )
 
@@ -96,5 +99,124 @@ func TestPrepareNamesTheToolchainStepWhenMiseCannotRun(t *testing.T) {
 	want := `the toolchain step could not run: mise --cd /work/smith/worktrees/spec-42 install: exec: "mise": executable file not found in $PATH`
 	if err == nil || err.Error() != want {
 		t.Errorf("Prepare() err = %v, want %q", err, want)
+	}
+}
+
+// worktree is a temp worktree whose repo file holds repoFile.
+func worktree(t *testing.T, repoFile string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".smith"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte(repoFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// failOn is a runner that fails the calls whose argv starts with name.
+type failOn struct {
+	fakeRunner
+	name string
+	err  error
+}
+
+func (f *failOn) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := f.fakeRunner.Run(ctx, name, args, stdin, stdout, stderr); err != nil {
+		return err
+	}
+	if len(args) > 0 && args[len(args)-1] == f.name {
+		return f.err
+	}
+	return nil
+}
+
+func TestPrepareRunsTheWorktreesPrepareCommandUnderMiseAfterTheToolchain(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, "prepare: npm ci\n")
+	run := &fakeRunner{}
+	p := prepare.Preparer{Command: run, Mise: "mise"}
+
+	if err := p.Prepare(t.Context(), dir, io.Discard); err != nil {
+		t.Fatalf("Prepare() err = %v", err)
+	}
+
+	want := [][]string{
+		{"mise", "--cd", dir, "install"},
+		{"mise", "--cd", dir, "exec", "--", "sh", "-c", "npm ci"},
+	}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestPrepareRunsNoPrepareCommandWhenTheToolchainFails(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, "prepare: npm ci\n")
+	run := &fakeRunner{err: exitError{code: 1}}
+	p := prepare.Preparer{Command: run, Mise: "mise"}
+
+	err := p.Prepare(t.Context(), dir, io.Discard)
+
+	var failed *prepare.StepError
+	if !errors.As(err, &failed) || failed.Step != prepare.Toolchain {
+		t.Fatalf("Prepare() err = %v, want the toolchain step's *prepare.StepError", err)
+	}
+	if want := [][]string{{"mise", "--cd", dir, "install"}}; !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestPrepareNamesThePrepareStepAndExitStatusOnFailure(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, "prepare: make setup\n")
+	run := &failOn{name: "make setup", err: exitError{code: 2}}
+	p := prepare.Preparer{Command: run, Mise: "mise"}
+
+	err := p.Prepare(t.Context(), dir, io.Discard)
+
+	var failed *prepare.StepError
+	if !errors.As(err, &failed) {
+		t.Fatalf("Prepare() err = %v, want a *prepare.StepError", err)
+	}
+	if failed.Step != prepare.RepoCommand || failed.Status != 2 {
+		t.Errorf("Prepare() failed step %q with status %d, want step %q with status 2", failed.Step, failed.Status, prepare.RepoCommand)
+	}
+	if want := "the prepare step exited with status 2: make setup"; err.Error() != want {
+		t.Errorf("Prepare() err = %q, want %q", err, want)
+	}
+}
+
+func TestPrepareWithoutMiseRunsThePrepareCommandDirectlyInTheWorktree(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, "prepare: npm ci\n")
+	run := &fakeRunner{}
+	p := prepare.Preparer{Command: run}
+
+	if err := p.Prepare(t.Context(), dir, io.Discard); err != nil {
+		t.Fatalf("Prepare() err = %v", err)
+	}
+
+	want := [][]string{{"sh", "-c", `cd -- "$1" && exec sh -c "$2"`, "sh", dir, "npm ci"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestPrepareRefusesAMalformedRepoFileBeforeRunningTheCommand(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, "prepare:\n  - npm ci\n")
+	run := &fakeRunner{}
+	p := prepare.Preparer{Command: run, Mise: "mise"}
+
+	err := p.Prepare(t.Context(), dir, io.Discard)
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Prepare() err = %v, want a *blueprint.ValidationError", err)
+	}
+	if want := [][]string{{"mise", "--cd", dir, "install"}}; !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
 	}
 }

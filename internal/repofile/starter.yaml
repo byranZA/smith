@@ -19,6 +19,11 @@
 # for one run.
 # push: false
 
+# The command that prepares a worktree of this repo, run with `sh -c` in the
+# worktree under the toolchain its mise config pins. It must be safe to re-run.
+# Unset, no command runs.
+# prepare: uv sync
+
 # The tracker's triage labels: the one that marks a task for an agent, the one
 # that marks it for a human (where a task the loop skips goes), and the one
 # that marks a spec not yet split into tasks. Set only those this repo names

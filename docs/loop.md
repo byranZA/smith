@@ -146,6 +146,7 @@ agent: claude
 model: opus
 effort: high
 push: true
+prepare: uv sync
 labels:
   agent: ready-for-agent
   human: ready-for-human
@@ -160,9 +161,17 @@ Each setting resolves on its own, most specific first:
 2. The repo file.
 3. The built-in default: `claude`, the agent's own model and effort, push on, and the triage labels shown above.
 
-The triage labels have no flags: they are set in the repo file or left to their defaults.
+The triage labels and the prepare command have no flags: they are set in the repo file or left to their defaults.
 
-The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, and a `prepare:` that is not one non-empty string. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+
+### The prepare command
+
+`prepare:` is the command that makes a checkout of the repo ready to work in, such as `uv sync`, `npm ci` or `make setup`. Left unset, no command runs. smith runs it when it [prepares a worktree](./sessions.md#worktree-preparation), with `sh -c` in the worktree, after installing the toolchain the repo's mise config pins and under `mise exec`, so it sees those pinned versions. A failed toolchain install stops before the command runs; a failed command is reported as the prepare step with its exit status. Where there is no mise, the toolchain step is skipped and the command runs in your own environment.
+
+The command is read from the repo file in the worktree being prepared, not from the checkout you run smith in, so a branch that changes `prepare:` is prepared its own way.
+
+The command must be safe to re-run. smith runs it every time it prepares a worktree, including one it prepared before, so it should bring an existing checkout up to date rather than assume a fresh one.
 
 ### Triage labels
 

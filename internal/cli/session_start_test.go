@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -147,3 +149,53 @@ type exitStatus int
 func (e exitStatus) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
 func (e exitStatus) ExitCode() int { return int(e) }
+
+func TestSessionStartRunsThePrepareCommandTheBranchDeclares(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepoWithRepoFiles(t, workspace, "smith", "prepare: pip install -r requirements.txt\n", "spec-42", "prepare: uv sync\n")
+	w := onBoxWiring(t, resolvedBox(workspace, "smith"), &fakeTmux{}, &fakeExec{})
+	mise := &fakeMise{}
+	w.mise = mise
+
+	_, stderr, code := runSessionOn(t, w, "start", "--repo", "smith", "--branch", "spec-42", "--detach")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if len(mise.calls) != 2 || !strings.HasSuffix(strings.Join(mise.calls[1], " "), "spec-42 exec -- sh -c uv sync") {
+		t.Errorf("mise ran %v, want the install then the branch's own prepare command in the spec-42 worktree", mise.calls)
+	}
+}
+
+// writeBareRepoWithRepoFiles is writeBareRepo whose main commits base as its
+// repo file and whose branch commits its own repo file over it.
+func writeBareRepoWithRepoFiles(t *testing.T, workspace, repo, base, branch, branchFile string) {
+	t.Helper()
+	src := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "smith@example.com"},
+		{"config", "user.name", "smith"},
+	} {
+		runGit(t, src, args...)
+	}
+	commitRepoFile := func(content, message string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(src, ".smith"), 0o755); err != nil {
+			t.Fatalf("make .smith: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(src, ".smith", "repo.yaml"), []byte(content), 0o600); err != nil {
+			t.Fatalf("write repo file: %v", err)
+		}
+		runGit(t, src, "add", ".smith/repo.yaml")
+		runGit(t, src, "commit", "-m", message)
+	}
+	commitRepoFile(base, "base")
+	runGit(t, src, "checkout", "-b", branch)
+	commitRepoFile(branchFile, "branch")
+	runGit(t, src, "checkout", "main")
+	if err := os.MkdirAll(filepath.Join(workspace, repo), 0o755); err != nil {
+		t.Fatalf("make repo directory: %v", err)
+	}
+	runGit(t, src, "clone", "--bare", "-c", "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*", src, filepath.Join(workspace, repo, "repo.git"))
+}

@@ -39,6 +39,10 @@ type Repo struct {
 	root string
 }
 
+// At is the git repo whose root is root, for a caller that already knows it,
+// such as one preparing a worktree it made.
+func At(root string) Repo { return Repo{root: root} }
+
 // Path is where the repo's repo file is, whether or not it exists yet.
 func (r Repo) Path() string { return filepath.Join(r.root, dirName, fileName) }
 
