@@ -45,11 +45,12 @@ type Launcher interface {
 type Bench interface {
 	// WorkBranch names the branch closed tasks land on.
 	WorkBranch() string
-	// Open returns the directory of task's worktree, creating it from the
-	// work branch's tip or returning the one an earlier attempt left.
+	// Open returns the directory of task's worktree on a branch cut from the
+	// work branch's tip, recycling a landed task's worktree, or returns the
+	// one an earlier attempt left.
 	Open(ctx context.Context, task int) (string, error)
 	// Land brings task's commits into the work branch and removes its
-	// worktree and branch.
+	// branch, keeping its worktree for the next task.
 	Land(ctx context.Context, task int) error
 	// TaskBranch names the branch task's worktree has checked out.
 	TaskBranch(task int) string

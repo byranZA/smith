@@ -141,53 +141,74 @@ func (w Workbench) WorkBranch() string { return w.branch }
 // it.
 func (w Workbench) Lag() Lag { return w.lag }
 
-// Open returns the directory of task's worktree, creating it on a new task
-// branch cut from the work branch's tip, or returning the one an earlier
-// attempt left as it is. It refuses, leaving it in place, anything at that
-// path that is not this repo's worktree on task's branch.
+// Open returns the directory of task's worktree: the one that already has
+// task's branch checked out, as an earlier attempt left it; else a landed
+// task's recycled worktree, switched to a new task branch cut from the work
+// branch's tip; else a new worktree on that branch. It refuses, leaving it in
+// place, anything at a new worktree's path.
 func (w Workbench) Open(ctx context.Context, task int) (string, error) {
-	dir := w.worktree(task)
-	_, err := os.Lstat(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.TaskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
-			return "", fmt.Errorf("add worktree %s: %w", dir, err)
+	trees, err := w.worktrees(ctx)
+	if err != nil {
+		return "", err
+	}
+	if dir, ok := w.holder(trees, task); ok {
+		return dir, nil
+	}
+	if i := slices.IndexFunc(trees, w.recycled); i >= 0 {
+		dir := trees[i].dir
+		if _, err := w.run(ctx, dir, "switch", "--quiet", "-c", w.TaskBranch(task), branchRefPrefix+w.branch); err != nil {
+			return "", fmt.Errorf("switch worktree %s to task branch %s: %w", dir, w.TaskBranch(task), err)
 		}
 		return dir, nil
 	}
-	if err != nil {
+	return w.add(ctx, task, trees)
+}
+
+// recycled reports whether t is a worktree of the execution's that a landed
+// task left with no branch checked out, for the next task to reuse.
+func (w Workbench) recycled(t tree) bool {
+	return t.ref == "" && filepath.Dir(t.dir) == w.executionDir()
+}
+
+// add creates task's worktree on a new task branch cut from the work branch's
+// tip, refusing anything already at its path, which trees, the worktrees git
+// registers, says whether it is this repo's.
+func (w Workbench) add(ctx context.Context, task int, trees []tree) (string, error) {
+	dir := w.worktree(task)
+	_, err := os.Lstat(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("look for worktree %s: %w", dir, err)
 	}
-	if err := w.owns(ctx, task, dir); err != nil {
-		return "", err
+	if err == nil {
+		return "", w.occupied(task, dir, trees)
+	}
+	if _, err := w.run(ctx, w.dir, "worktree", "add", "-b", w.TaskBranch(task), dir, branchRefPrefix+w.branch); err != nil {
+		return "", fmt.Errorf("add worktree %s: %w", dir, err)
 	}
 	return dir, nil
 }
 
-// owns refuses dir unless git registers it as a worktree of this repo with
-// task's branch checked out.
-func (w Workbench) owns(ctx context.Context, task int, dir string) error {
-	trees, err := w.worktrees(ctx)
-	if err != nil {
-		return err
-	}
-	want := branchRefPrefix + w.TaskBranch(task)
+// occupied is why task's new worktree cannot be added at dir, where trees,
+// the worktrees git registers, already holds something that is not task's.
+func (w Workbench) occupied(task int, dir string, trees []tree) error {
 	i := slices.IndexFunc(trees, func(t tree) bool { return t.dir == dir })
 	if i < 0 {
 		return fmt.Errorf("%s is not a worktree of this repo, so cannot hold task branch %s: move it aside, then run again", dir, w.TaskBranch(task))
 	}
-	if trees[i].ref != want {
-		return fmt.Errorf("worktree %s has %s checked out, not task branch %s: an execution on another work branch left it, so finish or remove it there, then run again",
-			dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.TaskBranch(task))
-	}
-	return nil
+	return fmt.Errorf("worktree %s has %s checked out, not task branch %s: another execution left it, so finish or remove it there, then run again",
+		dir, cmp.Or(strings.TrimPrefix(trees[i].ref, branchRefPrefix), "a detached HEAD"), w.TaskBranch(task))
 }
 
 // Land fast-forwards the work branch to task's branch, in the worktree that has
-// it checked out when there is one, then removes task's worktree and branch. It
+// it checked out when there is one, then removes task's branch, keeping its
+// worktree, detached at the landed commit, for the next task to recycle. It
 // refuses, changing nothing, a task worktree or work-branch checkout with
 // uncommitted changes and a task branch the work branch cannot fast-forward to.
 func (w Workbench) Land(ctx context.Context, task int) error {
-	dir := w.worktree(task)
+	dir, err := w.taskTree(ctx, task)
+	if err != nil {
+		return err
+	}
 	status, err := w.run(ctx, dir, "status", "--porcelain")
 	if err != nil {
 		return fmt.Errorf("read the status of worktree %s: %w", dir, err)
@@ -198,13 +219,37 @@ func (w Workbench) Land(ctx context.Context, task int) error {
 	if err := w.fastForward(ctx, task); err != nil {
 		return err
 	}
-	if _, err := w.run(ctx, w.dir, "worktree", "remove", dir); err != nil {
-		return fmt.Errorf("remove worktree %s: %w", dir, err)
+	if _, err := w.run(ctx, dir, "switch", "--quiet", "--detach"); err != nil {
+		return fmt.Errorf("detach worktree %s from task branch %s: %w", dir, w.TaskBranch(task), err)
 	}
 	if _, err := w.run(ctx, w.dir, "branch", "-D", w.TaskBranch(task)); err != nil {
 		return fmt.Errorf("remove task branch %s: %w", w.TaskBranch(task), err)
 	}
 	return nil
+}
+
+// taskTree returns the directory of the worktree that has task's branch
+// checked out, and is an error when none has.
+func (w Workbench) taskTree(ctx context.Context, task int) (string, error) {
+	trees, err := w.worktrees(ctx)
+	if err != nil {
+		return "", err
+	}
+	dir, ok := w.holder(trees, task)
+	if !ok {
+		return "", fmt.Errorf("no worktree has task branch %s checked out", w.TaskBranch(task))
+	}
+	return dir, nil
+}
+
+// holder returns the directory of the worktree among trees that has task's
+// branch checked out, and reports whether one has.
+func (w Workbench) holder(trees []tree, task int) (string, bool) {
+	i := slices.IndexFunc(trees, func(t tree) bool { return t.ref == branchRefPrefix+w.TaskBranch(task) })
+	if i < 0 {
+		return "", false
+	}
+	return trees[i].dir, true
 }
 
 // Ahead counts the commits task's branch has that the work branch does not,
@@ -498,10 +543,30 @@ func (w Workbench) defaultBranch(ctx context.Context) (string, error) {
 	return "", errNoDefaultBranch
 }
 
-// worktree returns where task's worktree lives, under the repo's git common
-// directory so no checkout is dirtied.
+// executionDir returns the directory the execution's task worktrees live in,
+// named for the work branch and under the repo's git common directory so no
+// checkout is dirtied.
+func (w Workbench) executionDir() string {
+	return filepath.Join(w.common, "smith", "worktrees", pathSegment(w.branch))
+}
+
+// worktree returns where a new worktree cut for task lives, in the
+// execution's directory.
 func (w Workbench) worktree(task int) string {
-	return filepath.Join(w.common, "smith", "worktrees", strconv.Itoa(task))
+	return filepath.Join(w.executionDir(), strconv.Itoa(task))
+}
+
+// pathSegment reduces s to one path segment by replacing every character
+// outside [A-Za-z0-9._-] with a hyphen.
+func pathSegment(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, s)
 }
 
 // TaskBranch names task's branch, in a namespace of smith's own beside the

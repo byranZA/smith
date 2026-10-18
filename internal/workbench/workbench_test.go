@@ -168,7 +168,7 @@ func TestOpenGivesTheTaskAWorktreeUnderTheGitDirOnABranchFromTheWorkBranchTip(t 
 
 	common := resolved(t, git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"))
 	got := []string{resolved(t, dir), git(t, dir, "rev-parse", "HEAD"), git(t, dir, "symbolic-ref", "--short", "HEAD")}
-	want := []string{filepath.Join(common, "smith", "worktrees", "431"), git(t, clone, "rev-parse", bench.WorkBranch()), "smith/tasks/smith/430-loop-works-in-task-worktrees/431"}
+	want := []string{filepath.Join(common, "smith", "worktrees", "smith-430-loop-works-in-task-worktrees", "431"), git(t, clone, "rev-parse", bench.WorkBranch()), "smith/tasks/smith/430-loop-works-in-task-worktrees/431"}
 	if !slices.Equal(got, want) {
 		t.Errorf("Open(431) worktree, HEAD and branch = %q, want %q", got, want)
 	}
@@ -232,7 +232,7 @@ func TestLandFastForwardsTheWorkBranchToTheTasksCommits(t *testing.T) {
 	}
 }
 
-func TestLandRemovesTheTaskWorktreeAndTaskBranch(t *testing.T) {
+func TestLandRemovesTheTaskBranchButKeepsItsWorktree(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
 	bench := setup(t, clone)
@@ -247,8 +247,8 @@ func TestLandRemovesTheTaskWorktreeAndTaskBranch(t *testing.T) {
 	}
 
 	_, statErr := os.Stat(dir)
-	if branches := git(t, clone, "branch", "--list", "smith/tasks/*"); !os.IsNotExist(statErr) || branches != "" {
-		t.Errorf("after Land() worktree stat = %v, task branches %q; want the worktree and branch gone", statErr, branches)
+	if branches := git(t, clone, "branch", "--list", "smith/tasks/*"); statErr != nil || branches != "" {
+		t.Errorf("after Land() worktree stat = %v, task branches %q; want the worktree kept and the branch gone", statErr, branches)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestLandWithNoCommitsLeavesTheWorkBranchWhereItWas(t *testing.T) {
 	}
 }
 
-func TestLandWithNoCommitsRemovesTheTaskWorktreeAndTaskBranch(t *testing.T) {
+func TestLandWithNoCommitsRemovesTheTaskBranchButKeepsItsWorktree(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
 	bench := setup(t, clone)
@@ -282,8 +282,8 @@ func TestLandWithNoCommitsRemovesTheTaskWorktreeAndTaskBranch(t *testing.T) {
 	}
 
 	_, statErr := os.Stat(dir)
-	if branches := git(t, clone, "branch", "--list", "smith/tasks/*"); !os.IsNotExist(statErr) || branches != "" {
-		t.Errorf("after Land() worktree stat = %v, task branches %q; want the worktree and branch gone", statErr, branches)
+	if branches := git(t, clone, "branch", "--list", "smith/tasks/*"); statErr != nil || branches != "" {
+		t.Errorf("after Land() worktree stat = %v, task branches %q; want the worktree kept and the branch gone", statErr, branches)
 	}
 }
 
@@ -585,32 +585,17 @@ func TestSetupRefusesAWorkBranchCheckedOutInADirtyWorktree(t *testing.T) {
 	}
 }
 
-func TestOpenRefusesARetainedWorktreeOfAnotherWorkBranch(t *testing.T) {
+func TestOpenRefusesAWorktreeOnAnotherBranchAtTheTaskWorktree(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
-	req := spec430
-	req.Branch = "work-a"
-	benchA, err := workbench.Setup(t.Context(), connection.System(), clone, req)
-	if err != nil {
-		t.Fatalf("Setup(work-a) error = %v", err)
-	}
-	dir, err := benchA.Open(t.Context(), 431)
-	if err != nil {
-		t.Fatalf("Open() on work-a error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "half.txt"), []byte("half done\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	req.Branch = "work-b"
-	benchB, err := workbench.Setup(t.Context(), connection.System(), clone, req)
-	if err != nil {
-		t.Fatalf("Setup(work-b) error = %v", err)
-	}
+	bench := setup(t, clone)
+	path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith-430-loop-works-in-task-worktrees", "431")
+	git(t, clone, "worktree", "add", "-b", "elsewhere", path)
 
-	got, err := benchB.Open(t.Context(), 431)
+	got, err := bench.Open(t.Context(), 431)
 
-	if err == nil || got != "" || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "smith/tasks/work-b/431") || git(t, dir, "status", "--porcelain") != "?? half.txt" {
-		t.Errorf("Open(431) on work-b = %q, %v; want an error naming %s and smith/tasks/work-b/431, with half.txt kept", got, err, dir)
+	if err == nil || got != "" || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "elsewhere") || git(t, path, "symbolic-ref", "--short", "HEAD") != "elsewhere" {
+		t.Errorf("Open(431) over a worktree on elsewhere = %q, %v; want an error naming %s and elsewhere, with the worktree kept on elsewhere", got, err, path)
 	}
 }
 
@@ -629,7 +614,7 @@ func TestOpenRefusesAndKeepsAnUnregisteredPathAtTheTaskWorktree(t *testing.T) {
 			t.Parallel()
 			clone, _ := cloned(t)
 			bench := setup(t, clone)
-			path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "431")
+			path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith-430-loop-works-in-task-worktrees", "431")
 			if err := place(path); err != nil {
 				t.Fatal(err)
 			}
