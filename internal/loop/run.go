@@ -233,7 +233,8 @@ func (o InteractiveOutcome) Succeeded() bool {
 }
 
 // RunInteractive hands spec's next available task to one agent run attached to
-// the operator's terminal, and runs no agent when no task is available.
+// the operator's terminal, and runs no agent when no task is available. When
+// the spec is complete once it ends, the recycled task worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
@@ -242,7 +243,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	remaining := Survey(current)
 	next, ok := remaining.Next()
 	if !ok {
-		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, nil
+		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
 	if _, _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
 		return InteractiveOutcome{}, err
@@ -259,7 +260,8 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 			return InteractiveOutcome{}, err
 		}
 	}
-	return InteractiveOutcome{Task: next, Handed: true, Remaining: Survey(after), WorkBranch: l.Bench.WorkBranch()}, nil
+	remaining = Survey(after)
+	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 }
 
 // refresh reads current, the execution read for issue number, as it stands
