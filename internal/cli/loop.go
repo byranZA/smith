@@ -14,16 +14,18 @@ import (
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/prepare"
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
 	"github.com/byranZA/smith/internal/workbench"
+	"github.com/byranZA/smith/internal/workspace"
 )
 
 // loopWiring is what the loop verbs reach the outside world through: the
-// tracker, agent launches and lookup, the workbench and pushes, the hostname,
-// and the git, config home and working directory that locate the repo file.
+// tracker, agent launches and lookup, the workbench and pushes, the
+// preparation of each task worktree, the hostname, and the git, config home and working directory that locate the repo file.
 // On a box it also reaches gh in a repo's clone, the box's configuration and
 // staging root, tmux and mise, and to relay a run to a box it reaches ssh,
 // declares this smith's version and reacts to a box refusing it for skew.
@@ -36,6 +38,7 @@ type loopWiring struct {
 	launcher loop.Launcher
 	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error)
 	pusher   func(dir string) loop.Pusher
+	preparer loop.Preparer
 	lookPath func(name string) (string, error)
 	mise     session.Runner
 	hostname func() (string, error)
@@ -60,6 +63,7 @@ func systemLoop() loopWiring {
 		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
 		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
+		preparer: prepare.Preparer{Command: connection.System(), Mise: systemMise()},
 		lookPath: exec.LookPath,
 		mise:     connection.System(),
 		hostname: os.Hostname,
@@ -80,6 +84,22 @@ func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.B
 		return nil, workbench.Lag{}, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
 	}
 	return bench, bench.Lag(), nil
+}
+
+// systemMise names the mise executable task worktrees on this machine are
+// prepared with: the one a session runs under, when it is installed where
+// smith installs it or is on PATH, and empty otherwise, which skips the
+// toolchain step.
+func systemMise() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	exe, err := exec.LookPath(workspace.SessionMise(home))
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 // newLoopCmd builds `smith loop`, the verbs that work a spec's tasks, or a
@@ -302,7 +322,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			l := loop.Loop{Recorder: recorder, Progress: cmd.ErrOrStderr(), Limits: limits, Launcher: w.launcher, Hostname: w.hostname}
+			l := loop.Loop{Recorder: recorder, Progress: cmd.ErrOrStderr(), Limits: limits, Launcher: w.launcher, Preparer: w.preparer, Hostname: w.hostname}
 			execution, err := w.prepare(cmd, ref, &l, flags, branch, base)
 			if err != nil {
 				return abort(cmd, l, ref, execution, interactive, err)

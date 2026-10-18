@@ -152,7 +152,7 @@ is what write-once means, and resume does not make an exception of it.
 
 Before a human session launches, `start` installs the toolchain the repo's own mise config pins, with `mise install` pointed at the worktree, then runs the [prepare command](./loop.md#the-prepare-command) the worktree's repo file declares, if any, under `mise exec` ([ADR-0018](./adr/0018-worktree-preparation.md)). Their output streams to stderr as it is printed, over the relay too, so you watch the install before the session exists rather than finding it half-done inside `tmux`.
 
-A failed install or prepare command prints a `smith: warning:` naming the step and its exit status, and the session launches anyway: you are the one who fixes it, and you need the shell to do so. A live session is not prepared, and neither is a loop-driven session's own worktree, where only smith runs.
+A failed install or prepare command prints a `smith: warning:` naming the step and its exit status, and the session launches anyway: you are the one who fixes it, and you need the shell to do so. A live session is not prepared, and neither is a loop-driven session's own worktree, where only smith runs; the loop prepares each task worktree instead (see [the loop](./loop.md#smith-loop-run)).
 
 ### What a session's shell holds
 

@@ -65,6 +65,8 @@ However the run stops, the loop also posts its stop report as a comment from smi
 - **`stopped`**: you interrupted the run, such as with Ctrl-C. The report says `interrupted`.
 - **`failed`**: the run stopped on an error, such as a failed push. The report names the error.
 
+Before every agent attempt, the first and each retry, the loop [prepares](./sessions.md#worktree-preparation) the task worktree, on your machine as on a box: it installs the toolchain the repo's mise config pins, then runs the worktree's [prepare command](#the-prepare-command), streaming both to stderr. A failed preparation launches no agent and stops the run with the outcome `failed`, its report naming preparation, the task and the task worktree (`prepare the worktree of #N in <worktree>: …`). Another attempt cannot fix it, so it counts as no attempt: the task is not labelled `smith:failed`, skipped or commented on. A loop-driven session's own worktree is not prepared, since only smith runs there.
+
 A stop report that fails to post is a `smith: warning: …` line, and changes neither the outcome nor the exit status. A run whose issue cannot be read at all posts nothing. `--interactive` posts no stop report.
 
 Two limits bound a run so it can be left alone:

@@ -57,6 +57,14 @@ type Bench interface {
 	Ahead(ctx context.Context, task int) (int, error)
 }
 
+// Preparer is the seam through which the loop makes a task worktree ready to
+// work in before each agent attempt.
+type Preparer interface {
+	// Prepare prepares the worktree at dir, streaming its output to out as it
+	// is printed.
+	Prepare(ctx context.Context, dir string, out io.Writer) error
+}
+
 // Pusher is the seam through which the loop pushes the work branch.
 type Pusher interface {
 	// Push pushes branch to origin under its own name, never forcing.
@@ -76,7 +84,10 @@ type Loop struct {
 	// Pusher pushes the work branch after each landed task; nil turns
 	// pushing off.
 	Pusher Pusher
-	Agent  agent.Adapter
+	// Preparer prepares the task worktree before every agent attempt; nil
+	// prepares nothing.
+	Preparer Preparer
+	Agent    agent.Adapter
 	// Options are the model and effort every agent run asks for.
 	Options agent.Options
 	Prompt  Prompt
@@ -268,15 +279,19 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 // hand marks task as worked and gives it to one agent run of cmd in task's
 // worktree, returning that worktree's directory and whether the agent was
 // killed by SIGKILL, and reports an agent that exits with a failure, leaving
-// it to the tracker to judge. The caller releases
-// the mark, except on an error from an interrupted run or a failed report of
-// that failure, when hand has already removed it.
+// it to the tracker to judge. The worktree is prepared first, and a failed
+// preparation is an error naming it before task is marked or any agent runs.
+// The caller releases the mark, except on an error from an interrupted run or
+// a failed report of that failure, when hand has already removed it.
 func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (string, bool, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
 		return "", false, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
+	if err := l.prepare(ctx, task, dir); err != nil {
+		return "", false, err
+	}
 	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
 		return "", false, err
 	}
@@ -296,6 +311,19 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (s
 		return "", false, errors.Join(failed, l.unmarkDetached(ctx, task))
 	}
 	return dir, kill, nil
+}
+
+// prepare prepares task's worktree at dir with the Preparer, when there is
+// one, streaming its output to Progress. A failure is an error naming
+// preparation, task and dir, since another agent attempt cannot fix it.
+func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error {
+	if l.Preparer == nil {
+		return nil
+	}
+	if err := l.Preparer.Prepare(ctx, dir, l.Progress); err != nil {
+		return fmt.Errorf("prepare the worktree of #%d in %s: %w", task.Number, dir, err)
+	}
+	return nil
 }
 
 // reportFailure reports that the agent on task exited with err, naming the
