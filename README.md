@@ -78,17 +78,8 @@ Tailscale, and only closes public SSH once it has proved the tailnet route
 works, so a half-ready ACL never locks you out.
 → [docs/provisioning.md](docs/provisioning.md)
 
-**Blueprints.** A blueprint (`~/.smith/blueprints/`) declares what kind of box
-smith builds; preferences (`~/.smith/preferences.yaml`) hold what belongs to you
-across every box. Both are optional — every field has a default, and `access`
-also has a flag, resolved **flag → blueprint → preference → default**, and
-every resolved field reaches the box. `smith blueprint check`
-validates them offline and prints the resolved configuration with the source of
-each value.
-`smith init` writes commented starters for both.
-→ [docs/blueprints.md](docs/blueprints.md), a worked
-[blueprint](docs/examples/blueprints/acme.yaml) and
-[preferences](docs/examples/preferences.yaml)
+**Blueprints.** A blueprint (`~/.smith/blueprints/`) declares what kind of box smith builds; preferences (`~/.smith/preferences.yaml`) hold what belongs to you across every box. Both are optional — every field has a default, and `access` also has a flag, resolved **flag → blueprint → preference → default**, and every resolved field reaches the box. `smith blueprint check` validates them offline and prints the resolved configuration with the source of each value. `smith init` writes commented starters for both.
+→ [docs/blueprints.md](docs/blueprints.md), a worked [blueprint](docs/examples/blueprints/acme.yaml) and [preferences](docs/examples/preferences.yaml), and [a box that can clone and run the loop](docs/blueprints.md#a-box-that-can-clone-and-run-the-loop)
 
 **Making the box too.** Describe your provider's own CLI as data in a `provider`
 block and `smith machine create dev --blueprint acme` creates the box and waits
@@ -134,12 +125,7 @@ dev` converges the box to *your* version — including backwards. `smith update`
 **The loop.** `smith loop run <issue>` works a spec's tasks, or a single task, with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. Each task is worked in its own worktree and lands on the spec's or task's work branch (`smith/<n>-<slug>`), which is pushed after each closed task. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model, effort and push setting the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
 → [docs/loop.md](docs/loop.md)
 
-> **smith provisions no service's credentials.** It places files and exports
-> environment variables. (The loop reads GitHub Issues through your own
-> authenticated `gh`, and holds no credential of its own.) A blueprint declaring
-> `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git
-> needs a credential helper for that, and smith will not notice. Clone over SSH
-> and place the key, or place the helper's config yourself.
+> **smith provisions no service's credentials.** It places files and exports environment variables. (The loop reads GitHub Issues through your own authenticated `gh`, and holds no credential of its own.) A blueprint declaring `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git needs a credential helper for that, and smith will not notice. Place the helper's config yourself, or clone over SSH and place the key: [a box that can clone and run the loop](docs/blueprints.md#a-box-that-can-clone-and-run-the-loop).
 
 ## Documentation
 

@@ -1,0 +1,38 @@
+# The smallest box that clones a private repo over https:// and runs the loop
+# with claude. docs/blueprints.md, "A box that can clone and run the loop",
+# says why each line is here; acme.yaml beside it clones over SSH instead.
+#
+# Copy it to ~/.smith/blueprints/loop-box.yaml, change the repo and the
+# secret paths, and check it before you build anything:
+#
+#     smith blueprint check loop-box
+
+# Box level, because the clone runs before any repo's own tools are in scope.
+# Each key is a mise registry name.
+tools:
+  gh: latest
+  claude: latest
+
+# Read from files on your machine when machine setup runs, never from your
+# shell. GH_TOKEN is a fine-grained token with contents and issues read/write
+# on the repos below; CLAUDE_CODE_OAUTH_TOKEN comes from `claude setup-token`.
+env:
+  GH_TOKEN: file:~/.secrets/loop-box/gh-token
+  CLAUDE_CODE_OAUTH_TOKEN: file:~/.secrets/loop-box/claude-token
+
+# The git config that hands https://github.com credentials to gh:
+#
+#   [credential "https://github.com"]
+#       helper =
+#       helper = !gh auth git-credential
+#
+# It goes at ~/.config/git/config, because the git identity owns ~/.gitconfig.
+placements:
+  - from: file:~/.secrets/loop-box/git-config
+    to: ~/.config/git/config
+    mode: converge
+    perms: "0644"
+
+repos:
+  - url: https://github.com/you/project.git
+    base: main

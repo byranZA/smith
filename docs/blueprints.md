@@ -15,6 +15,7 @@ Worked examples ship with smith and are checked by its test suite, so they
 cannot drift out of the schema:
 
 - [`docs/examples/blueprints/acme.yaml`](./examples/blueprints/acme.yaml)
+- [`docs/examples/blueprints/loop-box.yaml`](./examples/blueprints/loop-box.yaml) — the smallest box that clones a private repo and runs the loop
 - [`docs/examples/preferences.yaml`](./examples/preferences.yaml)
 - [`docs/examples/adapters/`](./examples/adapters/) — provider adapters on
   their own, explained field by field in [Provider adapters](./providers.md)
@@ -284,19 +285,62 @@ The concrete consequence, worth reading twice:
 > that variable; it needs a credential helper configured to use it. smith will
 > not notice, will not warn, and the clone will fail on the box.
 
-Two things that do work:
+What does work is worked end to end in the next section. Whichever path you take, the declaration is yours and it is visible in the blueprint. The first-run cost is real, and the docs and examples are how it is paid.
 
-- **Clone over SSH** (`git@github.com:acme/api.git`) and place the key with a
-  box placement to `~/.ssh/id_forge`, `perms: "0600"`. This is what the example
-  blueprint does.
-- **Place a credential helper's own config** — for example a
-  `~/.git-credentials` file, or a `~/.gitconfig` wiring up a helper — with a box
-  placement, and clone over `https://`. A `~/.gitconfig` placement cannot sit
-  beside a `git` identity (see [Validation is strict](#validation-is-strict)),
-  so put the identity in that file too.
+## A box that can clone and run the loop
 
-Either way the declaration is yours and it is visible in the blueprint. The
-first-run cost is real, and the example is how it is paid.
+A box that runs [the loop](./loop.md) on a private repo needs three things from its blueprint: a way for git to clone and push, a token `gh` can read the tracker with, and the agent's own credential. [`docs/examples/blueprints/loop-box.yaml`](./examples/blueprints/loop-box.yaml) is the whole of it, filled in; this section says why each line is there.
+
+### Default path: HTTPS and one token
+
+One token covers the clone, the push and the tracker. The SSH path needs a key and GitHub's host keys on top of that same token.
+
+- **The token** is a fine-grained personal access token on the blueprint's repos with **contents** and **issues**, both read/write. Add **pull requests** write only if a repo's own prompt has agents open PRs; the loop itself pushes work branches and never opens one. The loop only checks that it can read the tracker, so a token without write access first shows up at the first `smith:working` mark, not at setup.
+- **Declare it as `GH_TOKEN`** in box `env`, the variable `gh` reads first. It can't be confused with a `GITHUB_TOKEN` your own shell already holds.
+- **Never source it from `gh auth token`.** That puts your own broad token on the box in place of a narrow one chosen on purpose ([ADR-0009](./adr/0009-provisioned-secrets-sit-in-plaintext.md)).
+- **`gh` is a box-level tool** (`gh: latest` under `tools`). The clone runs as `mise exec -- git …` before any repo's own tools are in scope, so a `gh` declared on a repo isn't there yet. smith installs neither `gh` nor any agent unless the blueprint declares it.
+- **A placement wires git to `gh`.** git ignores `GH_TOKEN`; it needs a credential helper. Keep this file on your machine and place it at `~/.config/git/config`, which git reads beside `~/.gitconfig`. The [git identity](#validation-is-strict) owns `~/.gitconfig`, so a placement there is refused beside one.
+
+  ```ini
+  [credential "https://github.com"]
+      helper =
+      helper = !gh auth git-credential
+  ```
+
+  The empty `helper =` clears any helper set before it, so `gh` is the only one asked.
+
+**Prefer `file:` over `env:`** for the token and every other secret. An `env:VAR` reference takes whatever `VAR` holds in your shell when `machine setup` runs, and that fails silently in both directions:
+
+- **You forget to export the box's value.** If your shell already holds the variable for its own use, setup resolves *that* value with no error and stages it onto the box: usually a broader credential than the one meant for it.
+- **You source a file to set the box's values.** That terminal now carries the box's credentials instead of yours, and later commands in it run as the wrong identity.
+
+A `file:` reference depends on nothing in your shell, and the variable's name on the box is independent of anything on your machine. Keep `env:` for values you really mean to take from your current environment. The examples keep secrets under `~/.secrets/<blueprint>/`, outside the config home.
+
+How the token reaches each shell on the box is in [What a shell on the box gets](./on-box.md#what-a-shell-on-the-box-gets): a session holds it, and a `git push` typed in a plain SSH shell gets it through the `gh` shim.
+
+### The agent's credential
+
+The loop's agent is a box-level tool with its own credential:
+
+| Agent | `tools` key | Credential, and where it goes | How to get it |
+| --- | --- | --- | --- |
+| `claude` | `claude` | `CLAUDE_CODE_OAUTH_TOKEN` in box `env`; or `ANTHROPIC_API_KEY` | `claude setup-token` on your machine, for a subscription; or an API key from the Anthropic console |
+| `codex` | `codex` | your login file, placed `from: file:~/.codex/auth.json` `to: ~/.codex/auth.json`, `mode: once`, `perms: "0600"`; or `OPENAI_API_KEY` in box `env` | `codex login` on your machine, for a subscription; or an API key from the OpenAI platform |
+
+- **codex's login is placed with `mode: once`** because codex rewrites the file when it refreshes its token, and `converge` would overwrite that with your stale copy. The cost: setup never replaces the file, so to change the box's login, delete it on the box and run `machine setup` again.
+- **Whether one codex login can be shared** between your machine and the box across a token refresh hasn't been checked. A box-only login avoids the question: `CODEX_HOME=~/.secrets/personal/codex codex login`, then place that directory's `auth.json` instead.
+- **The model reaches whichever agent runs.** A repo file's `model: opus` is handed to codex as-is, so `--agent codex` needs its own `--model`.
+- Other adapters, such as `pi`, read their own credential; declare it the same way.
+- smith checks none of these. A bad credential first shows up when the loop's first agent fails.
+
+### Alternative path: SSH
+
+Clone over `git@github.com:…` instead, with two placements:
+
+- **A dedicated key** at `~/.ssh/id_ed25519`, `perms: "0600"`. ssh tries that name by default; a key at any other name needs an `ssh_config` entry too.
+- **GitHub's host keys** at `~/.ssh/known_hosts`, `mode: once`, or the first, non-interactive clone stops at the host-key prompt. Build the file from `ssh_keys` in `https://api.github.com/meta`, each line prefixed `github.com `, and check it against [GitHub's published fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints) rather than trusting a bare `ssh-keyscan`.
+
+The loop still reads the tracker through `gh`, so this path needs the token and box-level `gh` as well. [`acme.yaml`](./examples/blueprints/acme.yaml) clones over SSH.
 
 ## House style
 

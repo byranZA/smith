@@ -67,6 +67,25 @@ func referencesScheme(env map[string]string, scheme string) bool {
 	return false
 }
 
+func TestTheLoopBoxExampleClonesOverHTTPSThroughGh(t *testing.T) {
+	t.Parallel()
+	got, _, err := config.Load(config.NewHome(exampleHome), "loop-box")
+	if err != nil {
+		t.Fatalf("Load(example loop-box) err = %v, want nil", err)
+	}
+
+	switch {
+	case got.Tools["gh"] == "":
+		t.Errorf("loop-box tools = %v, want gh at box level", got.Tools)
+	case !strings.HasPrefix(got.Env["GH_TOKEN"], "file:"):
+		t.Errorf("loop-box GH_TOKEN = %q, want a file: reference", got.Env["GH_TOKEN"])
+	case len(got.Placements) != 1 || got.Placements[0].To != "~/.config/git/config":
+		t.Errorf("loop-box placements = %+v, want one at ~/.config/git/config", got.Placements)
+	case len(got.Repos) != 1 || !strings.HasPrefix(got.Repos[0].URL, "https://"):
+		t.Errorf("loop-box repos = %+v, want one https:// repo", got.Repos)
+	}
+}
+
 func TestTheShippedExamplePreferencesValidate(t *testing.T) {
 	t.Parallel()
 	got, err := config.LoadPreferences(config.NewHome(exampleHome))
