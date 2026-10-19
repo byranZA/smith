@@ -19,6 +19,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/byranZA/smith/internal/gitlock"
 )
 
 // errNoDefaultBranch is why Setup cannot cut a work branch when origin names
@@ -534,24 +536,17 @@ func (w Workbench) isAncestor(ctx context.Context, a, b string) (bool, error) {
 	}
 }
 
-// fetchAttempts bounds how many times fetch runs git when a concurrent fetch
-// keeps moving a remote-tracking ref under it.
-const fetchAttempts = 5
-
 // fetch fetches branch from origin into origin/<branch> and returns its tip
 // there, reading neither FETCH_HEAD nor anything else a concurrent fetch in the
 // clone could replace with another branch. It reruns a fetch that lost the race
 // to update origin/<branch> to a concurrent one.
 func (w Workbench) fetch(ctx context.Context, branch string) (string, error) {
 	tracking := "refs/remotes/origin/" + branch
-	for attempt := 1; ; attempt++ {
+	if err := gitlock.Retry(ctx, func() error {
 		_, err := w.run(ctx, w.dir, "fetch", "--quiet", "--no-write-fetch-head", "origin", "+"+branchRefPrefix+branch+":"+tracking)
-		if err == nil {
-			break
-		}
-		if attempt == fetchAttempts || !strings.Contains(err.Error(), "cannot lock ref") {
-			return "", fmt.Errorf("fetch origin's %s: %w", branch, err)
-		}
+		return err
+	}); err != nil {
+		return "", fmt.Errorf("fetch origin's %s: %w", branch, err)
 	}
 	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", tracking+"^{commit}")
 	if err != nil {

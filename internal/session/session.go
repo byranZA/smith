@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/byranZA/smith/internal/gitlock"
 	"github.com/byranZA/smith/internal/hint"
 )
 
@@ -352,23 +353,17 @@ func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
 	return remoteBase(ctx, env.Git, s.bare, base)
 }
 
-// fetchAttempts bounds how many times fetch runs git when a concurrent fetch
-// keeps moving a remote-tracking ref under it.
-const fetchAttempts = 5
-
 // fetch refreshes the repo's remote-tracking refs, which the unpushed count
 // reads, before a branch is cut. It reruns a fetch that lost the race to update
 // one of those refs to a concurrent fetch in the clone.
 func fetch(ctx context.Context, git Runner, bare, repo string) error {
-	for attempt := 1; ; attempt++ {
+	if err := gitlock.Retry(ctx, func() error {
 		_, err := run(ctx, git, "git", "-C", bare, "fetch")
-		if err == nil {
-			return nil
-		}
-		if attempt == fetchAttempts || !strings.Contains(err.Error(), "cannot lock ref") {
-			return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
-		}
+		return err
+	}); err != nil {
+		return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
 	}
+	return nil
 }
 
 // absentStatus is the status `git show-ref --verify` exits with for a ref the
