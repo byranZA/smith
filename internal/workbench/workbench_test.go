@@ -916,7 +916,7 @@ func TestSetupsStartedTogetherInOneCloneEachCutTheirWorkBranch(t *testing.T) {
 
 		for i, err := range errs {
 			if err != nil {
-				t.Fatalf("round %d: Setup() in worktree %d error = %v", round, i, err)
+				t.Fatalf("round %d: Setup(#%d in %s) error = %v, want nil", round, 100*round+i+1, trees[i], err)
 			}
 			branch := fmt.Sprintf("refs/heads/smith/%d-together", 100*round+i+1)
 			if got := git(t, clone, "rev-parse", branch); got != tip {
@@ -951,7 +951,7 @@ func TestSetupCutsAtItsBaseWhenAnotherFetchInTheCloneLandsBeforeItReadsTheTip(t 
 
 	bench, err := workbench.Setup(t.Context(), fetchedBetween{other: "release-2"}, bare, spec430)
 	if err != nil {
-		t.Fatalf("Setup() error = %v, want nil", err)
+		t.Fatalf("Setup(%+v in %s) error = %v, want nil", spec430, bare, err)
 	}
 
 	if got, tip := git(t, bare, "rev-parse", "refs/heads/"+bench.WorkBranch()), git(t, remote, "rev-parse", "main"); got != tip {

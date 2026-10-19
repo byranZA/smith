@@ -14,15 +14,29 @@ import (
 	"github.com/byranZA/smith/internal/workbench"
 )
 
-// together runs each of fns at the same time and returns their errors in order.
-func together(fns ...func() error) []error {
-	errs := make([]error, len(fns))
+// op is one operation a test runs alongside others, named for its failure message.
+type op struct {
+	name string
+	run  func() error
+}
+
+// together runs each of ops at the same time and fails the test for each that errs.
+func together(t *testing.T, round int, ops ...op) {
+	t.Helper()
+	errs := make([]error, len(ops))
 	var wg sync.WaitGroup
-	for i, fn := range fns {
-		wg.Go(func() { errs[i] = fn() })
+	for i, o := range ops {
+		wg.Go(func() { errs[i] = o.run() })
 	}
 	wg.Wait()
-	return errs
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("round %d: %s err = %v, want nil", round, ops[i].name, err)
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
 }
 
 // teammate returns a func that pushes a new commit to remote's main for each round.
@@ -36,12 +50,13 @@ func teammate(t *testing.T, remote string) func(round int) {
 	}
 }
 
-// sourceOf returns a SourceOf of the base on env's repo "smith" that answers only its error.
-func sourceOf(t *testing.T, env session.Env) func() error {
-	return func() error {
+// sourceOf returns the op that runs SourceOf for the base of env's repo "smith".
+func sourceOf(t *testing.T, env session.Env) op {
+	t.Helper()
+	return op{name: `SourceOf(repo "smith")`, run: func() error {
 		_, err := session.SourceOf(t.Context(), env, session.StartRequest{Repo: "smith"})
 		return err
-	}
+	}}
 }
 
 func TestSourceOfsStartedTogetherAllSucceed(t *testing.T) {
@@ -53,14 +68,8 @@ func TestSourceOfsStartedTogetherAllSucceed(t *testing.T) {
 	for round := range 5 {
 		push(round)
 
-		errs := together(sourceOf(t, env), sourceOf(t, env), sourceOf(t, env), sourceOf(t, env),
+		together(t, round, sourceOf(t, env), sourceOf(t, env), sourceOf(t, env), sourceOf(t, env),
 			sourceOf(t, env), sourceOf(t, env), sourceOf(t, env), sourceOf(t, env))
-
-		for i, err := range errs {
-			if err != nil {
-				t.Fatalf("round %d: SourceOf() %d err = %v", round, i, err)
-			}
-		}
 	}
 }
 
@@ -82,29 +91,23 @@ func TestSourceOfAndALoopSetupStartedTogetherBothSucceed(t *testing.T) {
 			commit(t, moving, fmt.Sprintf("round-%d-%d", round, i))
 			commits = append(commits, gitOut(t, moving, "rev-parse", "HEAD"))
 		}
-		moveOrigin := func() error {
+		moveOrigin := op{name: "push to origin's main", run: func() error {
 			for _, c := range commits {
 				if err := gitFails(t, moving, "push", "origin", c+":refs/heads/main"); err != nil {
 					return fmt.Errorf("push %s: %w", c, err)
 				}
 			}
 			return nil
-		}
-		setup := func(i int) func() error {
-			return func() error {
-				req := workbench.Request{Number: 10*round + i + 1, Title: "loop"}
+		}}
+		setup := func(i int) op {
+			req := workbench.Request{Number: 10*round + i + 1, Title: "loop"}
+			return op{name: fmt.Sprintf("Setup(#%d in %s)", req.Number, trees[i]), run: func() error {
 				_, err := workbench.Setup(t.Context(), connection.System(), trees[i], req)
 				return err
-			}
+			}}
 		}
 
-		errs := together(moveOrigin, sourceOf(t, env), setup(0), setup(1), sourceOf(t, env), setup(2), setup(3))
-
-		for i, err := range errs {
-			if err != nil {
-				t.Fatalf("round %d: fetch %d err = %v", round, i, err)
-			}
-		}
+		together(t, round, moveOrigin, sourceOf(t, env), setup(0), setup(1), sourceOf(t, env), setup(2), setup(3))
 	}
 }
 
@@ -137,7 +140,7 @@ func TestALoopSetupInTheBareCloneCutsAtItsBaseWhenASessionFetchesBeforeItReadsTh
 	bench, err := workbench.Setup(t.Context(), sessionFetchBetween{env: env, err: &sourceErr}, bare, req)
 
 	if err != nil || sourceErr != nil {
-		t.Fatalf("Setup() err = %v, SourceOf() err = %v; want nil, nil", err, sourceErr)
+		t.Fatalf("Setup(#1 on release-2 in %s) err = %v, SourceOf() between its fetch and tip read err = %v; want nil, nil", bare, err, sourceErr)
 	}
 	if got := gitOut(t, bare, "rev-parse", "refs/heads/"+bench.WorkBranch()); got != tip {
 		t.Errorf("%s = %s, want origin's release-2 %s", bench.WorkBranch(), got, tip)
