@@ -356,12 +356,9 @@ func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
 // keeps moving a remote-tracking ref under it.
 const fetchAttempts = 5
 
-// fetch refreshes the repo from its remote. It runs only where a branch is
-// about to be cut, and it also keeps the unpushed count honest: that count
-// reads the remote-tracking refs, so it is only as fresh as the last fetch.
-// Every checkout of the clone shares those refs, and a fetch that finds one
-// moved by another since it read it refuses to update it, so fetch runs again
-// on that refusal: the rerun reads the ref as the other fetch left it.
+// fetch refreshes the repo's remote-tracking refs, which the unpushed count
+// reads, before a branch is cut. It reruns a fetch that lost the race to update
+// one of those refs to a concurrent fetch in the clone.
 func fetch(ctx context.Context, git Runner, bare, repo string) error {
 	for attempt := 1; ; attempt++ {
 		_, err := run(ctx, git, "git", "-C", bare, "fetch")

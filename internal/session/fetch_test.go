@@ -25,8 +25,7 @@ func together(fns ...func() error) []error {
 	return errs
 }
 
-// teammate returns a push to remote's main of a new commit for each round, the
-// way a teammate moves the base on.
+// teammate returns a func that pushes a new commit to remote's main for each round.
 func teammate(t *testing.T, remote string) func(round int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -37,8 +36,7 @@ func teammate(t *testing.T, remote string) func(round int) {
 	}
 }
 
-// sourceOf is a SourceOf of the base on env's repo "smith" that answers only
-// with whether it failed.
+// sourceOf returns a SourceOf of the base on env's repo "smith" that answers only its error.
 func sourceOf(t *testing.T, env session.Env) func() error {
 	return func() error {
 		_, err := session.SourceOf(t.Context(), env, session.StartRequest{Repo: "smith"})
