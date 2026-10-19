@@ -120,18 +120,13 @@ phase_swap() {
 # it ensures, it does not assume: an apt-get update then an idempotent apt-get
 # install. It is fatal if any apt-get step fails. already-satisfied is read from
 # apt's own report of what it changed, so a re-run on a provisioned box is a
-# no-op. In tailscale mode curl + ca-certificates are ensured first so the repo
-# keyring can be fetched.
+# no-op. The base set carries curl + ca-certificates, so in tailscale mode the
+# repo keyring can be fetched once it is installed.
 phase_packages() {
   apt_update
 
-  local base_pkgs=("${BASE_PACKAGES[@]}")
-  if [ "$ACCESS" = "tailscale" ]; then
-    base_pkgs+=(curl ca-certificates)
-  fi
-
   local base_result ts_result="satisfied"
-  apt_install "${base_pkgs[@]}"
+  apt_install "${BASE_PACKAGES[@]}"
   base_result="$APT_RESULT"
 
   if [ "$ACCESS" = "tailscale" ]; then

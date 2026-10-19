@@ -1,8 +1,12 @@
 # apt: the base package set, the first-boot apt-lock wait every apt-get call
 # carries, and the Tailscale apt repo.
 
-# The base package set every box gets, regardless of access mode.
-BASE_PACKAGES=(fail2ban ufw unattended-upgrades)
+# The base package set every box gets, regardless of access mode or image: the
+# hardening packages, git for every repo and worktree step, tmux as the terminal
+# substrate, curl with ca-certificates for fetching mise's installer and the
+# Tailscale repo over HTTPS, and sudo for the smith user's passwordless-sudo
+# grant. A minimal image ships none of the last five.
+BASE_PACKAGES=(fail2ban ufw unattended-upgrades git tmux curl ca-certificates sudo)
 
 # APT_LOCK_TIMEOUT is the single hardcoded budget (seconds) for waiting out a busy
 # apt lock. On a freshly booted cloud image, cloud-init / unattended-upgrades holds
@@ -75,7 +79,7 @@ apt_install() {
 # ensure_tailscale_repo pins Tailscale's official apt repo for the box's Ubuntu
 # codename, using the binary .noarmor.gpg keyring so no gnupg is required. It is
 # check-before-change: an already-present keyring and sources list are left as
-# they are. It assumes curl and ca-certificates are already installed.
+# they are. It relies on the curl and ca-certificates in BASE_PACKAGES.
 ensure_tailscale_repo() {
   local codename="" base
   if [ -r /etc/os-release ]; then
