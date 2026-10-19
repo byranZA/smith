@@ -538,14 +538,14 @@ func (w Workbench) isAncestor(ctx context.Context, a, b string) (bool, error) {
 // keeps moving a remote-tracking ref under it.
 const fetchAttempts = 5
 
-// fetch fetches branch from origin and returns its tip there. It also moves
-// origin/<branch>, which every checkout of the clone shares, and a fetch that
-// finds that ref moved by another since it read it refuses to update it, so
-// fetch runs again on that refusal: the rerun reads the ref as the other fetch
-// left it.
+// fetch fetches branch from origin into origin/<branch> and returns its tip
+// there, reading neither FETCH_HEAD nor anything else a concurrent fetch in the
+// clone could replace with another branch. It reruns a fetch that lost the race
+// to update origin/<branch> to a concurrent one.
 func (w Workbench) fetch(ctx context.Context, branch string) (string, error) {
+	tracking := "refs/remotes/origin/" + branch
 	for attempt := 1; ; attempt++ {
-		_, err := w.run(ctx, w.dir, "fetch", "--quiet", "origin", branchRefPrefix+branch)
+		_, err := w.run(ctx, w.dir, "fetch", "--quiet", "--no-write-fetch-head", "origin", "+"+branchRefPrefix+branch+":"+tracking)
 		if err == nil {
 			break
 		}
@@ -553,7 +553,7 @@ func (w Workbench) fetch(ctx context.Context, branch string) (string, error) {
 			return "", fmt.Errorf("fetch origin's %s: %w", branch, err)
 		}
 	}
-	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", tracking+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("read origin's %s: %w", branch, err)
 	}

@@ -1,8 +1,11 @@
 package session_test
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
@@ -104,5 +107,41 @@ func TestSourceOfAndALoopSetupStartedTogetherBothSucceed(t *testing.T) {
 				t.Fatalf("round %d: fetch %d err = %v", round, i, err)
 			}
 		}
+	}
+}
+
+// sessionFetchBetween runs git for real, and after each fetch runs a SourceOf on env's repo "smith".
+type sessionFetchBetween struct {
+	env session.Env
+	err *error
+}
+
+func (f sessionFetchBetween) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := connection.System().Run(ctx, name, args, stdin, stdout, stderr); err != nil || !slices.Contains(args, "fetch") {
+		return err
+	}
+	_, *f.err = session.SourceOf(ctx, f.env, session.StartRequest{Repo: "smith"})
+	return nil
+}
+
+func TestALoopSetupInTheBareCloneCutsAtItsBaseWhenASessionFetchesBeforeItReadsTheTip(t *testing.T) {
+	t.Parallel()
+	env, remote := sourceEnv(t)
+	bare := filepath.Join(env.Workspace, "smith", "repo.git")
+	moving := t.TempDir()
+	git(t, moving, "clone", remote, moving)
+	git(t, moving, "push", "origin", "HEAD:refs/heads/release-2")
+	pushToOrigin(t, remote, "main")
+	tip := gitOut(t, moving, "rev-parse", "HEAD")
+	var sourceErr error
+
+	req := workbench.Request{Number: 1, Title: "loop", Base: "release-2"}
+	bench, err := workbench.Setup(t.Context(), sessionFetchBetween{env: env, err: &sourceErr}, bare, req)
+
+	if err != nil || sourceErr != nil {
+		t.Fatalf("Setup() err = %v, SourceOf() err = %v; want nil, nil", err, sourceErr)
+	}
+	if got := gitOut(t, bare, "rev-parse", "refs/heads/"+bench.WorkBranch()); got != tip {
+		t.Errorf("%s = %s, want origin's release-2 %s", bench.WorkBranch(), got, tip)
 	}
 }
