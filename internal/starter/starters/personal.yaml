@@ -5,33 +5,51 @@
 #     smith blueprint check personal
 #     smith machine setup <login>@<host> --blueprint personal
 #
+# Uncomment a whole block, its section key included. A value uncommented
+# without the key above it becomes an unknown top-level field.
+#
 # Your preferences.yaml holds what follows you from box to box. The keys here
 # are the ones only a blueprint declares. A fixed key such as access or git may
 # also be declared here, and then overrides your preferences for this box.
 #
 # A filled-in example is in the smith docs at docs/examples/blueprints/acme.yaml.
+# What a box needs to clone a private repo and run the loop is in
+# docs/blueprints.md, "A box that can clone and run the loop".
 
 # System packages, installed unversioned from apt.
 # packages:
 #   - ripgrep
 
-# Version-pinned runtimes for the whole box.
+# Version-pinned runtimes for the whole box. Each key is a mise registry name
+# (find one with `mise registry | grep <tool>`). The loop's agent and gh belong
+# here, at box level: the clone runs before any repo's own tools are in scope.
 # tools:
-#   node: "20"
+#   gh: latest
+#   claude: latest
 
-# Box-wide environment variables. Each value is a reference to where the value
+# Box-wide environment variables. Uncomment env: with them. Each key is the
+# variable's name on the box. Each value is a reference to where the value
 # lives, never the value itself: env:VAR reads your environment, file:PATH
-# reads a file on your machine, literal:TEXT is the text itself.
+# reads a file on your machine, literal:TEXT is the text itself. References
+# are resolved on your machine when machine setup runs; blueprint check lists
+# any that won't resolve but still exits 0.
+#
+# Prefer file: for secrets. env: takes whatever your shell holds at setup, so
+# a forgotten export can silently put your own token on the box instead.
+# GH_TOKEN is the token gh and the loop use; the agent needs its own credential.
 # env:
-#   GITHUB_TOKEN: env:GH_TOKEN
+#   GH_TOKEN: file:~/.secrets/personal/gh-token
+#   CLAUDE_CODE_OAUTH_TOKEN: file:~/.secrets/personal/claude-token
 
 # Files placed on the box. mode is converge (replace on every pass, the
 # default) or once (write only if absent); perms is a quoted octal file mode.
+# This one wires git's https:// credentials to gh. It goes at
+# ~/.config/git/config, because the git identity owns ~/.gitconfig.
 # placements:
-#   - from: file:~/.ssh/id_forge
-#     to: ~/.ssh/id_forge
+#   - from: file:~/.secrets/personal/git-config
+#     to: ~/.config/git/config
 #     mode: converge
-#     perms: "0600"
+#     perms: "0644"
 
 # The repositories this box carries, each cloned into the workspace. name
 # defaults to the last segment of the url; tools, env and placements override
@@ -39,7 +57,7 @@
 # relative to its worktree.
 # repos:
 #   - name: project
-#     url: git@github.com:you/project.git
+#     url: https://github.com/you/project.git
 #     base: main
 #     tools:
 #       node: "22"

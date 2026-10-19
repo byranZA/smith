@@ -2,9 +2,9 @@ package blueprint
 
 import "fmt"
 
-// gitconfigPath is the file git reads a box-wide identity from. Git reads it
-// or ~/.config/git/config and never both, so this is the one path the
-// identity fields and a box placement can collide on.
+// gitconfigPath is the file smith writes a box-wide identity to. Git reads it
+// beside ~/.config/git/config, so this is the one path the identity fields and
+// a box placement can collide on.
 const gitconfigPath = "~/.gitconfig"
 
 // GitConflicts refuses an identity and a box placement that would both claim

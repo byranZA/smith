@@ -88,7 +88,8 @@ each value.
 `smith init` writes commented starters for both.
 → [docs/blueprints.md](docs/blueprints.md), a worked
 [blueprint](docs/examples/blueprints/acme.yaml) and
-[preferences](docs/examples/preferences.yaml)
+[preferences](docs/examples/preferences.yaml), and
+[a box that can clone and run the loop](docs/blueprints.md#a-box-that-can-clone-and-run-the-loop)
 
 **Making the box too.** Describe your provider's own CLI as data in a `provider`
 block and `smith machine create dev --blueprint acme` creates the box and waits
@@ -138,8 +139,9 @@ dev` converges the box to *your* version — including backwards. `smith update`
 > environment variables. (The loop reads GitHub Issues through your own
 > authenticated `gh`, and holds no credential of its own.) A blueprint declaring
 > `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git
-> needs a credential helper for that, and smith will not notice. Clone over SSH
-> and place the key, or place the helper's config yourself.
+> needs a credential helper for that, and smith will not notice. Place the
+> helper's config yourself, or clone over SSH and place the key:
+> [a box that can clone and run the loop](docs/blueprints.md#a-box-that-can-clone-and-run-the-loop).
 
 ## Documentation
 
