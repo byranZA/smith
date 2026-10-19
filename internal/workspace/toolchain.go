@@ -308,13 +308,60 @@ func ensureMise(ctx context.Context, run Runner, install string, progress io.Wri
 	}
 	script := fmt.Sprintf("curl -fsSL %s | MISE_INSTALL_PATH=%s sh",
 		connection.ShellArg(installer), connection.ShellArg(install))
-	if err := run.Run(ctx, "sh", []string{"-c", script}, nil, progress, progress); err != nil {
+	relay := &withoutAdvice{w: progress}
+	err := run.Run(ctx, "sh", []string{"-c", script}, nil, relay, relay)
+	if flushErr := relay.flush(); err == nil && flushErr != nil {
+		return "", nil, flushErr
+	}
+	if err != nil {
 		return "", nil, fmt.Errorf("install mise from %s: %w", installer, err)
 	}
 	if !invocable(ctx, run, install) {
 		return "", nil, fmt.Errorf("mise is still not invocable at %s after installing it", install)
 	}
 	return install, []string{"installed mise at " + install}, nil
+}
+
+// withoutAdvice relays the mise installer's output to w line by line, less its
+// advice to activate mise in a shell, which smith's own shell setup makes wrong.
+type withoutAdvice struct {
+	w       io.Writer
+	pending []byte
+}
+
+// Write relays each whole line p completes and holds back the rest until the
+// next write or flush.
+func (a *withoutAdvice) Write(p []byte) (int, error) {
+	a.pending = append(a.pending, p...)
+	for {
+		end := bytes.IndexByte(a.pending, '\n')
+		if end < 0 {
+			return len(p), nil
+		}
+		line := a.pending[:end+1]
+		a.pending = a.pending[end+1:]
+		if err := a.relay(line); err != nil {
+			return len(p), err
+		}
+	}
+}
+
+// flush relays whatever the installer printed after its last newline.
+func (a *withoutAdvice) flush() error {
+	line := a.pending
+	a.pending = nil
+	return a.relay(line)
+}
+
+// relay writes line to w unless it is the activate advice.
+func (a *withoutAdvice) relay(line []byte) error {
+	if len(line) == 0 || bytes.Contains(line, []byte(" activate ")) {
+		return nil
+	}
+	if _, err := a.w.Write(line); err != nil {
+		return fmt.Errorf("relay the mise installer's output: %w", err)
+	}
+	return nil
 }
 
 // invocable reports whether mise answers at the given command. A box that has

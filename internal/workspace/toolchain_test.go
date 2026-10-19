@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -808,5 +809,86 @@ func TestConvergeProvesMiseOnce(t *testing.T) {
 	}
 	if probes != 1 {
 		t.Errorf("the stage probed mise %d times, want the one proof the run shares: %v", probes, box.calls)
+	}
+}
+
+// installerRun is mise's installer output under bash for /home/smith/.local/bin/mise, its advice included.
+const installerRun = "mise: installing mise...\n" +
+	"mise: installed successfully to /home/smith/.local/bin/mise\n" +
+	"mise: run the following to activate mise in your shell:\n" +
+	"echo \"eval \\\"\\$(/home/smith/.local/bin/mise activate bash)\\\"\" >> ~/.bashrc\n" +
+	"\n" +
+	"mise: run `mise doctor` to verify this is set up correctly\n"
+
+func TestConvergeDropsTheInstallersActivateAdvice(t *testing.T) {
+	t.Parallel()
+	box := &fakeBox{installed: map[string]bool{}, installerOutput: installerRun}
+
+	_, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+
+	for _, advice := range []string{
+		"mise: run the following to activate mise in your shell:\n",
+		"echo \"eval \\\"\\$(/home/smith/.local/bin/mise activate bash)\\\"\" >> ~/.bashrc\n",
+	} {
+		if strings.Contains(progress, advice) {
+			t.Errorf("progress = %q, want no %q — smith sets up the shell itself", progress, advice)
+		}
+	}
+}
+
+func TestConvergeRelaysTheInstallersOtherOutput(t *testing.T) {
+	t.Parallel()
+	box := &fakeBox{installed: map[string]bool{}, installerOutput: installerRun}
+
+	_, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+
+	want := "mise: installing mise...\n" +
+		"mise: installed successfully to /home/smith/.local/bin/mise\n" +
+		"\n" +
+		"mise: run `mise doctor` to verify this is set up correctly\n"
+	if !strings.Contains(progress, want) {
+		t.Errorf("progress = %q, want the installer's other lines %q", progress, want)
+	}
+}
+
+func TestConvergeReportsAFailedMiseInstallWithItsOutput(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("exit status 22")
+	box := &fakeBox{
+		installed:       map[string]bool{},
+		installerOutput: "mise: installing mise...\ncurl: (22) The requested URL returned error: 503",
+		miseErr:         cause,
+	}
+
+	result, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+
+	if !strings.Contains(progress, "mise: installing mise...\ncurl: (22) The requested URL returned error: 503") {
+		t.Errorf("progress = %q, want the failed installer's output", progress)
+	}
+	var got error
+	for _, o := range result.Outcomes {
+		if o.Err != nil {
+			got = o.Err
+		}
+	}
+	if !errors.Is(got, cause) {
+		t.Errorf("the failed step's error = %v, want it to wrap %v", got, cause)
+	}
+	if got == nil || !strings.Contains(got.Error(), "install mise from") {
+		t.Errorf("the failed step's error = %v, want it to say the mise install failed", got)
+	}
+}
+
+func TestConvergeRunsNoInstallerWhenMiseIsInvocable(t *testing.T) {
+	t.Parallel()
+	box := &fakeBox{installed: map[string]bool{}, hasMise: true, installerOutput: installerRun}
+
+	_, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
+
+	if box.ran("mise.run") {
+		t.Errorf("the stage ran %v, want no installer on a box whose mise answers", box.calls)
+	}
+	if strings.Contains(progress, "mise: installing mise...") {
+		t.Errorf("progress = %q, want no installer output", progress)
 	}
 }

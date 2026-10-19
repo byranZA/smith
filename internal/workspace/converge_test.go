@@ -32,6 +32,8 @@ type fakeBox struct {
 	miseAt string
 	// miseErr fails the mise commands the way a box with no network does.
 	miseErr error
+	// installerOutput is what mise's install script prints on stderr as it runs.
+	installerOutput string
 	// remotes is the url each bare clone on the box was cloned from, keyed by
 	// the clone's path, which is what a repo's remote is probed for.
 	remotes map[string]string
@@ -115,6 +117,9 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, stdin io.Re
 		return f.install(argv[len(argv)-1], stdin)
 	case strings.Contains(line, "mise.run"):
 		f.miseAt = installPath(line)
+		if _, err := io.WriteString(stderr, f.installerOutput); err != nil {
+			return fmt.Errorf("write canned installer output: %w", err)
+		}
 		return f.miseErr
 	case isMise(name):
 		if !f.holdsMise(name) {
