@@ -534,10 +534,24 @@ func (w Workbench) isAncestor(ctx context.Context, a, b string) (bool, error) {
 	}
 }
 
-// fetch fetches branch from origin and returns its tip there.
+// fetchAttempts bounds how many times fetch runs git when a concurrent fetch
+// keeps moving a remote-tracking ref under it.
+const fetchAttempts = 5
+
+// fetch fetches branch from origin and returns its tip there. It also moves
+// origin/<branch>, which every checkout of the clone shares, and a fetch that
+// finds that ref moved by another since it read it refuses to update it, so
+// fetch runs again on that refusal: the rerun reads the ref as the other fetch
+// left it.
 func (w Workbench) fetch(ctx context.Context, branch string) (string, error) {
-	if _, err := w.run(ctx, w.dir, "fetch", "--quiet", "origin", branchRefPrefix+branch); err != nil {
-		return "", fmt.Errorf("fetch origin's %s: %w", branch, err)
+	for attempt := 1; ; attempt++ {
+		_, err := w.run(ctx, w.dir, "fetch", "--quiet", "origin", branchRefPrefix+branch)
+		if err == nil {
+			break
+		}
+		if attempt == fetchAttempts || !strings.Contains(err.Error(), "cannot lock ref") {
+			return "", fmt.Errorf("fetch origin's %s: %w", branch, err)
+		}
 	}
 	tip, err := w.run(ctx, w.dir, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
 	if err != nil {

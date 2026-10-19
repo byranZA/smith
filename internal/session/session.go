@@ -352,14 +352,26 @@ func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
 	return remoteBase(ctx, env.Git, s.bare, base)
 }
 
+// fetchAttempts bounds how many times fetch runs git when a concurrent fetch
+// keeps moving a remote-tracking ref under it.
+const fetchAttempts = 5
+
 // fetch refreshes the repo from its remote. It runs only where a branch is
 // about to be cut, and it also keeps the unpushed count honest: that count
 // reads the remote-tracking refs, so it is only as fresh as the last fetch.
+// Every checkout of the clone shares those refs, and a fetch that finds one
+// moved by another since it read it refuses to update it, so fetch runs again
+// on that refusal: the rerun reads the ref as the other fetch left it.
 func fetch(ctx context.Context, git Runner, bare, repo string) error {
-	if _, err := run(ctx, git, "git", "-C", bare, "fetch"); err != nil {
-		return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
+	for attempt := 1; ; attempt++ {
+		_, err := run(ctx, git, "git", "-C", bare, "fetch")
+		if err == nil {
+			return nil
+		}
+		if attempt == fetchAttempts || !strings.Contains(err.Error(), "cannot lock ref") {
+			return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
+		}
 	}
-	return nil
 }
 
 // absentStatus is the status `git show-ref --verify` exits with for a ref the

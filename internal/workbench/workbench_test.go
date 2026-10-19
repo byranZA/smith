@@ -3,12 +3,14 @@ package workbench_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -885,5 +887,41 @@ func TestAheadOfATaskWithNoBranchIsAnError(t *testing.T) {
 
 	if got, err := bench.Ahead(t.Context(), 431); err == nil {
 		t.Errorf("Ahead(431) = %d, nil, want an error for a task branch that does not exist", got)
+	}
+}
+
+func TestSetupsStartedTogetherInOneCloneEachCutTheirWorkBranch(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	later := filepath.Join(t.TempDir(), "later")
+	git(t, filepath.Dir(later), "clone", remote, later)
+	trees := make([]string, 8)
+	for i := range trees {
+		trees[i] = filepath.Join(t.TempDir(), "tree")
+		git(t, clone, "worktree", "add", "--detach", trees[i])
+	}
+
+	for round := range 5 {
+		tip := commitIn(t, later, fmt.Sprintf("round-%d.txt", round))
+		git(t, later, "push", "origin", "main")
+		errs := make([]error, len(trees))
+		var wg sync.WaitGroup
+		for i, tree := range trees {
+			wg.Go(func() {
+				req := workbench.Request{Number: 100*round + i + 1, Title: "together"}
+				_, errs[i] = workbench.Setup(t.Context(), connection.System(), tree, req)
+			})
+		}
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: Setup() in worktree %d error = %v", round, i, err)
+			}
+			branch := fmt.Sprintf("refs/heads/smith/%d-together", 100*round+i+1)
+			if got := git(t, clone, "rev-parse", branch); got != tip {
+				t.Errorf("round %d: %s = %s, want origin's main %s", round, branch, got, tip)
+			}
+		}
 	}
 }
