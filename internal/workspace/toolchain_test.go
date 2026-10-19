@@ -812,8 +812,7 @@ func TestConvergeProvesMiseOnce(t *testing.T) {
 	}
 }
 
-// installerRun is what mise's install script prints installing to
-// /home/smith/.local/bin/mise under bash, its shell advice included.
+// installerRun is mise's installer output under bash for /home/smith/.local/bin/mise, its advice included.
 const installerRun = "mise: installing mise...\n" +
 	"mise: installed successfully to /home/smith/.local/bin/mise\n" +
 	"mise: run the following to activate mise in your shell:\n" +
@@ -822,6 +821,7 @@ const installerRun = "mise: installing mise...\n" +
 	"mise: run `mise doctor` to verify this is set up correctly\n"
 
 func TestConvergeDropsTheInstallersActivateAdvice(t *testing.T) {
+	t.Parallel()
 	box := &fakeBox{installed: map[string]bool{}, installerOutput: installerRun}
 
 	_, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
@@ -837,6 +837,7 @@ func TestConvergeDropsTheInstallersActivateAdvice(t *testing.T) {
 }
 
 func TestConvergeRelaysTheInstallersOtherOutput(t *testing.T) {
+	t.Parallel()
 	box := &fakeBox{installed: map[string]bool{}, installerOutput: installerRun}
 
 	_, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
@@ -851,6 +852,7 @@ func TestConvergeRelaysTheInstallersOtherOutput(t *testing.T) {
 }
 
 func TestConvergeReportsAFailedMiseInstallWithItsOutput(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("exit status 22")
 	box := &fakeBox{
 		installed:       map[string]bool{},
@@ -878,6 +880,7 @@ func TestConvergeReportsAFailedMiseInstallWithItsOutput(t *testing.T) {
 }
 
 func TestConvergeRunsNoInstallerWhenMiseIsInvocable(t *testing.T) {
+	t.Parallel()
 	box := &fakeBox{installed: map[string]bool{}, hasMise: true, installerOutput: installerRun}
 
 	_, progress := convergeOnBox(t, box, t.TempDir(), blueprint.Blueprint{Tools: map[string]string{"node": "20"}})
