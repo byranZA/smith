@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/byranZA/smith/internal/gitlock"
 	"github.com/byranZA/smith/internal/hint"
 )
 
@@ -352,11 +353,14 @@ func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
 	return remoteBase(ctx, env.Git, s.bare, base)
 }
 
-// fetch refreshes the repo from its remote. It runs only where a branch is
-// about to be cut, and it also keeps the unpushed count honest: that count
-// reads the remote-tracking refs, so it is only as fresh as the last fetch.
+// fetch refreshes the repo's remote-tracking refs, which the unpushed count
+// reads, before a branch is cut. It reruns a fetch that lost the race to update
+// one of those refs to a concurrent fetch in the clone.
 func fetch(ctx context.Context, git Runner, bare, repo string) error {
-	if _, err := run(ctx, git, "git", "-C", bare, "fetch"); err != nil {
+	if err := gitlock.Retry(ctx, func() error {
+		_, err := run(ctx, git, "git", "-C", bare, "fetch")
+		return err
+	}); err != nil {
 		return fmt.Errorf("fetch the repo %q at %s before cutting a branch: %w", repo, bare, err)
 	}
 	return nil

@@ -3,12 +3,14 @@ package workbench_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -885,5 +887,113 @@ func TestAheadOfATaskWithNoBranchIsAnError(t *testing.T) {
 
 	if got, err := bench.Ahead(t.Context(), 431); err == nil {
 		t.Errorf("Ahead(431) = %d, nil, want an error for a task branch that does not exist", got)
+	}
+}
+
+func TestSetupsStartedTogetherInOneCloneEachCutTheirWorkBranch(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	later := filepath.Join(t.TempDir(), "later")
+	git(t, filepath.Dir(later), "clone", remote, later)
+	trees := make([]string, 8)
+	for i := range trees {
+		trees[i] = filepath.Join(t.TempDir(), "tree")
+		git(t, clone, "worktree", "add", "--detach", trees[i])
+	}
+
+	for round := range 5 {
+		tip := commitIn(t, later, fmt.Sprintf("round-%d.txt", round))
+		git(t, later, "push", "origin", "main")
+		errs := make([]error, len(trees))
+		var wg sync.WaitGroup
+		for i, tree := range trees {
+			wg.Go(func() {
+				req := workbench.Request{Number: 100*round + i + 1, Title: "together"}
+				_, errs[i] = workbench.Setup(t.Context(), connection.System(), tree, req)
+			})
+		}
+		wg.Wait()
+
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: Setup(#%d in %s) error = %v, want nil", round, 100*round+i+1, trees[i], err)
+			}
+			branch := fmt.Sprintf("refs/heads/smith/%d-together", 100*round+i+1)
+			if got := git(t, clone, "rev-parse", branch); got != tip {
+				t.Errorf("round %d: %s = %s, want origin's main %s", round, branch, got, tip)
+			}
+		}
+	}
+}
+
+// fetchedBetween runs git for real, and after each fetch runs another of origin's other in the same directory.
+type fetchedBetween struct {
+	other string
+}
+
+func (f fetchedBetween) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := connection.System().Run(ctx, name, args, stdin, stdout, stderr); err != nil || !slices.Contains(args, "fetch") {
+		return err
+	}
+	dir := args[slices.Index(args, "-C")+1]
+	return connection.System().Run(ctx, "git", []string{"-C", dir, "fetch", "--quiet", "origin", "refs/heads/" + f.other}, nil, io.Discard, io.Discard)
+}
+
+func TestSetupCutsAtItsBaseWhenAnotherFetchInTheCloneLandsBeforeItReadsTheTip(t *testing.T) {
+	t.Parallel()
+	_, remote := cloned(t)
+	bare := filepath.Join(t.TempDir(), "repo.git")
+	git(t, filepath.Dir(bare), "clone", "--bare", remote, bare)
+	later := filepath.Join(t.TempDir(), "later")
+	git(t, filepath.Dir(later), "clone", remote, later)
+	git(t, later, "commit", "--allow-empty", "-m", "on release-2")
+	git(t, later, "push", "origin", "HEAD:refs/heads/release-2")
+
+	bench, err := workbench.Setup(t.Context(), fetchedBetween{other: "release-2"}, bare, spec430)
+	if err != nil {
+		t.Fatalf("Setup(%+v in %s) error = %v, want nil", spec430, bare, err)
+	}
+
+	if got, tip := git(t, bare, "rev-parse", "refs/heads/"+bench.WorkBranch()), git(t, remote, "rev-parse", "main"); got != tip {
+		t.Errorf("%s = %s, want origin's main %s", bench.WorkBranch(), got, tip)
+	}
+}
+
+func TestSetupsStartedTogetherInABareCloneEachCutAtTheirBase(t *testing.T) {
+	t.Parallel()
+	_, remote := cloned(t)
+	bare := filepath.Join(t.TempDir(), "repo.git")
+	git(t, filepath.Dir(bare), "clone", "--bare", remote, bare)
+	later := filepath.Join(t.TempDir(), "later")
+	git(t, filepath.Dir(later), "clone", remote, later)
+	bases := []string{"main", "release-2"}
+
+	for round := range 5 {
+		tips := map[string]string{}
+		for _, base := range bases {
+			git(t, later, "commit", "--allow-empty", "-m", fmt.Sprintf("round %d on %s", round, base))
+			git(t, later, "push", "--force", "origin", "HEAD:refs/heads/"+base)
+			tips[base] = git(t, later, "rev-parse", "HEAD")
+		}
+		reqs := make([]workbench.Request, 8)
+		for i := range reqs {
+			reqs[i] = workbench.Request{Number: 100*round + i + 1, Title: "together", Base: bases[i%len(bases)]}
+		}
+		errs := make([]error, len(reqs))
+		var wg sync.WaitGroup
+		for i, req := range reqs {
+			wg.Go(func() { _, errs[i] = workbench.Setup(t.Context(), connection.System(), bare, req) })
+		}
+		wg.Wait()
+
+		for i, req := range reqs {
+			if errs[i] != nil {
+				t.Fatalf("round %d: Setup(#%d on %s) error = %v, want nil", round, req.Number, req.Base, errs[i])
+			}
+			branch := fmt.Sprintf("refs/heads/smith/%d-together", req.Number)
+			if got := git(t, bare, "rev-parse", branch); got != tips[req.Base] {
+				t.Errorf("round %d: %s = %s, want origin's %s %s", round, branch, got, req.Base, tips[req.Base])
+			}
+		}
 	}
 }
