@@ -8,14 +8,8 @@ import (
 	"testing"
 )
 
-// TestScriptPackagesInstallWhatSmithRunsOnAMinimalImage runs setup in public
-// mode, the access mode that adds no packages of its own, and checks the
-// packages phase installs what the rest of smith runs on: git for every repo
-// and worktree step, tmux as the terminal substrate, and curl with
-// ca-certificates for fetching mise's installer over HTTPS, and sudo for the
-// smith user's passwordless-sudo grant. A minimal image such as Docker's
-// ubuntu:24.04 ships none of them.
 func TestScriptPackagesInstallWhatSmithRunsOnAMinimalImage(t *testing.T) {
+	t.Parallel()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash not available")
