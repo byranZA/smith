@@ -174,11 +174,12 @@ declaration site for every credential on the box.
   future effort. Passwordless sudo makes every half-measure a speed bump wearing a boundary's
   clothes. A contributor is most likely to break this by adding exactly such a half-measure;
   stating the non-goal is what makes that reviewable.
-- **A key-in-file scheme** (`dotenv:~/.secrets/api.env#GITHUB_TOKEN`) — deferred. It makes smith
-  parse dotenv format, which is deceptively ambiguous (`export` prefixes, quoting, multiline
-  values), and operators who keep secrets in files overwhelmingly already run something that puts
-  them in the environment. Additive later via the same clean-room slot. See the consequence below
-  for the gap it leaves.
+- **A key-in-file scheme** (`dotenv:~/.secrets/api.env#GITHUB_TOKEN`) — rejected (#296, see
+  [`.out-of-scope/dotenv-reference-scheme.md`](../../.out-of-scope/dotenv-reference-scheme.md)).
+  It makes smith parse dotenv format, which is deceptively ambiguous (`export` prefixes, quoting,
+  multiline values), for what is only a convenience over one `file:` per secret. The intended
+  route to many secrets in one place is a secret-manager scheme in the same clean-room slot. See
+  the consequence below for the gap it leaves.
 - **Splitting `env` into a references map and a plain-values map** — rejected. It doubles the
   schema surface and asks the operator to classify every variable, which they will get wrong in
   the direction that hurts.
