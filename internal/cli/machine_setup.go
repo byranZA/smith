@@ -597,14 +597,16 @@ func smithTarget(host string) string { return smithLogin + "@" + host }
 
 // registeredReport renders a successful setup's registration: the rename when
 // the entry moved, the name and target the box answers to, and the commands to
-// reach it by. Its re-run line adds --blueprint when none was staged and --name
-// when the box is named after its host.
+// reach it by. Its re-run line always carries --blueprint, naming the staged
+// one since a box built from a blueprint refuses a re-run without it, and adds
+// --name when the box is named after its host.
 func registeredReport(names inventory.Naming, target, moved string) string {
 	name, _ := inventory.Name(names)
-	setup := "smith machine setup " + name
-	if names.Blueprint == "" {
-		setup += " --blueprint <blueprint>"
+	blueprint := names.Blueprint
+	if blueprint == "" {
+		blueprint = "<blueprint>"
 	}
+	setup := "smith machine setup " + name + " --blueprint " + blueprint
 	if inventory.HostNamed(names) {
 		setup += " --name <name>"
 	}

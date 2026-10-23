@@ -151,7 +151,7 @@ registered smith@100.92.14.7 as "b"
 
 Reach it by name from now on:
   smith machine status b
-  smith machine setup b
+  smith machine setup b --blueprint go-dev
 `
 	if stdout != want {
 		t.Errorf("rename a b stdout = %q, want %q", stdout, want)

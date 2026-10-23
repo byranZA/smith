@@ -713,7 +713,7 @@ func TestSetupOfABoxNamedAfterItsHostSuggestsNamingIt(t *testing.T) {
 			name:   "a re-run whose marker recorded the host",
 			marker: `{"schema_version":2,"access_mode":"public","name":"203.0.113.10"}`,
 			args:   []string{"--blueprint", "acme", "root@203.0.113.10"},
-			want:   "  smith machine setup 203.0.113.10 --name <name>\n",
+			want:   "  smith machine setup 203.0.113.10 --blueprint acme --name <name>\n",
 		},
 	}
 	for _, tt := range tests {
@@ -734,7 +734,7 @@ func TestSetupOfABoxNamedAfterItsHostSuggestsNamingIt(t *testing.T) {
 	}
 }
 
-func TestSetupWithABlueprintAndANameReportsTheRegistrationAsBefore(t *testing.T) {
+func TestSetupWithABlueprintAndANameSuggestsARunThatNamesTheBlueprint(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: public\n")
@@ -748,7 +748,7 @@ func TestSetupWithABlueprintAndANameReportsTheRegistrationAsBefore(t *testing.T)
 
 Reach it by name from now on:
   smith machine status dev
-  smith machine setup dev
+  smith machine setup dev --blueprint acme
 `
 	if !strings.HasSuffix(stdout, "✓ workspace\n"+want) {
 		t.Errorf("stdout = %q, want it to end with exactly %q", stdout, want)
