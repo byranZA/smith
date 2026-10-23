@@ -109,10 +109,10 @@ git tag -a <tag> -m "smith <tag>"
 git push origin <tag>
 ```
 
-Watch the release workflow (`gh run watch`). When it finishes, put the notes at the top of the release body, keeping the generated changelog below them:
+Watch the release workflow (`gh run watch`). When it finishes, put the notes at the top of the release body, keeping the generated changelog below them. The notes link the docs relatively (`../loop.md#x`), which resolves in the repo but breaks on the release page, so rewrite each link into an absolute URL pinned to the tag; the notes file in the repo keeps its relative links:
 
 ```sh
-{ cat docs/releases/<target>.md; echo; gh release view <tag> --json body -q .body; } > "$TMPDIR/notes.md"
+{ sed -E 's#\]\(\.\./#](https://github.com/byranZA/smith/blob/<tag>/docs/#g' docs/releases/<target>.md; echo; gh release view <tag> --json body -q .body; } > "$TMPDIR/notes.md"
 gh release edit <tag> --notes-file "$TMPDIR/notes.md"
 ```
 
@@ -124,5 +124,12 @@ Prove the published release is the one the docs describe:
 - `shasum -a 256 -c checksums.txt --ignore-missing` against the downloaded archive passes.
 - `gh attestation verify <archive> --repo byranZA/smith` passes.
 - `gh release view <tag>` shows the notes, the five archives plus `checksums.txt`, and the right pre-release flag.
+- The release body links the docs at the tag: no relative `](../` link is left, and every linked doc path exists at the tag. Both commands print nothing on a pass:
+
+  ```sh
+  gh release view <tag> --json body -q .body > "$TMPDIR/body.md"
+  grep -n '](\.\./' "$TMPDIR/body.md"
+  grep -oE 'byranZA/smith/blob/<tag>/[^)#]+' "$TMPDIR/body.md" | sed 's#^byranZA/smith/blob/<tag>/##' | sort -u | while read -r p; do git cat-file -e "<tag>:$p" 2>/dev/null || echo "missing at <tag>: $p"; done
+  ```
 
 **Done when** each check passed — report each one's result to the user. A failure is reported, not retried around: a bad release is fixed with a new tag, never by moving one.
