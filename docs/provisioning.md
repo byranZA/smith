@@ -3,7 +3,7 @@
 `smith machine setup` takes a fresh box and makes it a secure, reachable
 development machine: it creates a `smith` user with your SSH key, enables a
 default-deny firewall, hardens SSH (no root login, no passwords), and turns on
-fail2ban and automatic security updates. It then installs smith itself onto the
+fail2ban and automatic security updates. Its `packages` phase also installs what every box needs whatever its image: `git`, `tmux`, `curl`, `ca-certificates` and `sudo`. It then installs smith itself onto the
 box and converges the workspace its blueprint declares.
 
 Re-running is safe — every step checks before it changes anything.

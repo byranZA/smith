@@ -337,7 +337,7 @@ _Avoid_: variable, parameter, interpolation.
 
 **Control surface / relay**:
 The operator's local smith after bootstrap: it holds the box inventory and the config home, and it
-**relays** the session and workspace verbs over SSH to the smith installed on the box rather than
+**relays** the session and workspace verbs, and `loop run <box>`, over SSH to the smith installed on the box rather than
 reimplementing them. One implementation of every verb, identical to what an operator gets by SSHing
 in and typing `smith` ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)).
 _Avoid_: client, remote execution, agent.
@@ -446,6 +446,10 @@ _Avoid_: ticket, job, step.
 An agent run that the agent CLI itself ends in failure, as opposed to a **failed attempt**, which is any run that leaves its task open. It says the agent may be broken, not the task, so the loop never skips a task for it: when every attempt at a task is an agent failure, or the agent cannot be started at all, the run stops as **agent broken** and leaves the task unmarked for the next run. A run killed by the OS, or one that exits cleanly with its task still open, is a failed attempt but not an agent failure, and a clean exit shows the agent works ([ADR-0020](./docs/adr/0020-the-loop-stops-on-a-broken-agent.md)).
 _Avoid_: crash, agent error.
 
+**Outcome / stop report**:
+How a loop run ended, one of `complete`, `waiting on human`, `attempts exhausted`, `cap reached`, `agent broken`, `stopped` or `failed`. Once the run's issue is admitted, the loop posts its **stop report**, the outcome and the run's report, as a comment on that issue, so a run is readable from anywhere. A loop-driven session also writes the outcome into its session record, where `session list` shows it under `OUTCOME` ([ADR-0017](./docs/adr/0017-the-loop-starts-its-own-session-on-a-box.md)).
+_Avoid_: result, status, exit code.
+
 **Triage label**:
 One of the three tracker labels that say what an issue is for: the agent label (`ready-for-agent`) and the human label (`ready-for-human`) say who a task is meant for, and the spec label (`spec`) marks a spec not yet split into tasks. A repo names its own in its **repo file**, each one defaulting to the name shown. A task carrying both the agent and the human label is the human's, so no two may share a name. The loop's own marks, `smith:working` and `smith:failed`, are signals for people, not triage labels, and cannot be renamed ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)).
 _Avoid_: status label, tag.
@@ -459,7 +463,7 @@ smith's built-in knowledge of one coding-agent CLI (`claude`, `codex`, `pi`): ho
 _Avoid_: backend, provider (reserved for the provider adapter), agent plugin.
 
 **Effort**:
-smith's own small scale for how hard an agent should think, which each agent adapter translates into its CLI's flag. An adapter whose CLI cannot express effort refuses it by name. A **model**, by contrast, is passed to the agent verbatim, because model names change faster than smith releases.
+smith's own small scale for how hard an agent should think, which each agent adapter translates into its CLI's flag. An adapter whose CLI could not express effort would refuse it by name; the three built-in adapters all can. A **model**, by contrast, is passed to the agent verbatim, because model names change faster than smith releases.
 _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 
 **Repo file**:
