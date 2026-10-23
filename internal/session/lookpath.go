@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -39,4 +40,27 @@ func nearest(dir string) string {
 		}
 		dir = parent
 	}
+}
+
+// MiseExec is a Runner that launches every command under the mise exec a
+// session's process runs under, from the directory its runner launches from.
+type MiseExec struct {
+	mise   string
+	runner Runner
+}
+
+// UnderMise is runner with every command it launches put under the mise exec
+// a session's process on env's box runs under, so it finds the tools and
+// environment the blueprint declares where a relayed smith's own PATH would not.
+func UnderMise(env Env, runner Runner) MiseExec {
+	return MiseExec{mise: cmp.Or(env.Mise, miseFile), runner: runner}
+}
+
+// Run launches name with args under mise exec, wiring the given
+// stdin/stdout/stderr, and returns the process error.
+func (m MiseExec) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if err := m.runner.Run(ctx, m.mise, append([]string{"exec", "--", name}, args...), stdin, stdout, stderr); err != nil {
+		return fmt.Errorf("run %s under %s exec: %w", name, m.mise, err)
+	}
+	return nil
 }

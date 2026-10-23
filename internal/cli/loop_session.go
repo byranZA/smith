@@ -41,9 +41,9 @@ type sessionRun struct {
 // watch it. Every refusal comes before anything is on disk, and a live session
 // on the work branch is one. Settings and prompt are checked where the root
 // process will read them, and a new branch is cut from the commit they were
-// checked at. The agent is looked up under the mise exec the
-// session's root process runs under, since a relayed smith's own PATH is
-// stripped.
+// checked at. The issue is read with gh, and the agent looked up, under the
+// mise exec the session's root process runs under, since a relayed smith's
+// own PATH is stripped.
 func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessionRun) error {
 	inv := invocation(cmd, "loop run", typed(cmd, []string{run.issue}))
 	if run.interactive {
@@ -71,7 +71,8 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
-	admitted, err := w.admit(cmd, ref, settings, w.ghIn(clone))
+	gh := session.UnderMise(env, w.ghIn(clone))
+	admitted, err := w.admit(cmd, ref, settings, gh)
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 			return reportInvalid(cmd, err)
 		}
 		if derived != settings {
-			if _, err := w.admit(cmd, ref, derived, w.ghIn(clone)); err != nil {
+			if _, err := w.admit(cmd, ref, derived, gh); err != nil {
 				return err
 			}
 		}
