@@ -2,7 +2,7 @@
 
 smith does not drive a box from your laptop. `machine setup` **installs smith
 onto the box**, and from then on the verbs that do work there — the session
-verbs and `workspace converge` — execute on the box. Your local smith is a
+verbs, `workspace converge` and `loop run <box>` — execute on the box. Your local smith is a
 control surface: it **relays** the verb over SSH and streams the box's own
 output back.
 

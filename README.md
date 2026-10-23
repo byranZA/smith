@@ -14,8 +14,8 @@ promise — pin to an exact tag.
 
 Smith is one static binary that lives in two places. On your machine it is a
 control surface. `machine setup` **installs the same binary onto the box**, and
-the verbs that do work there — the session verbs and `workspace converge` — run
-there; your local smith relays them over SSH and streams the box's output back.
+the verbs that do work there — the session verbs, `workspace converge` and
+`loop run <box>` — run there; your local smith relays them over SSH and streams the box's output back.
 That is what lets an agent keep working after you close your laptop.
 
 Three things make a box a smith box:
@@ -122,7 +122,7 @@ mismatch rather than silently misparsing a renamed flag. `smith machine upgrade
 dev` converges the box to *your* version — including backwards. `smith update` updates your own smith to the latest release, then offers to converge every box to it.
 → [docs/on-box.md](docs/on-box.md)
 
-**The loop.** `smith loop run <issue>` works a spec's tasks, or a single task, with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. Each task is worked in its own worktree and lands on the spec's or task's work branch (`smith/<n>-<slug>`), which is pushed after each closed task. `--interactive` runs one task with the agent attached to your terminal. The repo file (`.smith/repo.yaml`) holds the agent, model, effort and push setting the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
+**The loop.** `smith loop run <issue>` works a spec's tasks, or a single task, with a coding agent (`claude`, `codex` or `pi`), one task per agent run, reading GitHub Issues to choose each task and to see whether the agent closed it. Each task is worked in its own worktree and lands on the spec's or task's work branch (`smith/<n>-<slug>`), which is pushed after each closed task. `--interactive` runs one task with the agent attached to your terminal. `smith loop run <box> <issue> --repo <name>` runs it on a box instead, in a loop-driven session that outlives your connection, and `smith session attach` watches it read-only. The repo file (`.smith/repo.yaml`) holds the agent, model, effort, push setting, prepare command and triage labels the repo shares, and the loop prompt can be ejected to `.smith/prompt.md`.
 → [docs/loop.md](docs/loop.md)
 
 > **smith provisions no service's credentials.** It places files and exports environment variables. (The loop reads GitHub Issues through your own authenticated `gh`, and holds no credential of its own.) A blueprint declaring `GITHUB_TOKEN` beside `https://` clone URLs **will not authenticate** — git needs a credential helper for that, and smith will not notice. Place the helper's config yourself, or clone over SSH and place the key: [a box that can clone and run the loop](docs/blueprints.md#a-box-that-can-clone-and-run-the-loop).

@@ -16,12 +16,12 @@ detail.
 
 | page | what it covers |
 | --- | --- |
-| [Blueprints and preferences](./blueprints.md) | the config home, the split between the two files, precedence, and what smith does and does not do about credentials |
+| [Blueprints and preferences](./blueprints.md) | the config home, the split between the two files, precedence, what smith does and does not do about credentials, and what a box needs to clone a private repo and run the loop |
 | [The box inventory](./inventory.md) | the `machine` verbs that read or write it (setup naming, `list`, `add`, `rename`, `forget`), naming rules, collisions and renames, the file's schema versioning |
 | [The workspace stage](./workspace.md) | what `workspace converge` converges, the order the steps land in, and why it is that order |
-| [Sessions](./sessions.md) | the five session verbs and their flags, the three paths through `start`, the two access levels, what `rm` destroys, the pre-teardown read |
-| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, attempts and the iteration cap, `--interactive`, the agent adapters, the repo file and its precedence, ejecting the loop prompt |
-| [smith on the box](./on-box.md) | the setup pipeline's stages, the relay, version skew and `machine upgrade`, the refusal paths |
+| [Sessions](./sessions.md) | the five session verbs and their flags, the three paths through `start`, the two access levels, what `rm` destroys, the pre-teardown read, worktree preparation, loop-driven sessions |
+| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, attempts and the iteration cap, stop reports and outcomes, agent failures, `--interactive`, running on a box (`--repo`, `loop run <box>`), the agent adapters, the repo file and its precedence, the prepare command, triage labels, ejecting the loop prompt |
+| [smith on the box](./on-box.md) | the setup pipeline's stages, the relay, version skew and `machine upgrade`, the refusal paths, what a shell on the box gets |
 
 ## Examples
 
@@ -30,6 +30,7 @@ detail.
 - Provider adapters: [doctl](./examples/adapters/doctl.yaml),
   [doctl with a name marker](./examples/adapters/doctl-name-marker.yaml),
   [hcloud](./examples/adapters/hcloud.yaml)
+- [A box that clones a private repo and runs the loop](./examples/blueprints/loop-box.yaml)
 
 ## Release notes
 

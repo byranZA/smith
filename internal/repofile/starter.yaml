@@ -1,7 +1,7 @@
 # The repo file: the loop settings everyone running `smith loop` on this repo
 # shares. Commit it. A setting left commented out uses smith's built-in
 # default, and a flag on `smith loop run` overrides any setting but the
-# labels for one run without editing this file.
+# prepare command and the labels for one run without editing this file.
 
 # The coding agent the loop hands each task to: claude (the default), codex or pi.
 # agent: claude

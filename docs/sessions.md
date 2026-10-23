@@ -30,9 +30,7 @@ box smith@203.0.113.10 has no smith installed: `smith machine setup smith@203.0.
 installs it, along with the rest of what the box is missing
 ```
 
-Sessions need `tmux` and `git` on the box. smith does not install either. Stock
-Ubuntu server images ship both, but a minimal image may not: list them under
-the blueprint's `packages` if so.
+Sessions need `tmux` and `git` on the box. `machine setup` installs both in its `packages` phase, along with `curl`, `ca-certificates` and `sudo`, so a minimal image needs nothing extra in the blueprint's `packages`.
 
 ## Names are derived, never chosen
 
@@ -404,8 +402,7 @@ When the loop stops, it writes its **outcome** into the same record, and `list` 
 
 - **Keystrokes.** Everything smith does to a session it does by starting or
   stopping it. There is no `send-keys`.
-- **Outcomes.** Liveness only — smith reports that a session is running, never
-  whether what ran in it succeeded.
+- **Exit statuses.** smith reports liveness and, for a loop-driven session, the outcome the loop recorded, never a process's exit status.
 - **A browser terminal**, a per-session log, `--json` on `list`, and a box
   `destroy` verb. Deferred, and nothing here forecloses them.
 

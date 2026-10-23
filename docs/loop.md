@@ -15,7 +15,7 @@ Every verb runs in the repo it is invoked from, but no agent works in your check
 
 ## What the loop reads from GitHub
 
-The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed and authenticated.
+The tracker is GitHub Issues, reached through `gh`, so `gh` must be installed and authenticated. When `gh` is not logged in or GitHub refuses its token, `list` and `run` stop before touching any task and exit 1 with `the tracker can't authenticate with gh: <what gh said>`; any other `gh` failure reads `gh could not be used: <what gh said>`.
 
 - **The issue** the loop is given is named as `42`, `#42`, `owner/name#42` or its issue URL, and is a spec or a single task. A qualified reference or URL for an issue in a different repo from the one `gh` sees in the working directory is refused.
 - **A spec** is an issue with sub-issues, whatever its labels, or one labelled `spec`, which marks a spec not yet split into tasks. An issue with sub-issues is a spec even when it is labelled `ready-for-agent`, and is never handed to an agent itself. Any other issue is a task, worked alone as a run of one task. A **child task**, one with a parent, runs on its immediate parent's work branch, and no sibling task is worked. A **standalone task**, with no parent, runs on a work branch of its own.
@@ -51,7 +51,7 @@ Each setting names where its value came from. A kind of task with nothing in it 
 
 Prints the same settings block as `list`, then works the spec or task unattended until no task is available. As it goes, it writes `smith: handing #N <title> to the agent in <worktree>` to stderr before each agent run, and `smith: the agent on #N ended with a failure: …` when one fails. At the end it reports why it stopped, then names the work branch (`work branch: smith/N-<slug>`):
 
-- **`spec #N complete`**, or **`task #N complete`** for a standalone task: every task is closed. Exit 0.
+- **`spec #N complete`**, or **`task #N complete`** for a task named on its own, child or standalone: every task is closed. Exit 0.
 - **No task is available for an agent**: what remains is blocked, for a human, or not ready. Exit 1.
 - **The agent left a task open on every attempt**: see attempts below. Exit 1.
 - **The agent failed on every attempt at a task**, or **could not be started**: see agent failures below. Exit 1.
@@ -69,14 +69,14 @@ However the run stops, the loop also posts its stop report as a comment from smi
 
 Before every agent attempt, the first and each retry, the loop [prepares](./sessions.md#worktree-preparation) the task worktree, on your machine as on a box: it installs the toolchain the repo's mise config pins, then runs the worktree's [prepare command](#the-prepare-command), streaming both to stderr. A failed preparation launches no agent and stops the run with the outcome `failed`, its report naming preparation, the task and the task worktree (`prepare the worktree of #N in <worktree>: …`). Another attempt cannot fix it, so it counts as no attempt: the task is not labelled `smith:failed`, skipped or commented on. A loop-driven session's own worktree is not prepared, since only smith runs there.
 
-A stop report that fails to post is a `smith: warning: …` line, and changes neither the outcome nor the exit status. A run whose issue cannot be read at all posts nothing. `--interactive` posts no stop report.
+A stop report that fails to post is a `smith: warning: …` line, and changes neither the outcome nor the exit status. A run refused before its issue is admitted (an issue that cannot be read, a task that is not available, a spec with no tasks, an agent that is not installed, an invalid repo file or prompt) posts nothing; one that fails after that, such as on setting up the work branch, posts the outcome `failed`. `--interactive` posts no stop report.
 
 Two limits bound a run so it can be left alone:
 
 - **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.
 - **`--max-iterations`** (default 10): the most agent runs the whole loop makes.
 
-An agent that exits with a failure is reported and the loop carries on: whether the task is done is the tracker's call, not the exit code's.
+An agent that exits with a failure is reported, and the task is checked on the tracker as after any run: a task it closed lands, whatever the exit code. Whether the loop carries on depends on its attempts, as below.
 
 A run the agent CLI ends with a non-zero exit is an **agent failure**: it says the agent may be broken, not the task. When every attempt at a task is an agent failure, the run stops as `agent broken` instead of skipping it, so a dead credential or a broken agent install stops the run on its first task rather than handing every task of the spec to you. A launch that cannot start the agent at all, such as a binary missing from `PATH`, stops the run the same way on its first launch, counting no attempt. The task the run stops on is left as the next run should find it: its `smith:working` label is removed, it is not labelled `smith:failed`, handed to you or commented on, and its task worktree is kept. The stop report reads like `spec #42 stopped: the agent failed on every attempt at #44 (run claude: exit status 1); check that the agent runs on <hostname>`, the hostname marked unknown when it cannot be read. A task with even one attempt that was not an agent failure, a clean exit that left it open or a SIGKILL, is skipped as usual. Tasks closed earlier in the run stay landed and pushed. `--interactive` is unchanged: it makes one attempt and never skips ([ADR-0020](./adr/0020-the-loop-stops-on-a-broken-agent.md)).
 
@@ -111,9 +111,13 @@ On a box, `smith loop run <issue> --repo <name>` runs the loop in a **loop-drive
 1. **Preflight, in your terminal.** smith resolves the settings from the flags and the repo file, and checks the ejected prompt, as the session's root process will find them: in the work branch's worktree when a stopped session left one, uncommitted changes included; else at the work branch's tip when the clone holds it; else on the base the branch will be cut from, fetched first (`--base`, else the base the blueprint declares, else the clone's default branch, as origin holds it). It reads and admits the issue through `gh` in the repo's clone, and finds the agent on the `PATH` the session's root process will have: under the same `mise exec`, in the work branch's worktree, or in the repo's directory while that worktree does not exist yet. Any refusal is reported here, exactly as a foreground run reports it, and nothing is created: no session, no worktree, no work branch.
 2. **The work branch** is `--branch`, else `smith/<n>-<slug>` from the issue (see [The work branch](#the-work-branch)). The session is named after it the way every session is: `<repo>-<branch>`, so spec #305 in repo `smith` runs in session `smith-smith-305-<slug>`, and `--branch feat/x` in `smith-feat-x`.
 3. **One session per branch.** A live session on the work branch, human-driven or loop-driven, refuses the run, naming the session and the commands to attach to it or stop it. A stopped one hands over its worktree: the loop-driven session starts in it, and the loop adopts the branch.
-4. **The session starts and smith returns.** The session's root process is `smith loop run <issue>` with the same flags, no `--repo`, and `--branch` set to the work branch, so the session ends when the loop does. smith prints the session's name and the commands to watch it, and exits 0:
+4. **The session starts and smith returns.** The session's root process is `smith loop run <issue>` with the same flags, no `--repo`, and `--branch` set to the work branch, so the session ends when the loop does. smith prints the settings block, as `list` does, then the session's name and the commands to watch it, and exits 0:
 
 ```text
+agent:  claude (repo file)
+model:  opus (repo file)
+effort: high (repo file)
+push:   on (built-in default)
 session smith-smith-305-run-the-loop-on-a-box is live on branch smith/305-run-the-loop-on-a-box of smith, driven by the loop
 attach: smith session attach smith-smith-305-run-the-loop-on-a-box
 list:   smith session list
@@ -191,7 +195,7 @@ The command must be safe to re-run. smith runs it every time it prepares a workt
 | `human` | `ready-for-human` | a task for a human, and where a skipped task goes |
 | `spec` | `spec` | a spec not yet split into tasks |
 
-Each key is optional, and one left out keeps its default. A name set to nothing (`agent: ""`) is refused, never taken as the default. No two keys may share a name, the default ones included: a task carrying both the agent and the human label goes to the human, so `human: ready-for-agent` would send every task to a human. The loop uses the names everywhere it reads, writes or reports a label, such as `#N is not labelled "<agent label>"`, and `list` and `run` add a line to the settings block naming all three:
+Each key is optional, and one left out keeps its default. A name set to nothing (`agent: ""`) is refused, never taken as the default. No two keys may share a name, the default ones included: a task carrying both the agent and the human label goes to the human, so `human: ready-for-agent` would send every task to a human. The loop uses the names everywhere it reads, writes or reports a label, such as `#N is not labelled "<agent label>"`, and when the repo file sets any of them, `list` and `run` add a line to the settings block naming all three:
 
 ```text
 labels: agent go (repo file), human ready-for-human (built-in default), spec epic (repo file)
