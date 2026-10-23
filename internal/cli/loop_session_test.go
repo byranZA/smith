@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -37,6 +38,21 @@ func (m *boxMise) Run(_ context.Context, name string, args []string, _ io.Reader
 	return err
 }
 
+// boxGh stands in for gh in a clone on a box, recording the argv it was
+// handed: gh is found only under mise exec, as the relayed PATH lacks it.
+type boxGh struct {
+	tracker *fakeTracker
+	calls   [][]string
+}
+
+func (g *boxGh) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	g.calls = append(g.calls, append([]string{name}, args...))
+	if filepath.Base(name) != "mise" || len(args) < 3 || args[0] != "exec" || args[1] != "--" {
+		return fmt.Errorf("exec: %q: executable file not found in $PATH", name)
+	}
+	return g.tracker.Run(ctx, args[2], args[3:], stdin, stdout, stderr)
+}
+
 // sessionLoop is loop wiring on a box whose workspace holds the bare clone of
 // "smith", driving the tmux server tmux, where mise finds claude and codex and
 // the relayed PATH finds no agent at all.
@@ -47,7 +63,7 @@ func sessionLoop(t *testing.T, gh *fakeTracker, tmux *tmuxBox) (loopWiring, stri
 	writeBareRepo(t, workspace, "smith")
 	return loopWiring{
 		gh:       gh,
-		ghIn:     func(string) tracker.Runner { return gh },
+		ghIn:     func(string) tracker.Runner { return &boxGh{tracker: gh} },
 		launcher: &idleAgent{},
 		lookPath: offPath,
 		mise:     &boxMise{installed: []string{"claude", "codex"}},
@@ -91,6 +107,29 @@ func TestLoopRunOnABoxStartsASessionWhoseRootProcessIsTheLoop(t *testing.T) {
 		"/usr/local/bin/smith", "loop", "run", "42", "--agent=codex", "--max-iterations=3", "--branch=smith/42-the-loop", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
+	}
+}
+
+func TestLoopRunOnABoxReadsTheIssueWithGhUnderMiseExec(t *testing.T) {
+	gh := &boxGh{tracker: readySpec()}
+	w, workspace := sessionLoop(t, gh.tracker, &tmuxBox{})
+	var dirs []string
+	w.ghIn = func(dir string) tracker.Runner {
+		dirs = append(dirs, dir)
+		return gh
+	}
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
+	}
+	want := []string{"mise", "exec", "--", "gh", "issue", "view", "42"}
+	if len(gh.calls) == 0 || !reflect.DeepEqual(gh.calls[0][:len(want)], want) {
+		t.Errorf("gh ran %q, want a first call beginning %q", gh.calls, want)
+	}
+	if clone := filepath.Join(workspace, "smith", "repo.git"); len(dirs) == 0 || dirs[0] != clone {
+		t.Errorf("gh ran in %q, want %q", dirs, clone)
 	}
 }
 

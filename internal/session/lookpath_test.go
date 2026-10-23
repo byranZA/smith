@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
@@ -104,5 +105,45 @@ func TestLookPathRefusesAnUndeclaredRepo(t *testing.T) {
 
 	if err == nil || len(mise.calls) != 0 {
 		t.Errorf("LookPath() err = %v after mise %q; want a refusal and no mise run", err, mise.calls)
+	}
+}
+
+func TestUnderMiseRunsEachCommandUnderMiseExec(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		mise string
+		want [][]string
+	}{
+		{"mise at its home install", "/home/smith/.local/bin/mise", [][]string{{"/home/smith/.local/bin/mise", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise by name on PATH", "", [][]string{{"mise", "exec", "--", "gh", "issue", "view", "42"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mise := &fakeMise{path: "/usr/bin/gh"}
+
+			if err := session.UnderMise(session.Env{Mise: tt.mise}, mise).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, io.Discard, io.Discard); err != nil {
+				t.Fatalf("UnderMise().Run() err = %v", err)
+			}
+
+			if !reflect.DeepEqual(mise.calls, tt.want) {
+				t.Errorf("UnderMise(%q).Run(gh issue view 42) ran %q, want %q", tt.mise, mise.calls, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnderMiseStreamsWhatTheCommandWrites(t *testing.T) {
+	t.Parallel()
+	mise := &fakeMise{path: "/usr/bin/gh"}
+	var stdout strings.Builder
+
+	if err := session.UnderMise(session.Env{}, mise).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, &stdout, io.Discard); err != nil {
+		t.Fatalf("UnderMise().Run() err = %v", err)
+	}
+
+	if got, want := stdout.String(), "/usr/bin/gh\n"; got != want {
+		t.Errorf("UnderMise().Run() wrote %q, want %q", got, want)
 	}
 }
