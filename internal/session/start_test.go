@@ -79,9 +79,9 @@ func TestStartRunsAHumanSessionsLoginShellUnderMise(t *testing.T) {
 	env := session.Env{
 		Workspace: workspace,
 		Repos:     []session.Repo{{Name: "smith"}},
-		Git:       connection.System(),
+		Git:       &miseGit{},
 		Tmux:      tmux,
-		Mise:      "/home/smith/.local/bin/mise",
+		Mise:      boxMise,
 	}
 
 	if _, err := session.Start(t.Context(), env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
@@ -103,9 +103,9 @@ func TestStartRunsARootCommandUnderMise(t *testing.T) {
 	env := session.Env{
 		Workspace: workspace,
 		Repos:     []session.Repo{{Name: "smith"}},
-		Git:       connection.System(),
+		Git:       &miseGit{},
 		Tmux:      tmux,
-		Mise:      "/home/smith/.local/bin/mise",
+		Mise:      boxMise,
 	}
 	req := session.StartRequest{Repo: "smith", Branch: "spec-42", Command: []string{"smith", "loop", "run", "docs/spec.md"}}
 

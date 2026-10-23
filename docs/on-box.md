@@ -45,7 +45,7 @@ Every shell on a box gets the blueprint's declared tools, but not every shell ge
 
 - **A plain SSH shell** gets mise's shims on `PATH` ahead of the system directories, from `/etc/profile.d/smith.sh`, which the [workspace stage](./workspace.md#the-toolchain) writes. Bash reads `/etc/profile` for every login shell, even when a `~/.bash_profile` stops `~/.profile` being read. The secrets stay out of the shell's environment, but a shim runs its tool with the `env` in scope, so `gh`, and the `gh auth git-credential` helper a `git push` runs, still gets its token.
 - **A session** runs its process under `mise exec` in its worktree: `bash -l` for a session you attach to, the root command for a loop-driven one. The shell, the loop and any agent it launches hold the declared tools and the exported `env`, fixed when the session started. A rotated secret reaches a session on `stop` and `start`.
-- **Relayed smith** runs over a non-interactive SSH, with a stripped `PATH` and no profile. Anything it does that needs a declared tool runs under `mise exec` in the worktree it concerns.
+- **Relayed smith** runs over a non-interactive SSH, with a stripped `PATH` and no profile. Anything it does that needs a declared tool runs under `mise exec` in the worktree it concerns, or in the repo's directory while that worktree does not exist yet. That covers the `git fetch` before a new branch is cut, so a `gh auth git-credential` helper finds `gh` and its token on a private repo, along with `gh` reading a loop's issue and the lookup of the agent. The rest of its `git`, which never reaches the remote, runs bare.
 
 A tool you installed yourself, outside the blueprint, has no shim. If it needs a token, run it in a session or as `mise exec -- <tool>`.
 

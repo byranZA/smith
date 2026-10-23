@@ -250,6 +250,9 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 type standUp struct {
 	// repo is the declared repo the session's worktree is cut from.
 	repo Repo
+	// root is the repo's workspace directory, which holds the mise config
+	// every worktree of the repo inherits.
+	root string
 	// bare is the repo's bare clone, which every git command runs against.
 	bare string
 	// trees is the repo's worktrees directory, one level below which every
@@ -270,6 +273,7 @@ func newStandUp(env Env, repo Repo, branch, base string) standUp {
 	root := filepath.Join(env.Workspace, repo.Name)
 	return standUp{
 		repo:   repo,
+		root:   root,
 		bare:   filepath.Join(root, bareDir),
 		trees:  filepath.Join(root, worktreesDir),
 		name:   DeriveName(repo.Name, branch),
@@ -338,9 +342,12 @@ func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool)
 
 // cutFrom fetches and answers with the ref a new branch is cut from: the
 // requested base, else the base the blueprint declares for the repo, else the
-// repo's default branch, as origin holds it when origin has it.
+// repo's default branch, as origin holds it when origin has it. The fetch runs
+// under the mise exec a session in the repo gets, so a credential helper the
+// blueprint wires to a declared tool finds it and its token on a relayed
+// smith's bare PATH.
 func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
-	if err := fetch(ctx, env.Git, s.bare, s.repo.Name); err != nil {
+	if err := fetch(ctx, UnderMise(env, env.Git, s.root), s.bare, s.repo.Name); err != nil {
 		return "", err
 	}
 	base := cmp.Or(s.base, s.repo.Base)
