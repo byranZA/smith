@@ -11,7 +11,7 @@ work is tracked, is [AGENTS.md](../AGENTS.md).
 
 ## Set up a fresh machine
 
-You need Go 1.26+ and `git`. `go.mod` pins the toolchain at go1.26.9 with a
+You need Go 1.26+ and `git`. `go.mod` pins the toolchain at go1.26.10 with a
 `toolchain` line, so an older 1.26 downloads and runs the pinned one on first
 use; `go version` inside the repo shows it. Clone, then install the dev tools:
 
