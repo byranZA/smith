@@ -174,11 +174,12 @@ declaration site for every credential on the box.
   future effort. Passwordless sudo makes every half-measure a speed bump wearing a boundary's
   clothes. A contributor is most likely to break this by adding exactly such a half-measure;
   stating the non-goal is what makes that reviewable.
-- **A key-in-file scheme** (`dotenv:~/.secrets/api.env#GITHUB_TOKEN`) — deferred. It makes smith
-  parse dotenv format, which is deceptively ambiguous (`export` prefixes, quoting, multiline
-  values), and operators who keep secrets in files overwhelmingly already run something that puts
-  them in the environment. Additive later via the same clean-room slot. See the consequence below
-  for the gap it leaves.
+- **A key-in-file scheme** (`dotenv:~/.secrets/api.env#GITHUB_TOKEN`) — rejected (#296, see
+  [`.out-of-scope/dotenv-reference-scheme.md`](../../.out-of-scope/dotenv-reference-scheme.md)).
+  It makes smith parse dotenv format, which is deceptively ambiguous (`export` prefixes, quoting,
+  multiline values), for what is only a convenience over one `file:` per secret. The intended
+  route to many secrets in one place is a secret-manager scheme in the same clean-room slot. See
+  the consequence below for the gap it leaves.
 - **Splitting `env` into a references map and a plain-values map** — rejected. It doubles the
   schema surface and asks the operator to classify every variable, which they will get wrong in
   the direction that hurts.
@@ -197,10 +198,12 @@ declaration site for every credential on the box.
 ## Consequences
 
 - **There is no way to name one value inside a file.** `env:GH_TOKEN` reads the operator's
-  **shell** environment, not any file. An operator keeping secrets in a dotenv file who wants a
-  single variable exported must first get it into their own shell (`direnv`, a `source`, a shell
-  plugin). This bites hardest on box credentials, which are exactly the case needing a specific
-  named value rather than a whole file.
+  **shell** environment, not any file. An operator keeping secrets in a dotenv file splits it into
+  one file per secret and names each with `file:`. Sourcing the file to feed `env:` instead goes
+  wrong both ways: forget it and setup stages the shell's own token, do it and the terminal carries
+  the box's credentials ([`docs/blueprints.md`](../blueprints.md#default-path-https-and-one-token),
+  "Prefer `file:` over `env:`"). This bites hardest on box credentials, which are exactly the case
+  needing a specific named value rather than a whole file.
 - **A placed file's variables are not exported.** Needing both — the file on disk for a bundler,
   the variables exported for a CLI — costs two declarations in v1.
 - **Box-scoped placements stay**, and are not an unexercised path: box credentials are frequently
