@@ -21,7 +21,9 @@ import (
 // hands back the branch git holds, which the sanitized directory name is too
 // lossy to carry, and it draws the line between a session and debris. A
 // directory below the worktrees directory that git does not know about is not
-// a session.
+// a session, and neither is a worktree git knows about that sits anywhere but
+// directly below the worktrees directory, such as the loop's task worktrees
+// inside the bare clone.
 
 // worktree is one entry of a bare repo's worktree registry: where the checkout
 // is and, unless its head is detached, the branch it is on.
@@ -38,9 +40,11 @@ type placed struct {
 	wt   worktree
 }
 
-// worktreesOf enumerates the worktrees the box's bare repos hold, which are
-// the sessions on it. It is the one enumeration every verb that works from a
-// name shares, so no two of them can disagree about what a session is.
+// worktreesOf enumerates the sessions on the box: the worktrees each bare repo
+// holds directly below its repo's worktrees directory. It is the one
+// enumeration every verb that works from a name shares, so no two of them can
+// disagree about what a session is, and a worktree placed anywhere else is
+// unknown to all of them alike.
 //
 // A declared repo the workspace stage has not cloned yet contributes nothing
 // rather than failing the enumeration, because there is nothing on the box to
@@ -59,8 +63,11 @@ func worktreesOf(ctx context.Context, env Env) ([]placed, error) {
 		if err != nil {
 			return nil, fmt.Errorf("list the worktrees of repo %q: %w", repo.Name, err)
 		}
+		trees := filepath.Join(env.Workspace, repo.Name, worktreesDir)
 		for _, wt := range worktrees {
-			found = append(found, placed{repo: repo, wt: wt})
+			if oneBelow(wt.path, trees) {
+				found = append(found, placed{repo: repo, wt: wt})
+			}
 		}
 	}
 	return found, nil
@@ -77,9 +84,9 @@ func listWorktrees(ctx context.Context, git Runner, bare string) ([]worktree, er
 	return parseWorktrees(listing), nil
 }
 
-// parseWorktrees reads `git worktree list --porcelain` into the worktrees that
-// are sessions. The bare repo lists itself and is dropped: it is the registry,
-// not a checkout anyone works in.
+// parseWorktrees reads `git worktree list --porcelain` into the checkouts the
+// repo holds, wherever they sit. The bare repo lists itself and is dropped: it
+// is the registry, not a checkout anyone works in.
 func parseWorktrees(listing string) []worktree {
 	var worktrees []worktree
 	var current worktree

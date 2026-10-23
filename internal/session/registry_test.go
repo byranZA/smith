@@ -3,6 +3,8 @@ package session_test
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -86,6 +88,88 @@ func TestEveryVerbRefusesAnUnknownNameAlike(t *testing.T) {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("%s of an unknown name err = %q, want it to contain %q", verb, err, want)
 			}
+		}
+	}
+}
+
+// taskWorktree stands up a worktree where the loop puts its task worktrees,
+// inside the bare clone rather than below the repo's worktrees directory, and
+// returns its path.
+func taskWorktree(t *testing.T, env session.Env) string {
+	t.Helper()
+	bare := filepath.Join(env.Workspace, "smith", "repo.git")
+	dir := filepath.Join(bare, "smith", "worktrees", "smith-work", "7")
+	git(t, bare, "worktree", "add", "-b", "smith/tasks/7", dir, "main")
+	return dir
+}
+
+func TestListWithholdsAWorktreeOutsideTheWorktreesDir(t *testing.T) {
+	ctx := context.Background()
+	env := registryEnv(t)
+	started, err := session.Start(ctx, env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
+	if err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+	taskWorktree(t, env)
+
+	listed, err := session.List(ctx, env, session.Filter{})
+	if err != nil {
+		t.Fatalf("List() err = %v", err)
+	}
+
+	var names []string
+	for _, s := range listed {
+		names = append(names, s.Name)
+	}
+	if want := []string{started.Name}; !equal(names, want) {
+		t.Errorf("List() names = %q, want %q", names, want)
+	}
+}
+
+func TestEveryVerbRefusesAWorktreeOutsideTheWorktreesDirAsUnknown(t *testing.T) {
+	ctx := context.Background()
+	env := registryEnv(t)
+	dir := taskWorktree(t, env)
+	const name = "smith-smith-tasks-7"
+
+	refusals := map[string]error{
+		"attach": session.Attach(ctx, env, name, session.Interact, io.Discard),
+		"stop":   session.Stop(ctx, env, name),
+	}
+	_, refusals["rm"] = session.Remove(ctx, env, []string{name}, false)
+	_, refusals["rm --force"] = session.Remove(ctx, env, []string{name}, true)
+
+	want := "no session named \"smith-smith-tasks-7\" exists on this box: `smith session list` reports the sessions there are"
+	for verb, err := range refusals {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s(%q) err = %v, want the unknown-session refusal %q", verb, name, err, want)
+		}
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("the task worktree at %s is gone after the refusals: %v", dir, err)
+	}
+}
+
+func TestRemoveRefusesABatchNamingAWorktreeOutsideTheWorktreesDirWhole(t *testing.T) {
+	ctx := context.Background()
+	env := registryEnv(t)
+	started, err := session.Start(ctx, env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
+	if err != nil {
+		t.Fatalf("Start() err = %v", err)
+	}
+	if err := session.Stop(ctx, env, started.Name); err != nil {
+		t.Fatalf("Stop(%q) err = %v", started.Name, err)
+	}
+	task := taskWorktree(t, env)
+
+	_, err = session.Remove(ctx, env, []string{started.Name, "smith-smith-tasks-7"}, true)
+
+	if err == nil {
+		t.Fatal("Remove() err = nil, want the batch refused for its unknown name")
+	}
+	for _, dir := range []string{filepath.Join(env.Workspace, "smith", "worktrees", "spec-42"), task} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("worktree at %s is gone after a refused batch: %v", dir, err)
 		}
 	}
 }
