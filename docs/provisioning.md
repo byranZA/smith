@@ -253,7 +253,7 @@ Reach it by name from now on:
   smith machine setup 203.0.113.10 --blueprint <blueprint> --name <name>
 ```
 
-A box set up with both `--blueprint` and `--name` ends with a plain `smith machine setup <name>`. A box that was built from a blueprint refuses a re-run without one, naming the blueprint to pass.
+A box set up with both `--blueprint` and `--name` ends with `smith machine setup <name> --blueprint <the staged blueprint>`. The line names the blueprint because a box that was built from one refuses a re-run without it.
 
 ## Interrupting a run
 

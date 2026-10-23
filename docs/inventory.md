@@ -47,7 +47,7 @@ Reach it by name from now on:
   smith machine setup dev --blueprint <blueprint>
 ```
 
-The re-run line names only what the run went without: `--blueprint` here, because none was staged. A setup with both `--blueprint` and `--name` ends with a plain `smith machine setup dev`.
+The re-run line holds the placeholder `--blueprint <blueprint>` here because none was staged. A setup with both `--blueprint` and `--name` ends with `smith machine setup dev --blueprint <the staged blueprint>`, since a box built from a blueprint refuses a re-run without it.
 
 Omit `--name` and smith takes the most specific name it has, in this order:
 
@@ -259,7 +259,7 @@ registered smith@203.0.113.10 as "staging"
 
 Reach it by name from now on:
   smith machine status staging
-  smith machine setup staging
+  smith machine setup staging --blueprint <blueprint>
 ```
 
 A new name that is empty, already held by a different box, or the box's current name is refused before anything changes. So is a name no box is registered under, a box smith cannot reach, and a box whose marker smith cannot read: the rename never moves only the inventory side.
