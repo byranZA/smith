@@ -162,9 +162,7 @@ The `env` in a session's shell is fixed when the session starts, so a rotated se
 
 - A **new** branch is cut from `--base`, else from the base the blueprint
   declares for that repo, else from the repo's default branch.
-- smith runs `git fetch` **before cutting**, and on no other path. A branch cut
-  from a stale base is a merge-time failure that looks like anything but a
-  session bug, and the fetch is also what keeps the unpushed count honest.
+- smith runs `git fetch` **before cutting**, and on no other path. A branch cut from a stale base is a merge-time failure that looks like anything but a session bug, and the fetch is also what keeps the unpushed count honest. It runs under `mise exec` in the repo's directory, so a credential helper the blueprint wires to a declared tool works on a private repo even from a [relayed smith](./on-box.md#what-a-shell-on-the-box-gets).
 - The base is cut from as **origin has it**: `origin/<base>` when the fetch brought that ref down, and `<base>` exactly as given otherwise, so a local-only branch, a tag or a commit still works as `--base`. The clone's own local branches are copied once and never moved, so they are not what a new branch starts from.
 - The new branch has **no upstream**, so `git pull` or `git push` in the session never targets the base it was cut from.
 - `--base` applies **only when cutting**. Against a branch that already exists

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/session"
 )
 
@@ -37,9 +36,9 @@ func lookPathEnv(t *testing.T) session.Env {
 	return session.Env{
 		Workspace: workspace,
 		Repos:     []session.Repo{{Name: "smith"}},
-		Git:       connection.System(),
+		Git:       &miseGit{},
 		Tmux:      &fakeTmux{},
-		Mise:      "/home/smith/.local/bin/mise",
+		Mise:      boxMise,
 	}
 }
 
@@ -113,22 +112,24 @@ func TestUnderMiseRunsEachCommandUnderMiseExec(t *testing.T) {
 	tests := []struct {
 		name string
 		mise string
+		dir  string
 		want [][]string
 	}{
-		{"mise at its home install", "/home/smith/.local/bin/mise", [][]string{{"/home/smith/.local/bin/mise", "exec", "--", "gh", "issue", "view", "42"}}},
-		{"mise by name on PATH", "", [][]string{{"mise", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise at its home install", "/home/smith/.local/bin/mise", "", [][]string{{"/home/smith/.local/bin/mise", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise by name on PATH", "", "", [][]string{{"mise", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise in a named directory", "/home/smith/.local/bin/mise", "/home/smith/workspace/smith", [][]string{{"/home/smith/.local/bin/mise", "-C", "/home/smith/workspace/smith", "exec", "--", "gh", "issue", "view", "42"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mise := &fakeMise{path: "/usr/bin/gh"}
 
-			if err := session.UnderMise(session.Env{Mise: tt.mise}, mise).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, io.Discard, io.Discard); err != nil {
+			if err := session.UnderMise(session.Env{Mise: tt.mise}, mise, tt.dir).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, io.Discard, io.Discard); err != nil {
 				t.Fatalf("UnderMise().Run() err = %v", err)
 			}
 
 			if !reflect.DeepEqual(mise.calls, tt.want) {
-				t.Errorf("UnderMise(%q).Run(gh issue view 42) ran %q, want %q", tt.mise, mise.calls, tt.want)
+				t.Errorf("UnderMise(%q, dir %q).Run(gh issue view 42) ran %q, want %q", tt.mise, tt.dir, mise.calls, tt.want)
 			}
 		})
 	}
@@ -139,7 +140,7 @@ func TestUnderMiseStreamsWhatTheCommandWrites(t *testing.T) {
 	mise := &fakeMise{path: "/usr/bin/gh"}
 	var stdout strings.Builder
 
-	if err := session.UnderMise(session.Env{}, mise).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, &stdout, io.Discard); err != nil {
+	if err := session.UnderMise(session.Env{}, mise, "").Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, &stdout, io.Discard); err != nil {
 		t.Fatalf("UnderMise().Run() err = %v", err)
 	}
 
