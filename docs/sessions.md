@@ -386,6 +386,8 @@ A session's **driver** comes from the verb that starts it, never from a flag: `s
 
 A loop-driven session is a session like any other: named `<repo>-<branch>` after its work branch, in a worktree below the repo's worktrees directory, and attached, listed, stopped and removed with the verbs above. It ends when the loop does. `list` shows its `DRIVER` as `loop`.
 
+Only a worktree directly below the repo's worktrees directory is a session. The loop's own task worktrees, which it keeps inside the bare clone, are not: `list` leaves them out, and `attach`, `stop` and `rm` refuse their names as they refuse a typo.
+
 Starting a session writes a **session record** in its worktree's own git dir,
 naming its driver, so a stopped session still reads as the driver it had. Each
 start overwrites the record, so a human `session start` on a loop's stopped
