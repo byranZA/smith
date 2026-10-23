@@ -1,7 +1,6 @@
 package session_test
 
 import (
-	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,7 +32,8 @@ func registryEnv(t *testing.T) session.Env {
 // is the name attach, stop and rm resolve, and the branch each of them reads
 // back is the one git holds rather than the one the name spells.
 func TestEveryVerbAddressesTheNameListReports(t *testing.T) {
-	ctx := context.Background()
+	t.Parallel()
+	ctx := t.Context()
 	env := registryEnv(t)
 	started, err := session.Start(ctx, env, session.StartRequest{Repo: "web", Branch: "web/spec-42"})
 	if err != nil {
@@ -68,7 +68,8 @@ func TestEveryVerbAddressesTheNameListReports(t *testing.T) {
 // home: a name no session holds reads the same at every verb that takes one,
 // so a typo cannot mean three different things.
 func TestEveryVerbRefusesAnUnknownNameAlike(t *testing.T) {
-	ctx := context.Background()
+	t.Parallel()
+	ctx := t.Context()
 	env := registryEnv(t)
 	if _, err := session.Start(ctx, env, session.StartRequest{Repo: "smith", Branch: "spec-42"}); err != nil {
 		t.Fatalf("Start() err = %v", err)
@@ -92,9 +93,7 @@ func TestEveryVerbRefusesAnUnknownNameAlike(t *testing.T) {
 	}
 }
 
-// taskWorktree stands up a worktree where the loop puts its task worktrees,
-// inside the bare clone rather than below the repo's worktrees directory, and
-// returns its path.
+// taskWorktree adds a loop task worktree inside the bare clone and returns its path.
 func taskWorktree(t *testing.T, env session.Env) string {
 	t.Helper()
 	bare := filepath.Join(env.Workspace, "smith", "repo.git")
@@ -104,7 +103,8 @@ func taskWorktree(t *testing.T, env session.Env) string {
 }
 
 func TestListWithholdsAWorktreeOutsideTheWorktreesDir(t *testing.T) {
-	ctx := context.Background()
+	t.Parallel()
+	ctx := t.Context()
 	env := registryEnv(t)
 	started, err := session.Start(ctx, env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
 	if err != nil {
@@ -127,7 +127,8 @@ func TestListWithholdsAWorktreeOutsideTheWorktreesDir(t *testing.T) {
 }
 
 func TestEveryVerbRefusesAWorktreeOutsideTheWorktreesDirAsUnknown(t *testing.T) {
-	ctx := context.Background()
+	t.Parallel()
+	ctx := t.Context()
 	env := registryEnv(t)
 	dir := taskWorktree(t, env)
 	const name = "smith-smith-tasks-7"
@@ -151,7 +152,8 @@ func TestEveryVerbRefusesAWorktreeOutsideTheWorktreesDirAsUnknown(t *testing.T) 
 }
 
 func TestRemoveRefusesABatchNamingAWorktreeOutsideTheWorktreesDirWhole(t *testing.T) {
-	ctx := context.Background()
+	t.Parallel()
+	ctx := t.Context()
 	env := registryEnv(t)
 	started, err := session.Start(ctx, env, session.StartRequest{Repo: "smith", Branch: "spec-42"})
 	if err != nil {
