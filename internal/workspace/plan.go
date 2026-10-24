@@ -142,6 +142,7 @@ func planRepos(b blueprint.Blueprint, root, home string) []Unit {
 			Name: name,
 			URL:  r.URL,
 			Path: filepath.Join(root, name, cloneDir),
+			Dir:  filepath.Join(root, name),
 			Mise: mise,
 		}})
 	}

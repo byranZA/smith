@@ -71,7 +71,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
-	gh := session.UnderMise(env, w.ghIn(clone), "")
+	gh := session.UnderMise(env, w.ghIn(clone), run.repo, "")
 	admitted, err := w.admit(cmd, ref, settings, gh)
 	if err != nil {
 		return err

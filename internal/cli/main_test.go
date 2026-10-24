@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/byranZA/smith/internal/misetrust"
 )
 
 // standInMise runs the command after mise exec's "--" as it stands, as mise does with no config to apply.
@@ -13,6 +15,14 @@ while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 shift
 exec "$@"
 `
+
+// untrusted is argv with the trust misetrust.Command wraps mise in taken off, leaving the mise invocation the shell would go on to exec.
+func untrusted(argv []string) []string {
+	if len(argv) > 4 && argv[0] == "sh" && argv[1] == "-c" && argv[2] == misetrust.Script {
+		return argv[4:]
+	}
+	return argv
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "mise")

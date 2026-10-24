@@ -21,7 +21,8 @@ func LookPath(ctx context.Context, env Env, runner Runner, repo, branch, name st
 		return "", err
 	}
 	dir := nearest(filepath.Join(env.Workspace, r.Name, worktreesDir, worktreeDir(branch)))
-	path, err := run(ctx, runner, cmp.Or(env.Mise, miseFile), "-C", dir, "exec", "--", "sh", "-c", `command -v "$1"`, "sh", name)
+	argv := env.mise(r.Name, "-C", dir, "exec", "--", "sh", "-c", `command -v "$1"`, "sh", name)
+	path, err := run(ctx, runner, argv[0], argv[1:]...)
 	if err != nil {
 		return "", fmt.Errorf("find %s on the PATH mise gives a session in %s: %w", name, dir, err)
 	}
@@ -43,21 +44,22 @@ func nearest(dir string) string {
 }
 
 // MiseExec is a Runner that launches every command under the mise exec a
-// session's process runs under, with mise reading its config from the
+// session's process in a repo runs under, with mise reading its config from the
 // directory it was given, or from the one its runner launches from.
 type MiseExec struct {
-	mise   string
+	env    Env
+	repo   string
 	dir    string
 	runner Runner
 }
 
 // UnderMise is runner with every command it launches put under the mise exec
-// a session's process on env's box runs under, so it finds the tools and
-// environment the blueprint declares where a relayed smith's own PATH would not.
-// mise reads its config from dir, or, given an empty dir, from wherever runner
-// launches it.
-func UnderMise(env Env, runner Runner, dir string) MiseExec {
-	return MiseExec{mise: cmp.Or(env.Mise, miseFile), dir: dir, runner: runner}
+// a session's process in repo on env's box runs under, so it finds the tools
+// and environment the blueprint declares where a relayed smith's own PATH would
+// not. mise reads its config from dir, or, given an empty dir, from wherever
+// runner launches it.
+func UnderMise(env Env, runner Runner, repo, dir string) MiseExec {
+	return MiseExec{env: env, repo: repo, dir: dir, runner: runner}
 }
 
 // Run launches name with args under mise exec, wiring the given
@@ -67,8 +69,9 @@ func (m MiseExec) Run(ctx context.Context, name string, args []string, stdin io.
 	if m.dir != "" {
 		exec = append([]string{"-C", m.dir}, exec...)
 	}
-	if err := m.runner.Run(ctx, m.mise, exec, stdin, stdout, stderr); err != nil {
-		return fmt.Errorf("run %s under %s exec: %w", name, m.mise, err)
+	argv := m.env.mise(m.repo, exec...)
+	if err := m.runner.Run(ctx, argv[0], argv[1:], stdin, stdout, stderr); err != nil {
+		return fmt.Errorf("run %s under %s exec: %w", name, cmp.Or(m.env.Mise, miseFile), err)
 	}
 	return nil
 }

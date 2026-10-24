@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -71,6 +73,48 @@ func TestConvergeClonesUnderMiseExec(t *testing.T) {
 
 	if !box.ran("mise exec -- git clone") {
 		t.Errorf("the stage ran %v, want the clone run under mise exec", box.calls)
+	}
+}
+
+func TestConvergeClonesTrustingTheRepoDirectory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+
+	convergeOnBox(t, box, home, declaresRepo("acme"))
+
+	if !box.ranExact("sh", "-c", misetrust.Script, filepath.Join(home, "workspace", "acme"), miseFile, "exec", "--", "git", "clone", "--bare",
+		"-c", "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*", forge, clonePath(home, "acme")) {
+		t.Errorf("the stage ran %v, want the clone's mise trusting the repo's directory", box.calls)
+	}
+}
+
+func TestConvergeRunsEveryGitOfAnExistingCloneTrustingTheRepoDirectory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	path := clonePath(home, "acme")
+	alreadyCloned(t, box, path, forge)
+
+	convergeOnBox(t, box, home, declaresRepo("acme"))
+
+	trusting := []string{"sh", "-c", misetrust.Script, filepath.Join(home, "workspace", "acme"), miseFile, "exec", "--", "git", "--git-dir", path}
+	want := [][]string{
+		append(slices.Clone(trusting), "remote", "get-url", "origin"),
+		append(slices.Clone(trusting), "config", "--get-all", "remote.origin.fetch"),
+		append(slices.Clone(trusting), "config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"),
+		append(slices.Clone(trusting), "fetch", "origin"),
+	}
+	var got [][]string
+	for _, argv := range box.calls {
+		if slices.Contains(argv, "--git-dir") {
+			got = append(got, argv)
+		}
+	}
+	if !slices.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("the stage ran git %q, want %q", got, want)
 	}
 }
 

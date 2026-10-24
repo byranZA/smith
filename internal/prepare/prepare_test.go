@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/prepare"
 )
 
@@ -49,7 +50,26 @@ func TestPrepareInstallsTheToolchainPointedAtTheWorktree(t *testing.T) {
 		t.Fatalf("Prepare() err = %v", err)
 	}
 
-	want := [][]string{{"/home/smith/.local/bin/mise", "--cd", "/work/smith/worktrees/spec-42", "install"}}
+	want := [][]string{{"sh", "-c", misetrust.Script, "/work/smith/worktrees/spec-42", "/home/smith/.local/bin/mise", "--cd", "/work/smith/worktrees/spec-42", "install"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestPrepareTrustsTheMiseConfigsInTheDirectoryItIsGiven(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, "prepare: npm ci\n")
+	run := &fakeRunner{}
+	p := prepare.Preparer{Command: run, Mise: "mise", Trust: "/srv/workspace/smith"}
+
+	if err := p.Prepare(t.Context(), dir, io.Discard); err != nil {
+		t.Fatalf("Prepare() err = %v", err)
+	}
+
+	want := [][]string{
+		{"sh", "-c", misetrust.Script, "/srv/workspace/smith", "mise", "--cd", dir, "install"},
+		{"sh", "-c", misetrust.Script, "/srv/workspace/smith", "mise", "--cd", dir, "exec", "--", "sh", "-c", "npm ci"},
+	}
 	if !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
 	}
@@ -143,8 +163,8 @@ func TestPrepareRunsTheWorktreesPrepareCommandUnderMiseAfterTheToolchain(t *test
 	}
 
 	want := [][]string{
-		{"mise", "--cd", dir, "install"},
-		{"mise", "--cd", dir, "exec", "--", "sh", "-c", "npm ci"},
+		{"sh", "-c", misetrust.Script, dir, "mise", "--cd", dir, "install"},
+		{"sh", "-c", misetrust.Script, dir, "mise", "--cd", dir, "exec", "--", "sh", "-c", "npm ci"},
 	}
 	if !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
@@ -163,7 +183,7 @@ func TestPrepareRunsNoPrepareCommandWhenTheToolchainFails(t *testing.T) {
 	if !errors.As(err, &failed) || failed.Step != prepare.Toolchain {
 		t.Fatalf("Prepare() err = %v, want the toolchain step's *prepare.StepError", err)
 	}
-	if want := [][]string{{"mise", "--cd", dir, "install"}}; !reflect.DeepEqual(run.calls, want) {
+	if want := [][]string{{"sh", "-c", misetrust.Script, dir, "mise", "--cd", dir, "install"}}; !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
 	}
 }
@@ -216,7 +236,7 @@ func TestPrepareRefusesAMalformedRepoFileBeforeRunningTheCommand(t *testing.T) {
 	if !errors.As(err, &verr) {
 		t.Fatalf("Prepare() err = %v, want a *blueprint.ValidationError", err)
 	}
-	if want := [][]string{{"mise", "--cd", dir, "install"}}; !reflect.DeepEqual(run.calls, want) {
+	if want := [][]string{{"sh", "-c", misetrust.Script, dir, "mise", "--cd", dir, "install"}}; !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
 	}
 }

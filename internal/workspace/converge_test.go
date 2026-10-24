@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/bootstrap"
+	"github.com/byranZA/smith/internal/misetrust"
 )
 
 // fakeBox stands in for the box the stage runs on: it records the argv of
@@ -66,8 +67,9 @@ func newBox() *fakeBox {
 }
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	argv := append([]string{name}, args...)
-	f.calls = append(f.calls, argv)
+	f.calls = append(f.calls, append([]string{name}, args...))
+	argv := untrusted(append([]string{name}, args...))
+	name, args = argv[0], argv[1:]
 	line := strings.Join(argv, " ")
 	if isMise(name) && !f.holdsMise(name) {
 		return fmt.Errorf("%s: command not found", name)
@@ -186,6 +188,14 @@ func (f *fakeBox) config(args []string, stdout, stderr io.Writer) error {
 	}
 	f.gitConfig[args[0]] = args[1]
 	return nil
+}
+
+// untrusted is argv less the trust wrapper misetrust.Command puts around mise.
+func untrusted(argv []string) []string {
+	if len(argv) > 4 && argv[0] == "sh" && argv[1] == "-c" && argv[2] == misetrust.Script {
+		return argv[4:]
+	}
+	return argv
 }
 
 // isMise reports whether a command is an invocation of mise, by the plain name

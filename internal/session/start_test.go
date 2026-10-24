@@ -14,6 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/hint"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 )
@@ -89,7 +90,7 @@ func TestStartRunsAHumanSessionsLoginShellUnderMise(t *testing.T) {
 	}
 
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
-	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-spec-42", "-c", dir, "/home/smith/.local/bin/mise", "exec", "--", "bash", "-l"}}
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-spec-42", "-c", dir, "sh", "-c", misetrust.Script, filepath.Join(workspace, "smith"), "/home/smith/.local/bin/mise", "exec", "--", "bash", "-l"}}
 	if !slices.EqualFunc(tmux.calls, want, slices.Equal) {
 		t.Errorf("Start() ran tmux %q, want %q", tmux.calls, want)
 	}
@@ -114,7 +115,7 @@ func TestStartRunsARootCommandUnderMise(t *testing.T) {
 	}
 
 	dir := filepath.Join(workspace, "smith", "worktrees", "spec-42")
-	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-spec-42", "-c", dir, "/home/smith/.local/bin/mise", "exec", "--", "smith", "loop", "run", "docs/spec.md"}}
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-spec-42", "-c", dir, "sh", "-c", misetrust.Script, filepath.Join(workspace, "smith"), "/home/smith/.local/bin/mise", "exec", "--", "smith", "loop", "run", "docs/spec.md"}}
 	if !slices.EqualFunc(tmux.calls, want, slices.Equal) {
 		t.Errorf("Start() ran tmux %q, want %q", tmux.calls, want)
 	}
