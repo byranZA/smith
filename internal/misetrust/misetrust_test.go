@@ -15,8 +15,7 @@ printf '%s|' "$MISE_TRUSTED_CONFIG_PATHS"
 for arg; do printf '[%s]' "$arg"; done
 `
 
-// runCommand runs misetrust.Command for the stand-in mise with environ as the
-// whole environment, and returns what the stand-in printed.
+// runCommand runs Command for the stand-in mise with environ as its whole environment and returns what it printed.
 func runCommand(t *testing.T, dir string, environ []string, args ...string) string {
 	t.Helper()
 	mise := filepath.Join(t.TempDir(), "mise")

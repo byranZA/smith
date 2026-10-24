@@ -190,8 +190,7 @@ func (f *fakeBox) config(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// untrusted is argv with the trust misetrust.Command wraps mise in taken off,
-// leaving the mise invocation the shell would go on to exec.
+// untrusted is argv less the trust wrapper misetrust.Command puts around mise.
 func untrusted(argv []string) []string {
 	if len(argv) > 4 && argv[0] == "sh" && argv[1] == "-c" && argv[2] == misetrust.Script {
 		return argv[4:]
