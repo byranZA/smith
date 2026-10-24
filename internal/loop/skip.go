@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -11,12 +12,13 @@ import (
 // unknown stands in the skip comment for a value the loop could not read.
 const unknown = "unknown"
 
-// noteSkip comments on skipped task's issue with where its work was left: the
-// machine, the task worktree dir, the task branch, the attempts it got in this
-// run, whether its agent was killed on the last of them, and how far its
-// branch got beyond the work branch. A value it cannot
-// read is marked unknown, and that or a failed comment write is a warning.
-func (l Loop) noteSkip(ctx context.Context, task tracker.Task, dir string, attempts int, killed bool) error {
+// noteSkip comments on skipped task's issue with where its work was left,
+// after last, its last attempt: the machine, the task worktree, the task
+// branch, the preset its attempts ran on, the attempts it got in this run,
+// whether its agent was killed on the last of them, and how far its branch
+// got beyond the work branch. A value it cannot read is marked unknown, and
+// that or a failed comment write is a warning.
+func (l Loop) noteSkip(ctx context.Context, task tracker.Task, last attempt, attempts int) error {
 	host, err := l.hostname()
 	if err := l.warnIf(err, "could not read this machine's hostname"); err != nil {
 		return err
@@ -32,10 +34,11 @@ func (l Loop) noteSkip(ctx context.Context, task tracker.Task, dir string, attem
 	var b strings.Builder
 	b.WriteString("smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n")
 	fmt.Fprintf(&b, "- **Machine:** %s\n", host)
-	fmt.Fprintf(&b, "- **Task worktree:** `%s`\n", dir)
+	fmt.Fprintf(&b, "- **Task worktree:** `%s`\n", last.dir)
 	fmt.Fprintf(&b, "- **Task branch:** `%s`\n", l.Bench.TaskBranch(task.Number))
+	fmt.Fprintf(&b, "- **Preset:** %s\n", cmp.Or(last.preset.Name, "one-off"))
 	fmt.Fprintf(&b, "- **Attempts:** %d in this run\n", attempts)
-	if killed {
+	if last.killed() {
 		fmt.Fprintf(&b, "- **Last attempt:** the agent was %s\n", KilledCause)
 	}
 	fmt.Fprintf(&b, "- **Progress:** %s\n", progress)

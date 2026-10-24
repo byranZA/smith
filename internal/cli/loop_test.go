@@ -211,6 +211,29 @@ func TestLoopListNamesTheNextTaskAndWhatRemains(t *testing.T) {
 	}
 }
 
+func TestLoopListNamesEachLabelledTasksPreset(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43, 44, 45),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+		"44": `{"number":44,"title":"Task 44","state":"OPEN","body":"","labels":[{"name":"ready-for-agent"},{"name":"preset:codex"}],"blockedBy":{"nodes":[]}}`,
+		"45": `{"number":45,"title":"Task 45","state":"OPEN","body":"","labels":[{"name":"ready-for-agent"},{"name":"preset:deep"}],"blockedBy":{"nodes":[{"number":43,"state":"OPEN"}]}}`,
+	}}
+
+	stdout, stderr, code := runLoopList(t, gh, "42")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := defaultSettings +
+		"spec #42 Spec: the loop\n" +
+		"next: #43 Task 43\n" +
+		"  available: #43, #44 (preset codex)\n" +
+		"  blocked: #45 (by #43; preset deep)\n"
+	if stdout != want {
+		t.Errorf("stdout =\n%s\nwant\n%s", stdout, want)
+	}
+}
+
 func TestLoopListSaysThereIsNoNextTaskWhenOnlyAHumanCanProceed(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{
 		"42": specJSON(43, 44),

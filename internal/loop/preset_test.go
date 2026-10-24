@@ -2,7 +2,9 @@ package loop_test
 
 import (
 	"errors"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/loop"
@@ -153,5 +155,87 @@ func TestRunInteractiveStopsBeforeAnyAgentOnATaskNamingAnUndefinedPreset(t *test
 	var undefined *preset.UndefinedError
 	if !errors.As(err, &undefined) || len(b.launched) != 0 {
 		t.Errorf("RunInteractive() = %v, launched %v; want the undefined preset refused with no agent launched", err, b.launched)
+	}
+}
+
+func TestRunNamesEachTasksPresetAsItHandsItOver(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43), labelled(44, "codex")}}
+	var progress strings.Builder
+	l := loopWith(t, b, preset.Flags{})
+	l.Progress = &progress
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{
+		"smith: handing #43 task to claude on preset opus in /bench/43",
+		"smith: handing #44 task to codex on preset codex in /bench/44",
+	}
+	if !containsLines(progress.String(), want) {
+		t.Errorf("Run() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunNamesAOneOffPresetAsItHandsATaskOver(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	var progress strings.Builder
+	l := loopWith(t, b, preset.Flags{Agent: "codex"})
+	l.Progress = &progress
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{"smith: handing #43 task to codex on a one-off preset in /bench/43"}
+	if !containsLines(progress.String(), want) {
+		t.Errorf("Run() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunInteractiveNamesTheTasksPresetAsItHandsItOver(t *testing.T) {
+	b := &board{tasks: []tracker.Task{labelled(43, "codex")}}
+	var progress strings.Builder
+	l := loopWith(t, b, preset.Flags{})
+	l.Progress = &progress
+
+	if _, err := l.RunInteractive(t.Context(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	want := []string{"smith: handing #43 task to codex on preset codex in /bench/43"}
+	if !containsLines(progress.String(), want) {
+		t.Errorf("RunInteractive() progress\n%s\nwant the lines %q", progress.String(), want)
+	}
+}
+
+func TestRunCommentsOnASkippedTaskWithThePresetItsAttemptsUsed(t *testing.T) {
+	b := &board{tasks: []tracker.Task{labelled(43, "codex")}, leaveOpen: []int{43}}
+	l := loopWith(t, b, preset.Flags{})
+	l.Hostname = hostnamed("box-1")
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{"smith skipped this task and handed it to a human: it was still open after its last attempt.\n\n" +
+		"- **Machine:** box-1\n" +
+		"- **Task worktree:** `/bench/43`\n" +
+		"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
+		"- **Preset:** codex\n" +
+		"- **Attempts:** 1 in this run\n" +
+		"- **Progress:** nothing committed beyond the work branch `smith/42-spec`\n"}
+	if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
+		t.Errorf("Run() commented %q on #43, want %q", got, want)
+	}
+}
+
+func TestKindsNamesEveryPresetATaskWithTwoPresetLabelsCarries(t *testing.T) {
+	remaining := loop.Remaining{Available: []tracker.Task{agentTask(43), labelled(44, "opus", "codex")}}
+
+	want := "  available: #43, #44 (presets opus, codex)\n"
+	if got := loop.Kinds(remaining, loop.Limits{}, false); got != want {
+		t.Errorf("Kinds(#43, #44 with two presets) = %q, want %q", got, want)
 	}
 }

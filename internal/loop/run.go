@@ -202,11 +202,11 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			capped.Capped = true
 			return capped, nil
 		}
-		adapter, opts, err := l.agent(next)
+		adapter, resolved, err := l.agent(next)
 		if err != nil {
 			return Outcome{}, err
 		}
-		run, err := l.hand(ctx, next, adapter.Unattended(l.Prompt.Render(next), opts))
+		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.Render(next), resolved.Options()))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -232,7 +232,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			return Outcome{}, err
 		}
 		if skip {
-			if err := l.noteSkip(ctx, next, run.dir, attempts[next.Number], run.killed()); err != nil {
+			if err := l.noteSkip(ctx, next, run, attempts[next.Number]); err != nil {
 				return Outcome{}, err
 			}
 		}
@@ -305,11 +305,11 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
-	adapter, opts, err := l.agent(next)
+	adapter, resolved, err := l.agent(next)
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
-	if _, err := l.hand(ctx, next, adapter.Interactive(l.Prompt.Interactive().Render(next), opts)); err != nil {
+	if _, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next), resolved.Options())); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -328,18 +328,18 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 }
 
-// agent returns the adapter and options of the preset task is handed to,
+// agent returns the preset task is handed to and the adapter of its agent,
 // refusing a preset the run cannot resolve.
-func (l Loop) agent(task tracker.Task) (agent.Adapter, agent.Options, error) {
+func (l Loop) agent(task tracker.Task) (agent.Adapter, preset.Resolved, error) {
 	resolved, err := l.Presets.Task(task)
 	if err != nil {
-		return nil, agent.Options{}, fmt.Errorf("choose a preset: %w", err)
+		return nil, preset.Resolved{}, fmt.Errorf("choose a preset: %w", err)
 	}
 	adapter, err := agent.Lookup(resolved.Agent.Value)
 	if err != nil {
-		return nil, agent.Options{}, fmt.Errorf("choose the agent of #%d: %w", task.Number, err)
+		return nil, preset.Resolved{}, fmt.Errorf("choose the agent of #%d: %w", task.Number, err)
 	}
-	return adapter, resolved.Options(), nil
+	return adapter, resolved, nil
 }
 
 // refresh reads current, the execution read for issue number, as it stands
@@ -362,9 +362,10 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 }
 
 // attempt is how one agent run on a task went: the task worktree it ran in,
-// and Launch's error, nil when the agent exited cleanly.
+// the preset it ran on, and Launch's error, nil when the agent exited cleanly.
 type attempt struct {
 	dir     string
+	preset  preset.Resolved
 	failure error
 }
 
@@ -375,13 +376,13 @@ func (a attempt) killed() bool { return errors.Is(a.failure, ErrKilled) }
 // failure, rather than exiting cleanly or being killed.
 func (a attempt) agentFailure() bool { return a.failure != nil && !a.killed() }
 
-// hand marks task as worked and gives it to one agent run of cmd in task's
-// worktree, returning how the attempt went, and reports an agent that fails,
+// hand marks task as worked and gives it to one agent run of cmd, on
+// resolved, in task's worktree, returning how the attempt went, and reports an agent that fails,
 // leaving it to the caller to judge. The worktree is prepared first, and a failed
 // preparation is an error naming it before task is marked or any agent runs.
 // The caller releases the mark, except on an error from an interrupted run or
 // a failed report of that failure, when hand has already removed it.
-func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (attempt, error) {
+func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resolved, cmd agent.Command) (attempt, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
 		return attempt{}, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
@@ -390,13 +391,13 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (a
 	if err := l.prepare(ctx, task, dir); err != nil {
 		return attempt{}, err
 	}
-	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
+	if err := l.report("smith: handing #%d %s to %s on %s in %s\n", task.Number, task.Title, resolved.Agent.Value, presetPhrase(resolved), dir); err != nil {
 		return attempt{}, err
 	}
 	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
 		return attempt{}, err
 	}
-	run := attempt{dir: dir, failure: l.Launcher.Launch(ctx, cmd)}
+	run := attempt{dir: dir, preset: resolved, failure: l.Launcher.Launch(ctx, cmd)}
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 		return attempt{}, errors.Join(interrupted, l.unmarkDetached(ctx, task))
@@ -408,6 +409,15 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (a
 		return attempt{}, errors.Join(err, l.unmarkDetached(ctx, task))
 	}
 	return run, nil
+}
+
+// presetPhrase names resolved as the hand-off line does: "preset opus", or
+// "a one-off preset" for one built from the run flags.
+func presetPhrase(resolved preset.Resolved) string {
+	if resolved.Name == "" {
+		return "a one-off preset"
+	}
+	return "preset " + resolved.Name
 }
 
 // prepare prepares task's worktree at dir with the Preparer, when there is

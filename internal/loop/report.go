@@ -137,12 +137,14 @@ func Kinds(remaining Remaining, limits Limits, withClosed bool) string {
 	return b.String()
 }
 
-// taskList renders tasks as "#43, #44", naming each blocked task's open
-// blockers after it.
+// taskList renders tasks as "#43, #44", naming after each task its open
+// blockers and the presets its preset: labels choose, as in
+// "#44 (by #43; preset codex)".
 func taskList(tasks []tracker.Task) string {
 	refs := make([]string, 0, len(tasks))
 	for _, task := range tasks {
 		ref := fmt.Sprintf("#%d", task.Number)
+		var notes []string
 		var open []string
 		for _, b := range task.Blockers {
 			if b.Open {
@@ -150,7 +152,17 @@ func taskList(tasks []tracker.Task) string {
 			}
 		}
 		if len(open) > 0 {
-			ref += " (by " + strings.Join(open, ", ") + ")"
+			notes = append(notes, "by "+strings.Join(open, ", "))
+		}
+		switch len(task.Presets) {
+		case 0:
+		case 1:
+			notes = append(notes, "preset "+task.Presets[0])
+		default:
+			notes = append(notes, "presets "+strings.Join(task.Presets, ", "))
+		}
+		if len(notes) > 0 {
+			ref += " (" + strings.Join(notes, "; ") + ")"
 		}
 		refs = append(refs, ref)
 	}
