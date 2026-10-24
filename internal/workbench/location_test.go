@@ -179,3 +179,93 @@ func TestOpenFindsAFailedTasksWorktreeLeftUnderTheGitDirByItsTaskBranch(t *testi
 		t.Errorf("Open(431) with its task branch checked out at %s = %q, %v, want %q, nil", old, got, err, old)
 	}
 }
+
+// worktreeConfigBare returns a bare clone of a fresh remote that keeps core.bare in its own config.worktree, not the shared config, and a linked session worktree of it.
+func worktreeConfigBare(t *testing.T) (bare, session string) {
+	t.Helper()
+	_, remote := cloned(t)
+	bare, session = filepath.Join(t.TempDir(), "repo.git"), filepath.Join(t.TempDir(), "session")
+	git(t, filepath.Dir(bare), "clone", "--bare", remote, bare)
+	git(t, bare, "config", "extensions.worktreeConfig", "true")
+	git(t, bare, "config", "--worktree", "core.bare", "true")
+	git(t, bare, "config", "--unset", "core.bare")
+	git(t, bare, "worktree", "add", "--detach", session, "main")
+	return bare, session
+}
+
+func TestOpenInABareRepoWithWorktreeConfigGivesTheTaskAWorktreeUnderTheGitCommonDir(t *testing.T) {
+	t.Parallel()
+	for name, pick := range map[string]func(bare, session string) string{
+		"bare repo":                      func(bare, _ string) string { return bare },
+		"linked worktree of a bare repo": func(_, session string) string { return session },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			bare, session := worktreeConfigBare(t)
+			dir := pick(bare, session)
+			bench, err := workbench.Setup(t.Context(), connection.System(), dir, t.TempDir(), spec430)
+			if err != nil {
+				t.Fatalf("Setup(%s) error = %v", dir, err)
+			}
+
+			got, err := bench.Open(t.Context(), 431)
+
+			want := filepath.Join(resolved(t, bare), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
+			if err != nil || got != want {
+				t.Errorf("Open(431) in %s = %q, %v, want %q, nil", dir, got, err, want)
+			}
+		})
+	}
+}
+
+func TestARunInABareReposSessionReusesTheWorktreeARunInTheBareRepoRecycled(t *testing.T) {
+	t.Parallel()
+	bare, session := worktreeConfigBare(t)
+	first, err := workbench.Setup(t.Context(), connection.System(), bare, t.TempDir(), spec430)
+	if err != nil {
+		t.Fatalf("Setup(%s) error = %v", bare, err)
+	}
+	landed, err := first.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+	if err := first.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) error = %v", err)
+	}
+	next, err := workbench.Setup(t.Context(), connection.System(), session, t.TempDir(), spec430)
+	if err != nil {
+		t.Fatalf("Setup(%s) error = %v", session, err)
+	}
+
+	got, err := next.Open(t.Context(), 432)
+
+	if err != nil || got != landed {
+		t.Errorf("Open(432) from the session = %q, %v, want the recycled %q, nil", got, err, landed)
+	}
+}
+
+func TestARunInABareRepoReusesTheWorktreeARunInItsSessionRecycled(t *testing.T) {
+	t.Parallel()
+	bare, session := worktreeConfigBare(t)
+	first, err := workbench.Setup(t.Context(), connection.System(), session, t.TempDir(), spec430)
+	if err != nil {
+		t.Fatalf("Setup(%s) error = %v", session, err)
+	}
+	landed, err := first.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+	if err := first.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) error = %v", err)
+	}
+	next, err := workbench.Setup(t.Context(), connection.System(), bare, t.TempDir(), spec430)
+	if err != nil {
+		t.Fatalf("Setup(%s) error = %v", bare, err)
+	}
+
+	got, err := next.Open(t.Context(), 432)
+
+	if err != nil || got != landed {
+		t.Errorf("Open(432) from the bare repo = %q, %v, want the recycled %q, nil", got, err, landed)
+	}
+}
