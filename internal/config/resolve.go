@@ -36,6 +36,8 @@ const (
 	// preference adapter is not in play at all, rather than assume the two
 	// were merged.
 	FromBlueprintReplacing Origin = "blueprint, replacing the preference"
+	// FromTaskLabel is a value a label on the task's issue chose.
+	FromTaskLabel Origin = "task label"
 	// FromRepoFile is a value the repo file declared.
 	FromRepoFile Origin = "repo file"
 	// FromPreferences is a value the operator's preferences declared.

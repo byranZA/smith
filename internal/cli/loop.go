@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/prepare"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
@@ -146,26 +146,27 @@ func (w loopWiring) repo(ctx context.Context) (repofile.Repo, error) {
 // settings resolves the loop settings for the repo smith is run from, flags
 // over its repo file over the built-in defaults. A repo with no repo file
 // resolves to the defaults.
-func (w loopWiring) settings(ctx context.Context, flags loop.Flags) (loop.Settings, error) {
+func (w loopWiring) settings(ctx context.Context, flags loop.Flags) (loop.Settings, preset.Choice, error) {
 	repo, err := w.repo(ctx)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
 	return settingsIn(repo, flags)
 }
 
 // settingsIn resolves the loop settings for repo as its checkout holds them,
-// flags over its repo file over the built-in defaults.
-func settingsIn(repo repofile.Repo, flags loop.Flags) (loop.Settings, error) {
+// flags over its repo file over the built-in defaults, with the preset choice
+// that picks each task's preset.
+func settingsIn(repo repofile.Repo, flags loop.Flags) (loop.Settings, preset.Choice, error) {
 	file, err := repofile.Load(repo)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	settings, err := loop.ResolveSettings(flags, file)
+	settings, choice, err := loop.ResolveSettings(flags, file)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	return settings, nil
+	return settings, choice, nil
 }
 
 // prompt loads the loop prompt for the repo smith is run from: its ejected
@@ -377,7 +378,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 // up and the execution is what was admitted, if anything, so the run can be
 // aborted.
 func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags loop.Flags, branch, base string) (tracker.Execution, error) {
-	settings, err := w.settings(cmd.Context(), flags)
+	settings, presets, err := w.settings(cmd.Context(), flags)
 	if err != nil {
 		return tracker.Execution{}, err
 	}
@@ -392,7 +393,7 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	l.Tracker, l.Agent, l.Options, l.Prompt = admitted.github, admitted.adapter, settings.Preset.Options(), prompt
+	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
 	if l.Pusher, err = w.origin(settings); err != nil {
 		return admitted.execution, err
 	}
@@ -433,10 +434,9 @@ func abort(cmd *cobra.Command, l loop.Loop, ref tracker.Ref, execution tracker.E
 	return reported
 }
 
-// admission is what a loop run's preflight found: the agent adapter each task
-// is handed to, the tracker, and the execution it admitted.
+// admission is what a loop run's preflight found: the tracker, and the
+// execution it admitted.
 type admission struct {
-	adapter   agent.Adapter
 	github    tracker.GitHub
 	execution tracker.Execution
 }
@@ -450,16 +450,12 @@ func installed(cmd *cobra.Command, name string, lookPath func(name string) (stri
 	return nil
 }
 
-// admit runs the preflight a loop run shares wherever it runs: it looks the
-// agent settings name up, warns of triage labels the repo lacks, and reads and
+// admit runs the preflight a loop run shares wherever it runs: it warns of
+// triage labels the repo lacks, and reads and
 // admits the execution ref names through gh. Each refusal is already reported
 // on cmd. Whether the agent is installed is the caller's to check, with
 // installed, against the PATH the run will have.
 func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
-	adapter, err := agent.Lookup(settings.Preset.Agent.Value)
-	if err != nil {
-		return admission{}, reportInvalid(cmd, err)
-	}
 	github := tracker.NewGitHub(gh, settings.Labels())
 	if err := warnOfLabels(cmd, github, settings); err != nil {
 		return admission{}, err
@@ -475,7 +471,7 @@ func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Set
 	if err := loop.Admit(execution, settings.Labels()); err != nil {
 		return admission{}, reportInvalid(cmd, err)
 	}
-	return admission{adapter: adapter, github: github, execution: execution}, nil
+	return admission{github: github, execution: execution}, nil
 }
 
 // runLoop works execution with l, unattended to completion or, when
@@ -538,7 +534,7 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			settings, err := w.settings(cmd.Context(), loop.Flags{})
+			settings, _, err := w.settings(cmd.Context(), loop.Flags{})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}

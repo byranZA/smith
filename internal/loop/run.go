@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -91,9 +92,9 @@ type Loop struct {
 	// Preparer prepares the task worktree before every agent attempt; nil
 	// prepares nothing.
 	Preparer Preparer
-	Agent    agent.Adapter
-	// Options are the model and effort every agent run asks for.
-	Options agent.Options
+	// Presets chooses the preset each task is handed to, and so its agent,
+	// model and effort.
+	Presets preset.Choice
 	Prompt  Prompt
 	Limits  Limits
 	// Progress is where the loop names each task as it hands it out.
@@ -148,7 +149,8 @@ type Broken struct {
 // Complete reports whether the run ended with every task of the spec closed.
 func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
-// Run first clears the worked marks a run that died left on spec's tasks, then
+// Run first refuses spec when one of its open tasks has a preset the run
+// cannot resolve, then clears the worked marks a run that died left on spec's tasks, then
 // works spec until no task is available for an agent, handing a task left open
 // out again up to MaxAttempts and stopping after MaxIterations agent runs. A
 // task left open after its last attempt is skipped and handed to a human,
@@ -183,6 +185,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	stopped := func(remaining Remaining) Outcome {
 		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
 	}
+	if err := l.Presets.Check(current); err != nil {
+		return Outcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
+	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
@@ -197,7 +202,11 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			capped.Capped = true
 			return capped, nil
 		}
-		run, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
+		adapter, opts, err := l.agent(next)
+		if err != nil {
+			return Outcome{}, err
+		}
+		run, err := l.hand(ctx, next, adapter.Unattended(l.Prompt.Render(next), opts))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -279,19 +288,28 @@ func (o InteractiveOutcome) Succeeded() bool {
 }
 
 // RunInteractive hands spec's next available task to one agent run attached to
-// the operator's terminal, and runs no agent when no task is available. When
+// the operator's terminal, on the task's own preset, and runs no agent when no
+// task is available or one of spec's open tasks has a preset the run cannot
+// resolve. When
 // the spec is complete once it ends, the recycled task worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
 		return InteractiveOutcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
+	if err := l.Presets.Check(current); err != nil {
+		return InteractiveOutcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
+	}
 	remaining := Survey(current)
 	next, ok := remaining.Next()
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
-	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
+	adapter, opts, err := l.agent(next)
+	if err != nil {
+		return InteractiveOutcome{}, err
+	}
+	if _, err := l.hand(ctx, next, adapter.Interactive(l.Prompt.Interactive().Render(next), opts)); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -308,6 +326,20 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	}
 	remaining = Survey(after)
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
+}
+
+// agent returns the adapter and options of the preset task is handed to,
+// refusing a preset the run cannot resolve.
+func (l Loop) agent(task tracker.Task) (agent.Adapter, agent.Options, error) {
+	resolved, err := l.Presets.Task(task)
+	if err != nil {
+		return nil, agent.Options{}, fmt.Errorf("choose a preset: %w", err)
+	}
+	adapter, err := agent.Lookup(resolved.Agent.Value)
+	if err != nil {
+		return nil, agent.Options{}, fmt.Errorf("choose the agent of #%d: %w", task.Number, err)
+	}
+	return adapter, resolved.Options(), nil
 }
 
 // refresh reads current, the execution read for issue number, as it stands

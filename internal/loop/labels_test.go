@@ -24,7 +24,7 @@ func (f *fakeLabels) Labels(context.Context) ([]string, error) {
 
 func settingsWith(t *testing.T, labels repofile.Labels) loop.Settings {
 	t.Helper()
-	s, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: labels})
+	s, _, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: labels})
 	if err != nil {
 		t.Fatalf("ResolveSettings(labels %+v) error = %v", labels, err)
 	}

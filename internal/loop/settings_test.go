@@ -76,7 +76,7 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := loop.ResolveSettings(tt.flags, tt.file)
+			got, _, err := loop.ResolveSettings(tt.flags, tt.file)
 
 			if err != nil || got != tt.want {
 				t.Errorf("ResolveSettings() = %+v, %v; want %+v", got, err, tt.want)
@@ -96,7 +96,7 @@ func TestResolveSettingsRefusesWhatNoAgentCanRun(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := loop.ResolveSettings(loop.Flags{Preset: tt.flags}, repofile.File{})
+			_, _, err := loop.ResolveSettings(loop.Flags{Preset: tt.flags}, repofile.File{})
 
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("ResolveSettings(%+v) error = %v, want it to contain %q", tt.flags, err, tt.want)
@@ -130,7 +130,7 @@ func TestResolveSettingsTakesEachLabelFromTheRepoFileOverItsDefault(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: tt.labels})
+			got, _, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: tt.labels})
 			if err != nil {
 				t.Fatalf("ResolveSettings(labels %+v) error = %v", tt.labels, err)
 			}
@@ -146,7 +146,7 @@ func TestResolveSettingsRefusesALabelSharingADefaultsName(t *testing.T) {
 	t.Parallel()
 	file := repofile.File{Labels: repofile.Labels{Human: "ready-for-agent"}}
 
-	_, err := loop.ResolveSettings(loop.Flags{}, file)
+	_, _, err := loop.ResolveSettings(loop.Flags{}, file)
 
 	want := `labels.human (repo file) is "ready-for-agent", the name labels.agent (built-in default) has: each label needs a name of its own`
 	if err == nil || err.Error() != want {
@@ -171,7 +171,7 @@ func TestResolveSettingsRefusesALabelNamedForOneOfSmithsOwnMarks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: tt.labels})
+			_, _, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: tt.labels})
 
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("ResolveSettings(labels %+v) error = %v, want %q", tt.labels, err, tt.want)

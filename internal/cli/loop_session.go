@@ -219,7 +219,7 @@ func (w loopWiring) checkedOut(ctx context.Context, dir string, flags loop.Flags
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings in %s: %w", dir, err)
 	}
-	settings, err := settingsIn(repo, flags)
+	settings, _, err := settingsIn(repo, flags)
 	if err != nil {
 		return loop.Settings{}, err
 	}
@@ -237,7 +237,7 @@ func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags loop.
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	settings, err := loop.ResolveSettings(flags, commit.File)
+	settings, _, err := loop.ResolveSettings(flags, commit.File)
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
 	}

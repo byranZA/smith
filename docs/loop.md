@@ -203,12 +203,21 @@ Every preset is checked when the repo file loads, used or not, and each problem 
 
 A role smith does not define (`smith has no role "review"`) and a role naming a preset `presets:` does not define are refused too. The flat top-level `agent`, `model` and `effort` keys of earlier versions are refused with their line and the presets shape that replaces them.
 
-The run flags change the work role's preset for one run, without editing the file:
+The run flags change the preset for one run, without editing the file:
 
 - `--preset P` runs every task on the repo file's preset `P`, which the settings report shows as from the flag.
 - `--agent X` builds a one-off preset on `X` that never inherits the repo file's model or effort, and `--model Y` beside it sets that preset's model.
 - `--model Y` alone keeps the work preset's agent and effort, and replaces its model.
 - `--effort E` replaces the effort of whichever preset the run resolves.
+
+A task can run on a preset of its own: a `preset:<name>` label on its issue, such as `preset:codex`, sends it to the repo file's preset `<name>` while the rest of its spec stays on the work preset. The `preset:` prefix is smith's own, like `smith:working`, not a triage label a repo file can rename. A preset therefore comes from, most specific first:
+
+1. `--preset`, `--agent` or `--model`, which pin every task of the run to one preset, over any label.
+2. The task's `preset:` label.
+3. The work role's preset.
+4. The built-in `default` preset.
+
+`--effort` alone pins nothing: each task keeps its own preset and runs at that effort. Straight after reading the spec, before any worktree is opened or agent started, the run checks each open task's label, and stops as `failed` on a task naming a preset the repo file does not define (`#N's label preset:missing names preset "missing", which the repo file does not define`) or carrying two labels (`#N carries the labels preset:opus and preset:codex: a task runs on one preset`). Closed tasks are not checked, and a run pinned by a flag checks no labels at all. `--interactive` honours the label the same way. Whether an agent is installed is checked up front only for the work preset's agent, so a labelled task whose agent is missing stops the run as `agent broken` when it is handed out.
 
 An unknown `--agent`, an `--effort` off the scale, and a `--preset` the repo file does not define are refused, naming the flag. `--preset` beside `--agent` or `--model` is refused too, since a preset already names its agent and model. The [presets ADR](./adr/0022-presets-and-roles.md) has the reasoning.
 

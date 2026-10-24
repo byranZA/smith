@@ -22,6 +22,10 @@ const (
 	failedLabel = "smith:failed"
 )
 
+// PresetPrefix leads a label that chooses the preset a task runs on. It is
+// smith's own, like the marks, not a triage label a repo file can rename.
+const PresetPrefix = "preset:"
+
 // IsMark reports whether name is one of the labels the loop marks its own
 // work with, which no triage label may share.
 func IsMark(name string) bool {
@@ -207,7 +211,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		if err != nil {
 			return Execution{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel)})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets()})
 	}
 	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
 }
@@ -242,7 +246,7 @@ func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Working: task.labelled(workingLabel)}, nil
+	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Working: task.labelled(workingLabel), Presets: task.presets()}, nil
 }
 
 // task reads task number with every issue linked as blocking it.
@@ -456,6 +460,18 @@ func (g GitHub) linkedPage(ctx context.Context, number int, name, cursor string)
 // labelled reports whether the issue carries the label called name.
 func (i issue) labelled(name string) bool {
 	return slices.Contains(i.Labels, label{Name: name})
+}
+
+// presets returns the name each of the issue's preset: labels carries, in
+// label order, or nil when it carries none.
+func (i issue) presets() []string {
+	var names []string
+	for _, l := range i.Labels {
+		if name, ok := strings.CutPrefix(l.Name, PresetPrefix); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // isSpec reports whether the issue is a spec: carrying the spec label among

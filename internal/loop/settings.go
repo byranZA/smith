@@ -34,14 +34,15 @@ type Settings struct {
 
 // ResolveSettings resolves the settings from flags over the repo file over the
 // built-in defaults, naming where each came from: the work role's preset as
-// preset.Choose chooses it, and each other setting field by field. It refuses
+// preset.Choose chooses it, and each other setting field by field. It also
+// returns the preset choice that picks each task's preset. It refuses
 // what preset.Choose refuses, a triage label named for one of the loop's own
 // marks, and two triage labels sharing a name. The triage labels are read
 // from the repo file alone.
-func ResolveSettings(flags Flags, file repofile.File) (Settings, error) {
+func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, error) {
 	choice, err := preset.Choose(file, flags.Preset)
 	if err != nil {
-		return Settings{}, fmt.Errorf("choose the preset: %w", err)
+		return Settings{}, preset.Choice{}, fmt.Errorf("choose the preset: %w", err)
 	}
 	defaults := tracker.DefaultLabels()
 	s := Settings{
@@ -52,9 +53,9 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, error) {
 		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
 	}
 	if err := s.distinctLabels(); err != nil {
-		return Settings{}, err
+		return Settings{}, preset.Choice{}, err
 	}
-	return s, nil
+	return s, choice, nil
 }
 
 // Labels are the triage labels the settings have the tracker read and write.
