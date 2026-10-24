@@ -15,9 +15,7 @@ import (
 	"github.com/byranZA/smith/internal/repofile"
 )
 
-// fakeGit answers `git rev-parse --show-toplevel` with root, exiting 128 when
-// root is empty. With root empty, `git rev-parse --is-bare-repository` prints
-// true when bare is set and exits 128 otherwise, as it does outside any repo.
+// fakeGit reports the configured checkout root or bare-repo status.
 type fakeGit struct {
 	root string
 	bare bool
