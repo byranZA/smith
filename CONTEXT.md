@@ -218,9 +218,9 @@ verbatim onto the box** at `/etc/smith/blueprint.yaml` so on-box smith reads the
 ([ADR-0006](./docs/adr/0006-the-blueprint-config-surface.md)).
 _Avoid_: manifest (reserved, avoided for the marker), config file, template, profile.
 
-**Config home vs box state**:
-`~/.smith/` is the **operator's** config home — `blueprints/`, `preferences`, and a gitignored `cache/` holding the box inventory. `/etc/smith/` is a **provisioned box's** state — the marker, the staged blueprint, the staged placement bytes, the staged env, and the staged resolution. Separate locations and roles, same format; they must never share a directory, because one machine could one day hold both. The config home is created by the **first write** into it and never by a read, and its `.gitignore` is appended to rather than rewritten: the file is the operator's.
-_Avoid_: config dir (ambiguous between the two).
+**Config home vs box state vs state home**:
+`~/.smith/` is the **operator's** config home — `blueprints/`, `preferences`, and a gitignored `cache/` holding the box inventory. `/etc/smith/` is a **provisioned box's** state — the marker, the staged blueprint, the staged placement bytes, the staged env, and the staged resolution. Separate locations and roles, same format; they must never share a directory, because one machine could one day hold both. The config home is created by the **first write** into it and never by a read, and its `.gitignore` is appended to rather than rewritten: the file is the operator's. The **state home**, `$XDG_STATE_HOME/smith/` (else `~/.local/state/smith/`), is smith's working state on whatever machine it runs on, such as a non-bare repo's task worktrees: neither config nor rebuildable, and created by the first write into it ([ADR-0021](./docs/adr/0021-task-worktrees-of-a-non-bare-repo-live-in-the-state-home.md)).
+_Avoid_: config dir (ambiguous between them), cache or data dir (for the state home).
 
 **Staged blueprint**:
 `/etc/smith/blueprint.yaml` — the operator's blueprint document written onto the box by the
