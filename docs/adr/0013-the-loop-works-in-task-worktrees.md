@@ -2,6 +2,8 @@
 
 > Amends [ADR-0012](./0012-the-repo-file.md), which left the loop working in the repo it is invoked from.
 
+> **Amended by [ADR-0021](./0021-task-worktrees-of-a-non-bare-repo-live-in-the-state-home.md).** A non-bare repo's task worktrees live in the state home, outside the checkout; a bare repo's stay under its git common directory.
+
 ## Context
 
 The loop runs an execution's tasks one after another in the checkout it is invoked from, on whatever branch that checkout has, and never creates or switches a branch. After each closed task it pushes that branch, skipping the push when the branch is `origin`'s default, because running the loop on `main` put the agent's commits on local `main`.
