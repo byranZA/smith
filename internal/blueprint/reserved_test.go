@@ -65,7 +65,7 @@ func TestParseReservesSchemaFieldNamesInBothOpenMapsAtBothScopes(t *testing.T) {
 
 func TestParseReservesEverySchemaFieldName(t *testing.T) {
 	reserved := []string{
-		"access", "terminal", "workspace", "provider", "packages", "tools",
+		"access", "terminal", "workspace", "provider", "packages", "groups", "tools",
 		"env", "placements", "repos", "git", "name", "url", "base", "from",
 		"to", "mode", "perms",
 	}

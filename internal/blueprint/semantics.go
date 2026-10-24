@@ -16,6 +16,9 @@ var (
 	placementModes = []string{"converge", "once"}
 	// octalPerms is a file mode written the way chmod takes it.
 	octalPerms = regexp.MustCompile(`^[0-7]{3,4}$`)
+	// groupName is a group name as Debian's adduser lets a system group be
+	// named (its default SYS_NAME_REGEX), which is what a package's group is.
+	groupName = regexp.MustCompile(`^[a-z_][-a-z0-9_]*\$?$`)
 )
 
 // gitSuffix is the extension a clone URL carries that a worktree directory
@@ -77,9 +80,31 @@ func validate(b Blueprint) []Finding {
 	report = append(report, choice("access", b.Access, accessModes)...)
 	report = append(report, choice("terminal", b.Terminal, terminals)...)
 	report = append(report, GitConflicts(b.Git, b.Placements)...)
+	report = append(report, groupFindings(b.Groups)...)
 	report = append(report, envFindings("env", b.Env)...)
 	report = append(report, placementFindings("placements", b.Placements, boxScope)...)
 	report = append(report, repoFindings(b.Repos)...)
+	return report
+}
+
+// groupFindings refuses a group entry that is not a name a group can carry, and
+// one declared a second time.
+func groupFindings(groups []string) []Finding {
+	var report []Finding
+	declared := map[string]bool{}
+	for i, g := range groups {
+		at := fmt.Sprintf("groups[%d]", i)
+		switch {
+		case !groupName.MatchString(g):
+			report = append(report, Finding{Path: at, Message: fmt.Sprintf(
+				"%q is not a group name: a group name is lowercase letters, digits, %q and %q, starting with a letter or %q",
+				g, "-", "_", "_")})
+		case declared[g]:
+			report = append(report, Finding{Path: at, Message: fmt.Sprintf("group %q is declared twice", g)})
+		default:
+			declared[g] = true
+		}
+	}
 	return report
 }
 

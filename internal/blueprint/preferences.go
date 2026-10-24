@@ -6,10 +6,10 @@ package blueprint
 // yes.
 //
 // It carries no collection fields, and that omission is the whole of the rule
-// that keeps repos, placements, packages, tools and env blueprint-only: a
-// collection written into a preferences file is refused by the strict pass as
-// a field the schema does not define, so there is no allowlist to write and
-// none to maintain. Do not add a validation rule that duplicates it.
+// that keeps repos, placements, packages, groups, tools and env
+// blueprint-only: a collection written into a preferences file is refused by
+// the strict pass as a field the schema does not define, so there is no
+// allowlist to write and none to maintain. Do not add a validation rule that duplicates it.
 //
 // The reason for the split is reproducibility, not merge semantics. A box's
 // marker records which blueprint it was built from and records nothing about

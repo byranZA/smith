@@ -13,7 +13,7 @@ import (
 // shape trips.
 var reservedFields = map[string]bool{
 	"access": true, "terminal": true, "workspace": true, "provider": true,
-	"packages": true, "tools": true, "env": true, "placements": true,
+	"packages": true, "groups": true, "tools": true, "env": true, "placements": true,
 	"repos": true, "git": true, "name": true, "url": true, "base": true,
 	"from": true, "to": true, "mode": true, "perms": true,
 }

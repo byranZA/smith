@@ -142,6 +142,8 @@ type Resolved struct {
 	Repos []blueprint.Repo
 	// Packages are the system packages installed on the box.
 	Packages []string
+	// Groups are the groups the smith user is added to on the box.
+	Groups []string
 	// Tools are the box-wide toolchain versions, keyed by tool name.
 	Tools map[string]string
 	// Env are the box-wide environment variables, keyed by variable name.
@@ -182,6 +184,7 @@ func (r Resolved) String() string {
 	lines = append(lines, block("git", r.Git.lines())...)
 	lines = append(lines, block("repos", repoLines(r.Repos))...)
 	lines = append(lines, block("packages", r.Packages)...)
+	lines = append(lines, block("groups", r.Groups)...)
 	lines = append(lines, block("tools", pairLines(r.Tools))...)
 	lines = append(lines, block("env", pairLines(r.Env))...)
 	lines = append(lines, block("placements", placementLines(r.Placements))...)
@@ -291,6 +294,7 @@ func Resolve(o Overrides, b *blueprint.Blueprint, p *blueprint.Preferences) Reso
 		},
 		Repos:      b.Repos,
 		Packages:   b.Packages,
+		Groups:     b.Groups,
 		Tools:      b.Tools,
 		Env:        b.Env,
 		Placements: b.Placements,

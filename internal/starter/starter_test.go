@@ -195,7 +195,7 @@ const verifiedAdapter = "../../docs/examples/adapters/doctl.yaml"
 // blueprintOnlyKeys are the ones only a blueprint declares.
 var (
 	fixedKeys         = []string{"access", "terminal", "workspace", "provider", "git"}
-	blueprintOnlyKeys = []string{"repos", "placements", "packages", "tools", "env"}
+	blueprintOnlyKeys = []string{"repos", "placements", "packages", "groups", "tools", "env"}
 )
 
 // starters scaffolds a fresh config home and returns the content of the

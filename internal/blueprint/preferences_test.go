@@ -12,6 +12,7 @@ func TestParsePreferencesRefusesACollection(t *testing.T) {
 		"repos":      "repos:\n  - url: git@github.com:acme/api.git\n",
 		"placements": "placements:\n  - to: ~/.npmrc\n",
 		"packages":   "packages:\n  - ripgrep\n",
+		"groups":     "groups:\n  - docker\n",
 		"tools":      "tools:\n  node: \"20\"\n",
 		"env":        "env:\n  TOKEN: op://vault/item/field\n",
 	}

@@ -37,6 +37,8 @@ func TestTheShippedExampleBlueprintCoversTheWholeSurface(t *testing.T) {
 		t.Errorf("example Git = %+v, want a git identity", got.Git)
 	case got.Provider == nil:
 		t.Error("example provider = nil, want a provider block")
+	case len(got.Groups) == 0:
+		t.Errorf("example groups = %v, want a group the smith user joins", got.Groups)
 	}
 }
 

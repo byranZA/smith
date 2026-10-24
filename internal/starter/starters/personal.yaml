@@ -20,6 +20,11 @@
 # packages:
 #   - ripgrep
 
+# Existing groups the smith user joins, such as docker, which the docker.io
+# package creates. Membership is only ever added.
+# groups:
+#   - docker
+
 # Version-pinned runtimes for the whole box. Each key is a mise registry name
 # (find one with `mise registry | grep <tool>`). The loop's agent and gh belong
 # here, at box level: the clone runs before any repo's own tools are in scope.
