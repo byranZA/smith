@@ -393,6 +393,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
+	if err := checkPresets(cmd, presets, admitted.execution); err != nil {
+		return admitted.execution, err
+	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
 	if l.Pusher, err = w.origin(settings); err != nil {
 		return admitted.execution, err
@@ -472,6 +475,16 @@ func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Set
 		return admission{}, reportInvalid(cmd, err)
 	}
 	return admission{github: github, execution: execution}, nil
+}
+
+// checkPresets refuses, reported on cmd, an execution with an open task whose
+// preset presets cannot choose, so a run fails before its work branch is set
+// up or any agent runs.
+func checkPresets(cmd *cobra.Command, presets preset.Choice, execution tracker.Execution) error {
+	if err := presets.Check(execution); err != nil {
+		return reportInvalid(cmd, fmt.Errorf("choose the presets of %s: %w", loop.Name(execution), err))
+	}
+	return nil
 }
 
 // runLoop works execution with l, unattended to completion or, when

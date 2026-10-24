@@ -15,6 +15,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/session"
@@ -39,11 +40,11 @@ type sessionRun struct {
 // starts a loop-driven session in the repo's worktree for the work branch,
 // whose root process is the same loop run without --repo, and reports how to
 // watch it. Every refusal comes before anything is on disk, and a live session
-// on the work branch is one. Settings and prompt are checked where the root
-// process will read them, and a new branch is cut from the commit they were
-// checked at. The issue is read with gh, and the agent looked up, under the
-// mise exec the session's root process runs under, since a relayed smith's
-// own PATH is stripped.
+// on the work branch is one. Settings, presets and prompt are checked where the
+// root process will read them, each open task's preset among them, and a new
+// branch is cut from the commit they were checked at. The issue is read with
+// gh, and the agent looked up, under the mise exec the session's root process
+// runs under, since a relayed smith's own PATH is stripped.
 func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessionRun) error {
 	inv := invocation(cmd, "loop run", typed(cmd, []string{run.issue}))
 	if run.interactive {
@@ -67,7 +68,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 		return reportInvalid(cmd, err)
 	}
 	req := session.StartRequest{Repo: run.repo, Branch: run.branch, Base: run.base}
-	settings, source, err := w.effective(cmd, env, clone, req, run.flags)
+	settings, presets, source, err := w.effective(cmd, env, clone, req, run.flags)
 	if err != nil {
 		return reportInvalid(cmd, err)
 	}
@@ -80,7 +81,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	branch := cmp.Or(run.branch, workbench.Branch(number, title))
 	if req.Branch == "" {
 		req.Branch = branch
-		derived, at, err := w.effective(cmd, env, clone, req, run.flags)
+		derived, chosen, at, err := w.effective(cmd, env, clone, req, run.flags)
 		if err != nil {
 			return reportInvalid(cmd, err)
 		}
@@ -89,7 +90,10 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 				return err
 			}
 		}
-		settings, source = derived, at
+		settings, presets, source = derived, chosen, at
+	}
+	if err := checkPresets(cmd, presets, admitted.execution); err != nil {
+		return err
 	}
 	lookPath := func(name string) (string, error) {
 		return session.LookPath(cmd.Context(), env, w.mise, run.repo, branch, name)
@@ -191,63 +195,64 @@ func writeLoopStarted(cmd *cobra.Command, inv hint.Invocation, s session.Session
 }
 
 // effective resolves the loop settings, flags over the repo file over the
-// built-in defaults, and checks the loop prompt, as the root process of the
-// session req stands up will find them: in the branch's checkout when it has
-// one, else at the commit its checkout will hold. It answers with where it
-// read them, and creates no worktree and no branch.
-func (w loopWiring) effective(cmd *cobra.Command, env session.Env, clone string, req session.StartRequest, flags loop.Flags) (loop.Settings, session.Source, error) {
+// built-in defaults, with the preset choice that picks each task's preset, and
+// checks the loop prompt, as the root process of the session req stands up
+// will find them: in the branch's checkout when it has one, else at the commit
+// its checkout will hold. It answers with where it read them, and creates no
+// worktree and no branch.
+func (w loopWiring) effective(cmd *cobra.Command, env session.Env, clone string, req session.StartRequest, flags loop.Flags) (loop.Settings, preset.Choice, session.Source, error) {
 	source, err := session.SourceOf(cmd.Context(), env, req)
 	if err != nil {
-		return loop.Settings{}, session.Source{}, fmt.Errorf("find the loop settings a session would run: %w", err)
+		return loop.Settings{}, preset.Choice{}, session.Source{}, fmt.Errorf("find the loop settings a session would run: %w", err)
 	}
 	if source.Dir == "" {
-		settings, err := w.committed(cmd, clone, source.Ref, flags)
-		return settings, source, err
+		settings, presets, err := w.committed(cmd, clone, source.Ref, flags)
+		return settings, presets, source, err
 	}
-	settings, err := w.checkedOut(cmd.Context(), source.Dir, flags)
-	return settings, source, err
+	settings, presets, err := w.checkedOut(cmd.Context(), source.Dir, flags)
+	return settings, presets, source, err
 }
 
-// checkedOut resolves the loop settings, and checks the loop prompt, as the
-// checkout at dir holds them, committed or not.
-func (w loopWiring) checkedOut(ctx context.Context, dir string, flags loop.Flags) (loop.Settings, error) {
+// checkedOut resolves the loop settings and preset choice, and checks the
+// loop prompt, as the checkout at dir holds them, committed or not.
+func (w loopWiring) checkedOut(ctx context.Context, dir string, flags loop.Flags) (loop.Settings, preset.Choice, error) {
 	home, err := w.home()
 	if err != nil {
-		return loop.Settings{}, err
+		return loop.Settings{}, preset.Choice{}, err
 	}
 	repo, err := repofile.Locate(ctx, w.git, dir, home)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings in %s: %w", dir, err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings in %s: %w", dir, err)
 	}
-	settings, _, err := settingsIn(repo, flags)
+	settings, presets, err := settingsIn(repo, flags)
 	if err != nil {
-		return loop.Settings{}, err
+		return loop.Settings{}, preset.Choice{}, err
 	}
 	if _, err := promptIn(repo); err != nil {
-		return loop.Settings{}, err
+		return loop.Settings{}, preset.Choice{}, err
 	}
-	return settings, nil
+	return settings, presets, nil
 }
 
 // committed resolves the loop settings, flags over the repo file over the
-// built-in defaults, and checks the loop prompt, as ref holds them in the git
-// repo at clone, reading no checkout.
-func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags loop.Flags) (loop.Settings, error) {
+// built-in defaults, with the preset choice, and checks the loop prompt, as
+// ref holds them in the git repo at clone, reading no checkout.
+func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags loop.Flags) (loop.Settings, preset.Choice, error) {
 	commit, err := repofile.Committed(cmd.Context(), w.git, clone, ref)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	settings, _, err := loop.ResolveSettings(flags, commit.File)
+	settings, presets, err := loop.ResolveSettings(flags, commit.File)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
 	if !commit.Ejected {
-		return settings, nil
+		return settings, presets, nil
 	}
 	if _, err := loop.ParsePrompt(ref+":.smith/prompt.md", commit.Prompt); err != nil {
-		return loop.Settings{}, fmt.Errorf("load loop prompt: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("load loop prompt: %w", err)
 	}
-	return settings, nil
+	return settings, presets, nil
 }
 
 // dirExec launches commands from dir, the way gh finds the repo whose issues
