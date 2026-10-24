@@ -98,7 +98,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	lookPath := func(name string) (string, error) {
 		return session.LookPath(cmd.Context(), env, w.mise, run.repo, branch, name)
 	}
-	if err := installed(cmd, settings.Preset.Agent.Value, lookPath); err != nil {
+	if err := installed(cmd, presets, admitted.execution, false, lookPath); err != nil {
 		return err
 	}
 	if err := refuseLive(cmd, env, run.repo, branch); err != nil {

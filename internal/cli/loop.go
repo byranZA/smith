@@ -337,7 +337,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				return reportInvalid(cmd, err)
 			}
 			l := loop.Loop{Recorder: recorder, Progress: cmd.ErrOrStderr(), Limits: limits, Launcher: w.launcher, Preparer: w.preparer, Hostname: w.hostname}
-			execution, err := w.prepare(cmd, ref, &l, flags, branch, base)
+			execution, err := w.prepare(cmd, ref, &l, flags, branch, base, interactive)
 			if err != nil {
 				return abort(cmd, l, ref, execution, interactive, err)
 			}
@@ -376,8 +376,8 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 // filling l in as it goes, and returns the execution it admitted. On a
 // refusal, which may already be reported on cmd, l holds as much as was set
 // up and the execution is what was admitted, if anything, so the run can be
-// aborted.
-func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags loop.Flags, branch, base string) (tracker.Execution, error) {
+// aborted. Interactive, it checks only the agent of the task it will hand out.
+func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags loop.Flags, branch, base string, interactive bool) (tracker.Execution, error) {
 	settings, presets, err := w.settings(cmd.Context(), flags)
 	if err != nil {
 		return tracker.Execution{}, err
@@ -386,14 +386,14 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	if err := installed(cmd, settings.Preset.Agent.Value, w.lookPath); err != nil {
-		return tracker.Execution{}, err
-	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh)
 	if err != nil {
 		return tracker.Execution{}, err
 	}
 	if err := checkPresets(cmd, presets, admitted.execution); err != nil {
+		return admitted.execution, err
+	}
+	if err := installed(cmd, presets, admitted.execution, interactive, w.lookPath); err != nil {
 		return admitted.execution, err
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
@@ -444,11 +444,18 @@ type admission struct {
 	execution tracker.Execution
 }
 
-// installed refuses, reported on cmd, an agent that lookPath cannot find, so
-// a run fails before it starts rather than on its first task.
-func installed(cmd *cobra.Command, name string, lookPath func(name string) (string, error)) error {
-	if _, err := lookPath(name); err != nil {
-		return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", name, err))
+// installed refuses, reported on cmd, any agent lookPath cannot find among
+// those a run of execution hands tasks to under presets, interactive or not,
+// so a run fails before it starts rather than on the task that needs it.
+func installed(cmd *cobra.Command, presets preset.Choice, execution tracker.Execution, interactive bool, lookPath func(name string) (string, error)) error {
+	names, err := loop.Agents(presets, execution, interactive)
+	if err != nil {
+		return reportInvalid(cmd, fmt.Errorf("choose the agents of %s: %w", loop.Name(execution), err))
+	}
+	for _, name := range names {
+		if _, err := lookPath(name); err != nil {
+			return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", name, err))
+		}
 	}
 	return nil
 }
@@ -456,7 +463,7 @@ func installed(cmd *cobra.Command, name string, lookPath func(name string) (stri
 // admit runs the preflight a loop run shares wherever it runs: it warns of
 // triage labels the repo lacks, and reads and
 // admits the execution ref names through gh. Each refusal is already reported
-// on cmd. Whether the agent is installed is the caller's to check, with
+// on cmd. Whether its agents are installed is the caller's to check, with
 // installed, against the PATH the run will have.
 func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
 	github := tracker.NewGitHub(gh, settings.Labels())

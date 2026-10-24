@@ -514,14 +514,16 @@ func (i *idleAgent) Launch(context.Context, agent.Command) error {
 	return nil
 }
 
-func TestLoopRunRefusesAMissingAgentBeforeReadingTheTracker(t *testing.T) {
-	gh := &fakeTracker{issues: map[string]string{}}
+func TestLoopRunRefusesAMissingAgentBeforeSettingUpTheWorkBranch(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
 	missing := func(name string) (string, error) { return "", errors.New("executable file not found in $PATH") }
+	idle := &idleAgent{}
+	w, benches := countingBench(loopWiring{gh: gh, launcher: idle, lookPath: missing})
 
-	_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: missing}, "42")
+	_, stderr, code := runLoopRun(t, w, "42")
 
-	if code == 0 || !strings.Contains(stderr, "claude") || len(gh.ran) != 0 {
-		t.Errorf("exit %d, stderr %q, ran %v; want non-zero naming claude, gh never run", code, stderr, gh.ran)
+	if code == 0 || !strings.Contains(stderr, "agent claude is not installed") || *benches != 0 || idle.runs != 0 {
+		t.Errorf("exit %d, stderr %q, %d work branches, %d agent runs; want non-zero naming claude, no work branch and no agent", code, stderr, *benches, idle.runs)
 	}
 }
 

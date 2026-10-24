@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -114,5 +115,101 @@ func TestLoopRunOnABoxChecksTaskPresetsAgainstTheBaseTheBranchIsCutFrom(t *testi
 
 	if code != 0 || len(started(tmux)) != 1 {
 		t.Errorf("exit %d, stderr %q, sessions %q; want 0 and a session started", code, stderr, started(tmux))
+	}
+}
+
+// installedOnly is a lookPath that finds only the programs named.
+func installedOnly(names ...string) func(string) (string, error) {
+	return func(name string) (string, error) {
+		if !slices.Contains(names, name) {
+			return "", fmt.Errorf("%s: executable file not found in $PATH", name)
+		}
+		return "/usr/local/bin/" + name, nil
+	}
+}
+
+func TestLoopRunChecksOnlyTheAgentsItsTasksPresetsUse(t *testing.T) {
+	for name, tc := range map[string]struct {
+		flags     []string
+		installed []string
+		want      []string
+	}{
+		"a labelled task without the unused work agent": {nil, []string{"codex"}, []string{"codex"}},
+		"interactive, the selected task's agent alone":  {[]string{"--interactive"}, []string{"codex"}, []string{"codex"}},
+		"pinned, the pinned agent alone":                {[]string{"--agent", "claude"}, []string{"claude"}, []string{"claude"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": presetTask(43, "OPEN", "codex")}}
+			launched := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+			w, _ := repoWith(t, gh, launched, opusRepoFile)
+			w.lookPath = installedOnly(tc.installed...)
+
+			_, stderr, code := runLoopRun(t, w, "42", tc.flags...)
+
+			var got []string
+			for _, cmd := range launched.commands {
+				got = append(got, cmd.Name)
+			}
+			if code != 0 || !slices.Equal(got, tc.want) {
+				t.Errorf("exit %d, stderr %q, launched %v; want 0 and %v", code, stderr, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoopRunRefusesATasksMissingAgentBeforeSettingUpTheWorkBranch(t *testing.T) {
+	for name, tc := range map[string]struct {
+		task      string
+		flags     []string
+		installed string
+		want      string
+	}{
+		"a labelled task's agent":           {presetTask(44, "OPEN", "codex"), nil, "claude", "agent codex is not installed"},
+		"the selected task's agent":         {presetTask(44, "OPEN", "codex"), []string{"--interactive"}, "codex", "agent claude is not installed"},
+		"the pinned agent over every label": {presetTask(44, "OPEN", "opus"), []string{"--preset", "codex"}, "claude", "agent codex is not installed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": tc.task}}
+			idle := &idleAgent{}
+			w, _ := repoWith(t, gh, idle, opusRepoFile)
+			w.lookPath = installedOnly(tc.installed)
+			w, benches := countingBench(w)
+
+			_, stderr, code := runLoopRun(t, w, "42", tc.flags...)
+
+			if code == 0 || !strings.Contains(stderr, tc.want) || *benches != 0 || idle.runs != 0 {
+				t.Errorf("exit %d, stderr %q, %d work branches, %d agent runs; want non-zero naming %q, no work branch and no agent", code, stderr, *benches, idle.runs, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoopRunOnABoxChecksTheAgentsItsTasksPresetsUse(t *testing.T) {
+	for name, tc := range map[string]struct {
+		installed []string
+		want      string
+	}{
+		"a labelled task without the unused work agent starts": {[]string{"codex"}, ""},
+		"a labelled task's missing agent is refused":           {[]string{"claude"}, "agent codex is not installed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmux := &tmuxBox{}
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": presetTask(43, "OPEN", "codex")}}
+			w, workspace := sessionLoop(t, gh, tmux)
+			upstream := gitStdout(t, filepath.Join(workspace, "smith", "repo.git"), "remote", "get-url", "origin")
+			writeRepoFile(t, upstream, "repo.yaml", opusRepoFile)
+			runGit(t, upstream, "add", ".smith")
+			runGit(t, upstream, "commit", "-m", "repo file")
+			w.mise = &boxMise{installed: tc.installed}
+
+			_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+			if tc.want == "" && (code != 0 || len(started(tmux)) != 1) {
+				t.Errorf("exit %d, stderr %q, started %q; want 0 and one session", code, stderr, started(tmux))
+			}
+			if tc.want != "" && (code == 0 || !strings.Contains(stderr, tc.want) || len(started(tmux)) != 0) {
+				t.Errorf("exit %d, stderr %q, started %q; want non-zero naming %q and no session", code, stderr, started(tmux), tc.want)
+			}
+		})
 	}
 }
