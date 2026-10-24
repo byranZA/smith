@@ -1,17 +1,20 @@
 // Package prepare makes a worktree ready to work in, in the foreground, before
 // anyone works there: it installs the toolchain the repo's own mise config
 // pins, then runs the prepare command the worktree's own repo file declares.
-// It is handed the process runner and the mise executable it drives and looks
-// nothing up itself, so a test fakes mise at the command boundary.
+// It is handed the process runner, the mise executable it drives and the
+// directory whose mise configs it trusts, and looks nothing up itself, so a
+// test fakes mise at the command boundary.
 package prepare
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/repofile"
 )
 
@@ -43,6 +46,9 @@ type Preparer struct {
 	// prepare command runs under. Empty means there is no mise: the toolchain
 	// step is skipped and the prepare command runs directly.
 	Mise string
+	// Trust is the smith-owned directory whose mise configs, at or below it,
+	// mise trusts while preparing. Empty trusts the worktree being prepared.
+	Trust string
 }
 
 // StepError reports the preparation step that failed and the status it exited
@@ -78,7 +84,7 @@ func (e *StepError) Unwrap() error { return e.Err }
 func (p Preparer) Prepare(ctx context.Context, dir string, out io.Writer) error {
 	if p.Mise != "" {
 		install := []string{p.Mise, "--cd", dir, "install"}
-		if err := p.step(ctx, Toolchain, strings.Join(install, " "), out, install); err != nil {
+		if err := p.step(ctx, Toolchain, strings.Join(install, " "), out, p.trusting(dir, install)); err != nil {
 			return err
 		}
 	}
@@ -91,9 +97,15 @@ func (p Preparer) Prepare(ctx context.Context, dir string, out io.Writer) error 
 	}
 	run := []string{"sh", "-c", inDir, "sh", dir, file.Prepare}
 	if p.Mise != "" {
-		run = []string{p.Mise, "--cd", dir, "exec", "--", "sh", "-c", file.Prepare}
+		run = p.trusting(dir, []string{p.Mise, "--cd", dir, "exec", "--", "sh", "-c", file.Prepare})
 	}
 	return p.step(ctx, RepoCommand, file.Prepare, out, run)
+}
+
+// trusting is the mise argv run with mise trusting the configs in Trust, or
+// in the worktree at dir when Trust is empty.
+func (p Preparer) trusting(dir string, argv []string) []string {
+	return misetrust.Command(argv[0], cmp.Or(p.Trust, dir), argv[1:]...)
 }
 
 // step runs one preparation step's argv, streaming both its output streams to

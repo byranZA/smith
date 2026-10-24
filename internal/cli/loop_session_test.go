@@ -17,6 +17,7 @@ import (
 
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/hint"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
 )
@@ -47,6 +48,8 @@ type boxGh struct {
 
 func (g *boxGh) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	g.calls = append(g.calls, append([]string{name}, args...))
+	argv := untrusted(append([]string{name}, args...))
+	name, args = argv[0], argv[1:]
 	if filepath.Base(name) != "mise" || len(args) < 3 || args[0] != "exec" || args[1] != "--" {
 		return fmt.Errorf("exec: %q: executable file not found in $PATH", name)
 	}
@@ -103,7 +106,7 @@ func TestLoopRunOnABoxStartsASessionWhoseRootProcessIsTheLoop(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop")
-	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-smith-42-the-loop", "-c", dir, "mise", "exec", "--",
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-smith-42-the-loop", "-c", dir, "sh", "-c", misetrust.Script, filepath.Join(workspace, "smith"), "mise", "exec", "--",
 		"/usr/local/bin/smith", "loop", "run", "42", "--agent=codex", "--max-iterations=3", "--branch=smith/42-the-loop", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
@@ -124,7 +127,7 @@ func TestLoopRunOnABoxReadsTheIssueWithGhUnderMiseExec(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
 	}
-	want := []string{"mise", "exec", "--", "gh", "issue", "view", "42"}
+	want := []string{"sh", "-c", misetrust.Script, filepath.Join(workspace, "smith"), "mise", "exec", "--", "gh", "issue", "view", "42"}
 	if len(gh.calls) == 0 || !reflect.DeepEqual(gh.calls[0][:len(want)], want) {
 		t.Errorf("gh ran %q, want a first call beginning %q", gh.calls, want)
 	}
@@ -174,7 +177,7 @@ func TestLoopRunOnABoxOnAChosenBranchNamesTheSessionAfterIt(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
 	}
 	dir := filepath.Join(workspace, "smith", "worktrees", "feat-x")
-	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-feat-x", "-c", dir, "mise", "exec", "--",
+	want := [][]string{{"tmux", "new-session", "-d", "-s", "smith/smith-feat-x", "-c", dir, "sh", "-c", misetrust.Script, filepath.Join(workspace, "smith"), "mise", "exec", "--",
 		"/usr/local/bin/smith", "loop", "run", "42", "--branch=feat/x", "--in-session"}}
 	if got := started(tmux); !reflect.DeepEqual(got, want) {
 		t.Errorf("tmux new-session = %q, want %q", got, want)
@@ -378,10 +381,11 @@ func TestLoopRunOnABoxLooksTheAgentUpUnderTheMiseItsSessionRunsUnder(t *testing.
 	}
 	dir := realDir(t, filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop"))
 	lookup, launch := mise.calls[0], launches[len(launches)-1]
-	if got, want := []string{lookup[0], lookup[1], realDir(t, lookup[2])}, []string{installed, "-C", dir}; !reflect.DeepEqual(got, want) {
-		t.Errorf("agent lookup ran %q, want it to start %q", lookup, want)
+	trust := realDir(t, filepath.Join(workspace, "smith"))
+	if got, want := []string{realDir(t, lookup[3]), lookup[4], lookup[5], realDir(t, lookup[6])}, []string{trust, installed, "-C", dir}; !reflect.DeepEqual(got, want) {
+		t.Errorf("agent lookup ran %q, want it to start trusting %q with %q", lookup, trust, want[1:])
 	}
-	if got, want := []string{realDir(t, launch[6]), launch[7], launch[8]}, []string{dir, installed, "exec"}; !reflect.DeepEqual(got, want) {
+	if got, want := []string{realDir(t, launch[6]), realDir(t, launch[10]), launch[11], launch[12]}, []string{dir, trust, installed, "exec"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("session launch ran %q, want it in %q under %q", launch, dir, installed)
 	}
 }

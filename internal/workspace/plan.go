@@ -47,6 +47,8 @@ func planStep(step Step, b blueprint.Blueprint, r staging.Resolution, root, home
 		return []Unit{{Step: Identity, Identity: r.Git, GitConfig: filepath.Join(home, ".gitconfig")}}
 	case step == Packages && len(b.Packages) > 0:
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
+	case step == Groups && len(b.Groups) > 0:
+		return []Unit{{Step: Groups, Groups: append([]string(nil), b.Groups...)}}
 	case step == Repos:
 		return planRepos(b, root, home)
 	case step == Orphans:
@@ -142,6 +144,7 @@ func planRepos(b blueprint.Blueprint, root, home string) []Unit {
 			Name: name,
 			URL:  r.URL,
 			Path: filepath.Join(root, name, cloneDir),
+			Dir:  filepath.Join(root, name),
 			Mise: mise,
 		}})
 	}

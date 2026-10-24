@@ -69,7 +69,7 @@ repos does not.
 
 Mechanically, preferences hold **fixed-key fields only** — `access`,
 `terminal`, `workspace`, `provider`, `git`. The open-ended collections —
-`repos`, `placements`, `packages`, `tools`, `env` — are **blueprint-only**, and
+`repos`, `placements`, `packages`, `groups`, `tools`, `env` — are **blueprint-only**, and
 writing one into `preferences.yaml` is an error.
 
 The reason is reproducibility. A box records which blueprint it was built from
@@ -168,6 +168,10 @@ packages:
   ripgrep
   jq
   postgresql-client
+  docker.io
+  docker-compose-v2
+groups:
+  docker
 tools:
   go: 1.23
   node: 20
@@ -239,6 +243,8 @@ otherwise fails *silently* — the reasoning is recorded in
   one is worktree-relative.
 - **Every value naming a secret must parse as a known reference scheme.**
 
+- **Each `groups` entry must be a group name, declared once.** A name follows Debian's `adduser` rule for a system group: lowercase letters, digits, `-` and `_`, starting with a letter or `_`, optionally ending in `$`. A repeated entry is refused by name.
+
 One rule spans both files, so it is checked after precedence has run: **a git
 identity and a box placement to `~/.gitconfig` are refused together**, because
 both claim that file. Choose one and drop the other.
@@ -267,6 +273,24 @@ References are resolved **on your machine** when `machine setup --blueprint`
 runs, and the values are staged onto the box in plaintext under `/etc/smith/`
 (see [Config staging](./on-box.md#config-staging)). A changed value reaches the
 box on the next `machine setup`, not on `workspace converge`.
+
+## Groups
+
+`groups` lists existing groups the smith user joins on the box, such as the `docker` group that lets it run `docker` without `sudo`:
+
+```yaml
+packages:
+  - docker.io
+  - docker-compose-v2
+groups:
+  - docker
+```
+
+- **A group comes from a package.** smith never creates one: a group the box does not hold fails the workspace's groups step, so declare the package that creates it.
+- **Membership is add-only.** Dropping a group from the blueprint leaves the smith user in it, as dropping a package leaves it installed.
+- **There is no denylist.** The smith user already has passwordless `sudo`, so no group grants it anything new.
+
+Membership reaches new logins only, and a running tmux server keeps the groups it started with. [The workspace stage](./workspace.md#groups) says what that means for sessions.
 
 ## smith knows no service by name
 

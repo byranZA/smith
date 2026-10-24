@@ -46,6 +46,9 @@ type Blueprint struct {
 	Provider *Provider `yaml:"provider"`
 	// Packages are the system packages installed on the box.
 	Packages []string `yaml:"packages"`
+	// Groups are the existing groups the smith user is added to, such as the
+	// docker group a docker package creates. Membership is only ever added.
+	Groups []string `yaml:"groups"`
 	// Tools are the box-wide toolchain versions, keyed by tool name.
 	Tools map[string]string `yaml:"tools"`
 	// Env are the box-wide environment variables, keyed by variable name.

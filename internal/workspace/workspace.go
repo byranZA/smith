@@ -48,6 +48,10 @@ const (
 	// Packages installs the blueprint's apt packages — the OS substrate and
 	// build prerequisites, unversioned by design.
 	Packages Step = "packages"
+	// Groups adds the smith user to the blueprint's groups, keeping the ones
+	// it is already in. It follows the packages because a package is what
+	// creates a group such as docker.
+	Groups Step = "groups"
 	// Toolchain installs mise, writes the generated config pinning the
 	// blueprint's tools and exporting its env, and puts mise's shims on a
 	// login shell's PATH. It precedes the clones because a token exported
@@ -67,7 +71,7 @@ const (
 // one place: a step is converged before another because it puts something on
 // the box the later one needs, never for tidiness.
 func Order() []Step {
-	return []Step{Placements, Identity, Packages, Toolchain, Repos, Orphans}
+	return []Step{Placements, Identity, Packages, Groups, Toolchain, Repos, Orphans}
 }
 
 // Unit is one unit of work the stage converges: which step it belongs to and
@@ -78,6 +82,8 @@ type Unit struct {
 	Step Step
 	// Packages are the apt packages a packages unit installs.
 	Packages []string
+	// Groups are the groups a groups unit adds the smith user to.
+	Groups []string
 	// Placement is the box-scoped file a placements unit materializes.
 	Placement Placement
 	// Identity is the git identity an identity unit sets, a field nobody
@@ -144,6 +150,9 @@ type Env struct {
 	// Profile is where the login profile putting mise's shims on PATH lands.
 	// A run that leaves it unset writes /etc/profile.d/smith.sh.
 	Profile string
+	// Proc is the process filesystem a groups step reads the tmux server's
+	// groups from. A run that leaves it unset reads /proc.
+	Proc string
 	// Hint is the command the run answers, which a refusal's suggested
 	// command is spelled for.
 	Hint hint.Invocation
@@ -153,6 +162,12 @@ type Env struct {
 // named, and /etc/profile.d/smith.sh when it named none.
 func (e Env) profile() string {
 	return cmp.Or(e.Profile, defaultProfile)
+}
+
+// proc is the process filesystem the run reads: the one the caller named, and
+// /proc when it named none.
+func (e Env) proc() string {
+	return cmp.Or(e.Proc, defaultProc)
 }
 
 // owner is the account a run claims placed files for: the one the caller

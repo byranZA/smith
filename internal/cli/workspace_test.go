@@ -35,6 +35,8 @@ type fakeBox struct {
 
 func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
 	f.calls = append(f.calls, append([]string{name}, args...))
+	argv := untrusted(append([]string{name}, args...))
+	name, args = argv[0], argv[1:]
 	line := strings.Join(args, " ")
 	switch {
 	case name == "git" && strings.HasPrefix(line, "config --global --includes --get"):

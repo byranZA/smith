@@ -250,7 +250,7 @@ _Avoid_: box preferences, on-box resolution.
 `~/.smith/preferences.yaml` — the operator's own half of the config home, answering *if you built
 a completely different box tomorrow, should this value follow?* with yes. **Fixed-key fields
 only** (`access`, `terminal`, `workspace`, `provider`, `git`); the open-ended collections
-(`repos`, `placements`, `packages`, `tools`, `env`) are blueprint-only, so the marker's blueprint
+(`repos`, `placements`, `packages`, `groups`, `tools`, `env`) are blueprint-only, so the marker's blueprint
 pointer is enough to reproduce a box. Optional, like the blueprint itself
 ([ADR-0006](./docs/adr/0006-the-blueprint-config-surface.md)).
 _Avoid_: settings, defaults, user config, global config.

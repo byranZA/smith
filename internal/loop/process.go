@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/misetrust"
 )
 
 // Process is the Launcher that starts a real agent process in the command's
@@ -19,6 +20,9 @@ type Process struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Mise is the mise executable the agent runs under, in its worktree and
+	// trusting the configs there. Empty runs the agent directly.
+	Mise string
 }
 
 // ErrKilled is what Launch's error is when the agent was killed by SIGKILL,
@@ -40,7 +44,8 @@ const stopDelay = 3 * time.Second
 // exiting 137 as a shell does for a child so killed, fails with ErrKilled, and
 // one whose process cannot be started fails with ErrNotStarted.
 func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
-	proc := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
+	argv := p.argv(cmd)
+	proc := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	proc.Env = append(os.Environ(), cmd.Env...)
 	proc.Dir = cmd.Dir
 	proc.Stdout = p.Stdout
@@ -62,4 +67,14 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 		return fmt.Errorf("run %s: %w", cmd.Name, err)
 	}
 	return nil
+}
+
+// argv is what Launch runs for cmd: the agent under mise exec in its
+// directory, trusting the configs there, or the agent itself with no Mise.
+func (p Process) argv(cmd agent.Command) []string {
+	argv := append([]string{cmd.Name}, cmd.Args...)
+	if p.Mise == "" {
+		return argv
+	}
+	return misetrust.Command(p.Mise, cmd.Dir, append([]string{"--cd", cmd.Dir, "exec", "--"}, argv...)...)
 }

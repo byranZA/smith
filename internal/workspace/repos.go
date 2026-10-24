@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/byranZA/smith/internal/misetrust"
 )
 
 // Where a declared repo lands on the box.
@@ -42,6 +44,10 @@ type Repo struct {
 	URL string
 	// Path is where the bare clone lands, absolute.
 	Path string
+	// Dir is the repo's directory under the workspace root, absolute: it holds
+	// the bare clone, the repo's generated mise config and every worktree, and
+	// its git runs under a mise trusting the configs in it.
+	Dir string
 	// Mise is where mise is installed if the box does not already have it. The
 	// clone runs under whichever mise the run proves — this one, or the one
 	// the box already answers by — so that the blueprint's box-level env is in
@@ -92,7 +98,7 @@ func convergeRepo(ctx context.Context, run Runner, m *mise, r Repo, progress io.
 		return "", err
 	}
 	what := fmt.Sprintf("fetch %s into %s", r.URL, r.Path)
-	if err := git(ctx, run, exe, progress, what, "--git-dir", r.Path, "fetch", "origin"); err != nil {
+	if err := git(ctx, run, exe, r, progress, what, "--git-dir", r.Path, "fetch", "origin"); err != nil {
 		return "", err
 	}
 	return summarize(append(done, repaired...), "fetched "+r.Path, nil)
@@ -103,15 +109,15 @@ func convergeRepo(ctx context.Context, run Runner, m *mise, r Repo, progress io.
 // are left where they are: worktrees may have them checked out.
 func track(ctx context.Context, run Runner, exe string, r Repo, progress io.Writer) ([]string, error) {
 	var out bytes.Buffer
-	args := miseArgs("--git-dir", r.Path, "config", "--get-all", "remote.origin.fetch")
-	if err := run.Run(ctx, exe, args, nil, &out, io.Discard); err != nil && !unset(err) {
+	argv := gitArgv(exe, r, "--git-dir", r.Path, "config", "--get-all", "remote.origin.fetch")
+	if err := run.Run(ctx, argv[0], argv[1:], nil, &out, io.Discard); err != nil && !unset(err) {
 		return nil, fmt.Errorf("read the fetch refspecs of the clone at %s: %w", r.Path, err)
 	}
 	if slices.Contains(strings.Fields(out.String()), trackingRefspec) {
 		return nil, nil
 	}
 	what := fmt.Sprintf("add the remote-tracking refspec to %s", r.Path)
-	if err := git(ctx, run, exe, progress, what, "--git-dir", r.Path, "config", "--add", "remote.origin.fetch", trackingRefspec); err != nil {
+	if err := git(ctx, run, exe, r, progress, what, "--git-dir", r.Path, "config", "--add", "remote.origin.fetch", trackingRefspec); err != nil {
 		return nil, err
 	}
 	return []string{"added the remote-tracking refspec to " + r.Path}, nil
@@ -135,7 +141,7 @@ func clone(ctx context.Context, run Runner, exe string, r Repo, progress io.Writ
 		return "", fmt.Errorf("make the directory above %s: %w", r.Path, err)
 	}
 	what := fmt.Sprintf("clone %s into %s", r.URL, r.Path)
-	if err := git(ctx, run, exe, progress, what, "clone", "--bare", "-c", "remote.origin.fetch="+trackingRefspec, r.URL, r.Path); err != nil {
+	if err := git(ctx, run, exe, r, progress, what, "clone", "--bare", "-c", "remote.origin.fetch="+trackingRefspec, r.URL, r.Path); err != nil {
 		return "", err
 	}
 	return "cloned " + r.URL + " into " + r.Path, nil
@@ -145,8 +151,8 @@ func clone(ctx context.Context, run Runner, exe string, r Repo, progress io.Writ
 // the blueprint's declaration is held against.
 func remoteURL(ctx context.Context, run Runner, exe string, r Repo) (string, error) {
 	var out bytes.Buffer
-	args := miseArgs("--git-dir", r.Path, "remote", "get-url", "origin")
-	if err := run.Run(ctx, exe, args, nil, &out, io.Discard); err != nil {
+	argv := gitArgv(exe, r, "--git-dir", r.Path, "remote", "get-url", "origin")
+	if err := run.Run(ctx, argv[0], argv[1:], nil, &out, io.Discard); err != nil {
 		return "", fmt.Errorf("read the remote of the clone at %s: %w", r.Path, err)
 	}
 	return strings.TrimSpace(out.String()), nil
@@ -156,17 +162,19 @@ func remoteURL(ctx context.Context, run Runner, exe string, r Repo) (string, err
 // long clone reports on itself rather than looking hung. A failure is reported
 // as what the command was for, since the operator reads the outcome and not
 // the argv.
-func git(ctx context.Context, run Runner, exe string, progress io.Writer, what string, args ...string) error {
-	if err := run.Run(ctx, exe, miseArgs(args...), nil, progress, progress); err != nil {
+func git(ctx context.Context, run Runner, exe string, r Repo, progress io.Writer, what string, args ...string) error {
+	argv := gitArgv(exe, r, args...)
+	if err := run.Run(ctx, argv[0], argv[1:], nil, progress, progress); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
 }
 
-// miseArgs is a git invocation as mise runs it. It is `mise exec`, never `mise
-// activate`, which does not fire in the non-interactive shells smith runs in.
-func miseArgs(args ...string) []string {
-	return append([]string{"exec", "--", "git"}, args...)
+// gitArgv is a git invocation for r as the mise at exe runs it, trusting the
+// configs in r's directory. It is `mise exec`, never `mise activate`, which
+// does not fire in the non-interactive shells smith runs in.
+func gitArgv(exe string, r Repo, args ...string) []string {
+	return misetrust.Command(exe, r.Dir, append([]string{"exec", "--", "git"}, args...)...)
 }
 
 // clonedAt reports whether the box already holds a clone at path. An absent

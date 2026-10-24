@@ -8,20 +8,21 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/session"
 )
 
 // boxMise is where the toolchain step installs mise on a box.
 const boxMise = "/home/smith/.local/bin/mise"
 
-// miseGit runs every command for real, a command handed to boxMise as mise exec runs it with no config to apply, and records each argv it was handed.
+// miseGit runs every command for real, a command handed to boxMise, trusting or not, as mise exec runs it with no config to apply, and records each argv it was handed.
 type miseGit struct {
 	calls [][]string
 }
 
 func (g *miseGit) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	g.calls = append(g.calls, append([]string{name}, args...))
-	if name == boxMise {
+	if slices.Contains(append([]string{name}, args...), boxMise) {
 		cmd := args[slices.Index(args, "--")+1:]
 		name, args = cmd[0], cmd[1:]
 	}
@@ -63,7 +64,7 @@ func TestStartOfANewBranchRunsOnlyItsFetchUnderMiseInTheRepoDirectory(t *testing
 	}
 
 	repo := filepath.Join(env.Workspace, "smith")
-	want := [][]string{{boxMise, "-C", repo, "exec", "--", "git", "-C", filepath.Join(repo, "repo.git"), "fetch"}}
+	want := [][]string{{"sh", "-c", misetrust.Script, repo, boxMise, "-C", repo, "exec", "--", "git", "-C", filepath.Join(repo, "repo.git"), "fetch"}}
 	if got := g.underMise(); !slices.EqualFunc(got, want, slices.Equal) {
 		t.Errorf("Start(new branch spec-42) ran %q under mise, want %q", got, want)
 	}
@@ -94,7 +95,7 @@ func TestSourceOfANewBranchRunsOnlyItsFetchUnderMiseInTheRepoDirectory(t *testin
 	}
 
 	repo := filepath.Join(env.Workspace, "smith")
-	want := [][]string{{boxMise, "-C", repo, "exec", "--", "git", "-C", filepath.Join(repo, "repo.git"), "fetch"}}
+	want := [][]string{{"sh", "-c", misetrust.Script, repo, boxMise, "-C", repo, "exec", "--", "git", "-C", filepath.Join(repo, "repo.git"), "fetch"}}
 	if got := g.underMise(); !slices.EqualFunc(got, want, slices.Equal) {
 		t.Errorf("SourceOf(new branch spec-42) ran %q under mise, want %q", got, want)
 	}

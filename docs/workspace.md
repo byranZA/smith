@@ -33,12 +33,13 @@ needs:
 1. **Placements** — box-scoped placements are materialized from their staged bytes. First, because this is what puts forge credentials on the box; a clone that runs before them fails with an authentication error that looks like a credential bug rather than the ordering bug it is.
 2. **Identity** — the resolved git identity is set in the smith user's `~/.gitconfig`. See [Git identity](#git-identity).
 3. **Packages** — the blueprint's `packages` are installed with `apt`.
-4. **Toolchain** — `mise` is installed, and smith writes the generated config
+4. **Groups** — the smith user joins the blueprint's `groups`. After the packages, because a package is what creates a group such as `docker`. See [Groups](#groups).
+5. **Toolchain** — `mise` is installed, and smith writes the generated config
    pinning the blueprint's `tools` and exporting its `env`.
-5. **Repos** — each declared repo is cloned bare into
+6. **Repos** — each declared repo is cloned bare into
    `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is
    in scope for a token-authenticated clone.
-6. **Orphans** — the workspace root is scanned for repos the blueprint no
+7. **Orphans** — the workspace root is scanned for repos the blueprint no
    longer declares. This runs on every converge, even when the blueprint
    declares no repos at all.
 
@@ -88,6 +89,26 @@ reports that there was nothing to install and runs nothing. The install carries
 the base layer's own first-boot lock wait, so a converge racing the
 `unattended-upgrades` run of a freshly booted cloud image waits it out rather
 than aborting.
+
+## Groups
+
+The blueprint's `groups` are groups the smith user joins, keeping the ones it is already in (`sudo usermod -aG`). A blueprint with no `groups` runs no groups step.
+
+- **Only missing membership changes.** A run that finds the smith user in every declared group reports `nothing to change; smith already in docker` and runs nothing.
+- **A group the box does not hold fails the step**, named: `the box has no group "dokcer": groups come from packages, so declare the package that creates it or check the name for a typo`. smith never creates a group. The other steps still run, and the stage exits non-zero.
+- **Membership is add-only.** A group dropped from the blueprint is never left.
+
+### New membership reaches new logins only
+
+A process keeps the groups it started with. Every smith session, the loop's included, is a `tmux new-session` on tmux's default socket, so all of them are children of one tmux server, and a server started before the smith user joined a group passes the old groups to every session it creates afterwards.
+
+So on every run that declares `groups`, the step reads the groups of the running tmux server itself, from `/proc/<pid>/status`, rather than the smith user's membership. When the server lacks a declared group, the step's line says so and names its sessions:
+
+```text
+  groups      added smith to docker; note: the tmux server running sessions api, smith-loop lacks docker, and new sessions get it only once all of them are closed
+```
+
+The note fires whether or not this run added anything, so a re-run still warns, and it never fails the step. Close every session, or wait for them to end, and the next session starts a fresh server that carries the group. A fresh SSH login gets the group at once. With no server running, or one that already carries every declared group, there is no note. A server whose groups cannot be read gets a note of its own (`could not check whether the tmux server running sessions … carries …`), and the step still converges.
 
 ## The toolchain
 

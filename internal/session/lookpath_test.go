@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/session"
 )
 
@@ -62,7 +63,7 @@ func TestLookPathBeforeTheWorktreeExistsRunsMiseInTheRepoDirectory(t *testing.T)
 		t.Fatalf("LookPath() err = %v", err)
 	}
 
-	want := [][]string{{"/home/smith/.local/bin/mise", "-C", filepath.Join(env.Workspace, "smith"), "exec", "--", "sh", "-c", `command -v "$1"`, "sh", "claude"}}
+	want := [][]string{{"sh", "-c", misetrust.Script, filepath.Join(env.Workspace, "smith"), "/home/smith/.local/bin/mise", "-C", filepath.Join(env.Workspace, "smith"), "exec", "--", "sh", "-c", `command -v "$1"`, "sh", "claude"}}
 	if !reflect.DeepEqual(mise.calls, want) {
 		t.Errorf("LookPath() ran %q, want %q", mise.calls, want)
 	}
@@ -80,7 +81,7 @@ func TestLookPathInAnExistingWorktreeRunsMiseThere(t *testing.T) {
 		t.Fatalf("LookPath() err = %v", err)
 	}
 
-	want := [][]string{{"/home/smith/.local/bin/mise", "-C", filepath.Join(env.Workspace, "smith", "worktrees", "feat-x"), "exec", "--", "sh", "-c", `command -v "$1"`, "sh", "claude"}}
+	want := [][]string{{"sh", "-c", misetrust.Script, filepath.Join(env.Workspace, "smith"), "/home/smith/.local/bin/mise", "-C", filepath.Join(env.Workspace, "smith", "worktrees", "feat-x"), "exec", "--", "sh", "-c", `command -v "$1"`, "sh", "claude"}}
 	if !reflect.DeepEqual(mise.calls, want) {
 		t.Errorf("LookPath() ran %q, want %q", mise.calls, want)
 	}
@@ -115,16 +116,16 @@ func TestUnderMiseRunsEachCommandUnderMiseExec(t *testing.T) {
 		dir  string
 		want [][]string
 	}{
-		{"mise at its home install", "/home/smith/.local/bin/mise", "", [][]string{{"/home/smith/.local/bin/mise", "exec", "--", "gh", "issue", "view", "42"}}},
-		{"mise by name on PATH", "", "", [][]string{{"mise", "exec", "--", "gh", "issue", "view", "42"}}},
-		{"mise in a named directory", "/home/smith/.local/bin/mise", "/home/smith/workspace/smith", [][]string{{"/home/smith/.local/bin/mise", "-C", "/home/smith/workspace/smith", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise at its home install", "/home/smith/.local/bin/mise", "", [][]string{{"sh", "-c", misetrust.Script, "/home/smith/workspace/smith", "/home/smith/.local/bin/mise", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise by name on PATH", "", "", [][]string{{"sh", "-c", misetrust.Script, "/home/smith/workspace/smith", "mise", "exec", "--", "gh", "issue", "view", "42"}}},
+		{"mise in a named directory", "/home/smith/.local/bin/mise", "/home/smith/workspace/smith/repo.git", [][]string{{"sh", "-c", misetrust.Script, "/home/smith/workspace/smith", "/home/smith/.local/bin/mise", "-C", "/home/smith/workspace/smith/repo.git", "exec", "--", "gh", "issue", "view", "42"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mise := &fakeMise{path: "/usr/bin/gh"}
 
-			if err := session.UnderMise(session.Env{Mise: tt.mise}, mise, tt.dir).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, io.Discard, io.Discard); err != nil {
+			if err := session.UnderMise(session.Env{Workspace: "/home/smith/workspace", Mise: tt.mise}, mise, "smith", tt.dir).Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, io.Discard, io.Discard); err != nil {
 				t.Fatalf("UnderMise().Run() err = %v", err)
 			}
 
@@ -140,7 +141,7 @@ func TestUnderMiseStreamsWhatTheCommandWrites(t *testing.T) {
 	mise := &fakeMise{path: "/usr/bin/gh"}
 	var stdout strings.Builder
 
-	if err := session.UnderMise(session.Env{}, mise, "").Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, &stdout, io.Discard); err != nil {
+	if err := session.UnderMise(session.Env{}, mise, "smith", "").Run(t.Context(), "gh", []string{"issue", "view", "42"}, nil, &stdout, io.Discard); err != nil {
 		t.Fatalf("UnderMise().Run() err = %v", err)
 	}
 

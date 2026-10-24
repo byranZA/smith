@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -204,7 +205,8 @@ func convergeToolchain(ctx context.Context, env Env, m *mise, f Fragment, progre
 	}
 	done = append(done, wrote)
 	if len(f.Tools) > 0 {
-		if err := env.Command.Run(ctx, exe, installArgs(f.Dir), nil, progress, progress); err != nil {
+		install := installArgv(exe, f.Dir)
+		if err := env.Command.Run(ctx, install[0], install[1:], nil, progress, progress); err != nil {
 			return "", fmt.Errorf("install the pinned versions with mise: %w", err)
 		}
 		done = append(done, "installed "+pinned(f.Tools))
@@ -219,16 +221,17 @@ func convergeToolchain(ctx context.Context, env Env, m *mise, f Fragment, progre
 	return strings.Join(append(done, wrote), "; "), nil
 }
 
-// installArgs is the mise invocation that installs what a fragment pins. mise
-// resolves its config by walking up from where it runs, so a fragment written
-// above a repo's worktrees is installed with mise pointed at that directory —
-// there is no second mise and no store of the repo's own, only a config
-// selecting a version out of the one shared install directory.
-func installArgs(dir string) []string {
+// installArgv is the invocation of the mise at exe that installs what a
+// fragment pins. mise resolves its config by walking up from where it runs, so
+// a fragment written above a repo's worktrees is installed with mise pointed at
+// that directory, and trusting the configs in it — there is no second mise and
+// no store of the repo's own, only a config selecting a version out of the one
+// shared install directory.
+func installArgv(exe, dir string) []string {
 	if dir == "" {
-		return []string{"install"}
+		return []string{exe, "install"}
 	}
-	return []string{"--cd", dir, "install"}
+	return misetrust.Command(exe, dir, "--cd", dir, "install")
 }
 
 // stagedValues reads the value of every variable the fragment exports out of

@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/misetrust"
 )
 
 // TestSessionStartDetachedReportsTheSessionAndConnectsToNothing is the smoke
@@ -121,6 +123,24 @@ func TestSessionStartStreamsTheToolchainInstallToStderr(t *testing.T) {
 	}
 	if len(mise.calls) != 1 || !strings.HasSuffix(strings.Join(mise.calls[0], " "), "spec-42 install") {
 		t.Errorf("mise ran %v, want one install pointed at the spec-42 worktree", mise.calls)
+	}
+}
+
+func TestSessionStartPreparesTrustingTheReposDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	writeBareRepo(t, workspace, "smith")
+	w := onBoxWiring(t, resolvedBox(workspace, "smith"), &fakeTmux{}, &fakeExec{})
+	mise := &fakeMise{}
+	w.mise = mise
+
+	_, stderr, code := runSessionOn(t, w, "start", "--repo", "smith", "--branch", "spec-42", "--detach")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := []string{"sh", "-c", misetrust.Script, filepath.Join(workspace, "smith")}
+	if len(mise.calls) != 1 || !slices.Equal(mise.calls[0][:len(want)], want) {
+		t.Errorf("mise ran %q, want the install beginning %q", mise.calls, want)
 	}
 }
 
