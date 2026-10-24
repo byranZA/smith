@@ -466,8 +466,16 @@ _Avoid_: backend, provider (reserved for the provider adapter), agent plugin.
 smith's own small scale for how hard an agent should think, which each agent adapter translates into its CLI's flag. An adapter whose CLI could not express effort would refuse it by name; the three built-in adapters all can. A **model**, by contrast, is passed to the agent verbatim, because model names change faster than smith releases.
 _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 
+**Preset**:
+A named, complete agent setting: an **agent**, a **model** valid for that agent, and an **effort**. A preset is always chosen whole and by name, so a model never outlives the agent it belongs to, which separate agent and model settings let happen. A repo defines its own presets under names it chooses, in its **repo file**. A **role** names the preset it uses by default, and a **task** may name another for itself ([ADR-0022](./docs/adr/0022-presets-and-roles.md)).
+_Avoid_: profile (already avoided for the blueprint), persona, tier, agent config.
+
+**Role**:
+A job smith hands to an agent, such as working a task. smith defines the roles, because smith decides when each one runs, and a repo only says which **preset** each one uses. `work` is the only role for now, and it covers the interactive loop too: being attached to a terminal is a way of running a role, not a role of its own.
+_Avoid_: mode, stage, step.
+
 **Repo file**:
-`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone working that repo through smith should share (agent, model, effort, whether to push, the triage labels, and the prepare command). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
+`.smith/repo.yaml` at a repo's root: the repo's own, committed half of smith's configuration, holding what anyone working that repo through smith should share (its **presets** and which one each **role** uses, whether to push, the triage labels, and the prepare command). It is optional and strictly validated, and it sits between a flag and the built-in default in precedence. It is the one per-repo layer, an amendment to the single config home, and is distinct from both the config home (the operator's) and box state (a box's). Where the repo's `.smith/` *is* the config home, as in a home directory kept in git, smith refuses rather than mixing them ([ADR-0012](./docs/adr/0012-the-repo-file.md)).
 _Avoid_: project config, repo config, local config, config file.
 
 **Loop prompt**:
