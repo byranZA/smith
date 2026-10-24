@@ -44,14 +44,14 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func TestCommittedReadsTheRepoFileAndPromptAtARef(t *testing.T) {
 	t.Parallel()
-	bare := bareWith(t, map[string]string{".smith/repo.yaml": "agent: codex\n", ".smith/prompt.md": "Do #{{TASK_NUMBER}}.\n"})
+	bare := bareWith(t, map[string]string{".smith/repo.yaml": "roles:\n  work: codex\npresets:\n  codex: {agent: codex}\n", ".smith/prompt.md": "Do #{{TASK_NUMBER}}.\n"})
 
 	got, err := repofile.Committed(t.Context(), connection.System(), bare, "main")
 	if err != nil {
 		t.Fatalf("Committed(%q, main) err = %v", bare, err)
 	}
 
-	want := repofile.Commit{File: repofile.File{Agent: "codex"}, Prompt: []byte("Do #{{TASK_NUMBER}}.\n"), Ejected: true}
+	want := repofile.Commit{File: repofile.File{Presets: map[string]repofile.Preset{"codex": {Agent: "codex"}}, Roles: map[string]string{"work": "codex"}}, Prompt: []byte("Do #{{TASK_NUMBER}}.\n"), Ejected: true}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Committed(%q, main) = %+v, want %+v", bare, got, want)
 	}

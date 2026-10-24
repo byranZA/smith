@@ -14,6 +14,8 @@ import (
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/preset"
+	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -350,11 +352,11 @@ func TestRunGoesByTheTrackerWhenAnAgentExitsWithAFailure(t *testing.T) {
 
 func loopOn(t *testing.T, b *board, launcher loop.Launcher) loop.Loop {
 	t.Helper()
-	claude, err := agent.Lookup("claude")
+	choice, err := preset.Choose(repofile.File{}, preset.Flags{})
 	if err != nil {
-		t.Fatalf("Lookup(claude) error = %v", err)
+		t.Fatalf("Choose(no repo file, no flags) error = %v", err)
 	}
-	return loop.Loop{Tracker: b, Launcher: launcher, Bench: trees{}, Agent: claude, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard, Limits: loop.DefaultLimits()}
+	return loop.Loop{Tracker: b, Launcher: launcher, Bench: trees{}, Presets: choice, Prompt: "{{TASK_NUMBER}}", Progress: io.Discard, Limits: loop.DefaultLimits()}
 }
 
 // trees is a bench whose every task worktree opens and lands without fault, each task branch ahead of the work branch by ahead commits, or unreadable with aheadErr.
@@ -397,7 +399,12 @@ func (f failing) Launch(ctx context.Context, cmd agent.Command) error {
 func TestRunAsksEveryAgentRunForTheModelAndEffort(t *testing.T) {
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	l := loopOn(t, b, b)
-	l.Options = agent.Options{Model: "opus", Effort: agent.High}
+	file := repofile.File{Presets: map[string]repofile.Preset{"opus": {Agent: "claude", Model: "opus", Effort: "high"}}, Roles: map[string]string{"work": "opus"}}
+	choice, err := preset.Choose(file, preset.Flags{})
+	if err != nil {
+		t.Fatalf("Choose(%+v, no flags) error = %v", file, err)
+	}
+	l.Presets = choice
 
 	if _, err := l.Run(t.Context(), 42); err != nil {
 		t.Fatalf("Run() error = %v", err)

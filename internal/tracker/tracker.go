@@ -41,6 +41,10 @@ type Task struct {
 	// Working reports whether the task is marked as worked by an agent. It is
 	// a signal for people, never a reason to choose a task or pass one over.
 	Working bool
+	// Presets names each preset the task's preset: labels choose, in label
+	// order. Which one it runs on, and whether two is too many, is for the
+	// preset choice to decide.
+	Presets []string
 }
 
 // Audience is who a task is meant for.

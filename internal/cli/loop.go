@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -10,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/prepare"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
@@ -145,26 +146,27 @@ func (w loopWiring) repo(ctx context.Context) (repofile.Repo, error) {
 // settings resolves the loop settings for the repo smith is run from, flags
 // over its repo file over the built-in defaults. A repo with no repo file
 // resolves to the defaults.
-func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Settings, error) {
+func (w loopWiring) settings(ctx context.Context, flags loop.Flags) (loop.Settings, preset.Choice, error) {
 	repo, err := w.repo(ctx)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
 	return settingsIn(repo, flags)
 }
 
 // settingsIn resolves the loop settings for repo as its checkout holds them,
-// flags over its repo file over the built-in defaults.
-func settingsIn(repo repofile.Repo, flags repofile.File) (loop.Settings, error) {
+// flags over its repo file over the built-in defaults, with the preset choice
+// that picks each task's preset.
+func settingsIn(repo repofile.Repo, flags loop.Flags) (loop.Settings, preset.Choice, error) {
 	file, err := repofile.Load(repo)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	settings, err := loop.ResolveSettings(flags, file)
+	settings, choice, err := loop.ResolveSettings(flags, file)
 	if err != nil {
-		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
+		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	return settings, nil
+	return settings, choice, nil
 }
 
 // prompt loads the loop prompt for the repo smith is run from: its ejected
@@ -239,18 +241,21 @@ func lagWarning(branch string, lag workbench.Lag) string {
 	return fmt.Sprintf("smith: warning: work branch %s is %d %s behind origin/%s: merge or rebase origin/%s into it\n", branch, lag.Commits, commits, lag.Base, lag.Base)
 }
 
-// settingsReport renders each resolved setting with where it came from,
+// settingsReport renders each resolved setting with where it came from: the
+// work preset, by name or as a one-off, then its agent, model and effort,
 // naming an unset model or effort as the agent's own default. The triage
 // labels are reported only when the repo file sets one of them.
 func settingsReport(s loop.Settings) string {
 	var b strings.Builder
+	name := cmp.Or(s.Preset.Name, "one-off")
+	fmt.Fprintf(&b, "%-7s %s\n", "preset:", config.Value{Value: name, Origin: s.Preset.Origin})
 	for _, setting := range []struct {
 		name  string
 		value config.Value
 	}{
-		{"agent", s.Agent},
-		{"model", s.Model},
-		{"effort", s.Effort},
+		{"agent", s.Preset.Agent},
+		{"model", s.Preset.Model},
+		{"effort", s.Preset.Effort},
 		{"push", s.Push},
 	} {
 		if setting.value.Value == "" {
@@ -301,7 +306,7 @@ func newLoopPromptCmd() *cobra.Command {
 // and returns once it is live; a leading box relays the run to that box.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
-	var flags repofile.File
+	var flags loop.Flags
 	var interactive, noPush, inSession bool
 	var branch, base, repo string
 	cmd := &cobra.Command{
@@ -332,7 +337,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 				return reportInvalid(cmd, err)
 			}
 			l := loop.Loop{Recorder: recorder, Progress: cmd.ErrOrStderr(), Limits: limits, Launcher: w.launcher, Preparer: w.preparer, Hostname: w.hostname}
-			execution, err := w.prepare(cmd, ref, &l, flags, branch, base)
+			execution, err := w.prepare(cmd, ref, &l, flags, branch, base, interactive)
 			if err != nil {
 				return abort(cmd, l, ref, execution, interactive, err)
 			}
@@ -349,9 +354,10 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&flags.Agent, "agent", "", "the agent to hand each task to, over the repo file")
-	cmd.Flags().StringVar(&flags.Model, "model", "", "the model the agent runs, over the repo file")
-	cmd.Flags().StringVar(&flags.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the repo file")
+	cmd.Flags().StringVar(&flags.Preset.Preset, "preset", "", "the repo file's preset to hand every task to, over the work preset")
+	cmd.Flags().StringVar(&flags.Preset.Agent, "agent", "", "the agent to hand each task to, in a one-off preset that takes its model from --model alone")
+	cmd.Flags().StringVar(&flags.Preset.Model, "model", "", "the model the agent runs, over the work preset's")
+	cmd.Flags().StringVar(&flags.Preset.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the preset's")
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
@@ -370,9 +376,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 // filling l in as it goes, and returns the execution it admitted. On a
 // refusal, which may already be reported on cmd, l holds as much as was set
 // up and the execution is what was admitted, if anything, so the run can be
-// aborted.
-func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags repofile.File, branch, base string) (tracker.Execution, error) {
-	settings, err := w.settings(cmd.Context(), flags)
+// aborted. Interactive, it checks only the agent of the task it will hand out.
+func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags loop.Flags, branch, base string, interactive bool) (tracker.Execution, error) {
+	settings, presets, err := w.settings(cmd.Context(), flags)
 	if err != nil {
 		return tracker.Execution{}, err
 	}
@@ -380,14 +386,17 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	if err := installed(cmd, settings.Agent.Value, w.lookPath); err != nil {
-		return tracker.Execution{}, err
-	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh)
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	l.Tracker, l.Agent, l.Options, l.Prompt = admitted.github, admitted.adapter, settings.Options(), prompt
+	if err := checkPresets(cmd, presets, admitted.execution); err != nil {
+		return admitted.execution, err
+	}
+	if err := installed(cmd, presets, admitted.execution, interactive, w.lookPath); err != nil {
+		return admitted.execution, err
+	}
+	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
 	if l.Pusher, err = w.origin(settings); err != nil {
 		return admitted.execution, err
 	}
@@ -428,33 +437,35 @@ func abort(cmd *cobra.Command, l loop.Loop, ref tracker.Ref, execution tracker.E
 	return reported
 }
 
-// admission is what a loop run's preflight found: the agent adapter each task
-// is handed to, the tracker, and the execution it admitted.
+// admission is what a loop run's preflight found: the tracker, and the
+// execution it admitted.
 type admission struct {
-	adapter   agent.Adapter
 	github    tracker.GitHub
 	execution tracker.Execution
 }
 
-// installed refuses, reported on cmd, an agent that lookPath cannot find, so
-// a run fails before it starts rather than on its first task.
-func installed(cmd *cobra.Command, name string, lookPath func(name string) (string, error)) error {
-	if _, err := lookPath(name); err != nil {
-		return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", name, err))
+// installed refuses, reported on cmd, any agent lookPath cannot find among
+// those a run of execution hands tasks to under presets, interactive or not,
+// so a run fails before it starts rather than on the task that needs it.
+func installed(cmd *cobra.Command, presets preset.Choice, execution tracker.Execution, interactive bool, lookPath func(name string) (string, error)) error {
+	names, err := loop.Agents(presets, execution, interactive)
+	if err != nil {
+		return reportInvalid(cmd, fmt.Errorf("choose the agents of %s: %w", loop.Name(execution), err))
+	}
+	for _, name := range names {
+		if _, err := lookPath(name); err != nil {
+			return reportInvalid(cmd, fmt.Errorf("agent %s is not installed: %w", name, err))
+		}
 	}
 	return nil
 }
 
-// admit runs the preflight a loop run shares wherever it runs: it looks the
-// agent settings name up, warns of triage labels the repo lacks, and reads and
+// admit runs the preflight a loop run shares wherever it runs: it warns of
+// triage labels the repo lacks, and reads and
 // admits the execution ref names through gh. Each refusal is already reported
-// on cmd. Whether the agent is installed is the caller's to check, with
+// on cmd. Whether its agents are installed is the caller's to check, with
 // installed, against the PATH the run will have.
 func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
-	adapter, err := agent.Lookup(settings.Agent.Value)
-	if err != nil {
-		return admission{}, reportInvalid(cmd, err)
-	}
 	github := tracker.NewGitHub(gh, settings.Labels())
 	if err := warnOfLabels(cmd, github, settings); err != nil {
 		return admission{}, err
@@ -470,7 +481,17 @@ func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Set
 	if err := loop.Admit(execution, settings.Labels()); err != nil {
 		return admission{}, reportInvalid(cmd, err)
 	}
-	return admission{adapter: adapter, github: github, execution: execution}, nil
+	return admission{github: github, execution: execution}, nil
+}
+
+// checkPresets refuses, reported on cmd, an execution with an open task whose
+// preset presets cannot choose, so a run fails before its work branch is set
+// up or any agent runs.
+func checkPresets(cmd *cobra.Command, presets preset.Choice, execution tracker.Execution) error {
+	if err := presets.Check(execution); err != nil {
+		return reportInvalid(cmd, fmt.Errorf("choose the presets of %s: %w", loop.Name(execution), err))
+	}
+	return nil
 }
 
 // runLoop works execution with l, unattended to completion or, when
@@ -533,7 +554,7 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			settings, err := w.settings(cmd.Context(), repofile.File{})
+			settings, _, err := w.settings(cmd.Context(), loop.Flags{})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}

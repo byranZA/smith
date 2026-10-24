@@ -48,6 +48,7 @@ func TestRunCommentsOnASkippedTaskWhereItsWorkWasLeft(t *testing.T) {
 				"- **Machine:** box-1\n" +
 				"- **Task worktree:** `/bench/43`\n" +
 				"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
+				"- **Preset:** default\n" +
 				"- **Attempts:** 2 in this run\n" +
 				tt.progress + "\n"}
 			if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
@@ -130,6 +131,7 @@ func TestRunCommentsOnASkippedTaskMarkingWhatItCouldNotRead(t *testing.T) {
 		"- **Machine:** unknown\n" +
 		"- **Task worktree:** `/bench/43`\n" +
 		"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
+		"- **Preset:** default\n" +
 		"- **Attempts:** 1 in this run\n" +
 		"- **Progress:** unknown\n"}
 	if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
@@ -172,6 +174,7 @@ func TestRunCommentsOnASkippedTaskWhoseAgentWasKilled(t *testing.T) {
 		"- **Machine:** box-1\n" +
 		"- **Task worktree:** `/bench/43`\n" +
 		"- **Task branch:** `smith/tasks/smith/42-spec/43`\n" +
+		"- **Preset:** default\n" +
 		"- **Attempts:** 1 in this run\n" +
 		"- **Last attempt:** the agent was killed (likely out of memory)\n" +
 		"- **Progress:** nothing committed beyond the work branch `smith/42-spec`\n"}

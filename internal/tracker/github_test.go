@@ -823,6 +823,44 @@ func TestTaskReportsATaskLabelledAsWorked(t *testing.T) {
 	}
 }
 
+func TestExecutionReadsEachTasksPresetLabels(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		specView(42): `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/o/r/issues/43"},{"number":44,"state":"OPEN","url":"https://github.com/o/r/issues/44"}],"totalCount":2},"title":"Spec"}`,
+		taskView(43): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"ready-for-agent"},{"name":"preset:opus"},{"name":"preset:codex"}],"number":43,"state":"OPEN","title":"Task 43"}`,
+		taskView(44): agentTask(44, "OPEN", `{"nodes":[],"totalCount":0}`),
+	}}
+
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("Execution(42) error = %v", err)
+	}
+
+	want := []tracker.Task{
+		{Number: 43, Title: "Task 43", Open: true, For: tracker.Agent, Presets: []string{"opus", "codex"}},
+		{Number: 44, Title: "Task 44", Open: true, For: tracker.Agent},
+	}
+	if !reflect.DeepEqual(got.Tasks, want) {
+		t.Errorf("Execution(42) tasks =\n%+v\nwant\n%+v", got.Tasks, want)
+	}
+}
+
+func TestTaskReadsItsPresetLabel(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		taskView(80): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"ready-for-agent"},{"name":"preset:codex"}],"number":80,"state":"OPEN","subIssues":{"nodes":[],"totalCount":0},"title":"Fix X","url":"https://github.com/o/r/issues/80"}`,
+	}}
+
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Task(t.Context(), 80)
+	if err != nil {
+		t.Fatalf("Task(80) error = %v", err)
+	}
+
+	if want := (tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Presets: []string{"codex"}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("Task(80) = %+v, want %+v", got, want)
+	}
+}
+
 // configured are the triage labels a repo file can name in place of the defaults.
 var configured = tracker.Labels{Agent: "go", Human: "stop", Spec: "epic"}
 

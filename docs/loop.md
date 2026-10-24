@@ -4,7 +4,7 @@ The **loop** works a spec's tasks, or a single task, with a coding agent, one ta
 
 ```text
 smith loop list <issue>
-smith loop run  [<box>] <issue> [--agent <name>] [--model <name>] [--effort low|medium|high]
+smith loop run  [<box>] <issue> [--preset <name> | --agent <name> [--model <name>] | --model <name>] [--effort low|medium|high]
                         [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push]
                         [--branch <name>] [--base <branch>] [--repo <name>]
 smith loop prompt
@@ -34,22 +34,23 @@ The loop hands out the first available task in the spec's order. It reads the tr
 Shows the settings a run would use, the next task, and what remains, without running anything:
 
 ```text
+preset: opus (repo file)
 agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
 push:   on (built-in default)
 spec #244 Spec: the loop — smith loop and the repo file
 next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
-  blocked: #254 (by #253)
+  blocked: #254 (by #253; preset deep)
   waiting on a human: #255
   closed: #245, #246, #247
 ```
 
-Each setting names where its value came from. A kind of task with nothing in it is left out.
+Each setting names where its value came from. The first line is the preset the work role runs on (see [Presets and roles](#presets-and-roles)): its name, or `one-off` for a preset built from `--agent`, then its agent, model and effort, each with its own origin, so a `--model` or `--effort` flag shows against the preset it changed. A task whose `preset:` label chooses a preset of its own shows it after its number, beside any open blockers, as `#254 (by #253; preset deep)`; a task without one shows none. A kind of task with nothing in it is left out.
 
 ## `smith loop run`
 
-Prints the same settings block as `list`, then works the spec or task unattended until no task is available. As it goes, it writes `smith: handing #N <title> to the agent in <worktree>` to stderr before each agent run, and `smith: the agent on #N ended with a failure: …` when one fails. At the end it reports why it stopped, then names the work branch (`work branch: smith/N-<slug>`):
+Prints the same settings block as `list`, then works the spec or task unattended until no task is available. As it goes, it writes `smith: handing #N <title> to <agent> on preset <name> in <worktree>` to stderr before each agent run, naming the preset that task runs on, or `on a one-off preset` for one built from `--agent`, and `smith: the agent on #N ended with a failure: …` when one fails. At the end it reports why it stopped, then names the work branch (`work branch: smith/N-<slug>`):
 
 - **`spec #N complete`**, or **`task #N complete`** for a task named on its own, child or standalone: every task is closed. Exit 0.
 - **No task is available for an agent**: what remains is blocked, for a human, or not ready. Exit 1.
@@ -73,7 +74,7 @@ A stop report that fails to post is a `smith: warning: …` line, and changes ne
 
 Two limits bound a run so it can be left alone:
 
-- **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.
+- **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the preset its attempts ran on, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.
 - **`--max-iterations`** (default 10): the most agent runs the whole loop makes.
 
 An agent that exits with a failure is reported, and the task is checked on the tracker as after any run: a task it closed lands, whatever the exit code. Whether the loop carries on depends on its attempts, as below.
@@ -121,6 +122,7 @@ On a box, `smith loop run <issue> --repo <name>` runs the loop in a **loop-drive
 4. **The session starts and smith returns.** The session's root process is `smith loop run <issue>` with the same flags, no `--repo`, and `--branch` set to the work branch, so the session ends when the loop does. smith prints the settings block, as `list` does, then the session's name and the commands to watch it, and exits 0:
 
 ```text
+preset: opus (repo file)
 agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
@@ -136,7 +138,7 @@ list:   smith session list
 
 ### From your machine: `loop run <box>`
 
-`smith loop run <box> <issue> --repo <name>` from your own machine relays the run over SSH to the box's smith, the way the `session` verbs do. The box runs `smith loop run <issue> --repo <name>` with every loop flag you set (`--agent`, `--model`, `--effort`, `--max-iterations`, `--max-attempts`, `--branch`, `--base`, `--no-push`), so it starts the same loop-driven session as above. The preflight output and the exit status come back to your terminal, and smith returns once the session is live. It never attaches: run the printed `smith session attach <box> <name>` to watch.
+`smith loop run <box> <issue> --repo <name>` from your own machine relays the run over SSH to the box's smith, the way the `session` verbs do. The box runs `smith loop run <issue> --repo <name>` with every loop flag you set (`--preset`, `--agent`, `--model`, `--effort`, `--max-iterations`, `--max-attempts`, `--branch`, `--base`, `--no-push`), so it starts the same loop-driven session as above. The preflight output and the exit status come back to your terminal, and smith returns once the session is live. It never attaches: run the printed `smith session attach <box> <name>` to watch.
 
 A box running a different version of smith is handled as for the `session` verbs: asked about at a terminal, refused with the `smith machine upgrade <box>` to run otherwise. `--repo` is required with a box, and `--interactive` is refused with one before anything is relayed.
 
@@ -161,9 +163,12 @@ The model is passed to the agent verbatim. Effort is on smith's own scale (`low`
 `.smith/repo.yaml`, at the git repo's root, holds the settings everyone running the loop on the repo shares. Commit it. It is optional; without it every setting is the built-in default.
 
 ```yaml
-agent: claude
-model: opus
-effort: high
+presets:
+  opus:  { agent: claude, model: opus,        effort: medium }
+  deep:  { agent: claude, model: opus,        effort: high }
+  codex: { agent: codex,  model: gpt-6.1-sol, effort: high }
+roles:
+  work: opus
 push: true
 prepare: uv sync
 labels:
@@ -172,17 +177,49 @@ labels:
   spec: spec
 ```
 
-`smith repo init` writes a commented starter, filling in any value you give as a flag, and reports `created <path>`. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`. In a bare clone it refuses too, saying the directory is a bare repo.
+`smith repo init` writes a commented starter and reports `created <path>`. The starter defines one preset, named for its agent, and points the work role at it: `--agent`, `--model` and `--effort` fill that preset in, and without them it is `claude` with the agent's own model and effort. `smith repo init --agent codex --model gpt-6.1-sol --effort high` writes `presets: {codex: {agent: codex, model: gpt-6.1-sol, effort: high}}` and `roles: {work: codex}`. A starter that would not load, such as one for an unknown agent, is refused and nothing is written. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`. In a bare clone it refuses too, saying the directory is a bare repo.
 
-Each setting resolves on its own, most specific first:
+Each setting resolves most specific first:
 
 1. A flag on `smith loop run`, for that run only.
 2. The repo file.
-3. The built-in default: `claude`, the agent's own model and effort, push on, and the triage labels shown above.
+3. The built-in default: the `default` preset, which is `claude` with the agent's own model and effort, push on, and the triage labels shown above.
 
 The triage labels and the prepare command have no flags: they are set in the repo file or left to their defaults.
 
-The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, and a `prepare:` that is not one non-empty string. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, and a `prepare:` that is not one non-empty string. The presets and roles are checked as [Presets and roles](#presets-and-roles) says. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+
+### Presets and roles
+
+A **preset** is a named agent, model and effort, chosen whole, so a model never outlives the agent it belongs to. A repo defines as many presets as it likes under `presets:`, each with an `agent` and, optionally, a `model` and `effort`. One that leaves out its model or effort leaves it to the agent's own default.
+
+A **role** is a job smith hands an agent. smith defines the roles, and `roles:` says which preset each one runs on. `work`, the only role, works every task, unattended or with `--interactive`. With no `work` role, or no repo file, tasks run on the built-in `default` preset: `claude` with no model and no effort, even when the file defines presets.
+
+Every preset is checked when the repo file loads, used or not, and each problem is refused with its line before any agent runs:
+
+- its name is lowercase letters, digits and hyphens
+- its agent is one smith has an adapter for (`claude`, `codex` or `pi`)
+- its effort is on smith's scale (`low`, `medium`, `high`)
+
+A role smith does not define (`smith has no role "review"`) and a role naming a preset `presets:` does not define are refused too. The flat top-level `agent`, `model` and `effort` keys of earlier versions are refused with their line and the presets shape that replaces them.
+
+The run flags change the preset for one run, without editing the file:
+
+- `--preset P` runs every task on the repo file's preset `P`, which the settings report shows as from the flag.
+- `--agent X` builds a one-off preset on `X` that never inherits the repo file's model or effort, and `--model Y` beside it sets that preset's model.
+- `--model Y` alone keeps the work preset's agent and effort, and replaces its model.
+- `--effort E` replaces the effort of whichever preset the run resolves.
+
+A task can run on a preset of its own: a `preset:<name>` label on its issue, such as `preset:codex`, sends it to the repo file's preset `<name>` while the rest of its spec stays on the work preset. The `preset:` prefix is smith's own, like `smith:working`, not a triage label a repo file can rename. A preset therefore comes from, most specific first:
+
+1. `--preset`, `--agent` or `--model`, which pin every task of the run to one preset, over any label.
+2. The task's `preset:` label.
+3. The work role's preset.
+4. The built-in `default` preset.
+
+`--effort` alone pins nothing: each task keeps its own preset and runs at that effort. Straight after reading the spec, before any worktree is opened or agent started, the run checks each open task's label, and stops as `failed` on a task naming a preset the repo file does not define (`#N's label preset:missing names preset "missing", which the repo file does not define`) or carrying two labels (`#N carries the labels preset:opus and preset:codex: a task runs on one preset`). Closed tasks are not checked, and a run pinned by a flag checks no labels at all. `--interactive` honours the label the same way. Whether an agent is installed is checked up front only for the work preset's agent, so a labelled task whose agent is missing stops the run as `agent broken` when it is handed out.
+
+An unknown `--agent`, an `--effort` off the scale, and a `--preset` the repo file does not define are refused, naming the flag. `--preset` beside `--agent` or `--model` is refused too, since a preset already names its agent and model. The [presets ADR](./adr/0022-presets-and-roles.md) has the reasoning.
 
 ### The prepare command
 

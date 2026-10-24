@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 
 	"go.yaml.in/yaml/v3"
 
@@ -20,12 +21,10 @@ const subject = "repo file"
 // File is the repo file's contents. A field left empty or nil is unset, and
 // the loop falls back to its built-in default for it.
 type File struct {
-	// Agent names the agent adapter the loop hands each task to.
-	Agent string `yaml:"agent"`
-	// Model is the model the agent runs, passed to it verbatim.
-	Model string `yaml:"model"`
-	// Effort is how hard the agent thinks, on smith's own scale.
-	Effort string `yaml:"effort"`
+	// Presets are the named agent settings the repo defines, by name.
+	Presets map[string]Preset `yaml:"presets"`
+	// Roles name the preset each role smith defines runs on, by role.
+	Roles map[string]string `yaml:"roles"`
 	// Push says whether the loop pushes the branch after each task the agent
 	// closes. Nil is unset, which the loop takes as on.
 	Push *bool `yaml:"push"`
@@ -34,6 +33,18 @@ type File struct {
 	// Prepare is the command that prepares a worktree of the repo, run by
 	// sh -c in the worktree under its toolchain. Empty runs none.
 	Prepare string `yaml:"-"`
+}
+
+// Preset is a named agent setting, chosen whole: the agent adapter, the model
+// it runs and how hard it thinks. An empty model or effort is unset, and the
+// agent uses its own default for it.
+type Preset struct {
+	// Agent names the agent adapter the work is handed to.
+	Agent string `yaml:"agent"`
+	// Model is the model the agent runs, passed to it verbatim.
+	Model string `yaml:"model"`
+	// Effort is how hard the agent thinks, on smith's own scale.
+	Effort string `yaml:"effort"`
 }
 
 // Labels are the names of the tracker's triage labels. A name left empty is
@@ -54,18 +65,25 @@ type document struct {
 	File `yaml:",inline"`
 	// Prepare is the node written under prepareKey.
 	Prepare yaml.Node `yaml:"prepare"`
+	// Agent, Model and Effort are the retired flat keys, taken as whatever
+	// was written so that their own check reports them.
+	Agent  yaml.Node `yaml:"agent"`
+	Model  yaml.Node `yaml:"model"`
+	Effort yaml.Node `yaml:"effort"`
 }
 
-// Parse decodes a repo file strictly: any key it does not define, any label
-// set to no name, and a prepare command that is not one non-empty string, is
-// refused with its line, in a *blueprint.ValidationError. An empty document is
+// Parse decodes a repo file strictly: any key it does not define, the retired
+// flat agent, model and effort keys, an invalid preset, a role smith does not
+// define or naming no preset, any label set to no name, and a prepare command
+// that is not one non-empty string, is refused with its line, in a
+// *blueprint.ValidationError. An empty document is
 // valid and leaves every field unset.
 func Parse(data []byte) (File, error) {
 	var doc document
 	if err := blueprint.DecodeStrict(data, subject, &doc); err != nil {
 		return File{}, fmt.Errorf("parse repo file: %w", err)
 	}
-	if err := validationError(append(labelFindings(data), prepareFindings(data)...)); err != nil {
+	if err := validationError(slices.Concat(flatFindings(data), presetFindings(data), roleFindings(data, doc.Presets), labelFindings(data), prepareFindings(data))); err != nil {
 		return File{}, err
 	}
 	f := doc.File

@@ -1,12 +1,15 @@
 package repofile_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"testing"
 
+	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/repofile"
 )
@@ -21,7 +24,7 @@ func locate(t *testing.T, root string) repofile.Repo {
 	return repo
 }
 
-func scaffold(t *testing.T, repo repofile.Repo, values repofile.File) repofile.Outcome {
+func scaffold(t *testing.T, repo repofile.Repo, values repofile.Preset) repofile.Outcome {
 	t.Helper()
 	outcome, err := repofile.Scaffold(repo, values)
 	if err != nil {
@@ -48,39 +51,42 @@ func TestScaffoldWritesTheStarterAtTheRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	repo := locate(t, root)
 
-	outcome := scaffold(t, repo, repofile.File{})
+	outcome := scaffold(t, repo, repofile.Preset{})
 
 	want := repofile.Outcome{Path: filepath.Join(root, ".smith", "repo.yaml"), Created: true}
 	if outcome != want {
-		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.File{}, outcome, want)
+		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.Preset{}, outcome, want)
 	}
 }
 
-func TestTheUneditedStarterSetsNothing(t *testing.T) {
+func TestTheUneditedStarterRunsTheWorkRoleOnClaudeAlone(t *testing.T) {
 	t.Parallel()
 	repo := locate(t, t.TempDir())
-	scaffold(t, repo, repofile.File{})
+	scaffold(t, repo, repofile.Preset{})
 
-	if got := readRepoFile(t, repo); got != (repofile.File{}) {
-		t.Errorf("starter = %+v, want every field unset", got)
+	want := repofile.File{Presets: map[string]repofile.Preset{"claude": {Agent: "claude"}}, Roles: map[string]string{"work": "claude"}}
+	if got := readRepoFile(t, repo); !reflect.DeepEqual(got, want) {
+		t.Errorf("starter = %+v, want %+v", got, want)
 	}
 }
 
 func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 	t.Parallel()
 	repo := locate(t, t.TempDir())
-	scaffold(t, repo, repofile.File{})
+	scaffold(t, repo, repofile.Preset{})
 	data, err := os.ReadFile(repo.Path())
 	if err != nil {
 		t.Fatal(err)
 	}
-	example := regexp.MustCompile(`(?m)^# ((?:  )?[a-z]+:(?: |$))`).ReplaceAll(data, []byte("$1"))
+	example := regexp.MustCompile(`(?m)^( *)# ((?:  )*[a-z]+:(?: |$))`).ReplaceAll(data, []byte("$1$2"))
 
 	got, err := repofile.Parse(example)
 
 	off := false
 	want := repofile.File{
-		Agent: "claude", Model: "opus", Effort: "high", Push: &off, Prepare: "uv sync",
+		Presets: map[string]repofile.Preset{"claude": {Agent: "claude", Model: "opus", Effort: "high"}},
+		Roles:   map[string]string{"work": "claude"},
+		Push:    &off, Prepare: "uv sync",
 		Labels: repofile.Labels{Agent: "ready-for-agent", Human: "ready-for-human", Spec: "spec"},
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {
@@ -88,13 +94,16 @@ func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 	}
 }
 
-func TestScaffoldFillsInTheValuesGiven(t *testing.T) {
+func TestScaffoldFillsInThePresetGiven(t *testing.T) {
 	t.Parallel()
 	repo := locate(t, t.TempDir())
-	scaffold(t, repo, repofile.File{Agent: "claude", Model: "opus", Effort: "high"})
+	scaffold(t, repo, repofile.Preset{Agent: "codex", Model: "gpt-6.1-sol", Effort: "high"})
 
-	want := repofile.File{Agent: "claude", Model: "opus", Effort: "high"}
-	if got := readRepoFile(t, repo); got != want {
+	want := repofile.File{
+		Presets: map[string]repofile.Preset{"codex": {Agent: "codex", Model: "gpt-6.1-sol", Effort: "high"}},
+		Roles:   map[string]string{"work": "codex"},
+	}
+	if got := readRepoFile(t, repo); !reflect.DeepEqual(got, want) {
 		t.Errorf("repo file = %+v, want %+v", got, want)
 	}
 }
@@ -102,11 +111,30 @@ func TestScaffoldFillsInTheValuesGiven(t *testing.T) {
 func TestScaffoldFillsInOnlyTheValuesGiven(t *testing.T) {
 	t.Parallel()
 	repo := locate(t, t.TempDir())
-	scaffold(t, repo, repofile.File{Model: "anthropic/some: model"})
+	scaffold(t, repo, repofile.Preset{Model: "anthropic/some: model"})
 
-	want := repofile.File{Model: "anthropic/some: model"}
-	if got := readRepoFile(t, repo); got != want {
+	want := repofile.File{
+		Presets: map[string]repofile.Preset{"claude": {Agent: "claude", Model: "anthropic/some: model"}},
+		Roles:   map[string]string{"work": "claude"},
+	}
+	if got := readRepoFile(t, repo); !reflect.DeepEqual(got, want) {
 		t.Errorf("repo file = %+v, want %+v", got, want)
+	}
+}
+
+func TestScaffoldRefusesAPresetThatWouldNotLoad(t *testing.T) {
+	t.Parallel()
+	repo := locate(t, t.TempDir())
+	values := repofile.Preset{Agent: "cursor"}
+
+	_, err := repofile.Scaffold(repo, values)
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Scaffold(%q, %+v) error = %v, want a *blueprint.ValidationError", repo.Path(), values, err)
+	}
+	if _, statErr := os.Stat(repo.Path()); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("Scaffold(%q, %+v) left %q (%v), want no repo file written", repo.Path(), values, repo.Path(), statErr)
 	}
 }
 
@@ -114,7 +142,7 @@ func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	repo := locate(t, root)
-	existing := "agent: codex\n"
+	existing := "push: false\n"
 	if err := os.MkdirAll(filepath.Dir(repo.Path()), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +150,10 @@ func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outcome := scaffold(t, repo, repofile.File{Agent: "claude"})
+	outcome := scaffold(t, repo, repofile.Preset{Agent: "claude"})
 
 	if want := (repofile.Outcome{Path: repo.Path(), Created: false}); outcome != want {
-		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.File{Agent: "claude"}, outcome, want)
+		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.Preset{Agent: "claude"}, outcome, want)
 	}
 	if data, err := os.ReadFile(repo.Path()); err != nil || string(data) != existing {
 		t.Errorf("repo file = %q (%v), want it unchanged as %q", data, err, existing)
@@ -135,7 +163,7 @@ func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
 func TestScaffoldWritesNoPrompt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	scaffold(t, locate(t, root), repofile.File{})
+	scaffold(t, locate(t, root), repofile.Preset{})
 
 	entries, err := os.ReadDir(filepath.Join(root, ".smith"))
 	if err != nil {

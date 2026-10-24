@@ -139,7 +139,7 @@ func TestHelperHungUpLoop(t *testing.T) {
 		t.Skip("runs only as the child process of hangUpLoop")
 	}
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
-	w, _ := repoWith(t, gh, sleepingAgent{pidfile: filepath.Join(dir, "agent.pid")}, "agent: claude\n")
+	w, _ := repoWith(t, gh, sleepingAgent{pidfile: filepath.Join(dir, "agent.pid")}, "presets:\n  claude: {agent: claude}\nroles:\n  work: claude\n")
 	args := []string{"run", "42"}
 	if worktree := os.Getenv(hangupSessionEnv); worktree != "" {
 		w.git, w.workdir = connection.System(), func() (string, error) { return worktree, nil }

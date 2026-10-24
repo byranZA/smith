@@ -11,7 +11,7 @@ import (
 
 func TestParseRefusesAnUnknownKeyNamingItsLine(t *testing.T) {
 	t.Parallel()
-	data := "agent: claude\neffort: high\nmodle: opus\n"
+	data := "push: true\nprepare: make\nmodle: opus\n"
 
 	_, err := repofile.Parse([]byte(data))
 
@@ -27,7 +27,7 @@ func TestParseRefusesAnUnknownKeyNamingItsLine(t *testing.T) {
 
 func TestParseReadsEveryField(t *testing.T) {
 	t.Parallel()
-	data := "agent: codex\nmodel: gpt-5\neffort: low\npush: false\n"
+	data := "presets:\n  codex: {agent: codex, model: gpt-5, effort: low}\nroles:\n  work: codex\npush: false\nprepare: make\n"
 
 	got, err := repofile.Parse([]byte(data))
 	if err != nil {
@@ -35,7 +35,12 @@ func TestParseReadsEveryField(t *testing.T) {
 	}
 
 	off := false
-	want := repofile.File{Agent: "codex", Model: "gpt-5", Effort: "low", Push: &off}
+	want := repofile.File{
+		Presets: map[string]repofile.Preset{"codex": {Agent: "codex", Model: "gpt-5", Effort: "low"}},
+		Roles:   map[string]string{"work": "codex"},
+		Push:    &off,
+		Prepare: "make",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
 	}
@@ -58,7 +63,7 @@ func TestParseReadsTheLabelsBlock(t *testing.T) {
 
 func TestParseRefusesAnUnknownLabelKeyNamingItsLine(t *testing.T) {
 	t.Parallel()
-	data := "agent: claude\nlabels:\n  agent: go\n  task: ready\n"
+	data := "push: true\nlabels:\n  agent: go\n  task: ready\n"
 
 	_, err := repofile.Parse([]byte(data))
 
@@ -114,7 +119,7 @@ func TestParseRefusesTwoLabelsSharingANameNamingTheLaterLine(t *testing.T) {
 
 func TestParseRefusesAnEmptyLabelGivenThroughAnAlias(t *testing.T) {
 	t.Parallel()
-	data := "model: &empty \"\"\nlabels:\n  agent: *empty\n"
+	data := "presets:\n  plain: {agent: claude, model: &empty \"\"}\nlabels:\n  agent: *empty\n"
 
 	_, err := repofile.Parse([]byte(data))
 
@@ -122,7 +127,7 @@ func TestParseRefusesAnEmptyLabelGivenThroughAnAlias(t *testing.T) {
 	if !errors.As(err, &verr) {
 		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
 	}
-	want := []blueprint.Finding{{Line: 3, Path: "labels.agent", Message: "a label needs a name: set one, or leave the key out for the default"}}
+	want := []blueprint.Finding{{Line: 4, Path: "labels.agent", Message: "a label needs a name: set one, or leave the key out for the default"}}
 	if !reflect.DeepEqual(verr.Findings, want) {
 		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
 	}
@@ -146,14 +151,14 @@ func TestParseRefusesTwoLabelsSharingANameThroughAnAlias(t *testing.T) {
 
 func TestParseReadsALabelGivenThroughAnAlias(t *testing.T) {
 	t.Parallel()
-	data := "model: &name go\nlabels:\n  agent: *name\n"
+	data := "prepare: &name go\nlabels:\n  agent: *name\n"
 
 	got, err := repofile.Parse([]byte(data))
 	if err != nil {
 		t.Fatalf("Parse(%q) error = %v", data, err)
 	}
 
-	want := repofile.File{Model: "go", Labels: repofile.Labels{Agent: "go"}}
+	want := repofile.File{Prepare: "go", Labels: repofile.Labels{Agent: "go"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
 	}
@@ -161,14 +166,15 @@ func TestParseReadsALabelGivenThroughAnAlias(t *testing.T) {
 
 func TestParseReadsThePrepareCommand(t *testing.T) {
 	t.Parallel()
-	data := "agent: claude\nprepare: uv sync\n"
+	data := "push: true\nprepare: uv sync\n"
 
 	got, err := repofile.Parse([]byte(data))
 	if err != nil {
 		t.Fatalf("Parse(%q) error = %v", data, err)
 	}
 
-	want := repofile.File{Agent: "claude", Prepare: "uv sync"}
+	on := true
+	want := repofile.File{Push: &on, Prepare: "uv sync"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
 	}
@@ -177,10 +183,10 @@ func TestParseReadsThePrepareCommand(t *testing.T) {
 func TestParseRefusesAMalformedPrepareCommandNamingItsLine(t *testing.T) {
 	t.Parallel()
 	for name, data := range map[string]string{
-		"list":         "agent: claude\nprepare:\n  - uv sync\n",
-		"mapping":      "agent: claude\nprepare:\n  run: uv sync\n",
-		"quoted empty": "agent: claude\nprepare: \"\"\n",
-		"no value":     "agent: claude\nprepare:\n",
+		"list":         "push: true\nprepare:\n  - uv sync\n",
+		"mapping":      "push: true\nprepare:\n  run: uv sync\n",
+		"quoted empty": "push: true\nprepare: \"\"\n",
+		"no value":     "push: true\nprepare:\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -202,12 +208,12 @@ func TestParseRefusesAMalformedPrepareCommandNamingItsLine(t *testing.T) {
 func TestParseReadsAPrepareCommandSuppliedThroughAMerge(t *testing.T) {
 	t.Parallel()
 	for name, data := range map[string]string{
-		"mapping":           "agent: claude\n<<: {prepare: uv sync}\n",
-		"sequence":          "agent: claude\n<<: [{model: opus}, {prepare: uv sync}]\n",
-		"nested":            "agent: claude\n<<: {<<: {prepare: uv sync}}\n",
-		"direct overrides":  "agent: claude\nprepare: uv sync\n<<: {prepare: []}\n",
-		"first merge wins":  "agent: claude\n<<: [{prepare: uv sync}, {prepare: {}}]\n",
-		"own key overrides": "agent: claude\n<<: {prepare: uv sync, <<: {prepare: \"\"}}\n",
+		"mapping":           "push: true\n<<: {prepare: uv sync}\n",
+		"sequence":          "push: true\n<<: [{push: true}, {prepare: uv sync}]\n",
+		"nested":            "push: true\n<<: {<<: {prepare: uv sync}}\n",
+		"direct overrides":  "push: true\nprepare: uv sync\n<<: {prepare: []}\n",
+		"first merge wins":  "push: true\n<<: [{prepare: uv sync}, {prepare: {}}]\n",
+		"own key overrides": "push: true\n<<: {prepare: uv sync, <<: {prepare: \"\"}}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -227,13 +233,13 @@ func TestParseReadsAPrepareCommandSuppliedThroughAMerge(t *testing.T) {
 func TestParseRefusesAMalformedMergedPrepareCommandNamingItsLine(t *testing.T) {
 	t.Parallel()
 	for name, data := range map[string]string{
-		"list":             "agent: claude\n<<: {prepare: []}\n",
-		"mapping":          "agent: claude\n<<: {prepare: {}}\n",
-		"quoted empty":     "agent: claude\n<<: {prepare: \"\"}\n",
-		"sequence":         "agent: claude\n<<: [{model: opus}, {prepare: []}]\n",
-		"nested":           "agent: claude\n<<: {<<: {prepare: []}}\n",
-		"first merge wins": "agent: claude\n<<: [{prepare: []}, {prepare: uv sync}]\n",
-		"direct malformed": "agent: claude\nprepare: []\n<<: {prepare: uv sync}\n",
+		"list":             "push: true\n<<: {prepare: []}\n",
+		"mapping":          "push: true\n<<: {prepare: {}}\n",
+		"quoted empty":     "push: true\n<<: {prepare: \"\"}\n",
+		"sequence":         "push: true\n<<: [{push: true}, {prepare: []}]\n",
+		"nested":           "push: true\n<<: {<<: {prepare: []}}\n",
+		"first merge wins": "push: true\n<<: [{prepare: []}, {prepare: uv sync}]\n",
+		"direct malformed": "push: true\nprepare: []\n<<: {prepare: uv sync}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -254,7 +260,7 @@ func TestParseRefusesAMalformedMergedPrepareCommandNamingItsLine(t *testing.T) {
 
 func TestParseRefusesAMalformedPrepareCommandOnTheLineOfItsMergedKey(t *testing.T) {
 	t.Parallel()
-	data := "agent: claude\n<<:\n  prepare: []\n"
+	data := "push: true\n<<:\n  prepare: []\n"
 
 	_, err := repofile.Parse([]byte(data))
 

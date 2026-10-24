@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io/fs"
+	"regexp"
 
 	"go.yaml.in/yaml/v3"
 
@@ -31,14 +32,16 @@ type Outcome struct {
 	Created bool
 }
 
-// Scaffold writes the commented starter repo file into repo unless one is
-// already there, which is never overwritten. Each value set in values is
-// written uncommented in place of its placeholder; the rest stay commented,
-// so the starter as written leaves every field unset.
-func Scaffold(repo Repo, values File) (Outcome, error) {
+// Scaffold writes a commented starter repo file into repo, with one preset
+// filled from values and the work role on it, unless a repo file is already
+// there. It writes nothing when the starter would not load.
+func Scaffold(repo Repo, values Preset) (Outcome, error) {
 	content, err := render(values)
 	if err != nil {
 		return Outcome{}, err
+	}
+	if _, err := Parse(content); err != nil {
+		return Outcome{}, fmt.Errorf("scaffold repo file: %w", err)
 	}
 	created, err := starter.WriteAbsent(repo.Path(), content, dirMode, fileMode)
 	if err != nil {
@@ -47,27 +50,45 @@ func Scaffold(repo Repo, values File) (Outcome, error) {
 	return Outcome{Path: repo.Path(), Created: created}, nil
 }
 
-// render returns the starter with each value set in values uncommented in
-// place of its placeholder line.
-func render(values File) ([]byte, error) {
+// starterAgent is the agent the starter's preset names, and names it after.
+const starterAgent = "claude"
+
+// placeholder is one line of the starter that render fills in: the value to
+// set, the line's text as the starter writes it, and the line to write in its
+// place, with %s standing for the value as YAML.
+type placeholder struct {
+	key, value, text, line string
+}
+
+// render returns the starter with its preset filled in from values: the agent
+// in place of starterAgent, in the preset's name, its agent and the work role,
+// and each model or effort set uncommented in place of its placeholder line.
+func render(values Preset) ([]byte, error) {
 	content := starterFile
-	for _, field := range []struct{ key, value, placeholder string }{
-		{"agent", values.Agent, "claude"},
-		{"model", values.Model, "opus"},
-		{"effort", values.Effort, "high"},
-	} {
-		if field.value == "" {
+	placeholders := []placeholder{
+		{"model", values.Model, "# model: opus", "    model: %s"},
+		{"effort", values.Effort, "# effort: high", "    effort: %s"},
+	}
+	if values.Agent != starterAgent {
+		placeholders = append(placeholders,
+			placeholder{"preset", values.Agent, starterAgent + ":", "  %s:"},
+			placeholder{"agent", values.Agent, "agent: " + starterAgent, "    agent: %s"},
+			placeholder{WorkRole, values.Agent, WorkRole + ": " + starterAgent, "  " + WorkRole + ": %s"},
+		)
+	}
+	for _, p := range placeholders {
+		if p.value == "" {
 			continue
 		}
-		commented := []byte(fmt.Sprintf("# %s: %s\n", field.key, field.placeholder))
-		if !bytes.Contains(content, commented) {
-			return nil, fmt.Errorf("render repo file %s: the starter carries no placeholder for it", field.key)
+		line := regexp.MustCompile(`(?m)^ *` + regexp.QuoteMeta(p.text) + `$`)
+		if !line.Match(content) {
+			return nil, fmt.Errorf("render repo file %s: the starter carries no placeholder for it", p.key)
 		}
-		scalar, err := yaml.Marshal(field.value)
+		scalar, err := yaml.Marshal(p.value)
 		if err != nil {
-			return nil, fmt.Errorf("render repo file %s: %w", field.key, err)
+			return nil, fmt.Errorf("render repo file %s: %w", p.key, err)
 		}
-		content = bytes.Replace(content, commented, append([]byte(field.key+": "), scalar...), 1)
+		content = line.ReplaceAllLiteral(content, fmt.Appendf(nil, p.line, bytes.TrimSuffix(scalar, []byte("\n"))))
 	}
 	return content, nil
 }

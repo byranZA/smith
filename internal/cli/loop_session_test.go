@@ -295,7 +295,7 @@ func TestLoopRunOnABoxResolvesSettingsFromTheFetchedBaseTheBranchIsCutFrom(t *te
 	tmux := &tmuxBox{}
 	w, workspace := sessionLoop(t, readySpec(), tmux)
 	upstream := gitStdout(t, filepath.Join(workspace, "smith", "repo.git"), "remote", "get-url", "origin")
-	writeRepoFile(t, upstream, "repo.yaml", "agent: codex\n")
+	writeRepoFile(t, upstream, "repo.yaml", "presets:\n  codex: {agent: codex}\nroles:\n  work: codex\n")
 	runGit(t, upstream, "add", ".smith")
 	runGit(t, upstream, "commit", "-m", "repo file")
 	w.mise = &boxMise{installed: []string{"claude"}}
@@ -312,7 +312,7 @@ func TestLoopRunOnABoxResumingACheckoutPreflightsWhatTheCheckoutHolds(t *testing
 	tests := []struct {
 		name, file, content, want string
 	}{
-		{"its repo file", "repo.yaml", "agent: codex\n", "agent codex is not installed"},
+		{"its repo file", "repo.yaml", "presets:\n  codex: {agent: codex}\nroles:\n  work: codex\n", "agent codex is not installed"},
 		{"its loop prompt", "prompt.md", "work {{NOPE}}\n", "unknown placeholder {{NOPE}}"},
 	}
 	for _, tc := range tests {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -91,9 +92,9 @@ type Loop struct {
 	// Preparer prepares the task worktree before every agent attempt; nil
 	// prepares nothing.
 	Preparer Preparer
-	Agent    agent.Adapter
-	// Options are the model and effort every agent run asks for.
-	Options agent.Options
+	// Presets chooses the preset each task is handed to, and so its agent,
+	// model and effort.
+	Presets preset.Choice
 	Prompt  Prompt
 	Limits  Limits
 	// Progress is where the loop names each task as it hands it out.
@@ -148,7 +149,8 @@ type Broken struct {
 // Complete reports whether the run ended with every task of the spec closed.
 func (o Outcome) Complete() bool { return o.Remaining.Complete() }
 
-// Run first clears the worked marks a run that died left on spec's tasks, then
+// Run first refuses spec when one of its open tasks has a preset the run
+// cannot resolve, then clears the worked marks a run that died left on spec's tasks, then
 // works spec until no task is available for an agent, handing a task left open
 // out again up to MaxAttempts and stopping after MaxIterations agent runs. A
 // task left open after its last attempt is skipped and handed to a human,
@@ -183,6 +185,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	stopped := func(remaining Remaining) Outcome {
 		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
 	}
+	if err := l.Presets.Check(current); err != nil {
+		return Outcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
+	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
@@ -197,7 +202,11 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			capped.Capped = true
 			return capped, nil
 		}
-		run, err := l.hand(ctx, next, l.Agent.Unattended(l.Prompt.Render(next), l.Options))
+		adapter, resolved, err := l.agent(next)
+		if err != nil {
+			return Outcome{}, err
+		}
+		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.Render(next), resolved.Options()))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -223,7 +232,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			return Outcome{}, err
 		}
 		if skip {
-			if err := l.noteSkip(ctx, next, run.dir, attempts[next.Number], run.killed()); err != nil {
+			if err := l.noteSkip(ctx, next, run, attempts[next.Number]); err != nil {
 				return Outcome{}, err
 			}
 		}
@@ -279,19 +288,28 @@ func (o InteractiveOutcome) Succeeded() bool {
 }
 
 // RunInteractive hands spec's next available task to one agent run attached to
-// the operator's terminal, and runs no agent when no task is available. When
+// the operator's terminal, on the task's own preset, and runs no agent when no
+// task is available or one of spec's open tasks has a preset the run cannot
+// resolve. When
 // the spec is complete once it ends, the recycled task worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
 		return InteractiveOutcome{}, fmt.Errorf("read #%d: %w", spec, err)
 	}
+	if err := l.Presets.Check(current); err != nil {
+		return InteractiveOutcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
+	}
 	remaining := Survey(current)
 	next, ok := remaining.Next()
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
-	if _, err := l.hand(ctx, next, l.Agent.Interactive(l.Prompt.Interactive().Render(next), l.Options)); err != nil {
+	adapter, resolved, err := l.agent(next)
+	if err != nil {
+		return InteractiveOutcome{}, err
+	}
+	if _, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next), resolved.Options())); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -308,6 +326,20 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 	}
 	remaining = Survey(after)
 	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
+}
+
+// agent returns the preset task is handed to and the adapter of its agent,
+// refusing a preset the run cannot resolve.
+func (l Loop) agent(task tracker.Task) (agent.Adapter, preset.Resolved, error) {
+	resolved, err := l.Presets.Task(task)
+	if err != nil {
+		return nil, preset.Resolved{}, fmt.Errorf("choose a preset: %w", err)
+	}
+	adapter, err := agent.Lookup(resolved.Agent.Value)
+	if err != nil {
+		return nil, preset.Resolved{}, fmt.Errorf("choose the agent of #%d: %w", task.Number, err)
+	}
+	return adapter, resolved, nil
 }
 
 // refresh reads current, the execution read for issue number, as it stands
@@ -330,9 +362,10 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 }
 
 // attempt is how one agent run on a task went: the task worktree it ran in,
-// and Launch's error, nil when the agent exited cleanly.
+// the preset it ran on, and Launch's error, nil when the agent exited cleanly.
 type attempt struct {
 	dir     string
+	preset  preset.Resolved
 	failure error
 }
 
@@ -343,13 +376,13 @@ func (a attempt) killed() bool { return errors.Is(a.failure, ErrKilled) }
 // failure, rather than exiting cleanly or being killed.
 func (a attempt) agentFailure() bool { return a.failure != nil && !a.killed() }
 
-// hand marks task as worked and gives it to one agent run of cmd in task's
-// worktree, returning how the attempt went, and reports an agent that fails,
+// hand marks task as worked and gives it to one agent run of cmd, on
+// resolved, in task's worktree, returning how the attempt went, and reports an agent that fails,
 // leaving it to the caller to judge. The worktree is prepared first, and a failed
 // preparation is an error naming it before task is marked or any agent runs.
 // The caller releases the mark, except on an error from an interrupted run or
 // a failed report of that failure, when hand has already removed it.
-func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (attempt, error) {
+func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resolved, cmd agent.Command) (attempt, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
 		return attempt{}, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
@@ -358,13 +391,13 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (a
 	if err := l.prepare(ctx, task, dir); err != nil {
 		return attempt{}, err
 	}
-	if err := l.report("smith: handing #%d %s to the agent in %s\n", task.Number, task.Title, dir); err != nil {
+	if err := l.report("smith: handing #%d %s to %s on %s in %s\n", task.Number, task.Title, resolved.Agent.Value, presetPhrase(resolved), dir); err != nil {
 		return attempt{}, err
 	}
 	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
 		return attempt{}, err
 	}
-	run := attempt{dir: dir, failure: l.Launcher.Launch(ctx, cmd)}
+	run := attempt{dir: dir, preset: resolved, failure: l.Launcher.Launch(ctx, cmd)}
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 		return attempt{}, errors.Join(interrupted, l.unmarkDetached(ctx, task))
@@ -376,6 +409,15 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, cmd agent.Command) (a
 		return attempt{}, errors.Join(err, l.unmarkDetached(ctx, task))
 	}
 	return run, nil
+}
+
+// presetPhrase names resolved as the hand-off line does: "preset opus", or
+// "a one-off preset" for one built from the run flags.
+func presetPhrase(resolved preset.Resolved) string {
+	if resolved.Name == "" {
+		return "a one-off preset"
+	}
+	return "preset " + resolved.Name
 }
 
 // prepare prepares task's worktree at dir with the Preparer, when there is
