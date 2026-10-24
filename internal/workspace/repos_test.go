@@ -76,10 +76,8 @@ func TestConvergeClonesUnderMiseExec(t *testing.T) {
 	}
 }
 
-// TestConvergeClonesTrustingTheRepoDirectory proves the clone's mise trusts
-// the configs in the repo's workspace directory, where smith generates the
-// repo's own, and nowhere wider.
 func TestConvergeClonesTrustingTheRepoDirectory(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	box := newBox()
 	box.hasMise = true
@@ -92,10 +90,8 @@ func TestConvergeClonesTrustingTheRepoDirectory(t *testing.T) {
 	}
 }
 
-// TestConvergeRunsEveryGitOfAnExistingCloneTrustingTheRepoDirectory proves
-// each git command converging a clone the box already holds runs under a mise
-// trusting the repo's workspace directory.
 func TestConvergeRunsEveryGitOfAnExistingCloneTrustingTheRepoDirectory(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	box := newBox()
 	box.hasMise = true

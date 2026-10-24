@@ -621,10 +621,8 @@ func TestConvergePinsRepoToolsAboveTheWorktrees(t *testing.T) {
 	}
 }
 
-// TestConvergeInstallsARepoToolchainTrustingTheRepoDirectory proves the
-// install of a repo's own pins runs under a mise trusting the configs in the
-// repo's workspace directory, which holds the generated config it installs from.
 func TestConvergeInstallsARepoToolchainTrustingTheRepoDirectory(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	box := newBox()
 	box.hasMise = true
