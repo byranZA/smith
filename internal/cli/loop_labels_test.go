@@ -67,7 +67,7 @@ func TestLoopRunWarnsOfEachSetLabelTheRepoLacksBeforeAnyAgentRuns(t *testing.T) 
 func TestLoopRunWithDefaultLabelsChecksNoLabels(t *testing.T) {
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
-	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "agent: claude\n")
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "presets:\n  claude: {agent: claude}\nroles:\n  work: claude\n")
 
 	_, stderr, code := runLoopRun(t, w, "42")
 

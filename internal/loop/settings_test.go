@@ -6,23 +6,32 @@ import (
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
 )
 
 func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 	on, off := true, false
+	opus := repofile.File{
+		Presets: map[string]repofile.Preset{"opus": {Agent: "claude", Model: "opus", Effort: "high"}},
+		Roles:   map[string]string{"work": "opus"},
+	}
 	tests := []struct {
 		name  string
-		flags repofile.File
+		flags loop.Flags
 		file  repofile.File
 		want  loop.Settings
 	}{
 		{
 			name: "nothing set anywhere",
 			want: loop.Settings{
-				Agent:      config.Value{Value: "claude", Origin: config.FromDefault},
-				Model:      config.Value{Origin: config.FromDefault},
-				Effort:     config.Value{Origin: config.FromDefault},
+				Preset: preset.Resolved{
+					Name:   "default",
+					Origin: config.FromDefault,
+					Agent:  config.Value{Value: "claude", Origin: config.FromDefault},
+					Model:  config.Value{Origin: config.FromDefault},
+					Effort: config.Value{Origin: config.FromDefault},
+				},
 				Push:       config.Value{Value: "on", Origin: config.FromDefault},
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
@@ -31,11 +40,15 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 		},
 		{
 			name: "the repo file over the default",
-			file: repofile.File{Agent: "claude", Model: "opus", Effort: "high", Push: &off},
+			file: repofile.File{Presets: opus.Presets, Roles: opus.Roles, Push: &off},
 			want: loop.Settings{
-				Agent:      config.Value{Value: "claude", Origin: config.FromRepoFile},
-				Model:      config.Value{Value: "opus", Origin: config.FromRepoFile},
-				Effort:     config.Value{Value: "high", Origin: config.FromRepoFile},
+				Preset: preset.Resolved{
+					Name:   "opus",
+					Origin: config.FromRepoFile,
+					Agent:  config.Value{Value: "claude", Origin: config.FromRepoFile},
+					Model:  config.Value{Value: "opus", Origin: config.FromRepoFile},
+					Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
+				},
 				Push:       config.Value{Value: "off", Origin: config.FromRepoFile},
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
@@ -43,27 +56,18 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 			},
 		},
 		{
-			name:  "a flag over the repo file, field by field",
-			flags: repofile.File{Model: "sonnet", Push: &off},
-			file:  repofile.File{Model: "opus", Effort: "high", Push: &on},
+			name:  "flags over the repo file",
+			flags: loop.Flags{Preset: preset.Flags{Model: "sonnet"}, Push: &off},
+			file:  repofile.File{Presets: opus.Presets, Roles: opus.Roles, Push: &on},
 			want: loop.Settings{
-				Agent:      config.Value{Value: "claude", Origin: config.FromDefault},
-				Model:      config.Value{Value: "sonnet", Origin: config.FromFlag},
-				Effort:     config.Value{Value: "high", Origin: config.FromRepoFile},
+				Preset: preset.Resolved{
+					Name:   "opus",
+					Origin: config.FromRepoFile,
+					Agent:  config.Value{Value: "claude", Origin: config.FromRepoFile},
+					Model:  config.Value{Value: "sonnet", Origin: config.FromFlag},
+					Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
+				},
 				Push:       config.Value{Value: "off", Origin: config.FromFlag},
-				AgentLabel: defaultLabel("ready-for-agent"),
-				HumanLabel: defaultLabel("ready-for-human"),
-				SpecLabel:  defaultLabel("spec"),
-			},
-		},
-		{
-			name:  "a flag over the default",
-			flags: repofile.File{Agent: "claude", Effort: "low"},
-			want: loop.Settings{
-				Agent:      config.Value{Value: "claude", Origin: config.FromFlag},
-				Model:      config.Value{Origin: config.FromDefault},
-				Effort:     config.Value{Value: "low", Origin: config.FromFlag},
-				Push:       config.Value{Value: "on", Origin: config.FromDefault},
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -84,21 +88,18 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 func TestResolveSettingsRefusesWhatNoAgentCanRun(t *testing.T) {
 	tests := []struct {
 		name  string
-		flags repofile.File
-		file  repofile.File
+		flags preset.Flags
 		want  string
 	}{
-		{"an unknown agent in the repo file", repofile.File{}, repofile.File{Agent: "gemini"}, `agent (repo file): unknown agent "gemini": known agents are claude, codex, pi`},
-		{"an unknown agent as a flag", repofile.File{Agent: "gemini"}, repofile.File{}, `agent (flag): unknown agent "gemini"`},
-		{"an effort off the scale as a flag", repofile.File{Effort: "extreme"}, repofile.File{}, `effort (flag): unknown effort "extreme": the scale is low, medium, high`},
-		{"an effort off the scale in the repo file", repofile.File{}, repofile.File{Effort: "max"}, `effort (repo file): unknown effort "max"`},
+		{"an unknown agent as a flag", preset.Flags{Agent: "gemini"}, `--agent: unknown agent "gemini": known agents are claude, codex, pi`},
+		{"an effort off the scale as a flag", preset.Flags{Effort: "extreme"}, `--effort: unknown effort "extreme": the scale is low, medium, high`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := loop.ResolveSettings(tt.flags, tt.file)
+			_, err := loop.ResolveSettings(loop.Flags{Preset: tt.flags}, repofile.File{})
 
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("ResolveSettings() error = %v, want it to contain %q", err, tt.want)
+				t.Errorf("ResolveSettings(%+v) error = %v, want it to contain %q", tt.flags, err, tt.want)
 			}
 		})
 	}
@@ -129,7 +130,7 @@ func TestResolveSettingsTakesEachLabelFromTheRepoFileOverItsDefault(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := loop.ResolveSettings(repofile.File{}, repofile.File{Labels: tt.labels})
+			got, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: tt.labels})
 			if err != nil {
 				t.Fatalf("ResolveSettings(labels %+v) error = %v", tt.labels, err)
 			}
@@ -145,7 +146,7 @@ func TestResolveSettingsRefusesALabelSharingADefaultsName(t *testing.T) {
 	t.Parallel()
 	file := repofile.File{Labels: repofile.Labels{Human: "ready-for-agent"}}
 
-	_, err := loop.ResolveSettings(repofile.File{}, file)
+	_, err := loop.ResolveSettings(loop.Flags{}, file)
 
 	want := `labels.human (repo file) is "ready-for-agent", the name labels.agent (built-in default) has: each label needs a name of its own`
 	if err == nil || err.Error() != want {
@@ -170,7 +171,7 @@ func TestResolveSettingsRefusesALabelNamedForOneOfSmithsOwnMarks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := loop.ResolveSettings(repofile.File{}, repofile.File{Labels: tt.labels})
+			_, err := loop.ResolveSettings(loop.Flags{}, repofile.File{Labels: tt.labels})
 
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("ResolveSettings(labels %+v) error = %v, want %q", tt.labels, err, tt.want)

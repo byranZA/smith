@@ -32,7 +32,7 @@ type sessionRun struct {
 	branch      string
 	base        string
 	interactive bool
-	flags       repofile.File
+	flags       loop.Flags
 }
 
 // startSession runs a loop run's preflight on this box in the foreground, then
@@ -94,7 +94,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	lookPath := func(name string) (string, error) {
 		return session.LookPath(cmd.Context(), env, w.mise, run.repo, branch, name)
 	}
-	if err := installed(cmd, settings.Agent.Value, lookPath); err != nil {
+	if err := installed(cmd, settings.Preset.Agent.Value, lookPath); err != nil {
 		return err
 	}
 	if err := refuseLive(cmd, env, run.repo, branch); err != nil {
@@ -195,7 +195,7 @@ func writeLoopStarted(cmd *cobra.Command, inv hint.Invocation, s session.Session
 // session req stands up will find them: in the branch's checkout when it has
 // one, else at the commit its checkout will hold. It answers with where it
 // read them, and creates no worktree and no branch.
-func (w loopWiring) effective(cmd *cobra.Command, env session.Env, clone string, req session.StartRequest, flags repofile.File) (loop.Settings, session.Source, error) {
+func (w loopWiring) effective(cmd *cobra.Command, env session.Env, clone string, req session.StartRequest, flags loop.Flags) (loop.Settings, session.Source, error) {
 	source, err := session.SourceOf(cmd.Context(), env, req)
 	if err != nil {
 		return loop.Settings{}, session.Source{}, fmt.Errorf("find the loop settings a session would run: %w", err)
@@ -210,7 +210,7 @@ func (w loopWiring) effective(cmd *cobra.Command, env session.Env, clone string,
 
 // checkedOut resolves the loop settings, and checks the loop prompt, as the
 // checkout at dir holds them, committed or not.
-func (w loopWiring) checkedOut(ctx context.Context, dir string, flags repofile.File) (loop.Settings, error) {
+func (w loopWiring) checkedOut(ctx context.Context, dir string, flags loop.Flags) (loop.Settings, error) {
 	home, err := w.home()
 	if err != nil {
 		return loop.Settings{}, err
@@ -232,7 +232,7 @@ func (w loopWiring) checkedOut(ctx context.Context, dir string, flags repofile.F
 // committed resolves the loop settings, flags over the repo file over the
 // built-in defaults, and checks the loop prompt, as ref holds them in the git
 // repo at clone, reading no checkout.
-func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags repofile.File) (loop.Settings, error) {
+func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags loop.Flags) (loop.Settings, error) {
 	commit, err := repofile.Committed(cmd.Context(), w.git, clone, ref)
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)

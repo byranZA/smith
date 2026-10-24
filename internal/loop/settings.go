@@ -3,22 +3,25 @@ package loop
 import (
 	"fmt"
 
-	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
+// Flags are the loop settings a run's flags set, over the repo file. A field
+// left empty or nil is unset.
+type Flags struct {
+	// Preset are the flags that choose the preset the run works on.
+	Preset preset.Flags
+	// Push turns pushing after each closed task on or off.
+	Push *bool
+}
+
 // Settings are the resolved loop settings, each carrying where it came from.
-// An unset model or effort resolves to the empty value from the built-in
-// default, which leaves the agent to its own default.
 type Settings struct {
-	// Agent names the agent adapter each task is handed to.
-	Agent config.Value
-	// Model is the model the agent runs, passed to it verbatim.
-	Model config.Value
-	// Effort is how hard the agent thinks, on smith's own scale.
-	Effort config.Value
+	// Preset is the preset the work role runs on, with where it came from.
+	Preset preset.Resolved
 	// Push is "on" or "off": whether the loop pushes the branch after each
 	// task the agent closes.
 	Push config.Value
@@ -29,27 +32,24 @@ type Settings struct {
 	SpecLabel  config.Value
 }
 
-// ResolveSettings resolves each setting field by field as flag, then repo
-// file, then built-in default, refusing an unknown agent, an effort off the
-// scale, a triage label named for one of the loop's own marks, or two triage
-// labels sharing a name, and naming where each came from.
-// The triage labels are read from the repo file alone, whatever flags holds.
-func ResolveSettings(flags, file repofile.File) (Settings, error) {
+// ResolveSettings resolves the settings from flags over the repo file over the
+// built-in defaults, naming where each came from: the work role's preset as
+// preset.Choose chooses it, and each other setting field by field. It refuses
+// what preset.Choose refuses, a triage label named for one of the loop's own
+// marks, and two triage labels sharing a name. The triage labels are read
+// from the repo file alone.
+func ResolveSettings(flags Flags, file repofile.File) (Settings, error) {
+	choice, err := preset.Choose(file, flags.Preset)
+	if err != nil {
+		return Settings{}, fmt.Errorf("choose the preset: %w", err)
+	}
 	defaults := tracker.DefaultLabels()
 	s := Settings{
-		Agent:      resolveSetting(flags.Agent, file.Agent, agent.Default),
-		Model:      resolveSetting(flags.Model, file.Model, ""),
-		Effort:     resolveSetting(flags.Effort, file.Effort, ""),
+		Preset:     choice.Work(),
 		Push:       resolveSwitch(flags.Push, file.Push, true),
 		AgentLabel: resolveSetting("", file.Labels.Agent, defaults.Agent),
 		HumanLabel: resolveSetting("", file.Labels.Human, defaults.Human),
 		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
-	}
-	if _, err := agent.Lookup(s.Agent.Value); err != nil {
-		return Settings{}, fmt.Errorf("agent (%s): %w", s.Agent.Origin, err)
-	}
-	if _, err := agent.ParseEffort(s.Effort.Value); err != nil {
-		return Settings{}, fmt.Errorf("effort (%s): %w", s.Effort.Origin, err)
 	}
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, err
@@ -106,11 +106,6 @@ func (s Settings) distinctLabels() error {
 		}
 	}
 	return nil
-}
-
-// Options are the model and effort the settings ask every agent run for.
-func (s Settings) Options() agent.Options {
-	return agent.Options{Model: s.Model.Value, Effort: agent.Effort(s.Effort.Value)}
 }
 
 // Pushes reports whether the settings have the loop push after each closed task.

@@ -162,7 +162,8 @@ func (benchAt) Ahead(context.Context, int) (int, error) { return 0, nil }
 const workBranch = "work branch: smith/42-the-loop\n"
 
 // defaultSettings is the settings report of a run with no flag and no repo file.
-const defaultSettings = "agent:  claude (built-in default)\n" +
+const defaultSettings = "preset: default (built-in default)\n" +
+	"agent:  claude (built-in default)\n" +
 	"model:  the agent's own default (built-in default)\n" +
 	"effort: the agent's own default (built-in default)\n" +
 	"push:   on (built-in default)\n"
@@ -548,21 +549,6 @@ func repoWith(t *testing.T, gh *fakeTracker, launcher loop.Launcher, content str
 	return w, path
 }
 
-func TestLoopListReportsAnUntouchedStarterAsTheBuiltInDefaults(t *testing.T) {
-	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "CLOSED", "ready-for-agent")}}
-	w, _ := repoWith(t, gh, &idleAgent{}, "")
-	home := t.TempDir()
-	if _, _, code := runRepoInit(t, rootOf(t, w), rootOf(t, w), home); code != 0 {
-		t.Fatalf("repo init exit %d", code)
-	}
-
-	stdout, stderr, code := runLoopListIn(t, w, "42")
-
-	if code != 0 || !strings.HasPrefix(stdout, defaultSettings) {
-		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and every setting from the built-in default", code, stdout, stderr)
-	}
-}
-
 func rootOf(t *testing.T, w loopWiring) string {
 	t.Helper()
 	root, err := w.workdir()
@@ -570,79 +556,6 @@ func rootOf(t *testing.T, w loopWiring) string {
 		t.Fatal(err)
 	}
 	return root
-}
-
-func TestLoopRunReportsEachSettingWithItsOrigin(t *testing.T) {
-	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
-	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
-	w, _ := repoWith(t, gh, claude, "agent: claude\nmodel: opus\n")
-
-	stdout, stderr, code := runLoopRun(t, w, "42", "--effort", "low")
-
-	wantReport := "agent:  claude (repo file)\n" +
-		"model:  opus (repo file)\n" +
-		"effort: low (flag)\n"
-	wantArgs := []string{"--model", "opus", "--effort", "low"}
-	if code != 0 || !strings.HasPrefix(stdout, wantReport) || len(claude.commands) != 1 || !containsRun(claude.commands[0].Args, wantArgs) {
-		t.Errorf("exit %d, stdout %q, stderr %q, ran %v; want 0, the report\n%s\nand claude given %q", code, stdout, stderr, claude.commands, wantReport, wantArgs)
-	}
-}
-
-func TestLoopRunFlagOverridesTheRepoFileForOneRunAndLeavesItUnchanged(t *testing.T) {
-	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
-	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
-	content := "model: opus\n"
-	w, path := repoWith(t, gh, claude, content)
-
-	stdout, _, code := runLoopRun(t, w, "42", "--model", "sonnet")
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code != 0 || !strings.Contains(stdout, "model:  sonnet (flag)\n") || len(claude.commands) != 1 || !containsRun(claude.commands[0].Args, []string{"--model", "sonnet"}) || string(after) != content {
-		t.Errorf("exit %d, stdout %q, ran %v, repo file %q; want sonnet from a flag and the repo file unchanged", code, stdout, claude.commands, after)
-	}
-}
-
-func TestLoopRunWithNoModelGivesTheAgentNone(t *testing.T) {
-	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
-	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
-	w, _ := repoWith(t, gh, claude, "")
-
-	_, _, code := runLoopRun(t, w, "42")
-
-	if code != 0 || len(claude.commands) != 1 || slices.Contains(claude.commands[0].Args, "--model") || slices.Contains(claude.commands[0].Args, "--effort") {
-		t.Errorf("exit %d, ran %v; want claude given no model and no effort", code, claude.commands)
-	}
-}
-
-func TestLoopRunRefusesInvalidSettingsBeforeAnyAgentRuns(t *testing.T) {
-	for name, tc := range map[string]struct {
-		repoFile string
-		flags    []string
-		want     []string
-	}{
-		"unknown key":      {"agent: claude\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
-		"unknown agent":    {"agent: gemini\n", nil, []string{`"gemini"`, "known agents are claude, codex, pi"}},
-		"effort off scale": {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
-			idle := &idleAgent{}
-			w, _ := repoWith(t, gh, idle, tc.repoFile)
-
-			_, stderr, code := runLoopRun(t, w, "42", tc.flags...)
-
-			named := true
-			for _, want := range tc.want {
-				named = named && strings.Contains(stderr, want)
-			}
-			if code == 0 || !named || idle.runs != 0 || len(gh.ran) != 0 {
-				t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming %q, no agent and no gh", code, stderr, idle.runs, gh.ran, tc.want)
-			}
-		})
-	}
 }
 
 // recordingAgent is a fakeAgent that also records every command it was handed.

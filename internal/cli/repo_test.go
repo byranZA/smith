@@ -56,7 +56,7 @@ func TestRepoInitReportsTheRepoFileCreatedAtTheRepoRoot(t *testing.T) {
 func TestRepoInitReportsAnExistingRepoFileAsLeftAlone(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".smith", "repo.yaml")
-	writeFile(t, path, "agent: codex\n")
+	writeFile(t, path, "push: false\n")
 
 	stdout, _, _ := runRepoInit(t, root, root, t.TempDir())
 
@@ -68,13 +68,13 @@ func TestRepoInitReportsAnExistingRepoFileAsLeftAlone(t *testing.T) {
 func TestRepoInitFillsInTheFlags(t *testing.T) {
 	root := t.TempDir()
 
-	runRepoInit(t, root, root, t.TempDir(), "--agent", "claude", "--model", "opus", "--effort", "high")
+	runRepoInit(t, root, root, t.TempDir(), "--agent", "codex", "--model", "gpt-6.1-sol", "--effort", "high")
 
 	data, err := os.ReadFile(filepath.Join(root, ".smith", "repo.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{"\nagent: claude\n", "\nmodel: opus\n", "\neffort: high\n"} {
+	for _, line := range []string{"\npresets:\n  codex:\n    agent: codex\n    model: gpt-6.1-sol\n    effort: high\n", "\nroles:\n  work: codex\n"} {
 		if !strings.Contains(string(data), line) {
 			t.Errorf("repo file = %q, want it to set %q", data, strings.TrimSpace(line))
 		}

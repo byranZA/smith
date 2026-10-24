@@ -353,7 +353,7 @@ The loop's agent is a box-level tool with its own credential:
 
 - **codex's login is placed with `mode: once`** because codex rewrites the file when it refreshes its token, and `converge` would overwrite that with your stale copy. The cost: setup never replaces the file, so to change the box's login, delete it on the box and run `machine setup` again.
 - **Whether one codex login can be shared** between your machine and the box across a token refresh hasn't been checked. A box-only login avoids the question: `CODEX_HOME=~/.secrets/personal/codex codex login`, then place that directory's `auth.json` instead.
-- **The model reaches whichever agent runs.** A repo file's `model: opus` is handed to codex as-is, so `--agent codex` needs its own `--model`.
+- **A model belongs to its agent.** The repo file names each agent with its model in a [preset](./loop.md#presets-and-roles), and `--agent codex` builds a one-off preset that takes no model from the repo file, so a claude model never reaches codex.
 - Other adapters, such as `pi`, read their own credential; declare it the same way.
 - smith checks none of these. A bad credential first shows up when the loop's first agent fails.
 

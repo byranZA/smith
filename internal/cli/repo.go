@@ -25,9 +25,10 @@ func newRepoCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolv
 }
 
 // newRepoInitCmd builds `smith repo init`, which writes a commented starter
-// repo file at the root of the current git repo unless one is already there.
+// repo file at the root of the current git repo unless one is already there:
+// one preset, filled in from the flags, with the work role pointed at it.
 func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver) *cobra.Command {
-	var values repofile.File
+	var values repofile.Preset
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold the repo file with a commented starter",
@@ -55,9 +56,9 @@ func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirRe
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&values.Agent, "agent", "", "the agent to set in the starter")
-	cmd.Flags().StringVar(&values.Model, "model", "", "the model to set in the starter")
-	cmd.Flags().StringVar(&values.Effort, "effort", "", "the effort to set in the starter")
+	cmd.Flags().StringVar(&values.Agent, "agent", "", "the agent of the starter's preset, which is named for it (default claude)")
+	cmd.Flags().StringVar(&values.Model, "model", "", "the model of the starter's preset")
+	cmd.Flags().StringVar(&values.Effort, "effort", "", "the effort of the starter's preset (low, medium, high)")
 	return cmd
 }
 

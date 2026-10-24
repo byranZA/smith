@@ -18,7 +18,7 @@ func TestLoadWithNoRepoFileSetsNothing(t *testing.T) {
 
 	got, err := repofile.Load(repo)
 
-	if err != nil || got != (repofile.File{}) {
+	if err != nil || !reflect.DeepEqual(got, repofile.File{}) {
 		t.Errorf("Load(%q) = %+v, %v; want an empty File and no error", repo.Path(), got, err)
 	}
 }
@@ -26,12 +26,12 @@ func TestLoadWithNoRepoFileSetsNothing(t *testing.T) {
 func TestLoadReadsTheRepoFile(t *testing.T) {
 	t.Parallel()
 	repo := locate(t, t.TempDir())
-	writeRepoFile(t, repo, "agent: codex\nmodel: opus\n")
+	writeRepoFile(t, repo, "presets:\n  codex: {agent: codex, model: opus}\n")
 
 	got, err := repofile.Load(repo)
 
-	want := repofile.File{Agent: "codex", Model: "opus"}
-	if err != nil || got != want {
+	want := repofile.File{Presets: map[string]repofile.Preset{"codex": {Agent: "codex", Model: "opus"}}}
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("Load(%q) = %+v, %v; want %+v", repo.Path(), got, err, want)
 	}
 }
@@ -39,7 +39,7 @@ func TestLoadReadsTheRepoFile(t *testing.T) {
 func TestLoadRefusesAnUnknownKeyNamingItsLineAndTheFile(t *testing.T) {
 	t.Parallel()
 	repo := locate(t, t.TempDir())
-	writeRepoFile(t, repo, "agent: claude\n\nmodle: opus\n")
+	writeRepoFile(t, repo, "push: true\n\nmodle: opus\n")
 
 	_, err := repofile.Load(repo)
 
@@ -76,7 +76,7 @@ func TestLoadAtAWorktreeReadsItsOwnRepoFile(t *testing.T) {
 	got, err := repofile.Load(repofile.At(dir))
 
 	want := repofile.File{Prepare: "uv sync"}
-	if err != nil || got != want {
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("Load(At(%q)) = %+v, %v; want %+v", dir, got, err, want)
 	}
 }

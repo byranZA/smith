@@ -34,6 +34,7 @@ The loop hands out the first available task in the spec's order. It reads the tr
 Shows the settings a run would use, the next task, and what remains, without running anything:
 
 ```text
+preset: opus (repo file)
 agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
@@ -45,7 +46,7 @@ next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
   closed: #245, #246, #247
 ```
 
-Each setting names where its value came from. A kind of task with nothing in it is left out.
+Each setting names where its value came from. The first line is the preset the work role runs on (see [Presets and roles](#presets-and-roles)): its name, or `one-off` for a preset built from `--agent`, then its agent, model and effort, each with its own origin, so a `--model` or `--effort` flag shows against the preset it changed. A kind of task with nothing in it is left out.
 
 ## `smith loop run`
 
@@ -121,6 +122,7 @@ On a box, `smith loop run <issue> --repo <name>` runs the loop in a **loop-drive
 4. **The session starts and smith returns.** The session's root process is `smith loop run <issue>` with the same flags, no `--repo`, and `--branch` set to the work branch, so the session ends when the loop does. smith prints the settings block, as `list` does, then the session's name and the commands to watch it, and exits 0:
 
 ```text
+preset: opus (repo file)
 agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
@@ -161,9 +163,12 @@ The model is passed to the agent verbatim. Effort is on smith's own scale (`low`
 `.smith/repo.yaml`, at the git repo's root, holds the settings everyone running the loop on the repo shares. Commit it. It is optional; without it every setting is the built-in default.
 
 ```yaml
-agent: claude
-model: opus
-effort: high
+presets:
+  opus:  { agent: claude, model: opus,        effort: medium }
+  deep:  { agent: claude, model: opus,        effort: high }
+  codex: { agent: codex,  model: gpt-6.1-sol, effort: high }
+roles:
+  work: opus
 push: true
 prepare: uv sync
 labels:
@@ -172,17 +177,39 @@ labels:
   spec: spec
 ```
 
-`smith repo init` writes a commented starter, filling in any value you give as a flag, and reports `created <path>`. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`. In a bare clone it refuses too, saying the directory is a bare repo.
+`smith repo init` writes a commented starter and reports `created <path>`. The starter defines one preset, named for its agent, and points the work role at it: `--agent`, `--model` and `--effort` fill that preset in, and without them it is `claude` with the agent's own model and effort. `smith repo init --agent codex --model gpt-6.1-sol --effort high` writes `presets: {codex: {agent: codex, model: gpt-6.1-sol, effort: high}}` and `roles: {work: codex}`. A starter that would not load, such as one for an unknown agent, is refused and nothing is written. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`. In a bare clone it refuses too, saying the directory is a bare repo.
 
-Each setting resolves on its own, most specific first:
+Each setting resolves most specific first:
 
 1. A flag on `smith loop run`, for that run only.
 2. The repo file.
-3. The built-in default: `claude`, the agent's own model and effort, push on, and the triage labels shown above.
+3. The built-in default: the `default` preset, which is `claude` with the agent's own model and effort, push on, and the triage labels shown above.
 
 The triage labels and the prepare command have no flags: they are set in the repo file or left to their defaults.
 
-The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, and a `prepare:` that is not one non-empty string. An unknown agent or an effort off the scale is refused when the loop resolves it, naming where the value came from (`agent (repo file): …`); a flag that overrides the bad value hides it. `repo init` writes the values you give it without checking them. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, and a `prepare:` that is not one non-empty string. The presets and roles are checked as [Presets and roles](#presets-and-roles) says. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+
+### Presets and roles
+
+A **preset** is a named agent, model and effort, chosen whole, so a model never outlives the agent it belongs to. A repo defines as many presets as it likes under `presets:`, each with an `agent` and, optionally, a `model` and `effort`. One that leaves out its model or effort leaves it to the agent's own default.
+
+A **role** is a job smith hands an agent. smith defines the roles, and `roles:` says which preset each one runs on. `work`, the only role, works every task, unattended or with `--interactive`. With no `work` role, or no repo file, tasks run on the built-in `default` preset: `claude` with no model and no effort, even when the file defines presets.
+
+Every preset is checked when the repo file loads, used or not, and each problem is refused with its line before any agent runs:
+
+- its name is lowercase letters, digits and hyphens
+- its agent is one smith has an adapter for (`claude`, `codex` or `pi`)
+- its effort is on smith's scale (`low`, `medium`, `high`)
+
+A role smith does not define (`smith has no role "review"`) and a role naming a preset `presets:` does not define are refused too. The flat top-level `agent`, `model` and `effort` keys of earlier versions are refused with their line and the presets shape that replaces them.
+
+The run flags change the work role's preset for one run, without editing the file:
+
+- `--agent X` builds a one-off preset on `X` that never inherits the repo file's model or effort, and `--model Y` beside it sets that preset's model.
+- `--model Y` alone keeps the work preset's agent and effort, and replaces its model.
+- `--effort E` replaces the effort of whichever preset the run resolves.
+
+An unknown `--agent` or an `--effort` off the scale is refused, naming the flag. The [presets ADR](./adr/0022-presets-and-roles.md) has the reasoning.
 
 ### The prepare command
 

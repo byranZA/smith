@@ -1,7 +1,9 @@
 package repofile
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 
 	"go.yaml.in/yaml/v3"
 
@@ -73,11 +75,12 @@ func isEmpty(value *yaml.Node) bool {
 	return value.Kind == yaml.ScalarNode && (value.Value == "" || value.Tag == "!!null")
 }
 
-// validationError returns the findings as the repo file's *blueprint.ValidationError,
-// or nil when there are none.
+// validationError returns the findings, in document order, as the repo file's
+// *blueprint.ValidationError, or nil when there are none.
 func validationError(findings []blueprint.Finding) error {
 	if len(findings) == 0 {
 		return nil
 	}
+	slices.SortStableFunc(findings, func(a, b blueprint.Finding) int { return cmp.Compare(a.Line, b.Line) })
 	return fmt.Errorf("parse repo file: %w", &blueprint.ValidationError{Subject: subject, Findings: findings})
 }

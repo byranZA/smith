@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -145,7 +146,7 @@ func (w loopWiring) repo(ctx context.Context) (repofile.Repo, error) {
 // settings resolves the loop settings for the repo smith is run from, flags
 // over its repo file over the built-in defaults. A repo with no repo file
 // resolves to the defaults.
-func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Settings, error) {
+func (w loopWiring) settings(ctx context.Context, flags loop.Flags) (loop.Settings, error) {
 	repo, err := w.repo(ctx)
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
@@ -155,7 +156,7 @@ func (w loopWiring) settings(ctx context.Context, flags repofile.File) (loop.Set
 
 // settingsIn resolves the loop settings for repo as its checkout holds them,
 // flags over its repo file over the built-in defaults.
-func settingsIn(repo repofile.Repo, flags repofile.File) (loop.Settings, error) {
+func settingsIn(repo repofile.Repo, flags loop.Flags) (loop.Settings, error) {
 	file, err := repofile.Load(repo)
 	if err != nil {
 		return loop.Settings{}, fmt.Errorf("resolve loop settings: %w", err)
@@ -239,18 +240,21 @@ func lagWarning(branch string, lag workbench.Lag) string {
 	return fmt.Sprintf("smith: warning: work branch %s is %d %s behind origin/%s: merge or rebase origin/%s into it\n", branch, lag.Commits, commits, lag.Base, lag.Base)
 }
 
-// settingsReport renders each resolved setting with where it came from,
+// settingsReport renders each resolved setting with where it came from: the
+// work preset, by name or as a one-off, then its agent, model and effort,
 // naming an unset model or effort as the agent's own default. The triage
 // labels are reported only when the repo file sets one of them.
 func settingsReport(s loop.Settings) string {
 	var b strings.Builder
+	name := cmp.Or(s.Preset.Name, "one-off")
+	fmt.Fprintf(&b, "%-7s %s\n", "preset:", config.Value{Value: name, Origin: s.Preset.Origin})
 	for _, setting := range []struct {
 		name  string
 		value config.Value
 	}{
-		{"agent", s.Agent},
-		{"model", s.Model},
-		{"effort", s.Effort},
+		{"agent", s.Preset.Agent},
+		{"model", s.Preset.Model},
+		{"effort", s.Preset.Effort},
 		{"push", s.Push},
 	} {
 		if setting.value.Value == "" {
@@ -301,7 +305,7 @@ func newLoopPromptCmd() *cobra.Command {
 // and returns once it is live; a leading box relays the run to that box.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
-	var flags repofile.File
+	var flags loop.Flags
 	var interactive, noPush, inSession bool
 	var branch, base, repo string
 	cmd := &cobra.Command{
@@ -349,9 +353,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&flags.Agent, "agent", "", "the agent to hand each task to, over the repo file")
-	cmd.Flags().StringVar(&flags.Model, "model", "", "the model the agent runs, over the repo file")
-	cmd.Flags().StringVar(&flags.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the repo file")
+	cmd.Flags().StringVar(&flags.Preset.Agent, "agent", "", "the agent to hand each task to, in a one-off preset that takes its model from --model alone")
+	cmd.Flags().StringVar(&flags.Preset.Model, "model", "", "the model the agent runs, over the work preset's")
+	cmd.Flags().StringVar(&flags.Preset.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the preset's")
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
@@ -371,7 +375,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 // refusal, which may already be reported on cmd, l holds as much as was set
 // up and the execution is what was admitted, if anything, so the run can be
 // aborted.
-func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags repofile.File, branch, base string) (tracker.Execution, error) {
+func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, flags loop.Flags, branch, base string) (tracker.Execution, error) {
 	settings, err := w.settings(cmd.Context(), flags)
 	if err != nil {
 		return tracker.Execution{}, err
@@ -380,14 +384,14 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	if err := installed(cmd, settings.Agent.Value, w.lookPath); err != nil {
+	if err := installed(cmd, settings.Preset.Agent.Value, w.lookPath); err != nil {
 		return tracker.Execution{}, err
 	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh)
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	l.Tracker, l.Agent, l.Options, l.Prompt = admitted.github, admitted.adapter, settings.Options(), prompt
+	l.Tracker, l.Agent, l.Options, l.Prompt = admitted.github, admitted.adapter, settings.Preset.Options(), prompt
 	if l.Pusher, err = w.origin(settings); err != nil {
 		return admitted.execution, err
 	}
@@ -451,7 +455,7 @@ func installed(cmd *cobra.Command, name string, lookPath func(name string) (stri
 // on cmd. Whether the agent is installed is the caller's to check, with
 // installed, against the PATH the run will have.
 func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
-	adapter, err := agent.Lookup(settings.Agent.Value)
+	adapter, err := agent.Lookup(settings.Preset.Agent.Value)
 	if err != nil {
 		return admission{}, reportInvalid(cmd, err)
 	}
@@ -533,7 +537,7 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			settings, err := w.settings(cmd.Context(), repofile.File{})
+			settings, err := w.settings(cmd.Context(), loop.Flags{})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
