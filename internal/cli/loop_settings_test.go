@@ -61,8 +61,6 @@ func TestLoopRunFlagOverridesTheRepoFileForOneRunAndLeavesItUnchanged(t *testing
 	}
 }
 
-// opusRepoFile defines presets opus (claude, opus, medium) and codex (codex,
-// gpt-6.1-sol, high), with the work role on opus.
 const opusRepoFile = "presets:\n" +
 	"  opus:  {agent: claude, model: opus, effort: medium}\n" +
 	"  codex: {agent: codex, model: gpt-6.1-sol, effort: high}\n" +

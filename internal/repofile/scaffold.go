@@ -32,11 +32,9 @@ type Outcome struct {
 	Created bool
 }
 
-// Scaffold writes the commented starter repo file into repo unless one is
-// already there, which is never overwritten. The starter defines one preset,
-// named for its agent, and points the work role at it: values fills it in,
-// claude standing for an unset agent and an unset model or effort staying
-// commented. A starter that would not load is refused, and nothing is written.
+// Scaffold writes a commented starter repo file into repo, with one preset
+// filled from values and the work role on it, unless a repo file is already
+// there. It writes nothing when the starter would not load.
 func Scaffold(repo Repo, values Preset) (Outcome, error) {
 	content, err := render(values)
 	if err != nil {

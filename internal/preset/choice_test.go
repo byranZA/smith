@@ -11,8 +11,6 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// repoFile defines opus (claude, opus, medium) and codex (codex, gpt-6.1-sol,
-// high), with the work role on opus.
 var repoFile = repofile.File{
 	Presets: map[string]repofile.Preset{
 		"opus":  {Agent: "claude", Model: "opus", Effort: "medium"},

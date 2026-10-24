@@ -33,12 +33,9 @@ type Settings struct {
 }
 
 // ResolveSettings resolves the settings from flags over the repo file over the
-// built-in defaults, naming where each came from: the work role's preset as
-// preset.Choose chooses it, and each other setting field by field. It also
-// returns the preset choice that picks each task's preset. It refuses
-// what preset.Choose refuses, a triage label named for one of the loop's own
-// marks, and two triage labels sharing a name. The triage labels are read
-// from the repo file alone.
+// built-in defaults, naming each one's origin, and returns the preset choice
+// that picks each task's preset. It refuses what preset.Choose refuses and
+// triage labels that clash with each other or with the loop's own marks.
 func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, error) {
 	choice, err := preset.Choose(file, flags.Preset)
 	if err != nil {
