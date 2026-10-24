@@ -23,6 +23,7 @@ import (
 
 	"github.com/byranZA/smith/internal/gitlock"
 	"github.com/byranZA/smith/internal/hint"
+	"github.com/byranZA/smith/internal/misetrust"
 )
 
 // bareDir is the bare repo's directory name inside a repo's workspace
@@ -235,7 +236,7 @@ func Start(ctx context.Context, env Env, req StartRequest) (Session, error) {
 	if err := writeRecord(ctx, env.Git, dir, stood.Driver); err != nil {
 		return Session{}, err
 	}
-	if err := launch(ctx, env, stand.name, dir, req.Command); err != nil {
+	if err := launch(ctx, env, stand, dir, req.Command); err != nil {
 		return Session{}, err
 	}
 	return stood, nil
@@ -270,7 +271,7 @@ type standUp struct {
 // newStandUp resolves a request for branch of the declared repo, cut from
 // base when it is new, against the box's workspace.
 func newStandUp(env Env, repo Repo, branch, base string) standUp {
-	root := filepath.Join(env.Workspace, repo.Name)
+	root := env.Dir(repo.Name)
 	return standUp{
 		repo:   repo,
 		root:   root,
@@ -347,7 +348,7 @@ func (s standUp) checkout(ctx context.Context, env Env, dir string, exists bool)
 // blueprint wires to a declared tool finds it and its token on a relayed
 // smith's bare PATH.
 func (s standUp) cutFrom(ctx context.Context, env Env) (string, error) {
-	if err := fetch(ctx, UnderMise(env, env.Git, s.root), s.bare, s.repo.Name); err != nil {
+	if err := fetch(ctx, UnderMise(env, env.Git, s.repo.Name, s.root), s.bare, s.repo.Name); err != nil {
 		return "", err
 	}
 	base := cmp.Or(s.base, s.repo.Base)
@@ -452,15 +453,29 @@ func resolved(path string) string {
 // running the root command or else a login shell under mise exec. mise wraps
 // that command and never the tmux call, because a wrapped tmux would leak the
 // env of the session that started the server into every later one.
-func launch(ctx context.Context, env Env, name, dir string, command []string) error {
+func launch(ctx context.Context, env Env, s standUp, dir string, command []string) error {
 	if len(command) == 0 {
 		command = loginShell
 	}
-	args := append([]string{"new-session", "-d", "-s", TmuxSession(name), "-c", dir, cmp.Or(env.Mise, miseFile), "exec", "--"}, command...)
+	args := append([]string{"new-session", "-d", "-s", TmuxSession(s.name), "-c", dir}, env.mise(s.repo.Name, append([]string{"exec", "--"}, command...)...)...)
 	if _, err := run(ctx, env.Tmux, "tmux", args...); err != nil {
-		return fmt.Errorf("launch the tmux session for %q at %s: %w", name, dir, err)
+		return fmt.Errorf("launch the tmux session for %q at %s: %w", s.name, dir, err)
 	}
 	return nil
+}
+
+// mise is the argv that runs mise with args for a session in repo: the mise
+// env names, trusting the configs in the repo's directory. It is the one place
+// this package invokes mise, so no call can miss the trust.
+func (e Env) mise(repo string, args ...string) []string {
+	return misetrust.Command(cmp.Or(e.Mise, miseFile), e.Dir(repo), args...)
+}
+
+// Dir is the directory of the repo named repo under the workspace root. smith
+// owns it whole: it holds the repo's bare clone, the mise config smith
+// generates for it and every worktree cut from it.
+func (e Env) Dir(repo string) string {
+	return filepath.Join(e.Workspace, repo)
 }
 
 // repo finds the declared repo of that name. A repo the blueprint does not

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/byranZA/smith/internal/blueprint"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -620,6 +621,27 @@ func TestConvergePinsRepoToolsAboveTheWorktrees(t *testing.T) {
 	}
 }
 
+// TestConvergeInstallsARepoToolchainTrustingTheRepoDirectory proves the
+// install of a repo's own pins runs under a mise trusting the configs in the
+// repo's workspace directory, which holds the generated config it installs from.
+func TestConvergeInstallsARepoToolchainTrustingTheRepoDirectory(t *testing.T) {
+	home := t.TempDir()
+	box := newBox()
+	box.hasMise = true
+	b := blueprint.Blueprint{Repos: []blueprint.Repo{{
+		Name:  "acme",
+		URL:   "git@example.com:acme.git",
+		Tools: map[string]string{"node": "22"},
+	}}}
+
+	convergeOnBox(t, box, home, b)
+
+	dir := filepath.Join(home, "workspace", "acme")
+	if !box.ranExact("sh", "-c", misetrust.Script, dir, miseFile, "--cd", dir, "install") {
+		t.Errorf("the stage ran %v, want the repo's install trusting %s", box.calls, dir)
+	}
+}
+
 // TestConvergeCarriesTheGeneratedHeaderIntoTheRepoConfig proves the operator
 // who opens the repo's file is told it is smith's and that an edit is lost.
 func TestConvergeCarriesTheGeneratedHeaderIntoTheRepoConfig(t *testing.T) {
@@ -681,7 +703,7 @@ func TestConvergeSharesOneInstallStoreAcrossRepos(t *testing.T) {
 	}
 	var installs [][]string
 	for _, argv := range box.calls {
-		if len(argv) > 0 && isMise(argv[0]) && strings.Contains(strings.Join(argv, " "), "install") {
+		if argv := untrusted(argv); isMise(argv[0]) && strings.Contains(strings.Join(argv, " "), "install") {
 			installs = append(installs, argv)
 		}
 	}
@@ -744,7 +766,7 @@ func TestConvergeRunsTheMiseTheBoxAlreadyHas(t *testing.T) {
 	}
 	installPath := filepath.Join(home, ".local", "bin", "mise")
 	for _, argv := range box.calls {
-		if argv[0] == installPath {
+		if untrusted(argv)[0] == installPath {
 			t.Errorf("the stage ran %v, want the mise on PATH that answered the probe", argv)
 		}
 	}
@@ -754,7 +776,7 @@ func TestConvergeRunsTheMiseTheBoxAlreadyHas(t *testing.T) {
 	if !box.ranExact(miseFile, "install") {
 		t.Errorf("the stage ran %v, want the pinned version installed by the mise on PATH", box.calls)
 	}
-	if !box.ranExact(miseFile, "exec", "--", "git", "clone", "--bare",
+	if !box.ranExact("sh", "-c", misetrust.Script, filepath.Join(home, "workspace", "acme"), miseFile, "exec", "--", "git", "clone", "--bare",
 		"-c", "remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*", b.Repos[0].URL,
 		filepath.Join(home, "workspace", "acme", cloneDir)) {
 		t.Errorf("the stage ran %v, want the clone run under the mise the box has", box.calls)
@@ -783,7 +805,7 @@ func TestConvergeRunsTheMiseItInstalled(t *testing.T) {
 		t.Errorf("the stage ran %v, want the clone run under the mise it installed", box.calls)
 	}
 	for _, argv := range box.calls {
-		if argv[0] == miseFile && len(argv) > 1 && argv[1] != "--version" {
+		if argv := untrusted(argv); argv[0] == miseFile && len(argv) > 1 && argv[1] != "--version" {
 			t.Errorf("the stage ran %v, want the installed mise rather than a bare one", argv)
 		}
 	}

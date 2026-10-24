@@ -11,6 +11,7 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/connection"
+	"github.com/byranZA/smith/internal/misetrust"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/workspace"
@@ -18,10 +19,13 @@ import (
 
 const trackingRefspec = "+refs/heads/*:refs/remotes/origin/*"
 
-// gitBox is a box whose mise runs git for real and does nothing else.
+// gitBox is a box whose mise, trusting a directory or not, runs git for real and does nothing else.
 type gitBox struct{}
 
 func (gitBox) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if name == "sh" && len(args) > 3 && args[0] == "-c" && args[1] == misetrust.Script {
+		name, args = args[3], args[4:]
+	}
 	if name == "mise" && len(args) > 3 && slices.Equal(args[:3], []string{"exec", "--", "git"}) {
 		return connection.System().Run(ctx, "git", args[3:], stdin, stdout, stderr)
 	}

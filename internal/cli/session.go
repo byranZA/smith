@@ -382,7 +382,7 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 				if repo == "" || branch == "" {
 					return reportInvalid(cmd, errors.New("session start needs --repo naming a declared repo and --branch naming the branch to work on"))
 				}
-				env.Preparer = prepare.Preparer{Command: w.mise, Mise: env.Mise}
+				env.Preparer = prepare.Preparer{Command: w.mise, Mise: env.Mise, Trust: env.Dir(repo)}
 				env.Progress = cmd.ErrOrStderr()
 				started, err := session.Start(cmd.Context(), env, session.StartRequest{Repo: repo, Branch: branch, Base: base})
 				if err != nil {
