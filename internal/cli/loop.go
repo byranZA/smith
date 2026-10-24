@@ -353,6 +353,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&flags.Preset.Preset, "preset", "", "the repo file's preset to hand every task to, over the work preset")
 	cmd.Flags().StringVar(&flags.Preset.Agent, "agent", "", "the agent to hand each task to, in a one-off preset that takes its model from --model alone")
 	cmd.Flags().StringVar(&flags.Preset.Model, "model", "", "the model the agent runs, over the work preset's")
 	cmd.Flags().StringVar(&flags.Preset.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the preset's")

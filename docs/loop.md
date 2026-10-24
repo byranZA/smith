@@ -4,7 +4,7 @@ The **loop** works a spec's tasks, or a single task, with a coding agent, one ta
 
 ```text
 smith loop list <issue>
-smith loop run  [<box>] <issue> [--agent <name>] [--model <name>] [--effort low|medium|high]
+smith loop run  [<box>] <issue> [--preset <name> | --agent <name> [--model <name>] | --model <name>] [--effort low|medium|high]
                         [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push]
                         [--branch <name>] [--base <branch>] [--repo <name>]
 smith loop prompt
@@ -138,7 +138,7 @@ list:   smith session list
 
 ### From your machine: `loop run <box>`
 
-`smith loop run <box> <issue> --repo <name>` from your own machine relays the run over SSH to the box's smith, the way the `session` verbs do. The box runs `smith loop run <issue> --repo <name>` with every loop flag you set (`--agent`, `--model`, `--effort`, `--max-iterations`, `--max-attempts`, `--branch`, `--base`, `--no-push`), so it starts the same loop-driven session as above. The preflight output and the exit status come back to your terminal, and smith returns once the session is live. It never attaches: run the printed `smith session attach <box> <name>` to watch.
+`smith loop run <box> <issue> --repo <name>` from your own machine relays the run over SSH to the box's smith, the way the `session` verbs do. The box runs `smith loop run <issue> --repo <name>` with every loop flag you set (`--preset`, `--agent`, `--model`, `--effort`, `--max-iterations`, `--max-attempts`, `--branch`, `--base`, `--no-push`), so it starts the same loop-driven session as above. The preflight output and the exit status come back to your terminal, and smith returns once the session is live. It never attaches: run the printed `smith session attach <box> <name>` to watch.
 
 A box running a different version of smith is handled as for the `session` verbs: asked about at a terminal, refused with the `smith machine upgrade <box>` to run otherwise. `--repo` is required with a box, and `--interactive` is refused with one before anything is relayed.
 
@@ -205,11 +205,12 @@ A role smith does not define (`smith has no role "review"`) and a role naming a 
 
 The run flags change the work role's preset for one run, without editing the file:
 
+- `--preset P` runs every task on the repo file's preset `P`, which the settings report shows as from the flag.
 - `--agent X` builds a one-off preset on `X` that never inherits the repo file's model or effort, and `--model Y` beside it sets that preset's model.
 - `--model Y` alone keeps the work preset's agent and effort, and replaces its model.
 - `--effort E` replaces the effort of whichever preset the run resolves.
 
-An unknown `--agent` or an `--effort` off the scale is refused, naming the flag. The [presets ADR](./adr/0022-presets-and-roles.md) has the reasoning.
+An unknown `--agent`, an `--effort` off the scale, and a `--preset` the repo file does not define are refused, naming the flag. `--preset` beside `--agent` or `--model` is refused too, since a preset already names its agent and model. The [presets ADR](./adr/0022-presets-and-roles.md) has the reasoning.
 
 ### The prepare command
 

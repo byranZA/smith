@@ -4,6 +4,7 @@
 package preset
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/byranZA/smith/internal/agent"
@@ -17,6 +18,8 @@ const DefaultName = "default"
 
 // Flags are the run flags that choose a preset. A field left empty is unset.
 type Flags struct {
+	// Preset pins the run to one of the repo file's presets by name.
+	Preset string
 	// Agent builds a one-off preset on this agent, inheriting nothing.
 	Agent string
 	// Model replaces the model of the preset the run would otherwise use, or
@@ -61,6 +64,10 @@ func (e *UndefinedError) Error() string {
 	return fmt.Sprintf("%s names preset %q, which the repo file does not define", e.By, e.Name)
 }
 
+// ErrPresetWithAgent refuses the preset flag alongside the agent or model
+// flag, since a preset already names its agent and model.
+var ErrPresetWithAgent = errors.New("--preset cannot be combined with --agent or --model: a preset already names its agent and model")
+
 // Choice is the preset choice for one run, built by Choose.
 type Choice struct {
 	work Resolved
@@ -68,8 +75,12 @@ type Choice struct {
 
 // Choose builds the run's preset choice from the repo file and the run's
 // flags, refusing an agent flag smith has no adapter for, an effort flag off
-// smith's scale, and a work role naming a preset the repo file lacks.
+// smith's scale, a preset flag alongside the agent or model flag, and a work
+// role or preset flag naming a preset the repo file lacks.
 func Choose(file repofile.File, flags Flags) (Choice, error) {
+	if flags.Preset != "" && (flags.Agent != "" || flags.Model != "") {
+		return Choice{}, ErrPresetWithAgent
+	}
 	if flags.Agent != "" {
 		if _, err := agent.Lookup(flags.Agent); err != nil {
 			return Choice{}, fmt.Errorf("--agent: %w", err)
@@ -83,6 +94,11 @@ func Choose(file repofile.File, flags Flags) (Choice, error) {
 		return Choice{}, err
 	}
 	switch {
+	case flags.Preset != "":
+		work, err = named(file, flags.Preset, "--preset", config.FromFlag)
+		if err != nil {
+			return Choice{}, err
+		}
 	case flags.Agent != "":
 		work = Resolved{Origin: config.FromFlag, Agent: flagged(flags.Agent), Model: flagged(flags.Model), Effort: flagged("")}
 	case flags.Model != "":
@@ -104,12 +120,18 @@ func role(file repofile.File, name string) (Resolved, error) {
 	if !ok {
 		return builtin(), nil
 	}
-	p, ok := file.Presets[preset]
+	return named(file, preset, "role "+name, config.FromRepoFile)
+}
+
+// named resolves the repo file's preset name, as by chose it, with each
+// setting carrying origin, or refuses a name the repo file does not define.
+func named(file repofile.File, name, by string, origin config.Origin) (Resolved, error) {
+	p, ok := file.Presets[name]
 	if !ok {
-		return Resolved{}, &UndefinedError{Name: preset, By: "role " + name}
+		return Resolved{}, &UndefinedError{Name: name, By: by}
 	}
-	declared := func(value string) config.Value { return config.Value{Value: value, Origin: config.FromRepoFile} }
-	return Resolved{Name: preset, Origin: config.FromRepoFile, Agent: declared(p.Agent), Model: declared(p.Model), Effort: declared(p.Effort)}, nil
+	chosen := func(value string) config.Value { return config.Value{Value: value, Origin: origin} }
+	return Resolved{Name: name, Origin: origin, Agent: chosen(p.Agent), Model: chosen(p.Model), Effort: chosen(p.Effort)}, nil
 }
 
 // builtin is the built-in default preset: the default agent, with its model

@@ -89,6 +89,18 @@ func TestChooseResolvesTheWorkPreset(t *testing.T) {
 			want:  preset.Resolved{Name: "opus", Origin: config.FromRepoFile, Agent: fromFile("claude"), Model: fromFile("opus"), Effort: fromFlag("low")},
 		},
 		{
+			name:  "the preset flag picks one of the repo file's presets",
+			file:  repoFile,
+			flags: preset.Flags{Preset: "codex"},
+			want:  preset.Resolved{Name: "codex", Origin: config.FromFlag, Agent: fromFlag("codex"), Model: fromFlag("gpt-6.1-sol"), Effort: fromFlag("high")},
+		},
+		{
+			name:  "the effort flag applies over a pinned preset",
+			file:  repoFile,
+			flags: preset.Flags{Preset: "codex", Effort: "low"},
+			want:  preset.Resolved{Name: "codex", Origin: config.FromFlag, Agent: fromFlag("codex"), Model: fromFlag("gpt-6.1-sol"), Effort: fromFlag("low")},
+		},
+		{
 			name:  "the effort flag applies over a one-off preset",
 			file:  repoFile,
 			flags: preset.Flags{Agent: "codex", Effort: "low"},
@@ -153,5 +165,31 @@ func TestChooseRefusesAWorkRoleNamingAnUndefinedPreset(t *testing.T) {
 	var undefined *preset.UndefinedError
 	if !errors.As(err, &undefined) || *undefined != (preset.UndefinedError{Name: "missing", By: "role work"}) {
 		t.Errorf("Choose(%+v, no flags) error = %v, want the role work naming undefined preset missing", file, err)
+	}
+}
+
+func TestChooseRefusesAPresetFlagNamingAnUndefinedPreset(t *testing.T) {
+	t.Parallel()
+	flags := preset.Flags{Preset: "missing"}
+
+	_, err := preset.Choose(repoFile, flags)
+
+	var undefined *preset.UndefinedError
+	if !errors.As(err, &undefined) || *undefined != (preset.UndefinedError{Name: "missing", By: "--preset"}) {
+		t.Errorf("Choose(repo file, %+v) error = %v, want --preset naming undefined preset missing", flags, err)
+	}
+}
+
+func TestChooseRefusesThePresetFlagWithTheAgentOrModelFlag(t *testing.T) {
+	t.Parallel()
+	for _, flags := range []preset.Flags{
+		{Preset: "codex", Agent: "claude"},
+		{Preset: "codex", Model: "sonnet"},
+	} {
+		_, err := preset.Choose(repoFile, flags)
+
+		if !errors.Is(err, preset.ErrPresetWithAgent) {
+			t.Errorf("Choose(repo file, %+v) error = %v, want %v", flags, err, preset.ErrPresetWithAgent)
+		}
 	}
 }

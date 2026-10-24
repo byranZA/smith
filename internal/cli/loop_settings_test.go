@@ -137,20 +137,59 @@ func TestLoopRunWithNoModelGivesTheAgentNone(t *testing.T) {
 	}
 }
 
+func TestLoopRunWithAPresetFlagHandsEveryTaskToThatPreset(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43, 44), "43": taskJSON(43, "OPEN", "ready-for-agent"), "44": taskJSON(44, "OPEN", "ready-for-agent")}}
+	codex := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	w, _ := repoWith(t, gh, codex, opusRepoFile)
+
+	stdout, stderr, code := runLoopRun(t, w, "42", "--preset", "codex")
+
+	wantReport := "preset: codex (flag)\n" +
+		"agent:  codex (flag)\n" +
+		"model:  gpt-6.1-sol (flag)\n" +
+		"effort: high (flag)\n"
+	want := []string{"--model", "gpt-6.1-sol"}
+	if code != 0 || !strings.HasPrefix(stdout, wantReport) || len(codex.commands) != 2 || codex.commands[0].Name != "codex" || !containsRun(codex.commands[0].Args, want) ||
+		codex.commands[1].Name != "codex" || !containsRun(codex.commands[1].Args, want) {
+		t.Errorf("exit %d, stdout %q, stderr %q, ran %v; want 0, the report\n%s\nand both tasks handed to codex given %q", code, stdout, stderr, codex.commands, wantReport, want)
+	}
+}
+
+func TestLoopRunWithPresetAndEffortFlagsRunsThePresetAtThatEffort(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	file := "presets:\n" +
+		"  opus: {agent: claude, model: opus, effort: medium}\n" +
+		"  deep: {agent: claude, model: sonnet, effort: high}\n" +
+		"roles:\n" +
+		"  work: opus\n"
+	w, _ := repoWith(t, gh, claude, file)
+
+	stdout, stderr, code := runLoopRun(t, w, "42", "--preset", "deep", "--effort", "low")
+
+	want := []string{"--model", "sonnet", "--effort", "low"}
+	if code != 0 || !strings.Contains(stdout, "effort: low (flag)\n") || len(claude.commands) != 1 || claude.commands[0].Name != "claude" || !containsRun(claude.commands[0].Args, want) {
+		t.Errorf("exit %d, stdout %q, stderr %q, ran %v; want claude given %q", code, stdout, stderr, claude.commands, want)
+	}
+}
+
 func TestLoopRunRefusesInvalidSettingsBeforeAnyAgentRuns(t *testing.T) {
 	for name, tc := range map[string]struct {
 		repoFile string
 		flags    []string
 		want     []string
 	}{
-		"unknown key":        {"push: true\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
-		"flat agent key":     {"push: true\nagent: claude\n", nil, []string{"line 2", "agent is set in a preset now", "roles: {work: opus}"}},
-		"unknown agent":      {"presets:\n  g: {agent: gemini}\n", nil, []string{"line 2", `"gemini"`, "known agents are claude, codex, pi"}},
-		"malformed name":     {"presets:\n  Fast: {agent: claude}\n", nil, []string{"line 2", `preset name "Fast"`}},
-		"unknown role":       {"presets:\n  opus: {agent: claude}\nroles:\n  review: opus\n", nil, []string{"line 4", `smith has no role "review"`}},
-		"undefined preset":   {"roles:\n  work: missing\n", nil, []string{"line 2", `role work names preset "missing"`}},
-		"unknown agent flag": {"", []string{"--agent", "gemini"}, []string{"--agent", `"gemini"`}},
-		"effort off scale":   {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
+		"unknown key":            {"push: true\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
+		"flat agent key":         {"push: true\nagent: claude\n", nil, []string{"line 2", "agent is set in a preset now", "roles: {work: opus}"}},
+		"unknown agent":          {"presets:\n  g: {agent: gemini}\n", nil, []string{"line 2", `"gemini"`, "known agents are claude, codex, pi"}},
+		"malformed name":         {"presets:\n  Fast: {agent: claude}\n", nil, []string{"line 2", `preset name "Fast"`}},
+		"unknown role":           {"presets:\n  opus: {agent: claude}\nroles:\n  review: opus\n", nil, []string{"line 4", `smith has no role "review"`}},
+		"undefined preset":       {"roles:\n  work: missing\n", nil, []string{"line 2", `role work names preset "missing"`}},
+		"unknown agent flag":     {"", []string{"--agent", "gemini"}, []string{"--agent", `"gemini"`}},
+		"effort off scale":       {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
+		"undefined preset flag":  {opusRepoFile, []string{"--preset", "missing"}, []string{`--preset names preset "missing"`}},
+		"preset and agent flags": {opusRepoFile, []string{"--preset", "codex", "--agent", "claude"}, []string{"--preset", "--agent", "a preset already names its agent and model"}},
+		"preset and model flags": {opusRepoFile, []string{"--preset", "codex", "--model", "sonnet"}, []string{"--preset", "--model", "a preset already names its agent and model"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
