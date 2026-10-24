@@ -51,6 +51,7 @@ func launches(b *board) [][]string {
 }
 
 func TestRunHandsEachTaskToItsOwnPreset(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), labelled(44, "codex")}}
 
 	if _, err := loopWith(t, b, preset.Flags{}).Run(t.Context(), 42); err != nil {
@@ -67,6 +68,7 @@ func TestRunHandsEachTaskToItsOwnPreset(t *testing.T) {
 }
 
 func TestRunWithAPinnedPresetHandsEveryTaskToIt(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), labelled(44, "missing")}}
 
 	if _, err := loopWith(t, b, preset.Flags{Agent: "codex"}).Run(t.Context(), 42); err != nil {
@@ -83,6 +85,7 @@ func TestRunWithAPinnedPresetHandsEveryTaskToIt(t *testing.T) {
 }
 
 func TestRunWithTheEffortFlagKeepsEachTasksPreset(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), labelled(44, "codex")}}
 
 	if _, err := loopWith(t, b, preset.Flags{Effort: "low"}).Run(t.Context(), 42); err != nil {
@@ -99,6 +102,7 @@ func TestRunWithTheEffortFlagKeepsEachTasksPreset(t *testing.T) {
 }
 
 func TestRunStopsBeforeAnyAgentOnATaskNamingAnUndefinedPreset(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44), labelled(45, "missing")}}
 
 	_, err := loopWith(t, b, preset.Flags{}).Run(t.Context(), 42)
@@ -110,6 +114,7 @@ func TestRunStopsBeforeAnyAgentOnATaskNamingAnUndefinedPreset(t *testing.T) {
 }
 
 func TestRunStopsBeforeAnyAgentOnATaskWithTwoPresetLabels(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), labelled(44, "opus", "codex")}}
 
 	_, err := loopWith(t, b, preset.Flags{}).Run(t.Context(), 42)
@@ -121,6 +126,7 @@ func TestRunStopsBeforeAnyAgentOnATaskWithTwoPresetLabels(t *testing.T) {
 }
 
 func TestRunPassesOverAClosedTasksPresetLabel(t *testing.T) {
+	t.Parallel()
 	closed := labelled(43, "missing")
 	closed.Open = false
 	b := &board{tasks: []tracker.Task{closed, agentTask(44)}}
@@ -136,6 +142,7 @@ func TestRunPassesOverAClosedTasksPresetLabel(t *testing.T) {
 }
 
 func TestRunInteractiveOpensALabelledTaskOnItsOwnPreset(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{labelled(43, "codex")}}
 
 	if _, err := loopWith(t, b, preset.Flags{}).RunInteractive(t.Context(), 42); err != nil {
@@ -148,6 +155,7 @@ func TestRunInteractiveOpensALabelledTaskOnItsOwnPreset(t *testing.T) {
 }
 
 func TestRunInteractiveStopsBeforeAnyAgentOnATaskNamingAnUndefinedPreset(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{labelled(43, "missing")}}
 
 	_, err := loopWith(t, b, preset.Flags{}).RunInteractive(t.Context(), 42)
@@ -159,6 +167,7 @@ func TestRunInteractiveStopsBeforeAnyAgentOnATaskNamingAnUndefinedPreset(t *test
 }
 
 func TestRunNamesEachTasksPresetAsItHandsItOver(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), labelled(44, "codex")}}
 	var progress strings.Builder
 	l := loopWith(t, b, preset.Flags{})
@@ -178,6 +187,7 @@ func TestRunNamesEachTasksPresetAsItHandsItOver(t *testing.T) {
 }
 
 func TestRunNamesAOneOffPresetAsItHandsATaskOver(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	var progress strings.Builder
 	l := loopWith(t, b, preset.Flags{Agent: "codex"})
@@ -194,6 +204,7 @@ func TestRunNamesAOneOffPresetAsItHandsATaskOver(t *testing.T) {
 }
 
 func TestRunInteractiveNamesTheTasksPresetAsItHandsItOver(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{labelled(43, "codex")}}
 	var progress strings.Builder
 	l := loopWith(t, b, preset.Flags{})
@@ -210,6 +221,7 @@ func TestRunInteractiveNamesTheTasksPresetAsItHandsItOver(t *testing.T) {
 }
 
 func TestRunCommentsOnASkippedTaskWithThePresetItsAttemptsUsed(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{labelled(43, "codex")}, leaveOpen: []int{43}}
 	l := loopWith(t, b, preset.Flags{})
 	l.Hostname = hostnamed("box-1")
@@ -232,6 +244,7 @@ func TestRunCommentsOnASkippedTaskWithThePresetItsAttemptsUsed(t *testing.T) {
 }
 
 func TestKindsNamesEveryPresetATaskWithTwoPresetLabelsCarries(t *testing.T) {
+	t.Parallel()
 	remaining := loop.Remaining{Available: []tracker.Task{agentTask(43), labelled(44, "opus", "codex")}}
 
 	want := "  available: #43, #44 (presets opus, codex)\n"
