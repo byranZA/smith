@@ -26,6 +26,11 @@ const promptName = "prompt.md"
 // ErrNotARepo is returned by Locate when the directory is not inside a git repo.
 var ErrNotARepo = errors.New("must be run inside a git repo")
 
+// ErrBareRepo is returned by Locate when the directory is inside a bare repo,
+// which has no working tree to read the repo file from. Locate prefixes it with
+// the directory.
+var ErrBareRepo = errors.New("is a bare repo: run from a checkout of it, or with --repo on a box")
+
 // Runner launches a command on the operator's machine. It is the system
 // boundary git is reached through, injected so a test can stand in for git.
 type Runner interface {
@@ -51,11 +56,15 @@ func (r Repo) Path() string { return filepath.Join(r.root, dirName, fileName) }
 func (r Repo) PromptPath() string { return filepath.Join(r.root, dirName, promptName) }
 
 // Locate finds the root of the git repo dir is inside, asking git. It returns
-// ErrNotARepo when git finds none, and refuses a repo whose .smith directory
+// ErrNotARepo when git finds none, ErrBareRepo when the repo has no working
+// tree, and refuses a repo whose .smith directory
 // is the config home, so operator config and repo config never share one.
 func Locate(ctx context.Context, git Runner, dir string, home config.Home) (Repo, error) {
 	var stdout bytes.Buffer
 	if err := git.Run(ctx, "git", []string{"-C", dir, "rev-parse", "--show-toplevel"}, nil, &stdout, io.Discard); err != nil {
+		if isBare(ctx, git, dir) {
+			return Repo{}, fmt.Errorf("%s %w", dir, ErrBareRepo)
+		}
 		return Repo{}, fmt.Errorf("locate the repo from %s: %w: %w", dir, ErrNotARepo, err)
 	}
 	root := strings.TrimSpace(stdout.String())
@@ -63,6 +72,16 @@ func Locate(ctx context.Context, git Runner, dir string, home config.Home) (Repo
 		return Repo{}, fmt.Errorf("the repo's %s is the config home %s: keep repo config out of it", dirName, home.Path())
 	}
 	return Repo{root: root}, nil
+}
+
+// isBare reports whether git says dir is inside a bare repo. Outside any repo
+// git fails, which reads as not bare.
+func isBare(ctx context.Context, git Runner, dir string) bool {
+	var stdout bytes.Buffer
+	if err := git.Run(ctx, "git", []string{"-C", dir, "rev-parse", "--is-bare-repository"}, nil, &stdout, io.Discard); err != nil {
+		return false
+	}
+	return strings.TrimSpace(stdout.String()) == "true"
 }
 
 // isConfigHome reports whether root's .smith directory is the config home,
