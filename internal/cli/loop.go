@@ -51,19 +51,21 @@ type loopWiring struct {
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
-// agents started as processes on smith's own terminal, the real git keeping
+// agents started as processes on smith's own terminal under their task
+// worktree's mise, the real git keeping
 // the workbench and pushing to origin, the real PATH and the real hostname.
 func systemLoop() loopWiring {
+	mise := systemMise()
 	return loopWiring{
 		gh:       connection.System(),
 		ghIn:     func(dir string) tracker.Runner { return dirExec{dir: dir} },
 		box:      stagedBoxConfig,
 		root:     staging.Root,
 		tmux:     connection.System(),
-		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
+		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Mise: mise},
 		bench:    systemBench,
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
-		preparer: prepare.Preparer{Command: connection.System(), Mise: systemMise()},
+		preparer: prepare.Preparer{Command: connection.System(), Mise: mise},
 		lookPath: exec.LookPath,
 		mise:     connection.System(),
 		hostname: os.Hostname,
@@ -87,9 +89,9 @@ func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.B
 }
 
 // systemMise names the mise executable task worktrees on this machine are
-// prepared with: the one a session runs under, when it is installed where
-// smith installs it or is on PATH, and empty otherwise, which skips the
-// toolchain step.
+// prepared with and their agents run under: the one a session runs under, when
+// it is installed where smith installs it or is on PATH, and empty otherwise,
+// which skips the toolchain step and runs agents directly.
 func systemMise() string {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -19,23 +19,35 @@ import (
 )
 
 func TestProcessStopsTheAgentAndWhatItStartedWhenInterrupted(t *testing.T) {
-	pidfile := filepath.Join(t.TempDir(), "child.pid")
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", `sleep 30 & echo $! > "$0"; wait`, pidfile}}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	interrupted := make(chan bool, 1)
-	go func() { interrupted <- interruptOnceWritten(ctx, cancel, pidfile) }()
-
-	start := time.Now()
-	err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}}).Launch(ctx, cmd)
-	elapsed := time.Since(start)
-	cancel()
-
-	if !<-interrupted {
-		t.Fatalf("Launch() = %v after %v; the agent never wrote its child's pid", err, elapsed)
+	tests := []struct {
+		name string
+		mise string
+	}{
+		{"run directly", ""},
+		{"run under mise", standInMise(t)},
 	}
-	if err == nil || elapsed > 5*time.Second || !gone(t, pidfile) {
-		t.Errorf("Launch() = %v after %v; want an error, soon, with the agent's child stopped too", err, elapsed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pidfile := filepath.Join(dir, "child.pid")
+			cmd := agent.Command{Name: "sh", Args: []string{"-c", `sleep 30 & echo $! > "$0"; wait`, pidfile}, Dir: dir}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			interrupted := make(chan bool, 1)
+			go func() { interrupted <- interruptOnceWritten(ctx, cancel, pidfile) }()
+
+			start := time.Now()
+			err := (loop.Process{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Mise: tt.mise}).Launch(ctx, cmd)
+			elapsed := time.Since(start)
+			cancel()
+
+			if !<-interrupted {
+				t.Fatalf("Launch() = %v after %v; the agent never wrote its child's pid", err, elapsed)
+			}
+			if err == nil || elapsed > 5*time.Second || !gone(t, pidfile) {
+				t.Errorf("Launch() = %v after %v; want an error, soon, with the agent's child stopped too", err, elapsed)
+			}
+		})
 	}
 }
 
