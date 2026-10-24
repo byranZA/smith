@@ -63,13 +63,13 @@ func presetFindings(data []byte) []blueprint.Finding {
 	if top == nil {
 		return nil
 	}
-	presets := mappingValue(top, presetsKey)
+	_, presets := effectiveEntry(top, presetsKey)
 	if presets == nil {
 		return nil
 	}
 	var report []blueprint.Finding
-	for i := 0; i+1 < len(presets.Content); i += 2 {
-		name, preset := presets.Content[i], resolved(presets.Content[i+1])
+	for _, e := range effectiveEntries(presets) {
+		name, preset := e.key, e.value
 		path := presetsKey + "." + name.Value
 		if !presetName.MatchString(name.Value) {
 			report = append(report, blueprint.Finding{Line: name.Line, Path: path, Message: fmt.Sprintf("preset name %q may hold only lowercase letters, digits and hyphens", name.Value)})
@@ -98,13 +98,13 @@ func roleFindings(data []byte, presets map[string]Preset) []blueprint.Finding {
 	if top == nil {
 		return nil
 	}
-	set := mappingValue(top, rolesKey)
+	_, set := effectiveEntry(top, rolesKey)
 	if set == nil {
 		return nil
 	}
 	var report []blueprint.Finding
-	for i := 0; i+1 < len(set.Content); i += 2 {
-		role, value := set.Content[i], resolved(set.Content[i+1])
+	for _, e := range effectiveEntries(set) {
+		role, value := e.key, e.value
 		path := rolesKey + "." + role.Value
 		if !slices.Contains(roles, role.Value) {
 			report = append(report, blueprint.Finding{Line: role.Line, Path: path, Message: fmt.Sprintf("smith has no role %q: the only role is %s", role.Value, strings.Join(roles, ", "))})

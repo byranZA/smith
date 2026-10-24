@@ -130,3 +130,65 @@ func TestParseRefusesARoleNamingAnUndefinedPreset(t *testing.T) {
 		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
 	}
 }
+
+func TestParseRefusesInvalidPresetsAndRolesSetThroughAMerge(t *testing.T) {
+	t.Parallel()
+	data := "<<:\n  presets:\n    Bad: {agent: cursor, effort: maximum}\n  roles:\n    review: Bad\n    work: missing\n"
+
+	_, err := repofile.Parse([]byte(data))
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+	}
+	want := []blueprint.Finding{
+		{Line: 3, Path: "presets.Bad", Message: `preset name "Bad" may hold only lowercase letters, digits and hyphens`},
+		{Line: 3, Path: "presets.Bad.agent", Message: `unknown agent "cursor": known agents are claude, codex, pi`},
+		{Line: 3, Path: "presets.Bad.effort", Message: `unknown effort "maximum": the scale is low, medium, high`},
+		{Line: 5, Path: "roles.review", Message: `smith has no role "review": the only role is work`},
+		{Line: 6, Path: "roles.work", Message: `role work names preset "missing", which presets does not define`},
+	}
+	if !reflect.DeepEqual(verr.Findings, want) {
+		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+	}
+}
+
+func TestParseRefusesAnInvalidPresetMergedIntoThePresets(t *testing.T) {
+	t.Parallel()
+	data := "presets:\n  <<: {fast: {agent: cursor}}\n  opus: {agent: claude}\nroles:\n  work: opus\n"
+
+	_, err := repofile.Parse([]byte(data))
+
+	var verr *blueprint.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+	}
+	want := []blueprint.Finding{{Line: 2, Path: "presets.fast.agent", Message: `unknown agent "cursor": known agents are claude, codex, pi`}}
+	if !reflect.DeepEqual(verr.Findings, want) {
+		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+	}
+}
+
+func TestParseLoadsPresetsAndRolesSetThroughMerges(t *testing.T) {
+	t.Parallel()
+	data := "<<:\n  - presets: &shared\n      opus: {agent: claude, model: opus}\n      plain: {agent: cursor}\n    roles: {work: plain}\n" +
+		"  - roles: {work: missing}\n" +
+		"presets:\n  <<: *shared\n  plain: {agent: codex}\n" +
+		"roles:\n  <<: [{work: opus}, {work: missing}]\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	wantPresets := map[string]repofile.Preset{
+		"opus":  {Agent: "claude", Model: "opus"},
+		"plain": {Agent: "codex"},
+	}
+	if !reflect.DeepEqual(got.Presets, wantPresets) {
+		t.Errorf("Parse(%q) presets = %+v, want %+v", data, got.Presets, wantPresets)
+	}
+	if want := map[string]string{"work": "opus"}; !reflect.DeepEqual(got.Roles, want) {
+		t.Errorf("Parse(%q) roles = %+v, want %+v", data, got.Roles, want)
+	}
+}
