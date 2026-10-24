@@ -21,12 +21,9 @@ const defaultProc = "/proc"
 const absentStatus = 2
 
 // addGroups adds the smith user to each declared group it is not already in,
-// keeping the groups it holds, and reports what it did. Membership is only ever
-// added: a group the blueprint stopped declaring is left as it is.
-//
-// Membership reaches new logins only, and every smith session is a child of
-// one tmux server, so the report also notes a running server that lacks a
-// declared group — on every run, whether or not this one added anything.
+// never removing one, and reports what it did. The report also notes a running
+// tmux server that lacks a declared group, since every session inherits the
+// server's groups.
 func addGroups(ctx context.Context, env Env, groups []string, progress io.Writer) (string, error) {
 	ids, err := groupIDs(ctx, env.Command, groups)
 	if err != nil {
@@ -54,11 +51,7 @@ func addGroups(ctx context.Context, env Env, groups []string, progress io.Writer
 		}
 		summary = fmt.Sprintf("added %s to %s", user, strings.Join(missing, ", "))
 	}
-	note, err := staleServerNote(ctx, env, groups, ids)
-	if err != nil {
-		return "", err
-	}
-	return summary + note, nil
+	return summary + staleServerNote(ctx, env, groups, ids), nil
 }
 
 // groupIDs looks each declared group up in the box's group database and
@@ -90,22 +83,21 @@ func groupIDs(ctx context.Context, run Runner, groups []string) (map[string]stri
 	return ids, nil
 }
 
-// staleServerNote is the note owed when the smith user's tmux server is running
-// without one of the declared groups, naming its sessions, and empty when no
-// server is running or the one that is carries them all. The server's own
-// groups are read, not the user's membership: they are what every session it
-// starts inherits.
-func staleServerNote(ctx context.Context, env Env, groups []string, ids map[string]string) (string, error) {
+// staleServerNote is the note owed when the smith user's running tmux server
+// lacks a declared group, or its groups cannot be read, naming its sessions;
+// it is empty when no server runs or the one that does carries every group.
+func staleServerNote(ctx context.Context, env Env, groups []string, ids map[string]string) string {
 	pid, sessions := tmuxServer(ctx, env.Command)
 	if len(sessions) == 0 {
-		return "", nil
+		return ""
 	}
 	status, err := os.ReadFile(filepath.Join(env.proc(), pid, "status"))
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
+		return ""
 	}
 	if err != nil {
-		return "", fmt.Errorf("read the groups of the tmux server: %w", err)
+		return fmt.Sprintf("; note: could not check whether the tmux server running sessions %s carries %s: %v",
+			strings.Join(sessions, ", "), strings.Join(groups, ", "), err)
 	}
 	carried := processGroups(string(status))
 	var lacking []string
@@ -115,10 +107,10 @@ func staleServerNote(ctx context.Context, env Env, groups []string, ids map[stri
 		}
 	}
 	if len(lacking) == 0 {
-		return "", nil
+		return ""
 	}
 	return fmt.Sprintf("; note: the tmux server running sessions %s lacks %s, and new sessions get it only once all of them are closed",
-		strings.Join(sessions, ", "), strings.Join(lacking, ", ")), nil
+		strings.Join(sessions, ", "), strings.Join(lacking, ", "))
 }
 
 // tmuxServer is the process id of the tmux server on the default socket and

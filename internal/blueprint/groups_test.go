@@ -9,6 +9,7 @@ import (
 )
 
 func TestParseReadsTheDeclaredGroups(t *testing.T) {
+	t.Parallel()
 	got, err := blueprint.Parse([]byte("groups:\n  - docker\n  - kvm\n"))
 	if err != nil {
 		t.Fatalf("Parse() err = %v, want nil", err)
@@ -19,8 +20,10 @@ func TestParseReadsTheDeclaredGroups(t *testing.T) {
 }
 
 func TestParseAcceptsGroupNamesAdduserAllows(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"docker", "kvm", "_ssh", "plugdev", "sys-admin", "lp2", "machine$"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := blueprint.Parse([]byte("groups:\n  - \"" + name + "\"\n")); err != nil {
 				t.Errorf("Parse(groups [%q]) err = %v, want it accepted", name, err)
 			}
@@ -29,8 +32,10 @@ func TestParseAcceptsGroupNamesAdduserAllows(t *testing.T) {
 }
 
 func TestParseRefusesAMalformedGroupName(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"Docker", "2fa", "-docker", "doc ker", "docker:x", "", "do$cker"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			got := findings(t, "groups:\n  - docker\n  - \""+name+"\"\n")
 			if len(got) != 1 {
 				t.Fatalf("Findings = %+v, want exactly one", got)
@@ -46,6 +51,7 @@ func TestParseRefusesAMalformedGroupName(t *testing.T) {
 }
 
 func TestParseRefusesADuplicatedGroup(t *testing.T) {
+	t.Parallel()
 	got := findings(t, "groups:\n  - docker\n  - kvm\n  - docker\n")
 	if len(got) != 1 {
 		t.Fatalf("Findings = %+v, want exactly one", got)

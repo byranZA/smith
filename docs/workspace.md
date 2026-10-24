@@ -108,7 +108,7 @@ So on every run that declares `groups`, the step reads the groups of the running
   groups      added smith to docker; note: the tmux server running sessions api, smith-loop lacks docker, and new sessions get it only once all of them are closed
 ```
 
-The note fires whether or not this run added anything, so a re-run still warns, and it never fails the step. Close every session, or wait for them to end, and the next session starts a fresh server that carries the group. A fresh SSH login gets the group at once. With no server running, or one that already carries every declared group, there is no note.
+The note fires whether or not this run added anything, so a re-run still warns, and it never fails the step. Close every session, or wait for them to end, and the next session starts a fresh server that carries the group. A fresh SSH login gets the group at once. With no server running, or one that already carries every declared group, there is no note. A server whose groups cannot be read gets a note of its own (`could not check whether the tmux server running sessions … carries …`), and the step still converges.
 
 ## The toolchain
 

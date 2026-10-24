@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ func TestOrderIsTheStageOrder(t *testing.T) {
 // TestPlan drives the pure derivation from a staged blueprint to the ordered
 // units of work the stage converges.
 func TestPlan(t *testing.T) {
+	orphans := Unit{Step: Orphans, Workspace: Workspace{Root: "/home/smith/workspace", Declared: []string{}}}
 	tests := []struct {
 		name string
 		b    blueprint.Blueprint
@@ -33,45 +35,33 @@ func TestPlan(t *testing.T) {
 		{
 			name: "a blueprint declaring nothing plans only the orphans scan",
 			b:    blueprint.Blueprint{},
-			want: []Unit{{Step: Orphans}},
+			want: []Unit{orphans},
 		},
 		{
 			name: "declared packages plan one packages unit",
 			b:    blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}},
-			want: []Unit{{Step: Packages, Packages: []string{"ripgrep", "jq"}}, {Step: Orphans}},
+			want: []Unit{{Step: Packages, Packages: []string{"ripgrep", "jq"}}, orphans},
 		},
 		{
 			name: "declared groups plan one groups unit after the packages",
 			b:    blueprint.Blueprint{Packages: []string{"docker.io"}, Groups: []string{"docker", "kvm"}},
-			want: []Unit{{Step: Packages, Packages: []string{"docker.io"}}, {Step: Groups, Groups: []string{"docker", "kvm"}}, {Step: Orphans}},
+			want: []Unit{{Step: Packages, Packages: []string{"docker.io"}}, {Step: Groups, Groups: []string{"docker", "kvm"}}, orphans},
 		},
 		{
 			name: "an empty groups list plans no groups unit",
 			b:    blueprint.Blueprint{Groups: []string{}},
-			want: []Unit{{Step: Orphans}},
+			want: []Unit{orphans},
 		},
 		{
 			name: "an empty packages list plans no packages unit",
 			b:    blueprint.Blueprint{Packages: []string{}},
-			want: []Unit{{Step: Orphans}},
+			want: []Unit{orphans},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Plan(tt.b, resolved, "/home/smith")
-			if len(got) != len(tt.want) {
-				t.Fatalf("Plan() = %v, want %v", got, tt.want)
-			}
-			for i, unit := range got {
-				if unit.Step != tt.want[i].Step {
-					t.Errorf("Plan()[%d].Step = %q, want %q", i, unit.Step, tt.want[i].Step)
-				}
-				if strings.Join(unit.Packages, ",") != strings.Join(tt.want[i].Packages, ",") {
-					t.Errorf("Plan()[%d].Packages = %v, want %v", i, unit.Packages, tt.want[i].Packages)
-				}
-				if strings.Join(unit.Groups, ",") != strings.Join(tt.want[i].Groups, ",") {
-					t.Errorf("Plan()[%d].Groups = %v, want %v", i, unit.Groups, tt.want[i].Groups)
-				}
+			if got := Plan(tt.b, resolved, "/home/smith"); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Plan(%+v) = %+v, want %+v", tt.b, got, tt.want)
 			}
 		})
 	}

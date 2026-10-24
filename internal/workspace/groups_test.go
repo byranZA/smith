@@ -11,16 +11,14 @@ import (
 	"testing"
 )
 
-// groupBox stands in for the box's account and group databases and its tmux
-// server, recording the argv of every command it is asked to run.
+// groupBox fakes the box's account and group databases and its tmux server, recording every argv.
 type groupBox struct {
 	calls [][]string
 	// gids are the groups the box holds, each with its id.
 	gids map[string]int
 	// member are the groups the smith user's account is in.
 	member map[string]bool
-	// sessions are the sessions smith's tmux server is running, none when no
-	// server is running.
+	// sessions are the sessions the tmux server runs, none when no server runs.
 	sessions []string
 }
 
@@ -71,8 +69,7 @@ func write(w io.Writer, s string) error {
 	return nil
 }
 
-// mutations are the commands the run launched under sudo, the only ones that
-// change the box.
+// mutations are the commands the run launched under sudo, the only ones that change the box.
 func (g *groupBox) mutations() [][]string {
 	var found [][]string
 	for _, argv := range g.calls {
@@ -83,8 +80,7 @@ func (g *groupBox) mutations() [][]string {
 	return found
 }
 
-// procWith is a /proc holding the tmux server's status with the given
-// supplementary group ids.
+// procWith is a /proc whose tmux server status lists the given supplementary group ids.
 func procWith(t *testing.T, groups string) string {
 	t.Helper()
 	proc := t.TempDir()
@@ -110,6 +106,7 @@ func convergeGroups(t *testing.T, box *groupBox, proc string, groups ...string) 
 }
 
 func TestConvergeGroupsAddsSmithToOnlyTheMissingGroups(t *testing.T) {
+	t.Parallel()
 	box := &groupBox{gids: map[string]int{"docker": 999, "kvm": 993}, member: map[string]bool{"kvm": true}}
 
 	got := convergeGroups(t, box, t.TempDir(), "docker", "kvm")
@@ -126,6 +123,7 @@ func TestConvergeGroupsAddsSmithToOnlyTheMissingGroups(t *testing.T) {
 }
 
 func TestConvergeGroupsAlreadyAMemberChangesNothing(t *testing.T) {
+	t.Parallel()
 	box := &groupBox{gids: map[string]int{"docker": 999}, member: map[string]bool{"docker": true}}
 
 	got := convergeGroups(t, box, t.TempDir(), "docker")
@@ -142,6 +140,7 @@ func TestConvergeGroupsAlreadyAMemberChangesNothing(t *testing.T) {
 }
 
 func TestConvergeGroupsFailsNamingAGroupTheBoxDoesNotHold(t *testing.T) {
+	t.Parallel()
 	box := &groupBox{gids: map[string]int{"docker": 999}, member: map[string]bool{}}
 	plan := []Unit{{Step: Groups, Groups: []string{"docker", "dokcer"}}, {Step: Orphans, Workspace: Workspace{Root: t.TempDir()}}}
 
@@ -171,6 +170,7 @@ func TestConvergeGroupsFailsNamingAGroupTheBoxDoesNotHold(t *testing.T) {
 }
 
 func TestConvergeGroupsNotesATmuxServerThatLacksADeclaredGroup(t *testing.T) {
+	t.Parallel()
 	box := &groupBox{gids: map[string]int{"docker": 999}, member: map[string]bool{}, sessions: []string{"api", "smith-loop"}}
 
 	got := convergeGroups(t, box, procWith(t, "1000 27"), "docker")
@@ -185,6 +185,7 @@ func TestConvergeGroupsNotesATmuxServerThatLacksADeclaredGroup(t *testing.T) {
 }
 
 func TestConvergeGroupsNotesNothingWhenNoTmuxServerLacksTheGroups(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		sessions []string
@@ -195,6 +196,7 @@ func TestConvergeGroupsNotesNothingWhenNoTmuxServerLacksTheGroups(t *testing.T) 
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			box := &groupBox{gids: map[string]int{"docker": 999}, member: map[string]bool{"docker": true}, sessions: tt.sessions}
 
 			got := convergeGroups(t, box, procWith(t, tt.groups), "docker")
@@ -204,6 +206,38 @@ func TestConvergeGroupsNotesNothingWhenNoTmuxServerLacksTheGroups(t *testing.T) 
 			}
 			if want := "nothing to change; smith already in docker"; got.Summary != want {
 				t.Errorf("Converge(groups docker).Summary = %q, want %q", got.Summary, want)
+			}
+		})
+	}
+}
+
+func TestConvergeGroupsKeepsItsResultWhenTheTmuxServerCannotBeInspected(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		member  map[string]bool
+		summary string
+	}{
+		{"membership added", map[string]bool{}, "added smith to docker"},
+		{"membership already held", map[string]bool{"docker": true}, "nothing to change; smith already in docker"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			box := &groupBox{gids: map[string]int{"docker": 999}, member: tt.member, sessions: []string{"api"}}
+			proc := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(proc, fmt.Sprint(tmuxPID), "status"), 0o755); err != nil {
+				t.Fatalf("make an unreadable tmux server status: %v", err)
+			}
+
+			got := convergeGroups(t, box, proc, "docker")
+
+			if got.Err != nil {
+				t.Fatalf("Converge(groups docker).Err = %v, want an inspection failure left advisory", got.Err)
+			}
+			want := tt.summary + "; note: could not check whether the tmux server running sessions api carries docker: "
+			if !strings.HasPrefix(got.Summary, want) {
+				t.Errorf("Converge(groups docker).Summary = %q, want it to start %q", got.Summary, want)
 			}
 		})
 	}
