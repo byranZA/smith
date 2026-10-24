@@ -1,6 +1,7 @@
 package workbench_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -41,12 +44,15 @@ func cloned(t *testing.T) (clone, remote string) {
 	return clone, remote
 }
 
+// stateOf returns the state home for clone, beside it so each test's runs share one.
+func stateOf(clone string) string { return filepath.Join(filepath.Dir(clone), "state") }
+
 // spec430 is the request for spec #430, whose work branch is smith/430-loop-works-in-task-worktrees.
 var spec430 = workbench.Request{Number: 430, Title: "Spec: Loop works in task worktrees"}
 
 func setup(t *testing.T, clone string) workbench.Workbench {
 	t.Helper()
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), spec430)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
@@ -93,7 +99,7 @@ func TestSetupCutsANewWorkBranchFromTheNamedBase(t *testing.T) {
 	req := spec430
 	req.Base = "release-2"
 
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
@@ -114,7 +120,7 @@ func TestSetupCutsFromTheNamedBaseWhenOriginNamesNoDefaultBranch(t *testing.T) {
 	req := spec430
 	req.Base = "release-2"
 
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
@@ -151,14 +157,14 @@ func TestSetupRefusesWhenOriginNamesNoDefaultBranch(t *testing.T) {
 	git(t, root, "init", "--bare", "-b", "main", remote)
 	git(t, root, "clone", remote, clone)
 
-	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), spec430)
 
 	if err == nil || !strings.Contains(err.Error(), "origin names no default branch") || !strings.Contains(err.Error(), "git ls-remote --symref origin HEAD") {
 		t.Errorf("Setup() error = %v; want it to name the missing default branch and its fix", err)
 	}
 }
 
-func TestOpenGivesTheTaskAWorktreeUnderTheGitDirOnABranchFromTheWorkBranchTip(t *testing.T) {
+func TestOpenGivesTheTaskAWorktreeOnABranchFromTheWorkBranchTip(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
 	bench := setup(t, clone)
@@ -168,11 +174,30 @@ func TestOpenGivesTheTaskAWorktreeUnderTheGitDirOnABranchFromTheWorkBranchTip(t 
 		t.Fatalf("Open() error = %v", err)
 	}
 
-	common := resolved(t, git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"))
-	got := []string{resolved(t, dir), git(t, dir, "rev-parse", "HEAD"), git(t, dir, "symbolic-ref", "--short", "HEAD")}
-	want := []string{filepath.Join(common, "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431"), git(t, clone, "rev-parse", bench.WorkBranch()), "smith/tasks/smith/430-loop-works-in-task-worktrees/431"}
+	got := []string{git(t, dir, "rev-parse", "HEAD"), git(t, dir, "symbolic-ref", "--short", "HEAD")}
+	want := []string{git(t, clone, "rev-parse", bench.WorkBranch()), "smith/tasks/smith/430-loop-works-in-task-worktrees/431"}
 	if !slices.Equal(got, want) {
-		t.Errorf("Open(431) worktree, HEAD and branch = %q, want %q", got, want)
+		t.Errorf("Open(431) worktree HEAD and branch = %q, want %q", got, want)
+	}
+}
+
+func TestOpenInANonBareRepoGivesTheTaskAWorktreeInTheStateHomeOutsideTheCheckout(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	state := t.TempDir()
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, state, spec430)
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+
+	dir, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	want := regexp.MustCompile("^" + regexp.QuoteMeta(filepath.Join(resolved(t, state), "worktrees")) + "/clone-[0-9a-f]{8}/smith/430-loop-works-in-task-worktrees/431$")
+	if !want.MatchString(dir) || slices.Contains(strings.Split(dir, string(filepath.Separator)), ".git") || strings.HasPrefix(dir, clone+string(filepath.Separator)) {
+		t.Errorf("Open(431) worktree = %q, want one matching %s, with no .git segment, outside the checkout %s", dir, want, clone)
 	}
 }
 
@@ -413,7 +438,7 @@ func TestSetupRefusesAWorkBranchThatHasDivergedFromOrigin(t *testing.T) {
 	ours := commitIn(t, clone, "ours.txt")
 	git(t, clone, "switch", "main")
 
-	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), spec430)
 
 	if got := git(t, clone, "rev-parse", "refs/heads/smith/430-x"); err == nil || !strings.Contains(err.Error(), "smith/430-x") || got != ours {
 		t.Errorf("Setup() = %v, smith/430-x at %s; want an error naming smith/430-x and the branch still %s", err, got, ours)
@@ -426,7 +451,7 @@ func TestSetupRefusesMoreThanOneBranchMatchingTheNumber(t *testing.T) {
 	git(t, clone, "branch", "smith/430-a", "main")
 	git(t, clone, "push", "origin", "main:refs/heads/smith/430-b")
 
-	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), spec430)
 
 	if err == nil || !strings.Contains(err.Error(), "smith/430-a") || !strings.Contains(err.Error(), "smith/430-b") {
 		t.Errorf("Setup() error = %v; want it to name smith/430-a and smith/430-b", err)
@@ -472,7 +497,7 @@ func TestSetupUsesTheNamedWorkBranchExactlyAsNamed(t *testing.T) {
 	req := spec430
 	req.Branch = "worktree-loop"
 
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
@@ -496,7 +521,7 @@ func TestSetupWithANamedWorkBranchLooksNoBranchUpByNumber(t *testing.T) {
 	req := spec430
 	req.Branch = "worktree-loop"
 
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
@@ -516,7 +541,7 @@ func TestSetupAdoptsANamedWorkBranchOnlyOnOrigin(t *testing.T) {
 	req := spec430
 	req.Branch = "worktree-loop"
 
-	if _, err := workbench.Setup(t.Context(), connection.System(), clone, req); err != nil {
+	if _, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req); err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
 
@@ -541,7 +566,7 @@ func TestSetupRefusesAWorkBranchThatIsTheDefaultOrTheBaseBranch(t *testing.T) {
 			req := spec430
 			req.Branch, req.Base = tc.branch, tc.base
 
-			_, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+			_, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 
 			if after := git(t, remote, "for-each-ref"); err == nil || !strings.Contains(err.Error(), tc.branch) || after != before {
 				t.Errorf("Setup(branch %q, base %q) error = %v, origin's refs %q; want an error naming %s and origin's refs still %q", tc.branch, tc.base, err, after, tc.branch, before)
@@ -580,18 +605,28 @@ func TestSetupRefusesAWorkBranchCheckedOutInADirtyWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := workbench.Setup(t.Context(), connection.System(), clone, spec430)
+	_, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), spec430)
 
 	if err == nil || !strings.Contains(err.Error(), resolved(t, clone)) {
 		t.Errorf("Setup() error = %v, want one naming the checkout %s", err, resolved(t, clone))
 	}
 }
 
+// besideOpened returns where bench puts task's new worktree, beside the one Open gives task 1.
+func besideOpened(t *testing.T, bench workbench.Workbench, task int) string {
+	t.Helper()
+	dir, err := bench.Open(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("Open(1) error = %v", err)
+	}
+	return filepath.Join(filepath.Dir(dir), strconv.Itoa(task))
+}
+
 func TestOpenRefusesAWorktreeOnAnotherBranchAtTheTaskWorktree(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
 	bench := setup(t, clone)
-	path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
+	path := besideOpened(t, bench, 431)
 	git(t, clone, "worktree", "add", "-b", "elsewhere", path)
 
 	got, err := bench.Open(t.Context(), 431)
@@ -616,7 +651,7 @@ func TestOpenRefusesAndKeepsAnUnregisteredPathAtTheTaskWorktree(t *testing.T) {
 			t.Parallel()
 			clone, _ := cloned(t)
 			bench := setup(t, clone)
-			path := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
+			path := besideOpened(t, bench, 431)
 			if err := place(path); err != nil {
 				t.Fatal(err)
 			}
@@ -635,11 +670,10 @@ func TestOpenKeepsTheCauseOfAFilesystemErrorAtTheTaskWorktree(t *testing.T) {
 	t.Parallel()
 	clone, _ := cloned(t)
 	bench := setup(t, clone)
-	smith := filepath.Join(git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"), "smith")
-	if err := os.MkdirAll(smith, 0o755); err != nil {
+	if err := os.MkdirAll(stateOf(clone), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(smith, "worktrees"), []byte("not a directory\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stateOf(clone), "worktrees"), []byte("not a directory\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -712,7 +746,7 @@ func TestSetupKeepsTheCauseOfAFailedAncestryCheck(t *testing.T) {
 			commitIn(t, clone, "ours.txt")
 			git(t, clone, "switch", "main")
 
-			_, err := workbench.Setup(t.Context(), ancestryFails{err: cause}, clone, spec430)
+			_, err := workbench.Setup(t.Context(), ancestryFails{err: cause}, clone, stateOf(clone), spec430)
 
 			if !errors.Is(err, cause) || !strings.Contains(err.Error(), "smith/430-x") || strings.Contains(err.Error(), "diverged") {
 				t.Errorf("Setup() error = %v, want one naming smith/430-x and wrapping %v, not a divergence", err, cause)
@@ -811,7 +845,7 @@ func TestSetupReportsABaseItCannotFetch(t *testing.T) {
 	req := spec430
 	req.Base = "no-such-branch"
 
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup() error = %v", err)
 	}
@@ -909,7 +943,7 @@ func TestSetupsStartedTogetherInOneCloneEachCutTheirWorkBranch(t *testing.T) {
 		for i, tree := range trees {
 			wg.Go(func() {
 				req := workbench.Request{Number: 100*round + i + 1, Title: "together"}
-				_, errs[i] = workbench.Setup(t.Context(), connection.System(), tree, req)
+				_, errs[i] = workbench.Setup(t.Context(), connection.System(), tree, t.TempDir(), req)
 			})
 		}
 		wg.Wait()
@@ -949,7 +983,7 @@ func TestSetupCutsAtItsBaseWhenAnotherFetchInTheCloneLandsBeforeItReadsTheTip(t 
 	git(t, later, "commit", "--allow-empty", "-m", "on release-2")
 	git(t, later, "push", "origin", "HEAD:refs/heads/release-2")
 
-	bench, err := workbench.Setup(t.Context(), fetchedBetween{other: "release-2"}, bare, spec430)
+	bench, err := workbench.Setup(t.Context(), fetchedBetween{other: "release-2"}, bare, t.TempDir(), spec430)
 	if err != nil {
 		t.Fatalf("Setup(%+v in %s) error = %v, want nil", spec430, bare, err)
 	}
@@ -982,7 +1016,7 @@ func TestSetupsStartedTogetherInABareCloneEachCutAtTheirBase(t *testing.T) {
 		errs := make([]error, len(reqs))
 		var wg sync.WaitGroup
 		for i, req := range reqs {
-			wg.Go(func() { _, errs[i] = workbench.Setup(t.Context(), connection.System(), bare, req) })
+			wg.Go(func() { _, errs[i] = workbench.Setup(t.Context(), connection.System(), bare, t.TempDir(), req) })
 		}
 		wg.Wait()
 
@@ -995,5 +1029,77 @@ func TestSetupsStartedTogetherInABareCloneEachCutAtTheirBase(t *testing.T) {
 				t.Errorf("round %d: %s = %s, want origin's %s %s", round, branch, got, req.Base, tips[req.Base])
 			}
 		}
+	}
+}
+
+func TestOpenGivesTwoClonesOfARepoNamedAlikeTheirOwnStateHomeDirectories(t *testing.T) {
+	t.Parallel()
+	_, remote := cloned(t)
+	state := t.TempDir()
+	var dirs []string
+	for range 2 {
+		clone := filepath.Join(t.TempDir(), "clone")
+		git(t, filepath.Dir(clone), "clone", remote, clone)
+		bench, err := workbench.Setup(t.Context(), connection.System(), clone, state, spec430)
+		if err != nil {
+			t.Fatalf("Setup(%s) error = %v", clone, err)
+		}
+		dir, err := bench.Open(t.Context(), 431)
+		if err != nil {
+			t.Fatalf("Open(431) in %s error = %v", clone, err)
+		}
+		dirs = append(dirs, dir)
+	}
+
+	repoDir := func(dir string) string {
+		return strings.SplitN(strings.TrimPrefix(dir, resolved(t, state)), string(filepath.Separator), 4)[2]
+	}
+	if repoDir(dirs[0]) == repoDir(dirs[1]) {
+		t.Errorf("Open(431) worktrees of two clones named clone = %q, want them under different <repo>-<hash> directories", dirs)
+	}
+}
+
+func TestOpenInABareRepoOrItsLinkedWorktreeGivesTheTaskAWorktreeUnderTheGitCommonDir(t *testing.T) {
+	t.Parallel()
+	for name, dirOf := range map[string]func(t *testing.T, bare string) string{
+		"bare repo": func(*testing.T, string) string { return "" },
+		"linked worktree of a bare repo": func(t *testing.T, bare string) string {
+			tree := filepath.Join(t.TempDir(), "session")
+			git(t, bare, "worktree", "add", "--detach", tree, "main")
+			return tree
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, remote := cloned(t)
+			bare := filepath.Join(t.TempDir(), "repo.git")
+			git(t, filepath.Dir(bare), "clone", "--bare", remote, bare)
+			dir := cmp.Or(dirOf(t, bare), bare)
+			bench, err := workbench.Setup(t.Context(), connection.System(), dir, t.TempDir(), spec430)
+			if err != nil {
+				t.Fatalf("Setup(%s) error = %v", dir, err)
+			}
+
+			got, err := bench.Open(t.Context(), 431)
+
+			want := filepath.Join(resolved(t, bare), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
+			if err != nil || got != want {
+				t.Errorf("Open(431) in %s = %q, %v, want %q, nil", dir, got, err, want)
+			}
+		})
+	}
+}
+
+func TestOpenFindsAFailedTasksWorktreeLeftUnderTheGitDirByItsTaskBranch(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	old := filepath.Join(resolved(t, filepath.Join(clone, ".git")), "smith", "worktrees", "smith", "430-loop-works-in-task-worktrees", "431")
+	git(t, clone, "worktree", "add", "-b", bench.TaskBranch(431), old, bench.WorkBranch())
+
+	got, err := bench.Open(t.Context(), 431)
+
+	if err != nil || got != old {
+		t.Errorf("Open(431) with its task branch checked out at %s = %q, %v, want %q, nil", old, got, err, old)
 	}
 }

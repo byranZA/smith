@@ -61,7 +61,7 @@ func systemLoop() loopWiring {
 		root:     staging.Root,
 		tmux:     connection.System(),
 		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr},
-		bench:    systemBench,
+		bench:    systemBench(os.Getenv),
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		preparer: prepare.Preparer{Command: connection.System(), Mise: systemMise()},
 		lookPath: exec.LookPath,
@@ -76,14 +76,21 @@ func systemLoop() loopWiring {
 	}
 }
 
-// systemBench sets up the workbench for req in the repo dir is in, with the
-// real git, and returns how far an adopted work branch is behind its base.
-func systemBench(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
-	bench, err := workbench.Setup(ctx, connection.System(), dir, req)
-	if err != nil {
-		return nil, workbench.Lag{}, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
+// systemBench returns what sets up the workbench for req in the repo dir is
+// in, with the real git and the state home getenv's environment places, and
+// returns how far an adopted work branch is behind its base.
+func systemBench(getenv func(string) string) func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
+	return func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
+		state, err := workbench.StateHome(getenv)
+		if err != nil {
+			return nil, workbench.Lag{}, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
+		}
+		bench, err := workbench.Setup(ctx, connection.System(), dir, state, req)
+		if err != nil {
+			return nil, workbench.Lag{}, fmt.Errorf("set up the work branch for #%d: %w", req.Number, err)
+		}
+		return bench, bench.Lag(), nil
 	}
-	return bench, bench.Lag(), nil
 }
 
 // systemMise names the mise executable task worktrees on this machine are

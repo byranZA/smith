@@ -40,6 +40,43 @@ func (c *committingAgent) Launch(ctx context.Context, cmd agent.Command) error {
 	return c.fakeAgent.Launch(ctx, cmd)
 }
 
+// stateIn is an environment lookup whose XDG_STATE_HOME is xdg and whose HOME is unset.
+func stateIn(xdg string) func(string) string {
+	return func(name string) string { return map[string]string{"XDG_STATE_HOME": xdg}[name] }
+}
+
+func TestLoopRunWorksATaskOfANonBareCloneInTheStateHome(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
+	gitIn(t, root, "init", "--bare", "-b", "main", remote)
+	gitIn(t, root, "clone", remote, clone)
+	gitIn(t, clone, "commit", "--allow-empty", "-m", "seed")
+	gitIn(t, clone, "push", "origin", "main")
+	xdg, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	w := loopWiring{
+		gh:       gh,
+		launcher: claude,
+		bench:    systemBench(stateIn(xdg)),
+		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
+		lookPath: onPath,
+		git:      connection.System(),
+		workdir:  func() (string, error) { return clone, nil },
+	}
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	want := filepath.Join(xdg, "smith", "worktrees") + string(filepath.Separator)
+	if code != 0 || len(claude.commands) != 1 || !strings.HasPrefix(claude.commands[0].Dir, want) {
+		t.Errorf("exit %d, stderr %q, agents ran in %v; want 0 and one agent under %s", code, stderr, claude.commands, want)
+	}
+}
+
 func TestLoopRunLandsEachTaskOnANewWorkBranchAndPushesItLeavingTheCheckoutAlone(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -59,7 +96,7 @@ func TestLoopRunLandsEachTaskOnANewWorkBranchAndPushesItLeavingTheCheckoutAlone(
 	w := loopWiring{
 		gh:       gh,
 		launcher: &committingAgent{fakeAgent: fakeAgent{gh: gh}, t: t},
-		bench:    systemBench,
+		bench:    systemBench(stateIn(t.TempDir())),
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: onPath,
 		git:      connection.System(),
@@ -100,7 +137,7 @@ func TestLoopRunInteractiveWorksTheTaskInAWorktreeThenLandsAndPushesItLeavingThe
 	w := loopWiring{
 		gh:       gh,
 		launcher: claude,
-		bench:    systemBench,
+		bench:    systemBench(stateIn(t.TempDir())),
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		lookPath: onPath,
 		git:      connection.System(),

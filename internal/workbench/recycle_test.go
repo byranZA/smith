@@ -129,7 +129,7 @@ func TestOpenGivesAnotherWorkBranchItsOwnWorktreeLeavingTheFirstsAlone(t *testin
 	clone, _ := cloned(t)
 	req := spec430
 	req.Branch = "work-a"
-	benchA, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	benchA, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup(work-a) error = %v", err)
 	}
@@ -141,7 +141,7 @@ func TestOpenGivesAnotherWorkBranchItsOwnWorktreeLeavingTheFirstsAlone(t *testin
 		t.Fatal(err)
 	}
 	req.Branch = "work-b"
-	benchB, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	benchB, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup(work-b) error = %v", err)
 	}
@@ -237,7 +237,7 @@ func TestOpenDoesNotAdoptTheRecycledWorktreeOfAWorkBranchNamedAlike(t *testing.T
 	slashed := landedOn(t, clone, "work/a")
 	req := spec430
 	req.Branch = "work-a"
-	hyphened, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	hyphened, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup(work-a) error = %v", err)
 	}
@@ -270,7 +270,7 @@ func TestFinishLeavesTheRecycledWorktreeOfAWorkBranchNamedAlike(t *testing.T) {
 	hyphened := landedOn(t, clone, "work-a")
 	req := spec430
 	req.Branch = "work-a"
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup(work-a) error = %v", err)
 	}
@@ -294,7 +294,7 @@ func TestTheNextRunOfAWorkBranchNamedAlikeAnotherAdoptsItsOwnKeptWorktree(t *tes
 	hyphened := landedOn(t, clone, "work-a")
 	req := spec430
 	req.Branch = "work/a"
-	again, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	again, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup(work/a) error = %v", err)
 	}
@@ -315,7 +315,7 @@ func landedOn(t *testing.T, clone, branch string) string {
 	t.Helper()
 	req := spec430
 	req.Branch = branch
-	bench, err := workbench.Setup(t.Context(), connection.System(), clone, req)
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), req)
 	if err != nil {
 		t.Fatalf("Setup(%s) error = %v", branch, err)
 	}
