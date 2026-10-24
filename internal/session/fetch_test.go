@@ -102,7 +102,7 @@ func TestSourceOfAndALoopSetupStartedTogetherBothSucceed(t *testing.T) {
 		setup := func(i int) op {
 			req := workbench.Request{Number: 10*round + i + 1, Title: "loop"}
 			return op{name: fmt.Sprintf("Setup(#%d in %s)", req.Number, trees[i]), run: func() error {
-				_, err := workbench.Setup(t.Context(), connection.System(), trees[i], req)
+				_, err := workbench.Setup(t.Context(), connection.System(), trees[i], t.TempDir(), req)
 				return err
 			}}
 		}
@@ -137,7 +137,7 @@ func TestALoopSetupInTheBareCloneCutsAtItsBaseWhenASessionFetchesBeforeItReadsTh
 	var sourceErr error
 
 	req := workbench.Request{Number: 1, Title: "loop", Base: "release-2"}
-	bench, err := workbench.Setup(t.Context(), sessionFetchBetween{env: env, err: &sourceErr}, bare, req)
+	bench, err := workbench.Setup(t.Context(), sessionFetchBetween{env: env, err: &sourceErr}, bare, t.TempDir(), req)
 
 	if err != nil || sourceErr != nil {
 		t.Fatalf("Setup(#1 on release-2 in %s) err = %v, SourceOf() between its fetch and tip read err = %v; want nil, nil", bare, err, sourceErr)

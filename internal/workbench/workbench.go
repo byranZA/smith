@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -57,7 +59,7 @@ type Request struct {
 type Workbench struct {
 	git    Runner
 	dir    string
-	common string
+	root   string
 	branch string
 	lag    Lag
 }
@@ -82,14 +84,15 @@ type Lag struct {
 // when req names none. It refuses a work branch that is origin's default branch
 // or the base, more than one numbered branch, and one whose local and origin
 // copies have diverged or that is checked out in a worktree with uncommitted
-// changes, and never touches dir's own checkout.
-func Setup(ctx context.Context, git Runner, dir string, req Request) (Workbench, error) {
+// changes, and never touches dir's own checkout. A non-bare repo's task
+// worktrees live under state, the state home.
+func Setup(ctx context.Context, git Runner, dir, state string, req Request) (Workbench, error) {
 	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
-	common, err := w.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	root, err := w.worktreeRoot(ctx, state)
 	if err != nil {
-		return Workbench{}, fmt.Errorf("find the repo's git directory: %w", err)
+		return Workbench{}, err
 	}
-	w.common = common
+	w.root = root
 	found, err := w.find(ctx, req)
 	if err != nil {
 		return Workbench{}, err
@@ -353,10 +356,12 @@ func (w Workbench) checkout(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// tree is a worktree git registers for the repo, and the full ref of the
-// branch it has checked out, empty when none is.
+// tree is a worktree git registers for the repo, the full ref of the branch
+// it has checked out, empty when none is, and whether it is a bare repo, as
+// git marks the main one of a bare repo from any of its worktrees.
 type tree struct {
 	dir, ref string
+	bare     bool
 }
 
 // worktrees returns every worktree git registers for the repo.
@@ -373,6 +378,9 @@ func (w Workbench) worktrees(ctx context.Context) ([]tree, error) {
 		}
 		if ref, ok := strings.CutPrefix(line, "branch "); ok && len(trees) > 0 {
 			trees[len(trees)-1].ref = ref
+		}
+		if line == "bare" && len(trees) > 0 {
+			trees[len(trees)-1].bare = true
 		}
 	}
 	return trees, nil
@@ -571,13 +579,46 @@ func (w Workbench) defaultBranch(ctx context.Context) (string, error) {
 	return "", errNoDefaultBranch
 }
 
+// worktreeRoot returns the directory the repo's task worktrees live in: under
+// the git common directory when git marks the repo bare, whichever of its
+// worktrees dir is, and otherwise under state, in a directory named for the
+// checkout and its git common directory, so no checkout encloses one.
+func (w Workbench) worktreeRoot(ctx context.Context, state string) (string, error) {
+	common, err := w.run(ctx, w.dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("find the repo's git directory: %w", err)
+	}
+	trees, err := w.worktrees(ctx)
+	if err != nil {
+		return "", err
+	}
+	if trees[0].bare {
+		return filepath.Join(common, "smith", "worktrees"), nil
+	}
+	sum := sha256.Sum256([]byte(common))
+	return resolved(filepath.Join(state, "worktrees", filepath.Base(trees[0].dir)+"-"+hex.EncodeToString(sum[:4]))), nil
+}
+
+// resolved returns path with the symbolic links in its deepest existing
+// ancestor evaluated, as git records a worktree's path, creating nothing.
+func resolved(path string) string {
+	real, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return real
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path
+	}
+	return filepath.Join(resolved(parent), filepath.Base(path))
+}
+
 // executionDir returns the directory the execution's task worktrees live in,
-// under the repo's git common directory so no checkout is dirtied, at the work
-// branch's own path there. Git refuses a branch name that is not a path of
-// plain segments, or that nests in another branch, so no two work branches
-// share a directory.
+// at the work branch's own path under the repo's worktree root. Git refuses a
+// branch name that is not a path of plain segments, or that nests in another
+// branch, so no two work branches share a directory.
 func (w Workbench) executionDir() string {
-	return filepath.Join(w.common, "smith", "worktrees", filepath.FromSlash(w.branch))
+	return filepath.Join(w.root, filepath.FromSlash(w.branch))
 }
 
 // worktree returns where a new worktree cut for task lives, in the
