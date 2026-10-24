@@ -94,6 +94,15 @@ packages:
   - ripgrep
   - jq
   - postgresql-client
+  - docker.io
+  - docker-compose-v2
+
+# Groups the smith user joins, so it runs docker without sudo. A group comes
+# from a package — docker.io creates docker — and smith only ever adds
+# membership, never removes it. A session started before a group was joined
+# does not have it; see ../../workspace.md#groups.
+groups:
+  - docker
 
 # Version-pinned runtimes for the whole box. A repo can pin its own below.
 tools:

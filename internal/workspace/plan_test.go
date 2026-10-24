@@ -12,7 +12,7 @@ import (
 var resolved = staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"}
 
 func TestOrderIsTheStageOrder(t *testing.T) {
-	want := "placements,identity,packages,toolchain,repos,orphans"
+	want := "placements,identity,packages,groups,toolchain,repos,orphans"
 	got := make([]string, 0, len(Order()))
 	for _, s := range Order() {
 		got = append(got, string(s))
@@ -41,6 +41,16 @@ func TestPlan(t *testing.T) {
 			want: []Unit{{Step: Packages, Packages: []string{"ripgrep", "jq"}}, {Step: Orphans}},
 		},
 		{
+			name: "declared groups plan one groups unit after the packages",
+			b:    blueprint.Blueprint{Packages: []string{"docker.io"}, Groups: []string{"docker", "kvm"}},
+			want: []Unit{{Step: Packages, Packages: []string{"docker.io"}}, {Step: Groups, Groups: []string{"docker", "kvm"}}, {Step: Orphans}},
+		},
+		{
+			name: "an empty groups list plans no groups unit",
+			b:    blueprint.Blueprint{Groups: []string{}},
+			want: []Unit{{Step: Orphans}},
+		},
+		{
 			name: "an empty packages list plans no packages unit",
 			b:    blueprint.Blueprint{Packages: []string{}},
 			want: []Unit{{Step: Orphans}},
@@ -58,6 +68,9 @@ func TestPlan(t *testing.T) {
 				}
 				if strings.Join(unit.Packages, ",") != strings.Join(tt.want[i].Packages, ",") {
 					t.Errorf("Plan()[%d].Packages = %v, want %v", i, unit.Packages, tt.want[i].Packages)
+				}
+				if strings.Join(unit.Groups, ",") != strings.Join(tt.want[i].Groups, ",") {
+					t.Errorf("Plan()[%d].Groups = %v, want %v", i, unit.Groups, tt.want[i].Groups)
 				}
 			}
 		})

@@ -379,11 +379,25 @@ func TestResolvedReportsTheGitIdentityAndTheCollections(t *testing.T) {
 	}
 }
 
+func TestResolvedListsTheGroupsUnderTheirOwnBlockAfterThePackages(t *testing.T) {
+	t.Parallel()
+	b, err := blueprint.Parse([]byte("packages:\n  - docker.io\ngroups:\n  - docker\n"))
+	if err != nil {
+		t.Fatalf("Parse(document) err = %v, want nil", err)
+	}
+
+	got := config.Resolve(config.Overrides{}, &b, nil).String()
+
+	if want := "packages:\n  docker.io\ngroups:\n  docker\n"; !strings.Contains(got, want) {
+		t.Errorf("resolved configuration = %q, want it to contain %q", got, want)
+	}
+}
+
 func TestResolvedOmitsCollectionsNobodyDeclared(t *testing.T) {
 	t.Parallel()
 	got := config.Resolve(config.Overrides{}, nil, nil).String()
 
-	for _, unwanted := range []string{"repos", "packages", "tools", "env", "placements", "git"} {
+	for _, unwanted := range []string{"repos", "packages", "groups", "tools", "env", "placements", "git"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("resolved configuration = %q, want no empty %q section", got, unwanted)
 		}

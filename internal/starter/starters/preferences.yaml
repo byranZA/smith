@@ -6,7 +6,8 @@
 #
 # The test for whether a value belongs here: if you built a completely
 # different box tomorrow, should this value follow? Only the fixed-key fields
-# live here; repos, placements, packages, tools and env belong in a blueprint.
+# live here; repos, placements, packages, groups, tools and env belong in a
+# blueprint.
 #
 # A filled-in example is in the smith docs at docs/examples/preferences.yaml.
 
