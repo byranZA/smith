@@ -96,6 +96,7 @@ func skewLaptop(t *testing.T, ssh *skewSSH, term *scriptedTerminal, conv *conver
 	w := laptop(t, dir, &fakeSSHRelay{}, &fakeExec{}, &fakeRunner{}, &fakeRunner{})
 	w.ssh = ssh
 	w.skew = skew{term: term, converge: conv.converge}
+	w.term = term
 	return w
 }
 
@@ -337,10 +338,11 @@ func TestSkewOnAConnectingVerbDeclinedNeverConnects(t *testing.T) {
 	}
 }
 
-// TestSkewOnAConnectingVerbUnattendedNeverConnects checks the path an AFK loop
-// inherits on the verbs that would have replaced smith with ssh: nothing is
-// asked, nothing is connected, and the command to type is printed.
-func TestSkewOnAConnectingVerbUnattendedNeverConnects(t *testing.T) {
+// TestSkewOnAConnectingVerbUnattendedNeverReachesTheBox checks the path an
+// AFK loop inherits on the verbs that would have replaced smith with ssh: with
+// nobody at the terminal they refuse before the relay, so the box is never
+// asked, nothing is converged and nothing is connected.
+func TestSkewOnAConnectingVerbUnattendedNeverReachesTheBox(t *testing.T) {
 	for _, verb := range connectingVerbs {
 		t.Run(verb.name, func(t *testing.T) {
 			var order []string
@@ -349,22 +351,22 @@ func TestSkewOnAConnectingVerbUnattendedNeverConnects(t *testing.T) {
 			term := &scriptedTerminal{attended: false, order: &order}
 			w, connect := connectingLaptop(t, ssh, term, conv, &order)
 
-			_, stderr, code := runSessionOn(t, w, verb.args...)
+			_, _, code := runSessionOn(t, w, verb.args...)
 
 			if code == 0 {
-				t.Fatal("exit code = 0, want an unattended refused relay to fail")
+				t.Fatal("exit code = 0, want an unattended connecting verb to fail")
 			}
 			if term.asked {
 				t.Error("an unattended run waited for input")
 			}
-			if !strings.Contains(stderr, "smith machine upgrade dev") {
-				t.Errorf("stderr = %q, want the upgrade command for the box", stderr)
+			if len(ssh.calls) != 0 {
+				t.Errorf("ssh launched %v, want the box never reached", ssh.calls)
 			}
 			if len(conv.calls) != 0 {
 				t.Errorf("converged %v, want nothing", conv.calls)
 			}
 			if len(connect.calls) != 0 {
-				t.Errorf("exec called %v, want no terminal handed over before the skew decision", connect.calls)
+				t.Errorf("exec called %v, want no terminal handed over", connect.calls)
 			}
 		})
 	}

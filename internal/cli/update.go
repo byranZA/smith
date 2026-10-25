@@ -63,15 +63,18 @@ func systemUpdate() updateWiring {
 
 // newUpdateCmd builds `smith update`. It replaces the local binary with a
 // release (the latest, or the one --version names), switches into the new
-// binary, and that binary offers to converge every box to its version.
+// binary, and that binary offers to converge every box to its version. --yes
+// accepts that offer as --boxes does.
 func newUpdateCmd(w updateWiring) *cobra.Command {
 	var version string
 	var boxes, continuing bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update local smith to the latest release, then offer to upgrade every box",
+		Long:  help("Update local smith to the latest release, then offer to upgrade every box.", "With nobody at the terminal no box is upgraded: each box's upgrade command is printed instead, unless --boxes or --yes upgrades them all."),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			boxes = boxes || assumeYes(cmd)
 			if continuing {
 				return w.upgradeBoxes(cmd, boxes)
 			}

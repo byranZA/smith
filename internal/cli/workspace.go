@@ -122,6 +122,7 @@ func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 	return &cobra.Command{
 		Use:   "converge [<box>]",
 		Short: "Bring a box's workspace up to what its blueprint declares",
+		Long:  help("Bring a box's workspace up to what its blueprint declares.", skewHelp),
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			box, _ := leading(args, 0)
