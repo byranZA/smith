@@ -204,7 +204,7 @@ On a new repo or prompt, try one task with you watching first: `smith loop run -
 **Boxes by name.** A successful setup registers the address it proved in `~/.smith/cache/boxes.json`; `machine list`, `add` and `forget` manage it. In every verb, **the `@` decides**: a value containing `@` is an SSH target used as written, a value without one is looked up in the inventory and, on a miss, handed to `ssh` — so an `ssh_config` alias or a MagicDNS name works with no smith configuration at all.
 → [docs/inventory.md](docs/inventory.md)
 
-**The workspace.** Setup's last stage converges the box to the workspace its blueprint declares — placements, packages, the pinned toolchain, then a bare clone of every declared repo. It is a verb of its own, so you can re-converge without re-running the pipeline, and it never deletes: a step it cannot converge is reported and what the box already holds stays put.
+**The workspace.** Setup's last stage converges the box to the workspace its blueprint declares — placements, packages, the groups the smith user joins, the pinned toolchain, then a bare clone of every declared repo. It is a verb of its own, so you can re-converge without re-running the pipeline, and it never deletes: a step it cannot converge is reported and what the box already holds stays put.
 → [docs/workspace.md](docs/workspace.md)
 
 **Sessions.** Five verbs — `start`, `attach`, `list`, `stop`, `rm` — over sessions named `<repo>-<branch>`. `start` is ensure-running, `attach` is read-only to a loop-driven session unless you ask for `--interact`, and `list` is the work-state readout you check before destroying a box by hand:

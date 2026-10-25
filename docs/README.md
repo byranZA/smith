@@ -2,7 +2,7 @@
 
 Start at the repository [README](../README.md) for what smith is and a
 five-minute path from a fresh VPS to a running session. These pages carry the
-detail.
+detail. Each verb's own `--help` has examples and the exit codes it can return, and `smith help exit-codes` lists every code smith exits with.
 
 ## Getting a box running
 
@@ -16,11 +16,11 @@ detail.
 
 | page | what it covers |
 | --- | --- |
-| [Blueprints and preferences](./blueprints.md) | the config home, the split between the two files, precedence, what smith does and does not do about credentials, and what a box needs to clone a private repo and run the loop |
+| [Blueprints and preferences](./blueprints.md) | the config home, the split between the two files, precedence, the groups the smith user joins, what smith does and does not do about credentials, and what a box needs to clone a private repo and run the loop |
 | [The box inventory](./inventory.md) | the `machine` verbs that read or write it (setup naming, `list`, `add`, `rename`, `forget`), naming rules, collisions and renames, the file's schema versioning |
 | [The workspace stage](./workspace.md) | what `workspace converge` converges, the order the steps land in, and why it is that order |
 | [Sessions](./sessions.md) | the five session verbs and their flags, the three paths through `start`, the two access levels, what `rm` destroys, the pre-teardown read, worktree preparation, loop-driven sessions |
-| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, attempts and the iteration cap, stop reports and outcomes, agent failures, `--interactive`, running on a box (`--repo`, `loop run <box>`), the agent adapters, the repo file and its precedence, the prepare command, triage labels, ejecting the loop prompt |
+| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, attempts and the iteration cap, stop reports and outcomes, agent failures, `--interactive` and pairing on a task meant for a human, running on a box (`--repo`, `loop run <box>`), the agent adapters, the repo file and its precedence, presets and roles, the prepare command, triage labels, ejecting the loop prompt |
 | [smith on the box](./on-box.md) | the setup pipeline's stages, the relay, version skew and `machine upgrade`, the refusal paths, what a shell on the box gets |
 
 ## Examples
