@@ -54,7 +54,7 @@ func unavailable(task tracker.Task, labels tracker.Labels, interactive bool) str
 	case !task.Open:
 		return "is closed"
 	case task.For == tracker.Human && !interactive:
-		return "is meant for a human"
+		return "is meant for a human; pair on it with --interactive"
 	case task.For != tracker.Agent && task.For != tracker.Human:
 		return fmt.Sprintf("is not labelled %q", labels.Agent)
 	case blocked(task):

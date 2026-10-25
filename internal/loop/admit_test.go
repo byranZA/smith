@@ -15,7 +15,7 @@ func TestAdmitRefusesAnUnavailableSingleTaskNamingWhy(t *testing.T) {
 		want string
 	}{
 		"closed":          {closed(agentTask(80)), "#80 is closed"},
-		"for a human":     {humanTask(80), "#80 is meant for a human"},
+		"for a human":     {humanTask(80), "#80 is meant for a human; pair on it with --interactive"},
 		"for nobody":      {tracker.Task{Number: 80, Open: true, For: tracker.Nobody}, `#80 is not labelled "ready-for-agent"`},
 		"blocked":         {agentTask(80, tracker.Blocker{Number: 78}, tracker.Blocker{Number: 79, Open: true}), "#80 is blocked by #79"},
 		"blocked by many": {agentTask(80, tracker.Blocker{Number: 79, Open: true}, tracker.Blocker{Repo: "o/x", Number: 3, Open: true}), "#80 is blocked by #79, o/x#3"},
