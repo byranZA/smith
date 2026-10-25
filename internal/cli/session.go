@@ -311,7 +311,18 @@ func newSessionListCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [<box>]",
 		Short: "List the sessions on a box and whether they are running",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `List the sessions on a box: each one's worktree and branch, whether its tmux
+session is live, whether the worktree is dirty, and how many commits it has
+not pushed. --names prints one bare session name per line, for composing a
+"smith session rm". It exits 0 whatever it finds.
+
+` + relayedVerb + `
+
+` + exits(0, 1, 4, 5, 6),
+		Example: `  smith session list
+  smith session list --repo api --stopped
+  smith session list devbox --names`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return w.dispatch(cmd, args, sessionVerb{name: "list", local: func(_ []string, env session.Env) error {
 				filter, err := sessionFilter(repo, live, stopped)
@@ -373,7 +384,18 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start [<box>]",
 		Short: "Stand up a worktree and a tmux session for a branch",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Start a human-driven session: cut --branch from --base (else the repo's base
+in the blueprint, else its default branch) unless it exists, give it a
+worktree in the repo's workspace, prepare the worktree, and launch a tmux
+session in it. It then attaches the terminal writable; --detach returns once
+the session is live instead.
+
+` + relayedVerb + `
+
+` + exits(0, 1, 4, 5, 6),
+		Example: `  smith session start --repo api --branch feat/login
+  smith session start devbox --repo api --branch feat/login --base main --detach`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// A start that will connect hands the terminal to the box's tmux,
 			// so it travels the same way attach does; one that detaches is an
@@ -413,7 +435,17 @@ func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "attach [<box>] <name>",
 		Short: "Connect a terminal to a session, read-only to a loop-driven one unless asked to interact",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Attach the terminal to a session's tmux session. The attach mode follows the
+session's driver: a human-driven session attaches writable, a loop-driven one
+read-only, and --interact attaches writable either way. Read-only guards
+against typing into an agent's session by accident; it is not a permission.
+
+` + relayedVerb + `
+
+` + exits(0, 1, 4, 5, 6),
+		Example: `  smith session attach api-feat-login
+  smith session attach devbox api-smith-42-login --interact`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return w.dispatch(cmd, args, sessionVerb{name: "attach", takes: 1, terminal: true, connects: true, local: func(names []string, env session.Env) error {
 				mode := session.ByDriver
@@ -441,7 +473,15 @@ func newSessionStopCmd(w sessionWiring) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [<box>] <name>",
 		Short: "End a session's tmux session, keeping its worktree and branch",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `End a session's tmux session and leave its worktree and branch where they
+are. Nothing it does loses work, so it asks for no confirmation.
+
+` + relayedVerb + `
+
+` + exits(0, 1, 4, 5, 6),
+		Example: `  smith session stop api-feat-login
+  smith session stop devbox api-feat-login`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return w.dispatch(cmd, args, sessionVerb{name: "stop", takes: 1, local: func(names []string, env session.Env) error {
 				name := names[0]
@@ -476,7 +516,17 @@ func newSessionRemoveCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm [<box>] <name>...",
 		Short: "Reclaim the worktrees of one or more sessions, keeping their branches",
-		Args:  cobra.MinimumNArgs(1),
+		Long: `Remove the worktrees of the named sessions and keep their branches. A session
+whose tmux session is live or whose worktree is dirty refuses the whole batch:
+every offender is named, nothing is removed, and the --force command that
+overrides it is printed. It never prompts.
+
+` + relayedVerb + `
+
+` + exits(0, 1, 4, 5, 6),
+		Example: `  smith session rm api-feat-login
+  smith session rm devbox api-feat-login api-fix-typo --force`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return w.dispatch(cmd, args, sessionVerb{name: "rm", batch: true, local: func(names []string, env session.Env) error {
 				removed, err := session.Remove(cmd.Context(), env, names, force)

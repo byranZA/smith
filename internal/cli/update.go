@@ -70,7 +70,16 @@ func newUpdateCmd(w updateWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update local smith to the latest release, then offer to upgrade every box",
-		Args:  cobra.NoArgs,
+		Long: `Replace this smith binary with the latest release, or the one --version
+names, then offer to converge every box in the inventory to it, as
+"smith machine upgrade" does; --boxes upgrades them without asking. An update
+refused before anything was fetched or replaced exits 2, and a box that fails
+to upgrade exits 1 after the rest have been tried.
+
+` + exits(0, 1, 2),
+		Example: `  smith update
+  smith update --version 0.4.0 --boxes`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if continuing {
 				return w.upgradeBoxes(cmd, boxes)

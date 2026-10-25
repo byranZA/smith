@@ -122,7 +122,18 @@ func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 	return &cobra.Command{
 		Use:   "converge [<box>]",
 		Short: "Bring a box's workspace up to what its blueprint declares",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Read the staged blueprint and converge the box's workspace to what it
+declares: its repos, tools, env and placements, streaming each step. It is the
+last stage of "smith machine setup", and re-runs it alone. It never deletes:
+a repo the blueprint no longer declares is reported as an orphan and left
+alone, and a step that fails exits 1.
+
+` + relayedVerb + `
+
+` + exits(0, 1, 4, 5, 6),
+		Example: `  smith workspace converge
+  smith workspace converge devbox`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			box, _ := leading(args, 0)
 			target, err := relayTarget(w.home, box)

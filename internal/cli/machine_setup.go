@@ -54,7 +54,21 @@ func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup <login>@<host>",
 		Short: "Provision, secure, and make a fresh box reachable",
-		Args:  cobra.ExactArgs(1),
+		Long: `Connect to a box over its bootstrap login, run the preflight gate, then run
+the phases that leave it provisioned, secured and reachable as the smith user,
+and the stages on top: the access layer, the smith binary, the staged
+blueprint and the workspace it declares. It records what it did in the box's
+marker and registers the box in the inventory. Re-run against a box name, it
+converges the box again.
+
+A box the preflight gate rejects exits 2 with nothing changed, a box smith
+cannot connect to exits 3, and a run that stops after some phases exits 1.
+
+` + exits(0, 1, 2, 3),
+		Example: `  smith machine setup root@203.0.113.10 --blueprint personal --name dev
+  smith machine setup ubuntu@203.0.113.10 --access tailscale --tailscale-auth-key env:TS_AUTHKEY
+  smith machine setup dev`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inv, err := lookupInventory(resolve, args[0])
 			if err != nil {

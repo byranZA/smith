@@ -24,7 +24,14 @@ func newInitCmd(resolve homeResolver, git gitidentity.Runner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold the config home with starter preferences and a starter blueprint",
-		Args:  cobra.NoArgs,
+		Long: `Create the config home and write a starter preferences file and a starter
+blueprint wherever no file is already there, then name the two commands that
+take it to a built box. A file already there is left alone. The git identity
+in the starter preferences comes from the global git config.
+
+` + exits(0, 1),
+		Example: `  smith init`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			home, err := resolve()
 			if err != nil {

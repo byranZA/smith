@@ -287,7 +287,15 @@ func newLoopPromptCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "prompt",
 		Short: "Print the built-in loop prompt, to eject or diff against",
-		Args:  cobra.NoArgs,
+		Long: `Print the prompt the loop hands each task's agent, as built into smith, with
+its placeholders unfilled. It prints the built-in one even when the repo has
+its own: save the output as .smith/prompt.md to eject it, or diff a repo's
+prompt against it.
+
+` + exits(0, 1),
+		Example: `  smith loop prompt > .smith/prompt.md
+  smith loop prompt | diff - .smith/prompt.md`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), loop.BuiltinPrompt()); err != nil {
 				return fmt.Errorf("write loop prompt: %w", err)
@@ -312,7 +320,23 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [<box>] <issue>",
 		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Work an execution, a spec's tasks or a single task, handing each available
+task to a coding agent in its own task worktree. Each closed task is merged
+into the execution's work branch, which is pushed to origin; the checkout it
+runs from is never touched. --interactive hands the next task alone to an
+agent attached to this terminal. It exits 0 only when the execution is
+complete, or the interactive run's task was closed.
+
+On a box, --repo starts the run as a loop-driven session in that repo and
+returns once it is live. A leading box relays the run over ssh to the smith
+installed on that box, which exits with its own code; a box running another
+version of smith refuses the relay and exits 6.
+
+` + exits(0, 1, 6),
+		Example: `  smith loop run 42
+  smith loop run 42 --interactive
+  smith loop run devbox 42 --repo api`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			box, args := leading(args, 1)
 			ref, err := tracker.ParseRef(args[0])
@@ -548,7 +572,14 @@ func newLoopListCmd(w loopWiring) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list <issue>",
 		Short: "Show the next task the loop would run, and what remains",
-		Args:  cobra.ExactArgs(1),
+		Long: `Read a spec or a single task from the tracker and print the loop settings in
+force, the next task "smith loop run" would hand an agent, and what remains of
+the execution. It changes nothing, and exits 0 once the issue is read, whatever
+it holds.
+
+` + exits(0, 1),
+		Example: `  smith loop list 42`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := tracker.ParseRef(args[0])
 			if err != nil {

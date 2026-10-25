@@ -66,7 +66,15 @@ func newCreateCmd(resolve homeResolver, runner provider.Runner, dialer connectio
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a box at the provider the adapter describes",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a box at a provider by running the create template of a provider
+adapter through the provider's own CLI, then wait until the box's ssh port
+answers. It stops once the box exists: nothing is written to the box, and it
+prints the "smith machine setup" line to run next.
+
+` + exits(0, 1),
+		Example: `  smith machine create dev --blueprint personal
+  smith machine create dev`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolve()
 			if err != nil {
@@ -205,7 +213,15 @@ func newListCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the boxes smith knows how to reach",
-		Args:  cobra.NoArgs,
+		Long: `List the boxes in the box inventory, sorted by name. It is offline: no box is
+connected to unless --probe asks smith to try every box and report whether it
+answers. A box that does not answer is shown, never pruned, and does not fail
+the command.
+
+` + exits(0, 1),
+		Example: `  smith machine list
+  smith machine list --probe`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolve()
 			if err != nil {
@@ -264,7 +280,18 @@ func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status <name-or-target>",
 		Short: "Report how a box has drifted from what setup established",
-		Args:  cobra.ExactArgs(1),
+		Long: `Connect to a box, read its live facts, and report how they have drifted from
+what its marker says setup established. It changes nothing on the box. The
+argument is a box name from the inventory or a raw ssh target: one with an "@"
+is used as it is.
+
+The exit code is the verdict: 0 the box matches, 1 it has drifted, 2 it was
+never set up or its setup is partial, 3 smith could not connect to it.
+
+` + exits(0, 1, 2, 3),
+		Example: `  smith machine status dev
+  smith machine status smith@203.0.113.10`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inv, err := lookupInventory(resolve, args[0])
 			if err != nil {
@@ -388,7 +415,16 @@ func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <target>",
 		Short: "Register a box smith already provisioned",
-		Args:  cobra.ExactArgs(1),
+		Long: `Register a box smith already set up in the box inventory, so it can be named
+instead of addressed: the way back from a lost inventory, and the way a second
+machine learns a box the first one set up. smith connects, reads the box's
+marker and writes nothing to the box. A box with no marker was never set up by
+smith and is refused (2), as is a box smith cannot connect to (3).
+
+` + exits(0, 1, 2, 3),
+		Example: `  smith machine add smith@203.0.113.10
+  smith machine add smith@203.0.113.10 --name dev`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
 			ctx := cmd.Context()
@@ -543,7 +579,13 @@ func newForgetCmd(resolve homeResolver) *cobra.Command {
 	return &cobra.Command{
 		Use:   "forget <name>",
 		Short: "Remove a box from the inventory, leaving the box itself alone",
-		Args:  cobra.ExactArgs(1),
+		Long: `Remove one box from the box inventory. No connection is opened and the box
+keeps running; "smith machine add" registers it again. A name no box is
+registered under is refused.
+
+` + exits(0, 1),
+		Example: `  smith machine forget dev`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolve()
 			if err != nil {
