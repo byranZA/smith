@@ -1,15 +1,42 @@
 # The repo file: the loop settings everyone running `smith loop` on this repo
 # shares. Commit it. A setting left commented out uses smith's built-in
-# default, and a flag on `smith loop run` overrides any setting for one run
-# without editing this file.
+# default. For one run, `smith loop run --preset` picks another preset,
+# `--agent` builds a one-off one, `--model` and `--effort` change the preset's
+# model and effort, and `--no-push` turns pushing off, without editing this
+# file.
 
-# The coding agent the loop hands each task to: claude (the default), codex or pi.
-agent: claude
+# The agent settings this repo runs on, each a named preset: the coding agent
+# (claude, codex or pi), the model it runs, passed to it verbatim, and how hard
+# it thinks (low, medium or high). A preset that leaves out its model or effort
+# leaves it to the agent's own default. Name presets as you like, in lowercase
+# letters, digits and hyphens, and define as many as you need.
+presets:
+  claude:
+    agent: claude
+    model: sonnet
+    effort: medium
 
-# The model the agent runs, passed to it verbatim. Unset, the agent uses its
-# own default.
-model: opus
+# The preset each role runs on. work, the only role, works each task, attached
+# or not. Unset, it runs claude with the agent's own model and effort.
+roles:
+  work: claude
 
-# How hard the agent thinks: low, medium or high. Unset, the agent uses its
-# own default.
-effort: medium
+# Whether the loop pushes the work branch to origin, under its own name, after
+# each task it lands. Unset, it pushes; `smith loop run --no-push` turns it off
+# for one run.
+push: true
+
+# The command that prepares a worktree of this repo, run with `sh -c` in the
+# worktree under the toolchain its mise config pins. It must be safe to re-run.
+# Unset, no command runs.
+# prepare: uv sync
+
+# The tracker's triage labels: the one that marks a task for an agent, the one
+# that marks it for a human (where a task the loop skips goes), and the one
+# that marks a spec not yet split into tasks. Set only those this repo names
+# differently; the rest keep the defaults shown. `smith loop run` warns of any
+# label set here that the repo does not have.
+# labels:
+#   agent: ready-for-agent
+#   human: ready-for-human
+#   spec: spec
