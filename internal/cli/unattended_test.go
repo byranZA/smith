@@ -13,9 +13,7 @@ import (
 	"github.com/byranZA/smith/internal/agent"
 )
 
-// forbidden stands in for every boundary a refused verb must not reach — ssh,
-// git, tmux and the exec that hands the terminal over — and fails the test the
-// moment one is.
+// forbidden is every boundary a refused verb must not reach, failing the test when one is.
 type forbidden struct {
 	t *testing.T
 }
@@ -32,8 +30,7 @@ func (f forbidden) Exec(name string, args []string) error {
 	return nil
 }
 
-// unattendedLaptop assembles the session command on the operator's machine
-// with nobody at the terminal and every boundary forbidden.
+// unattendedLaptop is the operator's machine with nobody at the terminal and every boundary forbidden.
 func unattendedLaptop(t *testing.T) sessionWiring {
 	t.Helper()
 	dir := t.TempDir()
@@ -45,6 +42,7 @@ func unattendedLaptop(t *testing.T) sessionWiring {
 }
 
 func TestSessionAttachUnattendedRefusesBeforeConnecting(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		args []string
@@ -55,6 +53,7 @@ func TestSessionAttachUnattendedRefusesBeforeConnecting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, stderr, code := runSessionOn(t, unattendedLaptop(t), tt.args...)
 
 			if code != 1 {
@@ -68,6 +67,7 @@ func TestSessionAttachUnattendedRefusesBeforeConnecting(t *testing.T) {
 }
 
 func TestSessionStartUnattendedRefusesNamingTheDetachedStart(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		args []string
@@ -78,6 +78,7 @@ func TestSessionStartUnattendedRefusesNamingTheDetachedStart(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, stderr, code := runSessionOn(t, unattendedLaptop(t), tt.args...)
 
 			if code != 1 {
@@ -91,6 +92,7 @@ func TestSessionStartUnattendedRefusesNamingTheDetachedStart(t *testing.T) {
 }
 
 func TestSessionStartDetachedUnattendedStandsTheSessionUp(t *testing.T) {
+	t.Parallel()
 	workspace := t.TempDir()
 	writeBareRepo(t, workspace, "smith")
 	w := onBoxWiring(t, resolvedBox(workspace, "smith"), &fakeTmux{}, forbidden{t})
@@ -113,6 +115,7 @@ func (f forbidden) Launch(_ context.Context, cmd agent.Command) error {
 }
 
 func TestLoopRunInteractiveUnattendedRefusesBeforeAnything(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		args []string
@@ -123,6 +126,7 @@ func TestLoopRunInteractiveUnattendedRefusesBeforeAnything(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			w := laptopLoop(t, forbidden{t}, nil)
 			w.gh, w.launcher, w.git = forbidden{t}, forbidden{t}, forbidden{t}
 			w.workdir = func() (string, error) { return t.TempDir(), nil }
@@ -140,8 +144,7 @@ func TestLoopRunInteractiveUnattendedRefusesBeforeAnything(t *testing.T) {
 	}
 }
 
-// underRootWith runs cmd beneath a root carrying the flags every verb inherits
-// from smith's own root, with args, as the operator types them.
+// underRootWith runs cmd with args beneath a root carrying smith's inherited --yes.
 func underRootWith(t *testing.T, cmd *cobra.Command, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	root := &cobra.Command{Use: "smith", SilenceUsage: true, SilenceErrors: true}
@@ -156,8 +159,10 @@ func underRootWith(t *testing.T, cmd *cobra.Command, args ...string) (stdout, st
 }
 
 func TestSkewWithYesConvergesAndRerunsWithoutAsking(t *testing.T) {
+	t.Parallel()
 	for _, attended := range []bool{true, false} {
 		t.Run(fmt.Sprintf("attended=%v", attended), func(t *testing.T) {
+			t.Parallel()
 			ssh := &skewSSH{refuse: true, stdout: "smith-main  live  -  0\n"}
 			conv := &convergeRecorder{ssh: ssh}
 			term := &scriptedTerminal{attended: attended, answer: "n"}
@@ -181,6 +186,7 @@ func TestSkewWithYesConvergesAndRerunsWithoutAsking(t *testing.T) {
 }
 
 func TestRelayedVerbWithYesLeavesItOffTheBoxCommandLine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":1,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
 	ssh := &fakeSSHRelay{stdout: "smith-main\n"}
@@ -197,6 +203,7 @@ func TestRelayedVerbWithYesLeavesItOffTheBoxCommandLine(t *testing.T) {
 }
 
 func TestSmithAcceptsYesOnARelayedCommandLine(t *testing.T) {
+	t.Parallel()
 	root := newRootCmd()
 	root.SetArgs([]string{"--relayed-from", resolveVersion(), "--relayed-box", "dev", "--yes", "version"})
 	var out, errBuf bytes.Buffer
@@ -209,6 +216,7 @@ func TestSmithAcceptsYesOnARelayedCommandLine(t *testing.T) {
 }
 
 func TestHelpSaysWhatEachAffectedVerbDoesWithNobodyAtTheTerminal(t *testing.T) {
+	t.Parallel()
 	for _, path := range [][]string{
 		{"session", "attach"},
 		{"session", "start"},
@@ -220,6 +228,7 @@ func TestHelpSaysWhatEachAffectedVerbDoesWithNobodyAtTheTerminal(t *testing.T) {
 		{"update"},
 	} {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			t.Parallel()
 			found, _, err := newRootCmd().Find(path)
 			if err != nil {
 				t.Fatalf("Find(%v) err = %v", path, err)

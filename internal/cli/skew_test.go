@@ -338,10 +338,6 @@ func TestSkewOnAConnectingVerbDeclinedNeverConnects(t *testing.T) {
 	}
 }
 
-// TestSkewOnAConnectingVerbUnattendedNeverReachesTheBox checks the path an
-// AFK loop inherits on the verbs that would have replaced smith with ssh: with
-// nobody at the terminal they refuse before the relay, so the box is never
-// asked, nothing is converged and nothing is connected.
 func TestSkewOnAConnectingVerbUnattendedNeverReachesTheBox(t *testing.T) {
 	for _, verb := range connectingVerbs {
 		t.Run(verb.name, func(t *testing.T) {

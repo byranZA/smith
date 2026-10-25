@@ -62,9 +62,9 @@ func systemUpdate() updateWiring {
 }
 
 // newUpdateCmd builds `smith update`. It replaces the local binary with a
-// release (the latest, or the one --version names), switches into the new
-// binary, and that binary offers to converge every box to its version. --yes
-// accepts that offer as --boxes does.
+// release (the latest, or the one --version names) and switches into it, which
+// offers to converge every box to its version, an offer --boxes or --yes
+// accepts.
 func newUpdateCmd(w updateWiring) *cobra.Command {
 	var version string
 	var boxes, continuing bool
