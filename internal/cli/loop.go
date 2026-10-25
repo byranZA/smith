@@ -17,6 +17,7 @@ import (
 	"github.com/byranZA/smith/internal/prepare"
 	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
+	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
@@ -49,6 +50,7 @@ type loopWiring struct {
 	ssh      connection.Exec
 	version  string
 	skew     skew
+	term     terminal
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
@@ -76,6 +78,7 @@ func systemLoop() loopWiring {
 		ssh:      connection.System(),
 		version:  resolveVersion(),
 		skew:     operatorSkew(),
+		term:     secret.NewStdTerminal(),
 	}
 }
 
@@ -303,7 +306,8 @@ func newLoopPromptCmd() *cobra.Command {
 // on the execution's work branch, never in the checkout smith is run from. It
 // exits 0 only when the execution is complete or the interactive run's task
 // was closed. On a box, --repo starts the run in a loop-driven session instead
-// and returns once it is live; a leading box relays the run to that box.
+// and returns once it is live; a leading box relays the run to that box. An
+// --interactive run with nobody at the terminal refuses before anything else.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags loop.Flags
@@ -312,9 +316,13 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [<box>] <issue>",
 		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
+		Long:  help("Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own.", "With nobody at the terminal, --interactive refuses at once, naming the run without it.", skewHelp),
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			box, args := leading(args, 1)
+			if interactive && !attended(w.term) {
+				return refuseUnattended(cmd, "loop run --interactive", attachedInstead(cmd, box, args))
+			}
 			ref, err := tracker.ParseRef(args[0])
 			if err != nil {
 				return reportInvalid(cmd, err)

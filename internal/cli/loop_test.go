@@ -111,6 +111,9 @@ func inRepo(t *testing.T, w loopWiring) loopWiring {
 	if w.bench == nil {
 		w.bench = fakeBench
 	}
+	if w.term == nil {
+		w.term = &scriptedTerminal{attended: true}
+	}
 	return w
 }
 

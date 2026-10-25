@@ -87,8 +87,12 @@ func codeFromError(err error) int {
 // silenced so the cli owns all user-facing output and exit codes.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "smith",
-		Short:         "Provision a fresh VPS and run coding agents on it",
+		Use:   "smith",
+		Short: "Provision a fresh VPS and run coding agents on it",
+		Long: help("Provision a fresh VPS and run coding agents on it.",
+			"With nobody at the terminal smith never waits on a [y/N] question: it takes the answer that changes nothing and prints the command that would.",
+			"--yes answers every such question yes, attended or not.",
+			"It never answers a secret prompt, and a verb that hands the terminal over still refuses with nobody at one."),
 		Version:       resolveVersion(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -109,6 +113,7 @@ func newRootCmd() *cobra.Command {
 	if err := root.PersistentFlags().MarkHidden(relayedBoxFlag); err != nil {
 		panic(fmt.Sprintf("hide --%s: %v", relayedBoxFlag, err))
 	}
+	addYesFlag(root)
 	// Every verb inherits the check, before any of them run: a command line
 	// this smith may not mean the same thing by is refused rather than
 	// half-understood.
@@ -126,6 +131,7 @@ func newRootCmd() *cobra.Command {
 		mise:    connection.System(),
 		version: resolveVersion(),
 		skew:    operatorSkew(),
+		term:    secret.NewStdTerminal(),
 	}), newWorkspaceCmd(workspaceWiring{
 		blueprint:  stagedBlueprint,
 		resolution: stagedResolution,

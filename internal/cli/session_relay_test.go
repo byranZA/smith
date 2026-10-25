@@ -94,6 +94,7 @@ func laptop(t *testing.T, dir string, ssh *fakeSSHRelay, execer *fakeExec, git, 
 		ssh:     ssh,
 		mise:    &fakeRunner{},
 		version: "0.2.0",
+		term:    &scriptedTerminal{attended: true},
 	}
 }
 
@@ -306,5 +307,6 @@ func onBox(t *testing.T, resolve boxResolver, root string, git, tmux session.Run
 		ssh:     neverSSH{t: t},
 		mise:    &fakeRunner{},
 		version: "0.2.0",
+		term:    &scriptedTerminal{attended: true},
 	}
 }
