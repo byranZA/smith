@@ -45,6 +45,21 @@ func TestAgentsNamesTheAgentsARunHandsTasksTo(t *testing.T) {
 	}
 }
 
+func TestAgentsInteractiveOnANamedHumanTaskNamesItsAgent(t *testing.T) {
+	choice, err := preset.Choose(presetFile, preset.Flags{})
+	if err != nil {
+		t.Fatalf("Choose(preset file) error = %v", err)
+	}
+	task := labelled(80, "codex")
+	task.For = tracker.Human
+
+	got, err := loop.Agents(choice, tracker.Execution{Number: 80, Single: true, Tasks: []tracker.Task{task}}, true)
+
+	if want := []string{"codex"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("Agents(#80, interactive) = %v, %v; want %v", got, err, want)
+	}
+}
+
 func TestAgentsRefusesATaskWhosePresetDoesNotResolve(t *testing.T) {
 	choice, err := preset.Choose(presetFile, preset.Flags{})
 	if err != nil {
