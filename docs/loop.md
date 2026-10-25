@@ -114,6 +114,8 @@ Naming a task meant for a human on its own, `loop run --interactive <task>` pair
 
 Use it for the first run on a new repo or prompt, for a task you want to steer, or to pair on a task meant for a human.
 
+With no terminal attached, `--interactive` refuses at once and exits 1, before it reads the tracker or launches an agent, and names the same run without `--interactive`.
+
 ### On a box: `--repo`
 
 On a box, `smith loop run <issue> --repo <name>` runs the loop in a **loop-driven session** instead of in your terminal, so the run outlives your SSH connection ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). `<name>` is a repo the box's blueprint declares. It works in four steps:

@@ -17,6 +17,7 @@ import (
 	"github.com/byranZA/smith/internal/prepare"
 	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
+	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/session"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
@@ -49,6 +50,7 @@ type loopWiring struct {
 	ssh      connection.Exec
 	version  string
 	skew     skew
+	term     terminal
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
@@ -76,6 +78,7 @@ func systemLoop() loopWiring {
 		ssh:      connection.System(),
 		version:  resolveVersion(),
 		skew:     operatorSkew(),
+		term:     secret.NewStdTerminal(),
 	}
 }
 
@@ -311,7 +314,8 @@ prompt against it.
 // on the execution's work branch, never in the checkout smith is run from. It
 // exits 0 only when the execution is complete or the interactive run's task
 // was closed. On a box, --repo starts the run in a loop-driven session instead
-// and returns once it is live; a leading box relays the run to that box.
+// and returns once it is live; a leading box relays the run to that box. An
+// --interactive run with nobody at the terminal refuses before anything else.
 func newLoopRunCmd(w loopWiring) *cobra.Command {
 	limits := loop.DefaultLimits()
 	var flags loop.Flags
@@ -320,7 +324,7 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [<box>] <issue>",
 		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
-		Long: `Work an execution, a spec's tasks or a single task, handing each available
+		Long: help(`Work an execution, a spec's tasks or a single task, handing each available
 task to a coding agent in its own task worktree, so no agent works in the
 checkout the loop runs from. Each closed task is merged into the execution's
 work branch, which is pushed to origin. A clean checkout that has the work
@@ -334,15 +338,17 @@ returns once the session is live: exit 0 then means the session started, not
 that any task was worked. A leading box relays the run over ssh to the smith
 installed on that box, which exits with its own code, so a relayed run that
 starts its session exits 0 the same way. A box running another version of
-smith refuses the relay and exits 6.
-
-` + exits(0, 1, 6),
+smith refuses the relay, which exits 6 unless the box is converged and the run
+started again.`, "With nobody at the terminal, --interactive refuses at once, naming the run without it.", skewHelp) + "\n\n" + exits(0, 1, 6),
 		Example: `  smith loop run 42
   smith loop run 42 --interactive
   smith loop run devbox 42 --repo api`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			box, args := leading(args, 1)
+			if interactive && !attended(w.term) {
+				return refuseUnattended(cmd, "loop run --interactive", attachedInstead(cmd, box, args))
+			}
 			ref, err := tracker.ParseRef(args[0])
 			if err != nil {
 				return reportInvalid(cmd, err)

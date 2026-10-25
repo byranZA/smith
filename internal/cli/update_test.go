@@ -183,13 +183,7 @@ func (r *updateRig) run(t *testing.T, args ...string) (stdout, stderr string, co
 		home:     resolve,
 		converge: convergeNamedBox(resolve, r.ssh),
 	})
-	cmd.SetArgs(args)
-	var out, errBuf bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&errBuf)
-	cmd.SilenceUsage, cmd.SilenceErrors = true, true
-	code = codeFromError(cmd.Execute())
-	return out.String(), errBuf.String(), code
+	return underRootWith(t, cmd, append([]string{"update"}, args...)...)
 }
 
 func TestUpdateRefusesOnWindowsBeforeAnyDownload(t *testing.T) {
@@ -250,6 +244,43 @@ func TestUpdateBehindTheLatestReleaseReplacesTheBinaryAndSwitchesIntoItForTheBox
 	want := []string{rig.binary, "update", "--" + selfupdate.ContinueFlag, "--boxes"}
 	if !rig.switched.called || rig.switched.path != rig.binary || strings.Join(rig.switched.args, " ") != strings.Join(want, " ") {
 		t.Errorf("switched to %q with %q, want %q with %q", rig.switched.path, rig.switched.args, rig.binary, want)
+	}
+}
+
+func TestUpdateWithYesSwitchesIntoTheNewBinaryUpgradingEveryBox(t *testing.T) {
+	t.Parallel()
+	rig := newUpdateRig(t)
+
+	_, stderr, code := rig.run(t, "--yes")
+
+	if code != 0 {
+		t.Fatalf("update --yes exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := []string{rig.binary, "update", "--" + selfupdate.ContinueFlag, "--boxes"}
+	if strings.Join(rig.switched.args, " ") != strings.Join(want, " ") {
+		t.Errorf("update --yes switched with %q, want %q", rig.switched.args, want)
+	}
+}
+
+func TestUpdateContinuingWithYesUpgradesEveryBoxWithoutAsking(t *testing.T) {
+	t.Parallel()
+	rig := newUpdateRig(t)
+	rig.term = &scriptedTerminal{attended: true, answer: "n"}
+	rig.withBoxes(t, "alpha", "beta")
+	rig.afterSwitch("")
+
+	stdout, stderr, code := rig.run(t, "--"+selfupdate.ContinueFlag, "--yes")
+
+	if code != 0 {
+		t.Fatalf("update --yes exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if rig.term.asked {
+		t.Errorf("update --yes asked %q, want no question", rig.term.question)
+	}
+	for _, box := range []string{"alpha", "beta"} {
+		if want := "box " + box + ": upgraded 0.2.0 → 0.3.0"; !strings.Contains(stdout, want) {
+			t.Errorf("update --yes stdout = %q, want it to contain %q", stdout, want)
+		}
 	}
 }
 

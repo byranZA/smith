@@ -199,6 +199,8 @@ converge the box first:
 
 That is the path an AFK loop inherits, and it never blocks.
 
+`--yes`, which every verb takes, answers the question yes before it is asked, attended or not: the box is converged and the original command runs, and nothing is read from the terminal. It is local smith's alone and never travels to the box. It never answers a secret prompt.
+
 ### A box with no smith on it
 
 Every box provisioned before smith installed itself is in this state. A relay to

@@ -62,25 +62,25 @@ func systemUpdate() updateWiring {
 }
 
 // newUpdateCmd builds `smith update`. It replaces the local binary with a
-// release (the latest, or the one --version names), switches into the new
-// binary, and that binary offers to converge every box to its version.
+// release (the latest, or the one --version names) and switches into it, which
+// offers to converge every box to its version, an offer --boxes or --yes
+// accepts.
 func newUpdateCmd(w updateWiring) *cobra.Command {
 	var version string
 	var boxes, continuing bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update local smith to the latest release, then offer to upgrade every box",
-		Long: `Replace this smith binary with the latest release, or the one --version
+		Long: help(`Replace this smith binary with the latest release, or the one --version
 names, then offer to converge every box in the inventory to it, as
 "smith machine upgrade" does; --boxes upgrades them without asking. An update
 refused before anything was fetched or replaced exits 2, and a box that fails
-to upgrade exits 1 after the rest have been tried.
-
-` + exits(0, 1, 2),
+to upgrade exits 1 after the rest have been tried.`, "With nobody at the terminal no box is upgraded: each box's upgrade command is printed instead, unless --boxes or --yes upgrades them all.") + "\n\n" + exits(0, 1, 2),
 		Example: `  smith update
   smith update --version 0.4.0 --boxes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			boxes = boxes || assumeYes(cmd)
 			if continuing {
 				return w.upgradeBoxes(cmd, boxes)
 			}

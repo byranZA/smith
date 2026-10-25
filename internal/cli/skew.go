@@ -46,7 +46,8 @@ type skew struct {
 // offered a fix for. A verb that succeeded, or failed any other way, travels
 // out untouched; a version-skew refusal is put to the terminal, and answering
 // yes converges the box and runs the verb again, because a prompt that only
-// prints a suggestion is a slower way to print a suggestion.
+// prints a suggestion is a slower way to print a suggestion. --yes is that
+// answer given up front, attended or not.
 //
 // Whether a human is there is settled before the verb travels, on this
 // machine's own streams. The check is local smith's, not the box's: it is
@@ -64,10 +65,7 @@ func (s skew) react(cmd *cobra.Command, box string, run func() error) error {
 	if !errors.As(err, &mismatch) {
 		return err
 	}
-	if !attended {
-		return refuseSkew(cmd, box)
-	}
-	accepted, askErr := s.ask(box, mismatch)
+	accepted, askErr := s.answer(cmd, attended, box, mismatch)
 	if askErr != nil {
 		return askErr
 	}
@@ -82,6 +80,19 @@ func (s skew) react(cmd *cobra.Command, box string, run func() error) error {
 		return fmt.Errorf("write upgrade report: %w", err)
 	}
 	return run()
+}
+
+// answer reports whether the operator accepts converging box: yes when they
+// answered every question up front with --yes, no when nobody is there to ask,
+// and otherwise what they answer when asked.
+func (s skew) answer(cmd *cobra.Command, attended bool, box string, mismatch *relay.MismatchError) (bool, error) {
+	if assumeYes(cmd) {
+		return true, nil
+	}
+	if !attended {
+		return false, nil
+	}
+	return s.ask(box, mismatch)
 }
 
 // ask puts the convergence to the operator and reports whether they accepted.

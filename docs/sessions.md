@@ -197,6 +197,8 @@ smith `exec`s into `tmux`, so `attach` never returns: what you are talking to
 afterwards is `tmux` itself, with correct resize and signal handling and no
 smith process in the middle copying bytes.
 
+With no terminal attached (stdin and stdout must both be one), `attach` and a `start` without `--detach` refuse at once and exit 1, before they reach the box or `tmux`. `attach` names `smith session list` instead, and `start` names the same start with `--detach`, each spelled for where you ran it. `--yes` does not change this: it answers questions, and cannot conjure a terminal.
+
 Attaching to a stopped session says how to resume it, rather than resuming it
 for you:
 

@@ -57,7 +57,8 @@ const relayedVerb = `A leading box relays the verb over ssh to the smith install
 which runs it there and exits with its own code; with no box it runs on this
 machine. Either way it reads the blueprint staged where it runs: none staged
 exits 4, one that cannot be trusted exits 5. A box running another version of
-smith refuses the relay and exits 6.`
+smith refuses the relay, which exits 6 unless the box is converged and the verb
+run again.`
 
 // exits renders the last line of a verb's Long: the codes it can return, and a
 // pointer to the topic that says what they mean.

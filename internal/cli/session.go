@@ -110,6 +110,10 @@ type sessionWiring struct {
 	// skew is what a verb the box refused for version skew is reacted to
 	// through: the operator's terminal, and the convergence it may accept.
 	skew skew
+	// term is the operator's own terminal, which a verb handing it over
+	// checks is attended before it reaches anything. None is an unattended
+	// run.
+	term terminal
 }
 
 // leading splits a verb's positional arguments into the box it names and the
@@ -233,6 +237,10 @@ type sessionVerb struct {
 	// connects marks a verb handing that terminal over on this invocation, so
 	// it travels by replacing smith with ssh rather than by streaming.
 	connects bool
+	// instead renders, for a connecting verb, the command a caller with no
+	// terminal runs in its place, spelled for inv with the verb's own
+	// arguments.
+	instead func(inv hint.Invocation, args []string) string
 	// local is what the verb does when it runs on this machine: the arguments
 	// left after the box was taken off the front, against the box the
 	// blueprint staged here describes.
@@ -244,7 +252,9 @@ type sessionVerb struct {
 // line the operator typed to the smith installed there; no box named runs the
 // verb here, against the blueprint staged on this machine. A verb handing the
 // terminal over replaces smith with ssh, and every other one streams the box's
-// output back and carries its exit out.
+// output back and carries its exit out. With nobody at the terminal, a verb
+// handing it over refuses before it reaches anything, naming the command to
+// run instead.
 //
 // Either way the verb travels inside the version-skew reaction, so a box that
 // refuses the relay leaves the operator with the same offer whichever verb
@@ -253,6 +263,10 @@ func (w sessionWiring) dispatch(cmd *cobra.Command, args []string, v sessionVerb
 	box, rest, err := w.splitBox(args, v)
 	if err != nil {
 		return reportInvalid(cmd, err)
+	}
+	if v.connects && !attended(w.term) {
+		spelled := typed(cmd, rest)
+		return refuseUnattended(cmd, "session "+v.name, v.instead(relayedOr(invocation(cmd, "session "+v.name, spelled), box), spelled))
 	}
 	verb, err := w.verb(cmd, v.name, box, rest...)
 	if err != nil {
@@ -311,14 +325,12 @@ func newSessionListCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [<box>]",
 		Short: "List the sessions on a box and whether they are running",
-		Long: `List the sessions on a box: each one's worktree and branch, whether its tmux
+		Long: help(`List the sessions on a box: each one's worktree and branch, whether its tmux
 session is live, whether the worktree is dirty, and how many commits it has
 not pushed. --names prints one bare session name per line, for composing a
 "smith session rm". It exits 0 whatever it finds.
 
-` + relayedVerb + `
-
-` + exits(0, 1, 4, 5, 6),
+`+relayedVerb, skewHelp) + "\n\n" + exits(0, 1, 4, 5, 6),
 		Example: `  smith session list
   smith session list --repo api --stopped
   smith session list devbox --names`,
@@ -384,15 +396,13 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start [<box>]",
 		Short: "Stand up a worktree and a tmux session for a branch",
-		Long: `Start a human-driven session: cut --branch from --base (else the repo's base
+		Long: help(`Start a human-driven session: cut --branch from --base (else the repo's base
 in the blueprint, else its default branch) unless it exists, give it a
 worktree in the repo's workspace, prepare the worktree, and launch a tmux
 session in it. It then attaches the terminal writable; --detach returns once
 the session is live instead.
 
-` + relayedVerb + `
-
-` + exits(0, 1, 4, 5, 6),
+`+relayedVerb, handsOverHelp+" --detach needs no terminal.", skewHelp) + "\n\n" + exits(0, 1, 4, 5, 6),
 		Example: `  smith session start --repo api --branch feat/login
   smith session start devbox --repo api --branch feat/login --base main --detach`,
 		Args: cobra.MaximumNArgs(1),
@@ -400,7 +410,7 @@ the session is live instead.
 			// A start that will connect hands the terminal to the box's tmux,
 			// so it travels the same way attach does; one that detaches is an
 			// ordinary command whose report the operator reads.
-			return w.dispatch(cmd, args, sessionVerb{name: "start", terminal: true, connects: !detach, local: func(_ []string, env session.Env) error {
+			return w.dispatch(cmd, args, sessionVerb{name: "start", terminal: true, connects: !detach, instead: detachInstead, local: func(_ []string, env session.Env) error {
 				if repo == "" || branch == "" {
 					return reportInvalid(cmd, errors.New("session start needs --repo naming a declared repo and --branch naming the branch to work on"))
 				}
@@ -435,19 +445,17 @@ func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "attach [<box>] <name>",
 		Short: "Connect a terminal to a session, read-only to a loop-driven one unless asked to interact",
-		Long: `Attach the terminal to a session's tmux session. The attach mode follows the
+		Long: help(`Attach the terminal to a session's tmux session. The attach mode follows the
 session's driver: a human-driven session attaches writable, a loop-driven one
 read-only, and --interact attaches writable either way. Read-only guards
 against typing into an agent's session by accident; it is not a permission.
 
-` + relayedVerb + `
-
-` + exits(0, 1, 4, 5, 6),
+`+relayedVerb, handsOverHelp) + "\n\n" + exits(0, 1, 4, 5, 6),
 		Example: `  smith session attach api-feat-login
   smith session attach devbox api-smith-42-login --interact`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return w.dispatch(cmd, args, sessionVerb{name: "attach", takes: 1, terminal: true, connects: true, local: func(names []string, env session.Env) error {
+			return w.dispatch(cmd, args, sessionVerb{name: "attach", takes: 1, terminal: true, connects: true, instead: listInstead, local: func(names []string, env session.Env) error {
 				mode := session.ByDriver
 				if interact {
 					mode = session.Interact
@@ -473,12 +481,10 @@ func newSessionStopCmd(w sessionWiring) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [<box>] <name>",
 		Short: "End a session's tmux session, keeping its worktree and branch",
-		Long: `End a session's tmux session and leave its worktree and branch where they
+		Long: help(`End a session's tmux session and leave its worktree and branch where they
 are. Nothing it does loses work, so it asks for no confirmation.
 
-` + relayedVerb + `
-
-` + exits(0, 1, 4, 5, 6),
+`+relayedVerb, skewHelp) + "\n\n" + exits(0, 1, 4, 5, 6),
 		Example: `  smith session stop api-feat-login
   smith session stop devbox api-feat-login`,
 		Args: cobra.RangeArgs(1, 2),
@@ -516,14 +522,12 @@ func newSessionRemoveCmd(w sessionWiring) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm [<box>] <name>...",
 		Short: "Reclaim the worktrees of one or more sessions, keeping their branches",
-		Long: `Remove the worktrees of the named sessions and keep their branches. A session
+		Long: help(`Remove the worktrees of the named sessions and keep their branches. A session
 whose tmux session is live or whose worktree is dirty refuses the whole batch:
 every offender is named, nothing is removed, and the --force command that
 overrides it is printed. It never prompts.
 
-` + relayedVerb + `
-
-` + exits(0, 1, 4, 5, 6),
+`+relayedVerb, skewHelp) + "\n\n" + exits(0, 1, 4, 5, 6),
 		Example: `  smith session rm api-feat-login
   smith session rm devbox api-feat-login api-fix-typo --force`,
 		Args: cobra.MinimumNArgs(1),
