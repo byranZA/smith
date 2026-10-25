@@ -1,8 +1,9 @@
 # The repo file: the loop settings everyone running `smith loop` on this repo
 # shares. Commit it. A setting left commented out uses smith's built-in
-# default. For one run, `smith loop run --agent`, `--model` and `--effort`
-# change the work role's preset and `--no-push` turns pushing off, without
-# editing this file.
+# default. For one run, `smith loop run --preset` picks another preset,
+# `--agent` builds a one-off one, `--model` and `--effort` change the preset's
+# model and effort, and `--no-push` turns pushing off, without editing this
+# file.
 
 # The agent settings this repo runs on, each a named preset: the coding agent
 # (claude, codex or pi), the model it runs, passed to it verbatim, and how hard
