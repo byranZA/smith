@@ -48,7 +48,16 @@ func newCheckCmd(resolve homeResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check [<name-or-path>]",
 		Short: "Validate a blueprint and print what smith would use",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Validate a blueprint, named in the config home or given as a path, and print
+the resolved configuration smith would use: --access over the blueprint over
+preferences. With no blueprint named it checks preferences alone. It reaches
+no box. A valid blueprint exits 0 whether or not its references resolve.
+
+` + exits(0, 1),
+		Example: `  smith blueprint check
+  smith blueprint check personal
+  smith blueprint check ./api.yaml --access tailscale`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolve()
 			if err != nil {

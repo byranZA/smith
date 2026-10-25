@@ -65,7 +65,12 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the smith version and build provenance",
-		Args:  cobra.NoArgs,
+		Long: `Print the version of this smith binary and, when it was built inside a git
+tree, the commit and build time it came from.
+
+` + exits(0, 1),
+		Example: `  smith version`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := fmt.Sprintf("smith %s\n", resolveVersion())
 			stamp := readBuildStamp()

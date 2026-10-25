@@ -32,7 +32,14 @@ func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirRe
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold the repo file with a commented starter",
-		Args:  cobra.NoArgs,
+		Long: `Write a commented starter repo file, .smith/repo.yaml, at the root of the git
+repo smith is run from, unless one is already there. It holds one preset,
+filled in from the flags, with the work role pointed at it.
+
+` + exits(0, 1),
+		Example: `  smith repo init
+  smith repo init --agent codex --effort high`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			home, err := resolve()
 			if err != nil {

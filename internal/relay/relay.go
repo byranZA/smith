@@ -249,10 +249,9 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("smith on box %s exited %d", e.Target, e.Code)
 }
 
-// notInstalled is what a box with no smith at BoxSmith answers with: the
-// shell's "command not found" status, or its message when a login shell
-// reports the missing file some other way.
-const notInstalled = 127
+// NotInstalledExitCode is what a box with no smith at BoxSmith answers the
+// relay with: the shell's "command not found" status.
+const NotInstalledExitCode = 127
 
 // classify turns a failed relay into the error its cause deserves: a
 // provisioning gap that names the setup command, a version mismatch the caller
@@ -264,7 +263,7 @@ func classify(v Verb, stderr string, err error) error {
 		return err
 	}
 	switch code := coder.ExitCode(); {
-	case code == notInstalled || strings.Contains(stderr, BoxSmith+": No such file or directory"):
+	case code == NotInstalledExitCode || strings.Contains(stderr, BoxSmith+": No such file or directory"):
 		return &NotInstalledError{Box: v.named()}
 	case code == RefusalExitCode:
 		return &MismatchError{Target: v.Target, Box: boxVersion(stderr), Local: v.Version}

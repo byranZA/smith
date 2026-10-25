@@ -32,8 +32,11 @@ name is refused before anything changes, as is a box smith cannot reach.
 
 The provider-side marker is not renamed. An adapter whose marker is the box's
 own provider name keeps the old name there; the name on the box's marker is the
-one smith goes by.`,
-		Args: cobra.ExactArgs(2),
+one smith goes by.
+
+` + exits(0, 1, 2, 3),
+		Example: `  smith machine rename dev staging`,
+		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolve()
 			if err != nil {

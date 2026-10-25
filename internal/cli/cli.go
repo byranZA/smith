@@ -40,23 +40,17 @@ func Execute() int {
 	return execute(newRootCmd(), interruptGrace)
 }
 
-// The exit codes on-box smith answers a staged-config refusal with. They sit
-// outside the setup family's 0 pass, 1 partial, 2 gate rejection and 3 connect
-// failure, outside the 127 a box with no smith installed answers with, and
-// outside relay.RefusalExitCode, so a caller can tell a provisioning gap from a
-// document it cannot trust without reading the message. The session verbs
-// inherit them.
+// The exit codes a staged-config refusal is owed. exitCodes says what each
+// means, alongside every other code smith exits with.
 const (
 	exitStagedBlueprintAbsent    = 4
 	exitStagedBlueprintMalformed = 5
 )
 
-// codeFromError maps a command error to a process exit code. A nil error is 0,
-// an exitError carries its own already-reported code, a refused relay carries
-// the code the relaying smith classifies as a version mismatch, a staged-config
-// refusal
-// carries the code its kind is owed however deeply it is wrapped, and any other
-// error is a general failure (1).
+// codeFromError maps a command error to a process exit code, one of exitCodes.
+// An exitError carries its own already-reported code, a refused relay and a
+// staged-config refusal carry theirs however deeply they are wrapped, and any
+// other error is a general failure.
 func codeFromError(err error) int {
 	if err == nil {
 		return 0
@@ -142,7 +136,7 @@ func newRootCmd() *cobra.Command {
 		ssh:        connection.System(),
 		version:    resolveVersion(),
 		skew:       operatorSkew(),
-	}), newInitCmd(userConfigHome, connection.System()), newLoopCmd(systemLoop()), newRepoCmd(userConfigHome, connection.System(), currentDir), newUpdateCmd(systemUpdate()), newVersionCmd())
+	}), newInitCmd(userConfigHome, connection.System()), newLoopCmd(systemLoop()), newRepoCmd(userConfigHome, connection.System(), currentDir), newUpdateCmd(systemUpdate()), newVersionCmd(), newExitCodesTopic())
 	return root
 }
 

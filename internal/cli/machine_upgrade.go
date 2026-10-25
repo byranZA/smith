@@ -36,7 +36,18 @@ func newUpgradeCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade <name-or-target>",
 		Short: "Converge the smith binary on a box to the version local smith runs",
-		Args:  cobra.ExactArgs(1),
+		Long: `Install on a box the smith version local smith runs, or the one
+--smith-version names, so the two sides have no version skew. A box ahead of
+local smith is moved back. Nothing else changes: no setup phase or stage runs
+and the marker is not written. The argument is a box name from the inventory
+or a raw ssh target. Any refusal, including a box smith cannot connect to,
+exits 2 with the box still at the version it had.
+
+` + exits(0, 1, 2),
+		Example: `  smith machine upgrade dev
+  smith machine upgrade smith@203.0.113.10
+  smith machine upgrade dev --smith-version 0.4.0`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			result, err := converge(cmd.Context(), args[0], chosenVersion(smithVersion, resolveVersion()))
 			if err != nil {
