@@ -325,14 +325,16 @@ task to a coding agent in its own task worktree, so no agent works in the
 checkout the loop runs from. Each closed task is merged into the execution's
 work branch, which is pushed to origin. A clean checkout that has the work
 branch checked out, the one the loop runs from included, is fast-forwarded
-with it. --interactive hands the next task alone to an
-agent attached to this terminal. It exits 0 only when the execution is
+with it. --interactive hands the next task alone to an agent attached to this
+terminal. Run here in the foreground, it exits 0 only when the execution is
 complete, or the interactive run's task was closed.
 
 On a box, --repo starts the run as a loop-driven session in that repo and
-returns once it is live. A leading box relays the run over ssh to the smith
-installed on that box, which exits with its own code; a box running another
-version of smith refuses the relay and exits 6.
+returns once the session is live: exit 0 then means the session started, not
+that any task was worked. A leading box relays the run over ssh to the smith
+installed on that box, which exits with its own code, so a relayed run that
+starts its session exits 0 the same way. A box running another version of
+smith refuses the relay and exits 6.
 
 ` + exits(0, 1, 6),
 		Example: `  smith loop run 42
