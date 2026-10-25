@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -11,9 +12,10 @@ import (
 	"github.com/byranZA/smith/internal/relay"
 )
 
-// exitCodes is every code smith can exit with, paired with what it means. It
-// is the one place a code's meaning is written: `smith help exit-codes` prints
-// it, and each verb's help names the codes it returns from it.
+// exitCodes is every code smith can exit with, paired with what it means: each
+// verb's outcomes, then the interruptions any verb can end with. It is the one
+// place a code's meaning is written: `smith help exit-codes` prints it, and each
+// verb's help names the codes its outcome returns from it.
 var exitCodes = []struct {
 	code    int
 	meaning string
@@ -26,13 +28,18 @@ var exitCodes = []struct {
 	{exitStagedBlueprintMalformed, "The staged blueprint or resolution on the box cannot be trusted: it was truncated or hand-edited after setup staged it."},
 	{relay.RefusalExitCode, "The box runs another version of smith and refused the relayed verb. `smith machine upgrade <box>` converges it."},
 	{relay.NotInstalledExitCode, "Never smith's own exit: the shell's \"command not found\", which a box with no smith installed answers a relayed verb with. smith reports it as 1."},
+	{signalExitCode(syscall.SIGHUP), "Interrupted by SIGHUP: the terminal closed or the connection dropped. smith gave the verb a few seconds to clean up after itself, then stopped."},
+	{signalExitCode(syscall.SIGINT), "Interrupted by SIGINT, as Ctrl-C sends. smith gave the verb a few seconds to clean up after itself, then stopped."},
+	{signalExitCode(syscall.SIGTERM), "Interrupted by SIGTERM. smith gave the verb a few seconds to clean up after itself, then stopped."},
 }
 
 // newExitCodesTopic builds the `smith help exit-codes` help topic. It has no
 // Run, so cobra lists it under "Additional help topics" rather than as a verb.
 func newExitCodesTopic() *cobra.Command {
 	var b strings.Builder
-	b.WriteString("Every code smith can exit with. Each verb's help names the ones it returns.\n")
+	b.WriteString("Every code smith can exit with. Each verb's help names the ones its outcome\n" +
+		"returns; an interruption can end any verb, with one of the last three, on top\n" +
+		"of those.\n")
 	for _, c := range exitCodes {
 		fmt.Fprintf(&b, "\n  %-4d %s", c.code, c.meaning)
 	}

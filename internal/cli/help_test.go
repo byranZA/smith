@@ -27,6 +27,27 @@ func TestHelpExitCodesExplainsEveryCode(t *testing.T) {
 	}
 }
 
+func TestHelpExitCodesExplainsInterruptionsOfAnyVerb(t *testing.T) {
+	root := newRootCmd()
+	root.SetArgs([]string{"help", "exit-codes"})
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errBuf.String())
+	}
+	for code, signal := range map[string]string{"129": "SIGHUP", "130": "SIGINT", "143": "SIGTERM"} {
+		explained := regexp.MustCompile(`(?m)^\s*` + code + `\s+.*` + signal)
+		if !explained.MatchString(out.String()) {
+			t.Errorf("smith help exit-codes = %q, want a line explaining exit code %s as %s", out.String(), code, signal)
+		}
+	}
+	if !strings.Contains(out.String(), "any verb") {
+		t.Errorf("smith help exit-codes = %q, want it to say an interruption can end any verb", out.String())
+	}
+}
+
 func TestExitCodesIsAHelpTopic(t *testing.T) {
 	topic, _, err := newRootCmd().Find([]string{"exit-codes"})
 	if err != nil {
