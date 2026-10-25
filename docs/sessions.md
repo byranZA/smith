@@ -398,7 +398,7 @@ before sessions recorded their driver, reads as `human`.
 
 When the loop stops, it writes its **outcome** into the same record, and `list` shows it under `OUTCOME` once the session has ended. Starting a session again clears it, and `rm` takes the record, outcome and all, with the worktree. The full stop report is not kept on the box: it is on the issue, as the loop's comment.
 
-`loop run` refuses a branch whose session is live, whoever drives it, and reuses a stopped session's worktree, which is how a spec passes between the loop and a human for its tasks meant for a human. See [the loop](./loop.md#on-a-box---repo) for the run itself.
+`loop run` refuses a branch whose session is live, whoever drives it, and reuses a stopped session's worktree, which is how a spec passes between the loop and a human for its tasks meant for a human. In the human session, the human works such a task by hand or pairs with an agent on it through `loop run --interactive <task>`. See [the loop](./loop.md#on-a-box---repo) for the run itself.
 
 ## What is not here in v1
 

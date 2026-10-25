@@ -85,7 +85,7 @@ func TestLoopRunRefusesAnUnavailableTaskBeforeAnyWorkBranchIsSetUp(t *testing.T)
 		want  string
 	}{
 		"closed":      {taskJSON(80, "CLOSED", "ready-for-agent"), "#80 is closed\n"},
-		"for a human": {taskJSON(80, "OPEN", "ready-for-human"), "#80 is meant for a human\n"},
+		"for a human": {taskJSON(80, "OPEN", "ready-for-human"), "#80 is meant for a human; pair on it with --interactive\n"},
 		"unlabelled":  {taskJSON(80, "OPEN", "bug"), "#80 is not labelled \"ready-for-agent\"\n"},
 		"blocked":     {taskJSON(80, "OPEN", "ready-for-agent", 79), "#80 is blocked by #79\n"},
 	} {

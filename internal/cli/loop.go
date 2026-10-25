@@ -386,7 +386,7 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	admitted, err := w.admit(cmd, ref, settings, w.gh)
+	admitted, err := w.admit(cmd, ref, settings, w.gh, interactive)
 	if err != nil {
 		return tracker.Execution{}, err
 	}
@@ -461,11 +461,11 @@ func installed(cmd *cobra.Command, presets preset.Choice, execution tracker.Exec
 }
 
 // admit runs the preflight a loop run shares wherever it runs: it warns of
-// triage labels the repo lacks, and reads and
-// admits the execution ref names through gh. Each refusal is already reported
+// triage labels the repo lacks, and reads and admits the execution ref names
+// through gh, as a run attached to the terminal when interactive. Each refusal is already reported
 // on cmd. Whether its agents are installed is the caller's to check, with
 // installed, against the PATH the run will have.
-func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner) (admission, error) {
+func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Settings, gh tracker.Runner, interactive bool) (admission, error) {
 	github := tracker.NewGitHub(gh, settings.Labels())
 	if err := warnOfLabels(cmd, github, settings); err != nil {
 		return admission{}, err
@@ -478,7 +478,7 @@ func (w loopWiring) admit(cmd *cobra.Command, ref tracker.Ref, settings loop.Set
 	if err != nil {
 		return admission{}, reportInvalid(cmd, err)
 	}
-	if err := loop.Admit(execution, settings.Labels()); err != nil {
+	if err := loop.Admit(execution, settings.Labels(), interactive); err != nil {
 		return admission{}, reportInvalid(cmd, err)
 	}
 	return admission{github: github, execution: execution}, nil

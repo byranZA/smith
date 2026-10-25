@@ -63,6 +63,22 @@ func (r Remaining) Next() (tracker.Task, bool) {
 	return r.Available[0], true
 }
 
+// Pairing returns the task an interactive run of execution hands out, and
+// false when there is none: a single task when it is open, blocked by nothing
+// open, and meant for an agent or a human, and otherwise the spec's next
+// available task.
+func Pairing(execution tracker.Execution) (tracker.Task, bool) {
+	if !execution.Single {
+		return Survey(execution).Next()
+	}
+	for _, task := range execution.Tasks {
+		if task.Open && (task.For == tracker.Agent || task.For == tracker.Human) && !blocked(task) {
+			return task, true
+		}
+	}
+	return tracker.Task{}, false
+}
+
 // Complete reports whether every task of the spec is closed.
 func (r Remaining) Complete() bool {
 	return len(r.Available)+len(r.Blocked)+len(r.Human)+len(r.Unready)+len(r.Skipped) == 0

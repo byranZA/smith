@@ -96,3 +96,50 @@ func TestCompleteOnlyWhenEveryTaskIsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestPairingHandsOutANamedTaskThatIsOpenUnblockedAndLabelled(t *testing.T) {
+	t.Parallel()
+	blocker := tracker.Blocker{Number: 79, Open: true}
+	for name, tc := range map[string]struct {
+		task   tracker.Task
+		want   int
+		wantOK bool
+	}{
+		"for a human":  {humanTask(80), 80, true},
+		"for an agent": {agentTask(80, tracker.Blocker{Number: 79}), 80, true},
+		"closed":       {closed(humanTask(80)), 0, false},
+		"blocked":      {blockedBy(humanTask(80), blocker), 0, false},
+		"unlabelled":   {tracker.Task{Number: 80, Open: true, For: tracker.Nobody}, 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := loop.Pairing(tracker.Execution{Number: 80, Single: true, Tasks: []tracker.Task{tc.task}})
+
+			if got.Number != tc.want || ok != tc.wantOK {
+				t.Errorf("Pairing(#80) = #%d, %v; want #%d, %v", got.Number, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestPairingOnASpecHandsOutItsFirstTaskForAnAgent(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		tasks  []tracker.Task
+		want   int
+		wantOK bool
+	}{
+		"human task skipped":  {[]tracker.Task{humanTask(80), agentTask(81)}, 81, true},
+		"only a human task":   {[]tracker.Task{humanTask(80)}, 0, false},
+		"blocked task passed": {[]tracker.Task{agentTask(80, tracker.Blocker{Number: 79, Open: true}), agentTask(81)}, 81, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := loop.Pairing(tracker.Execution{Number: 74, Tasks: tc.tasks})
+
+			if got.Number != tc.want || ok != tc.wantOK {
+				t.Errorf("Pairing(spec #74) = #%d, %v; want #%d, %v", got.Number, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}

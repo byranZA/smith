@@ -287,11 +287,11 @@ func (o InteractiveOutcome) Succeeded() bool {
 	return o.Remaining.Complete()
 }
 
-// RunInteractive hands spec's next available task to one agent run attached to
-// the operator's terminal, on the task's own preset, and runs no agent when no
-// task is available or one of spec's open tasks has a preset the run cannot
-// resolve. When
-// the spec is complete once it ends, the recycled task worktree is removed.
+// RunInteractive hands the task Pairing chooses from spec to one agent run
+// attached to the operator's terminal, on the task's own preset, and runs no
+// agent when there is none or one of spec's open tasks has a preset the run
+// cannot resolve. When the spec is complete once it ends, the recycled task
+// worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
@@ -301,7 +301,7 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 		return InteractiveOutcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
 	}
 	remaining := Survey(current)
-	next, ok := remaining.Next()
+	next, ok := Pairing(current)
 	if !ok {
 		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
 	}
