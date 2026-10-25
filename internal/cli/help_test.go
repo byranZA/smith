@@ -10,6 +10,7 @@ import (
 )
 
 func TestHelpExitCodesExplainsEveryCode(t *testing.T) {
+	t.Parallel()
 	root := newRootCmd()
 	root.SetArgs([]string{"help", "exit-codes"})
 	var out, errBuf bytes.Buffer
@@ -28,6 +29,7 @@ func TestHelpExitCodesExplainsEveryCode(t *testing.T) {
 }
 
 func TestHelpExitCodesExplainsInterruptionsOfAnyVerb(t *testing.T) {
+	t.Parallel()
 	root := newRootCmd()
 	root.SetArgs([]string{"help", "exit-codes"})
 	var out, errBuf bytes.Buffer
@@ -49,6 +51,7 @@ func TestHelpExitCodesExplainsInterruptionsOfAnyVerb(t *testing.T) {
 }
 
 func TestExitCodesIsAHelpTopic(t *testing.T) {
+	t.Parallel()
 	topic, _, err := newRootCmd().Find([]string{"exit-codes"})
 	if err != nil {
 		t.Fatalf("Find(exit-codes) err = %v", err)
@@ -82,6 +85,7 @@ func leaves(cmd *cobra.Command) map[string]*cobra.Command {
 }
 
 func TestEveryVerbHasLongHelp(t *testing.T) {
+	t.Parallel()
 	for path, verb := range leaves(newRootCmd()) {
 		if strings.TrimSpace(verb.Long) == "" {
 			t.Errorf("%s has no Long, want help saying what the verb does", path)
@@ -90,6 +94,7 @@ func TestEveryVerbHasLongHelp(t *testing.T) {
 }
 
 func TestEveryVerbHasAnExample(t *testing.T) {
+	t.Parallel()
 	for path, verb := range leaves(newRootCmd()) {
 		if strings.TrimSpace(verb.Example) == "" {
 			t.Errorf("%s has no Example, want at least one realistic invocation", path)
@@ -98,6 +103,7 @@ func TestEveryVerbHasAnExample(t *testing.T) {
 }
 
 func TestEveryVerbPointsToTheExitCodesTopic(t *testing.T) {
+	t.Parallel()
 	for path, verb := range leaves(newRootCmd()) {
 		if !strings.Contains(verb.Long, `see "smith help exit-codes"`) {
 			t.Errorf("%s Long = %q, want it to name its exit codes and point to smith help exit-codes", path, verb.Long)
@@ -106,6 +112,7 @@ func TestEveryVerbPointsToTheExitCodesTopic(t *testing.T) {
 }
 
 func TestEveryRelayingVerbExamplesBothForms(t *testing.T) {
+	t.Parallel()
 	relaying := 0
 	for path, verb := range leaves(newRootCmd()) {
 		if !strings.Contains(verb.Use, "[<box>]") {
