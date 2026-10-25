@@ -5,6 +5,8 @@
 > **Amended by [ADR-0016](./0016-the-loop-comments-on-a-task-it-skips.md).** The loop also comments on a task it skips, saying where the work was left; a failed comment write is a warning.
 >
 > **Amended by [ADR-0020](./0020-the-loop-stops-on-a-broken-agent.md).** A task whose every attempt was an agent failure is not skipped; the run stops as `agent broken` instead.
+>
+> **Amended by [#470](https://github.com/byranZA/smith/issues/470).** An interactive run may work a task meant for a human when it is named on its own; left open, the task stays the human's.
 
 ## Context
 
