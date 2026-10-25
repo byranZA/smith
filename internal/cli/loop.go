@@ -321,9 +321,11 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 		Use:   "run [<box>] <issue>",
 		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
 		Long: `Work an execution, a spec's tasks or a single task, handing each available
-task to a coding agent in its own task worktree. Each closed task is merged
-into the execution's work branch, which is pushed to origin; the checkout it
-runs from is never touched. --interactive hands the next task alone to an
+task to a coding agent in its own task worktree, so no agent works in the
+checkout the loop runs from. Each closed task is merged into the execution's
+work branch, which is pushed to origin. A clean checkout that has the work
+branch checked out, the one the loop runs from included, is fast-forwarded
+with it. --interactive hands the next task alone to an
 agent attached to this terminal. It exits 0 only when the execution is
 complete, or the interactive run's task was closed.
 
