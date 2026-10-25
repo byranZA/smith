@@ -46,6 +46,7 @@ func TestAgentsNamesTheAgentsARunHandsTasksTo(t *testing.T) {
 }
 
 func TestAgentsInteractiveOnANamedHumanTaskNamesItsAgent(t *testing.T) {
+	t.Parallel()
 	choice, err := preset.Choose(presetFile, preset.Flags{})
 	if err != nil {
 		t.Fatalf("Choose(preset file) error = %v", err)
