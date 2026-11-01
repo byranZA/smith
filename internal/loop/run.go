@@ -427,10 +427,9 @@ func presetPhrase(resolved preset.Resolved) string {
 const PrepareTailLimit = 64 << 10
 
 // prepare prepares task's worktree at dir with the Preparer, when there is
-// one. It writes one progress line and holds the steps' output back, printing
-// its last PrepareTailLimit bytes only when preparation fails. A failure is an
-// error naming preparation, task and dir, since another agent attempt cannot
-// fix it.
+// one, holding its output back and printing the last PrepareTailLimit bytes
+// only on failure. A failure is an error naming task and dir, since another
+// agent attempt cannot fix it.
 func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error {
 	if l.Preparer == nil {
 		return nil
