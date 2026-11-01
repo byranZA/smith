@@ -439,6 +439,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Bench = bench
+	if l.Placements, err = w.placements(cmd, ref); err != nil {
+		return admitted.execution, err
+	}
 	if _, err := fmt.Fprint(cmd.ErrOrStderr(), lagWarning(bench.WorkBranch(), lag)); err != nil {
 		return admitted.execution, fmt.Errorf("write warning: %w", err)
 	}
