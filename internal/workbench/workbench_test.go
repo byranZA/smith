@@ -985,3 +985,57 @@ func TestPlanNamesAnExistingWorkBranchOfTheIssueUnderItsOwnSlug(t *testing.T) {
 		t.Errorf("Plan() branch = %q, want smith/430-older-title", branch)
 	}
 }
+
+// noDefaultBranch returns a clone of a bare remote whose origin names no
+// default branch.
+func noDefaultBranch(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	remote, clone := filepath.Join(root, "remote.git"), filepath.Join(root, "clone")
+	git(t, root, "init", "--bare", "-b", "main", remote)
+	git(t, root, "clone", remote, clone)
+	return clone
+}
+
+func TestPlanNamesAnExistingWorkBranchWhenOriginNamesNoDefaultBranch(t *testing.T) {
+	t.Parallel()
+	clone := noDefaultBranch(t)
+	git(t, clone, "commit", "--allow-empty", "-m", "start")
+	git(t, clone, "branch", "smith/430-older-title")
+
+	branch, base, err := workbench.Plan(t.Context(), connection.System(), clone, spec430)
+
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if branch != "smith/430-older-title" || base != "" {
+		t.Errorf("Plan() = %q, %q, want smith/430-older-title and no base", branch, base)
+	}
+}
+
+func TestSetupAdoptsAnExistingWorkBranchWhenOriginNamesNoDefaultBranch(t *testing.T) {
+	t.Parallel()
+	clone := noDefaultBranch(t)
+	git(t, clone, "commit", "--allow-empty", "-m", "start")
+	git(t, clone, "branch", "smith/430-older-title")
+
+	bench, err := workbench.Setup(t.Context(), connection.System(), clone, stateOf(clone), spec430)
+
+	if err != nil {
+		t.Fatalf("Setup() error = %v", err)
+	}
+	if bench.WorkBranch() != "smith/430-older-title" {
+		t.Errorf("WorkBranch() = %q, want smith/430-older-title", bench.WorkBranch())
+	}
+}
+
+func TestPlanRefusesAMissingWorkBranchWhenOriginNamesNoDefaultBranch(t *testing.T) {
+	t.Parallel()
+	clone := noDefaultBranch(t)
+
+	_, _, err := workbench.Plan(t.Context(), connection.System(), clone, spec430)
+
+	if err == nil || !strings.Contains(err.Error(), "git ls-remote --symref origin HEAD") {
+		t.Errorf("Plan() error = %v; want it to name the missing default branch and its fix", err)
+	}
+}
