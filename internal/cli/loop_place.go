@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
@@ -40,7 +41,12 @@ func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Place
 	if err != nil {
 		return nil, err
 	}
-	name := repoOf(ws, dir)
+	return placementsOf(box, repoOf(ws, dir), w, inv), nil
+}
+
+// placementsOf returns the placements box declares for the repo called name,
+// or nil when it declares none.
+func placementsOf(box boxConfig, name string, w loopWiring, inv hint.Invocation) *loop.Placements {
 	for _, r := range box.Repos {
 		if r.Name != name || len(r.Placements) == 0 {
 			continue
@@ -50,9 +56,9 @@ func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Place
 			To:     placedAt(r.Placements),
 			Placer: stagedPlacer{root: w.root, repos: box.Repos, hint: inv},
 			Git:    w.git,
-		}, nil
+		}
 	}
-	return nil, nil
+	return nil
 }
 
 // repoOf names the repo of the workspace at ws that dir is in: the first

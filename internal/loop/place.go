@@ -31,11 +31,10 @@ type Placements struct {
 	Git Runner
 }
 
-// into places the repo's files into the task worktree at dir, once every
-// destination is known to be gitignored there: a placement at a path git
-// would track is a file an agent may commit, or a tracked file overwritten
-// into the diff.
-func (p *Placements) into(ctx context.Context, dir string) error {
+// Check refuses when a destination is a path the checkout at dir does not
+// gitignore, and places nothing: a placement at a path git would track is a
+// file an agent may commit, or a tracked file overwritten into the diff.
+func (p *Placements) Check(ctx context.Context, dir string) error {
 	if p == nil || len(p.To) == 0 {
 		return nil
 	}
@@ -46,6 +45,18 @@ func (p *Placements) into(ctx context.Context, dir string) error {
 	if len(exposed) > 0 {
 		return fmt.Errorf("repo %q places files at paths its .gitignore does not ignore: %s: add them to the repo's .gitignore",
 			p.Repo, strings.Join(exposed, ", "))
+	}
+	return nil
+}
+
+// into places the repo's files into the task worktree at dir, once every
+// destination is known to be gitignored there.
+func (p *Placements) into(ctx context.Context, dir string) error {
+	if p == nil || len(p.To) == 0 {
+		return nil
+	}
+	if err := p.Check(ctx, dir); err != nil {
+		return err
 	}
 	if err := p.Placer.Place(p.Repo, dir); err != nil {
 		return fmt.Errorf("place the files of repo %q: %w", p.Repo, err)
