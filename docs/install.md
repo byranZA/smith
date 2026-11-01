@@ -4,7 +4,7 @@
 your machine as a control surface, and `machine setup` installs a matching copy
 onto each box it provisions ([smith on the box](./on-box.md)).
 
-The current release is **`v0.1.1`**.
+The current release is **`v0.2.0`**.
 
 > **Fetch with `curl`, not your browser.** smith is unsigned. A browser stamps
 > every download with a quarantine flag, so macOS Gatekeeper then refuses to run
@@ -14,43 +14,43 @@ The current release is **`v0.1.1`**.
 
 ## Download a release
 
-Each one-liner fetches the `v0.1.1` archive, unpacks it in the current
+Each one-liner fetches the `v0.2.0` archive, unpacks it in the current
 directory, and leaves the `smith` binary alongside its `LICENSE` and `README`.
 Move it onto your `PATH` afterwards (e.g. `sudo mv smith /usr/local/bin/`).
 
 **macOS** (Apple silicon):
 
 ```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_darwin_arm64.tar.gz | tar xz
+curl -L https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_darwin_arm64.tar.gz | tar xz
 ```
 
 **macOS** (Intel):
 
 ```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_darwin_amd64.tar.gz | tar xz
+curl -L https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_darwin_amd64.tar.gz | tar xz
 ```
 
 **Linux** (x86-64):
 
 ```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_linux_amd64.tar.gz | tar xz
+curl -L https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_linux_amd64.tar.gz | tar xz
 ```
 
 **Linux** (ARM64):
 
 ```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_linux_arm64.tar.gz | tar xz
+curl -L https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_linux_arm64.tar.gz | tar xz
 ```
 
 **Windows** (x86-64) — download the zip, then extract it (modern `tar` on
 Windows 10+ handles zips):
 
 ```sh
-curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_windows_amd64.zip
-tar -xf smith_0.1.1_windows_amd64.zip
+curl -L -O https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_windows_amd64.zip
+tar -xf smith_0.2.0_windows_amd64.zip
 ```
 
-Confirm it: `smith version` should print `0.1.1`.
+Confirm it: `smith version` should print `0.2.0`.
 
 These one-liners are for the first install, and for every install on Windows. Once smith is on your `PATH`, [`smith update`](#update-smith) moves it to a newer release.
 
@@ -108,13 +108,13 @@ archive to disk instead of piping it, check it against `checksums.txt`, then
 unpack — shown here for macOS Apple silicon (substitute your archive name):
 
 ```sh
-curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_darwin_arm64.tar.gz
-curl -L -O https://github.com/byranZA/smith/releases/download/v0.1.1/checksums.txt
+curl -L -O https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_darwin_arm64.tar.gz
+curl -L -O https://github.com/byranZA/smith/releases/download/v0.2.0/checksums.txt
 
 shasum -a 256 -c checksums.txt --ignore-missing   # macOS
 sha256sum   -c checksums.txt --ignore-missing     # Linux
 
-tar xzf smith_0.1.1_darwin_arm64.tar.gz
+tar xzf smith_0.2.0_darwin_arm64.tar.gz
 ```
 
 `--ignore-missing` verifies just the archive you downloaded and skips the rest.
@@ -126,11 +126,11 @@ If you have the Go toolchain (1.26+, matching smith's `go.mod`), build and
 install from the module tag directly:
 
 ```sh
-go install github.com/byranZA/smith/cmd/smith@v0.1.1
+go install github.com/byranZA/smith/cmd/smith@v0.2.0
 ```
 
 This resolves the tag, builds from source, and stamps the version from the
-module path — `smith version` still reports `0.1.1`, with no ldflags involved.
+module path — `smith version` still reports `0.2.0`, with no ldflags involved.
 The binary lands in `$(go env GOBIN)` (or `$(go env GOPATH)/bin`); make sure
 that's on your `PATH`.
 

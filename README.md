@@ -128,7 +128,7 @@ sequenceDiagram
 macOS Apple silicon shown — [other platforms and checksum verification](docs/install.md):
 
 ```sh
-curl -L https://github.com/byranZA/smith/releases/download/v0.1.1/smith_0.1.1_darwin_arm64.tar.gz | tar xz
+curl -L https://github.com/byranZA/smith/releases/download/v0.2.0/smith_0.2.0_darwin_arm64.tar.gz | tar xz
 sudo mv smith /usr/local/bin/
 smith version
 ```
