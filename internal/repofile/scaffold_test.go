@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/blueprint"
@@ -24,13 +25,13 @@ func locate(t *testing.T, root string) repofile.Repo {
 	return repo
 }
 
-func scaffold(t *testing.T, repo repofile.Repo, values repofile.Preset) repofile.Outcome {
+func scaffold(t *testing.T, repo repofile.Repo, values repofile.Preset) []repofile.Outcome {
 	t.Helper()
-	outcome, err := repofile.Scaffold(repo, values)
+	outcomes, err := repofile.Scaffold(repo, values)
 	if err != nil {
 		t.Fatalf("Scaffold(%q, %+v) error = %v", repo.Path(), values, err)
 	}
-	return outcome
+	return outcomes
 }
 
 func readRepoFile(t *testing.T, repo repofile.Repo) repofile.File {
@@ -51,11 +52,77 @@ func TestScaffoldWritesTheStarterAtTheRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	repo := locate(t, root)
 
-	outcome := scaffold(t, repo, repofile.Preset{})
+	outcomes := scaffold(t, repo, repofile.Preset{})
 
-	want := repofile.Outcome{Path: filepath.Join(root, ".smith", "repo.yaml"), Created: true}
-	if outcome != want {
-		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.Preset{}, outcome, want)
+	want := []repofile.Outcome{
+		{Path: filepath.Join(root, ".smith", "repo.yaml"), Created: true},
+		{Path: filepath.Join(root, ".smith", "README.md"), Created: true},
+	}
+	if !reflect.DeepEqual(outcomes, want) {
+		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.Preset{}, outcomes, want)
+	}
+}
+
+func TestScaffoldWritesOnlyTheRepoGuideBesideAnExistingRepoFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := locate(t, root)
+	writeSmithFile(t, repo.Path(), "push: false\n")
+
+	outcomes := scaffold(t, repo, repofile.Preset{})
+
+	want := []repofile.Outcome{
+		{Path: filepath.Join(root, ".smith", "repo.yaml"), Created: false},
+		{Path: filepath.Join(root, ".smith", "README.md"), Created: true},
+	}
+	if !reflect.DeepEqual(outcomes, want) {
+		t.Errorf("Scaffold() = %+v, want %+v", outcomes, want)
+	}
+	if data, err := os.ReadFile(repo.Path()); err != nil || string(data) != "push: false\n" {
+		t.Errorf("repo file = %q (%v), want it unchanged", data, err)
+	}
+}
+
+func TestScaffoldNeverOverwritesAnExistingRepoGuide(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := locate(t, root)
+	guide := filepath.Join(root, ".smith", "README.md")
+	writeSmithFile(t, guide, "my own notes\n")
+
+	outcomes := scaffold(t, repo, repofile.Preset{})
+
+	if got := outcomes[1]; got.Path != guide || got.Created {
+		t.Errorf("guide outcome = %+v, want %s left alone", got, guide)
+	}
+	if data, err := os.ReadFile(guide); err != nil || string(data) != "my own notes\n" {
+		t.Errorf("repo guide = %q (%v), want it unchanged", data, err)
+	}
+}
+
+func TestTheRepoGuidePointsAtTheAgentGuideAndTheWorkBranch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	scaffold(t, locate(t, root), repofile.Preset{})
+
+	data, err := os.ReadFile(filepath.Join(root, ".smith", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"smith help agents", "smith <verb> --help", "smith loop list <n>", ".smith/repo.yaml", ".smith/prompt.md", "does not run smith"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("repo guide lacks %q:\n%s", want, data)
+		}
+	}
+}
+
+func writeSmithFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -150,10 +217,10 @@ func TestScaffoldLeavesAnExistingRepoFileAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outcome := scaffold(t, repo, repofile.Preset{Agent: "claude"})
+	outcomes := scaffold(t, repo, repofile.Preset{Agent: "claude"})
 
-	if want := (repofile.Outcome{Path: repo.Path(), Created: false}); outcome != want {
-		t.Errorf("Scaffold(%q, %+v) = %+v, want %+v", repo.Path(), repofile.Preset{Agent: "claude"}, outcome, want)
+	if want := (repofile.Outcome{Path: repo.Path(), Created: false}); outcomes[0] != want {
+		t.Errorf("Scaffold(%q, %+v)[0] = %+v, want %+v", repo.Path(), repofile.Preset{Agent: "claude"}, outcomes[0], want)
 	}
 	if data, err := os.ReadFile(repo.Path()); err != nil || string(data) != existing {
 		t.Errorf("repo file = %q (%v), want it unchanged as %q", data, err, existing)
@@ -169,7 +236,11 @@ func TestScaffoldWritesNoPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "repo.yaml" {
-		t.Errorf(".smith holds %v, want only repo.yaml", entries)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if want := []string{"README.md", "repo.yaml"}; !reflect.DeepEqual(names, want) {
+		t.Errorf(".smith holds %v, want %v", names, want)
 	}
 }

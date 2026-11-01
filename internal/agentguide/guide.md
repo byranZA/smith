@@ -52,7 +52,7 @@ smith machine status dev
 
 ### Start a loop on a spec and walk away
 
-In a checkout of the repo, write the repo file once and commit it, then check what the loop would do before starting it.
+In a checkout of the repo, write the repo file and the repo guide once and commit them, then check what the loop would do before starting it.
 
 ```sh
 smith repo init --agent claude --model opus

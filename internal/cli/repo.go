@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -54,11 +55,11 @@ filled in from the flags, with the work role pointed at it.
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			outcome, err := repofile.Scaffold(repo, values)
+			outcomes, err := repofile.Scaffold(repo, values)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), outcomeLine(outcome)); err != nil {
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), repoOutcomeLines(outcomes)); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			return nil
@@ -70,12 +71,17 @@ filled in from the flags, with the work role pointed at it.
 	return cmd
 }
 
-// outcomeLine reports the repo file as created or left alone.
-func outcomeLine(o repofile.Outcome) string {
-	if o.Created {
-		return fmt.Sprintf("created %s\n", o.Path)
+// repoOutcomeLines reports each scaffolded file as created or left alone.
+func repoOutcomeLines(outcomes []repofile.Outcome) string {
+	var b strings.Builder
+	for _, o := range outcomes {
+		verb := "left alone"
+		if o.Created {
+			verb = "created"
+		}
+		fmt.Fprintf(&b, "%s %s\n", verb, o.Path)
 	}
-	return fmt.Sprintf("left alone %s\n", o.Path)
+	return b.String()
 }
 
 // currentDir locates the directory smith was run from.

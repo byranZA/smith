@@ -22,32 +22,44 @@ const (
 //go:embed starter.yaml
 var starterFile []byte
 
-// Outcome is what Scaffold did: the repo file's path and whether the starter
-// was written there or an existing file was left alone.
+//go:embed guide.md
+var guideFile []byte
+
+// Outcome is what Scaffold did with one file: its path and whether it was
+// written there or an existing file was left alone.
 type Outcome struct {
-	// Path is where the repo file is.
+	// Path is where the file is.
 	Path string
-	// Created reports whether the starter was written. False means a repo file
-	// was already there and was left untouched.
+	// Created reports whether the file was written. False means one was
+	// already there and was left untouched.
 	Created bool
 }
 
 // Scaffold writes a commented starter repo file into repo, with one preset
-// filled from values and the work role on it, unless a repo file is already
-// there. It writes nothing when the starter would not load.
-func Scaffold(repo Repo, values Preset) (Outcome, error) {
+// filled from values and the work role on it, and the repo guide beside it.
+// Each is written only if absent, and the outcomes name the repo file then the
+// repo guide. It writes nothing when the starter would not load.
+func Scaffold(repo Repo, values Preset) ([]Outcome, error) {
 	content, err := render(values)
 	if err != nil {
-		return Outcome{}, err
+		return nil, err
 	}
 	if _, err := Parse(content); err != nil {
-		return Outcome{}, fmt.Errorf("scaffold repo file: %w", err)
+		return nil, fmt.Errorf("scaffold repo file: %w", err)
 	}
-	created, err := starter.WriteAbsent(repo.Path(), content, dirMode, fileMode)
-	if err != nil {
-		return Outcome{}, fmt.Errorf("scaffold repo file: %w", err)
+	files := []struct {
+		path    string
+		content []byte
+	}{{repo.Path(), content}, {repo.GuidePath(), guideFile}}
+	outcomes := make([]Outcome, 0, len(files))
+	for _, f := range files {
+		created, err := starter.WriteAbsent(f.path, f.content, dirMode, fileMode)
+		if err != nil {
+			return nil, fmt.Errorf("scaffold repo file: %w", err)
+		}
+		outcomes = append(outcomes, Outcome{Path: f.path, Created: created})
 	}
-	return Outcome{Path: repo.Path(), Created: created}, nil
+	return outcomes, nil
 }
 
 // starterAgent is the agent the starter's preset names, and names it after.

@@ -48,7 +48,8 @@ func TestRepoInitReportsTheRepoFileCreatedAtTheRepoRoot(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if want := "created " + filepath.Join(root, ".smith", "repo.yaml") + "\n"; stdout != want {
+	want := "created " + filepath.Join(root, ".smith", "repo.yaml") + "\ncreated " + filepath.Join(root, ".smith", "README.md") + "\n"
+	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
 }
@@ -60,7 +61,8 @@ func TestRepoInitReportsAnExistingRepoFileAsLeftAlone(t *testing.T) {
 
 	stdout, _, _ := runRepoInit(t, root, root, t.TempDir())
 
-	if want := "left alone " + path + "\n"; stdout != want {
+	want := "left alone " + path + "\ncreated " + filepath.Join(root, ".smith", "README.md") + "\n"
+	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
 }

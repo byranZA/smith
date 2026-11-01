@@ -165,11 +165,11 @@ To reach the box over a tailnet instead of the public internet, add `--access ta
 
 ### 4. Get the repo ready for the loop
 
-In a checkout of the repo, write the repo file and commit it:
+In a checkout of the repo, write the repo file and the repo guide (`.smith/README.md`, which points a coding agent at `smith help agents`) and commit them:
 
 ```sh
 smith repo init --agent claude --model opus
-git add .smith/repo.yaml && git commit -m "chore: add the smith repo file"
+git add .smith/repo.yaml .smith/README.md && git commit -m "chore: add the smith repo file and guide"
 ```
 
 Then plan on GitHub: a spec issue with sub-issues for its tasks, each labelled `ready-for-agent` or `ready-for-human`. Check what the loop would do, without running anything:
