@@ -57,3 +57,6 @@ func traits(v Verb) string {
 	}
 	return " (" + strings.Join(t, "; ") + ")"
 }
+
+// Prose returns the embedded prose alone, before the verb map and exit codes Render appends.
+func Prose() string { return prose }
