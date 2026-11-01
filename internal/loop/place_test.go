@@ -26,14 +26,15 @@ func (p placing) Place(repo, dir string) error {
 // ignoring fakes git check-ignore: it prints the paths it was asked about that are in ignored, and exits 1 when there are none.
 type ignoring struct{ ignored []string }
 
-func (g ignoring) Run(_ context.Context, _ string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+func (g ignoring) Run(_ context.Context, _ string, _ []string, stdin io.Reader, stdout, _ io.Writer) error {
 	var out []string
-	for _, a := range args[slices.Index(args, "--")+1:] {
+	in, _ := io.ReadAll(stdin)
+	for _, a := range strings.Split(strings.TrimSuffix(string(in), "\x00"), "\x00") {
 		if slices.Contains(g.ignored, a) {
 			out = append(out, a)
 		}
 	}
-	_, _ = io.WriteString(stdout, strings.Join(out, "\n"))
+	_, _ = io.WriteString(stdout, strings.Join(out, "\x00")+"\x00")
 	if len(out) == 0 {
 		return errors.New("exit status 1")
 	}
@@ -53,6 +54,16 @@ func TestRunPlacesTheReposFilesBeforePreparationAndTheAgent(t *testing.T) {
 	want := []string{"place api /bench/43", "prepare /bench/43", "start 43", "launch 43", "stop 43"}
 	if !slices.Equal(b.events[:5], want) {
 		t.Errorf("Run() events = %q, want it to begin %q", b.events, want)
+	}
+}
+
+func TestRunPlacesADestinationWhoseNameHasSpaces(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l := loopOn(t, b, b)
+	l.Placements = &loop.Placements{Repo: "api", To: []string{"my secrets/.env local"}, Placer: placing{board: b}, Git: ignoring{ignored: []string{"my secrets/.env local"}}}
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v, want an ignored destination with spaces accepted", err)
 	}
 }
 
