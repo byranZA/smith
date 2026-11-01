@@ -120,6 +120,30 @@ func Setup(ctx context.Context, git Runner, dir, state string, req Request) (Wor
 	return w, nil
 }
 
+// Plan returns the work branch and base Setup would use for req, deciding them
+// the same way and refusing what Setup refuses about them, but only reading:
+// no branch is created or fetched, and no checkout is touched. The base is
+// origin's default branch when req names none, which is an error when origin
+// names no default branch.
+func Plan(ctx context.Context, git Runner, dir string, req Request) (branch, base string, err error) {
+	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
+	found, err := w.find(ctx, req)
+	if err != nil {
+		return "", "", err
+	}
+	if found != nil {
+		w.branch = found.name
+	}
+	base, err = w.base(ctx, req.Base)
+	if err != nil {
+		return "", "", err
+	}
+	if base == "" {
+		return "", "", errNoDefaultBranch
+	}
+	return w.branch, base, nil
+}
+
 // base returns the branch a missing work branch is cut from: named, or
 // origin's default branch when named is empty, which is empty itself when
 // origin names none. It refuses a work branch that is origin's default branch

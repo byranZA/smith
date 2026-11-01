@@ -31,7 +31,7 @@ The loop hands out the first available task in the spec's order. It reads the tr
 
 ## `smith loop list`
 
-Shows the settings a run would use, the next task, and what remains, without running anything:
+Shows the settings a run would use, the work branch and base branch it would use, the next task, and what remains, without running anything:
 
 ```text
 preset: opus (repo file)
@@ -39,6 +39,8 @@ agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
 push:   on (built-in default)
+branch: smith/244-spec-the-loop-smith-loop-and-the-repo-file
+base:   main
 spec #244 Spec: the loop — smith loop and the repo file
 next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
   blocked: #254 (by #253; preset deep)
@@ -47,6 +49,8 @@ next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
 ```
 
 Each setting names where its value came from. The first line is the preset the work role runs on (see [Presets and roles](#presets-and-roles)): its name, or `one-off` for a preset built from `--agent`, then its agent, model and effort, each with its own origin, so a `--model` or `--effort` flag shows against the preset it changed. A task whose `preset:` label chooses a preset of its own shows it after its number, beside any open blockers, as `#254 (by #253; preset deep)`; a task without one shows none. A kind of task with nothing in it is left out.
+
+The `branch:` line is the work branch a `loop run` of the issue would use, and `base:` the branch it would cut a new work branch from. Both are derived as `run` derives them (see [The work branch](#the-work-branch)): `smith/<n>-<slug>` from the issue, or the existing branch of that number, unless `--branch` names one, and origin's default branch unless `--base` names one. A task of a spec shows its spec's work branch. `list` only reads: it creates no branch, locally or on origin, so an agent can ask where a spec's work will land before committing to it.
 
 ## `smith loop run`
 

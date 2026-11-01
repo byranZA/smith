@@ -39,6 +39,7 @@ type loopWiring struct {
 	tmux     session.Runner
 	launcher loop.Launcher
 	bench    func(ctx context.Context, dir string, req workbench.Request) (loop.Bench, workbench.Lag, error)
+	plan     func(ctx context.Context, dir string, req workbench.Request) (branch, base string, err error)
 	pusher   func(dir string) loop.Pusher
 	preparer loop.Preparer
 	lookPath func(name string) (string, error)
@@ -67,6 +68,9 @@ func systemLoop() loopWiring {
 		tmux:     connection.System(),
 		launcher: loop.Process{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Mise: mise},
 		bench:    systemBench(os.Getenv),
+		plan: func(ctx context.Context, dir string, req workbench.Request) (string, string, error) {
+			return workbench.Plan(ctx, connection.System(), dir, req)
+		},
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		preparer: prepare.Preparer{Command: connection.System(), Mise: mise},
 		lookPath: exec.LookPath,
@@ -582,13 +586,15 @@ func checkLimits(limits loop.Limits) error {
 // nothing in the tracker. Exit 0 once the issue is read, whatever it holds; an
 // issue that cannot be read is reported naming why.
 func newLoopListCmd(w loopWiring) *cobra.Command {
-	return &cobra.Command{
+	var branch, base string
+	cmd := &cobra.Command{
 		Use:   "list <issue>",
 		Short: "Show the next task the loop would run, and what remains",
 		Long: `Read a spec or a single task from the tracker and print the loop settings in
 force, the next task "smith loop run" would hand an agent, and what remains of
-the execution. It changes nothing, and exits 0 once the issue is read, whatever
-it holds.
+the execution. It also names the work branch and the base branch a run would
+use, derived as "smith loop run" derives them, and creates neither. It changes
+nothing, and exits 0 once the issue is read, whatever it holds.
 
 ` + exits(0, 1),
 		Example: `  smith loop list 42`,
@@ -611,12 +617,30 @@ it holds.
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)+listReport(execution, loop.Survey(execution))); err != nil {
+			dir, err := w.workdir()
+			if err != nil {
+				return reportInvalid(cmd, fmt.Errorf("find the repo to work in: %w", err))
+			}
+			workBranch, workBase, err := w.plan(cmd.Context(), dir, workbench.Request{Number: execution.Number, Title: execution.Title, Branch: branch, Base: base})
+			if err != nil {
+				return reportInvalid(cmd, fmt.Errorf("find the work branch for #%d: %w", execution.Number, err))
+			}
+			report := settingsReport(settings) + branchReport(workBranch, workBase) + listReport(execution, loop.Survey(execution))
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&branch, "branch", "", "the work branch a run would use, named exactly (default: the spec's or task's smith/<n>-<slug> branch)")
+	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a run would cut a new work branch from (default: origin's default branch)")
+	return cmd
+}
+
+// branchReport renders the work branch and the base branch a run would use, in
+// the layout of the settings lines above it.
+func branchReport(branch, base string) string {
+	return fmt.Sprintf("branch: %s\nbase:   %s\n", branch, base)
 }
 
 // listReport renders the execution, its next task, and one line for each kind

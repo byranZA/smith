@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -108,6 +109,9 @@ func inRepo(t *testing.T, w loopWiring) loopWiring {
 	if w.pusher == nil {
 		w.pusher = (&fakeOrigin{}).at
 	}
+	if w.plan == nil {
+		w.plan = fakePlan
+	}
 	if w.bench == nil {
 		w.bench = fakeBench
 	}
@@ -203,6 +207,7 @@ func TestLoopListNamesTheNextTaskAndWhatRemains(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
 	want := defaultSettings +
+		"branch: smith/42-the-loop\nbase:   main\n" +
 		"spec #42 Spec: the loop\n" +
 		"next: #46 Task 46\n" +
 		"  available: #46\n" +
@@ -228,6 +233,7 @@ func TestLoopListNamesEachLabelledTasksPreset(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
 	}
 	want := defaultSettings +
+		"branch: smith/42-the-loop\nbase:   main\n" +
 		"spec #42 Spec: the loop\n" +
 		"next: #43 Task 43\n" +
 		"  available: #43, #44 (preset codex)\n" +
@@ -925,5 +931,62 @@ func TestLoopRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
 
 	if code == 0 || !strings.Contains(stderr, "push the work on #43: remote rejected") || !slices.Equal(claude.handed, []string{"43"}) {
 		t.Errorf("exit %d, stderr %q, handed %v; want non-zero naming #43 and the push error, with #44 never handed", code, stderr, claude.handed)
+	}
+}
+
+// fakePlan stands in for git: origin's default branch is main, and a named
+// branch or base is used as named.
+func fakePlan(_ context.Context, _ string, req workbench.Request) (string, string, error) {
+	return cmp.Or(req.Branch, workbench.Branch(req.Number, req.Title)), cmp.Or(req.Base, "main"), nil
+}
+
+func TestLoopListNamesTheDefaultWorkBranchAndBase(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": `{"number":42,"title":"Agent guide","state":"OPEN","body":"","labels":[],"blockedBy":{"nodes":[]}}`,
+	}}
+
+	stdout, stderr, code := runLoopList(t, gh, "42")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if want := "branch: smith/42-agent-guide\nbase:   main\n"; !strings.Contains(stdout, want) {
+		t.Errorf("stdout =\n%s\nwant it to contain %q", stdout, want)
+	}
+}
+
+func TestLoopListCreatesNoBranch(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": `{"number":42,"title":"Agent guide","state":"OPEN","body":"","labels":[],"blockedBy":{"nodes":[]}}`,
+	}}
+	setUp := false
+	w := loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath,
+		bench: func(context.Context, string, workbench.Request) (loop.Bench, workbench.Lag, error) {
+			setUp = true
+			return nil, workbench.Lag{}, nil
+		}}
+
+	_, stderr, code := runLoopListIn(t, w, "42")
+
+	if code != 0 || setUp {
+		t.Errorf("exit code = %d, work branch set up = %v, want 0 and false (stderr: %s)", code, setUp, stderr)
+	}
+}
+
+func TestLoopListNamesTheBranchAndBaseTheFlagsGive(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": `{"number":42,"title":"Agent guide","state":"OPEN","body":"","labels":[],"blockedBy":{"nodes":[]}}`,
+	}}
+	cmd := newLoopCmd(inRepo(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath}))
+	cmd.SetArgs([]string{"list", "42", "--branch", "feature/x", "--base", "develop"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if want := "branch: feature/x\nbase:   develop\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("stdout =\n%s\nwant it to contain %q", out.String(), want)
 	}
 }

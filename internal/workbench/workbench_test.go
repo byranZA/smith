@@ -935,3 +935,53 @@ func TestSetupsStartedTogetherInABareCloneEachCutAtTheirBase(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanNamesTheDefaultWorkBranchAndBaseWithoutCreatingAnything(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+
+	branch, base, err := workbench.Plan(t.Context(), connection.System(), clone, spec430)
+
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if branch != "smith/430-loop-works-in-task-worktrees" || base != "main" {
+		t.Errorf("Plan() = %q, %q, want smith/430-loop-works-in-task-worktrees, main", branch, base)
+	}
+	if got := git(t, clone, "for-each-ref", "refs/heads/smith"); got != "" {
+		t.Errorf("local smith branches = %q, want none", got)
+	}
+	if got := git(t, remote, "for-each-ref", "refs/heads/smith"); got != "" {
+		t.Errorf("origin smith branches = %q, want none", got)
+	}
+}
+
+func TestPlanHonoursTheNamedBranchAndBase(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	req := workbench.Request{Number: 430, Title: "x", Branch: "feature/mine", Base: "develop"}
+
+	branch, base, err := workbench.Plan(t.Context(), connection.System(), clone, req)
+
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if branch != "feature/mine" || base != "develop" {
+		t.Errorf("Plan() = %q, %q, want feature/mine, develop", branch, base)
+	}
+}
+
+func TestPlanNamesAnExistingWorkBranchOfTheIssueUnderItsOwnSlug(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	git(t, clone, "branch", "smith/430-older-title")
+
+	branch, _, err := workbench.Plan(t.Context(), connection.System(), clone, spec430)
+
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if branch != "smith/430-older-title" {
+		t.Errorf("Plan() branch = %q, want smith/430-older-title", branch)
+	}
+}

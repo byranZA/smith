@@ -119,6 +119,7 @@ func TestLoopListReportsTheConfiguredLabels(t *testing.T) {
 
 	want := defaultSettings +
 		"labels: agent go (repo file), human ready-for-human (built-in default), spec epic (repo file)\n" +
+		"branch: smith/42-the-loop\nbase:   main\n" +
 		"spec #42 Spec: the loop\n" +
 		"next: #43 Task 43\n" +
 		"  available: #43\n" +
