@@ -399,3 +399,55 @@ func realDir(t *testing.T, dir string) string {
 	}
 	return real
 }
+
+// checkedOutPlacingLoop is a session loop whose smith repo declares a
+// placement at .env and already has a stopped session's worktree whose
+// .gitignore holds ignore.
+func checkedOutPlacingLoop(t *testing.T, ignore string) (loopWiring, *tmuxBox) {
+	t.Helper()
+	tmux := &tmuxBox{}
+	w, workspace := sessionLoop(t, readySpec(), tmux)
+	plain := resolvedBox(workspace, "smith")
+	standUp(t, plain, tmux, "smith", "smith/42-the-loop")
+	stopSession(t, plain, tmux, "smith-smith-42-the-loop")
+	w.box, w.root = resolvedBoxPlacing(workspace, "smith", ".env"), stageRepoPlacement(t, "smith", ".env", "TOKEN=1\n")
+	dir := filepath.Join(workspace, "smith", "worktrees", "smith-42-the-loop")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(ignore), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return w, tmux
+}
+
+func TestLoopRunOnABoxRefusesAnUnignoredPlacementInTheExistingCheckoutBeforeStartingASession(t *testing.T) {
+	w, tmux := checkedOutPlacingLoop(t, "node_modules\n")
+	before := len(started(tmux))
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+	if code == 0 || len(started(tmux)) != before || !strings.Contains(stderr, ".env") || !strings.Contains(stderr, ".gitignore") {
+		t.Errorf("exit %d, stderr %q, new sessions %d; want non-zero naming .env and .gitignore and no session", code, stderr, len(started(tmux))-before)
+	}
+}
+
+func TestLoopRunOnABoxStartsASessionWhenTheExistingCheckoutIgnoresThePlacement(t *testing.T) {
+	w, tmux := checkedOutPlacingLoop(t, ".env\n")
+	before := len(started(tmux))
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+	if code != 0 || len(started(tmux)) != before+1 {
+		t.Errorf("exit %d, stderr %q, new sessions %d; want 0 and one session", code, stderr, len(started(tmux))-before)
+	}
+}
+
+func TestLoopRunOnABoxWithoutACheckoutLeavesPlacementChecksToTheTaskWorktrees(t *testing.T) {
+	tmux := &tmuxBox{}
+	w, workspace := sessionLoop(t, readySpec(), tmux)
+	w.box, w.root = resolvedBoxPlacing(workspace, "smith", ".env"), stageRepoPlacement(t, "smith", ".env", "TOKEN=1\n")
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "smith")
+
+	if code != 0 || len(started(tmux)) != 1 {
+		t.Errorf("exit %d, stderr %q, sessions %d; want 0 and one session", code, stderr, len(started(tmux)))
+	}
+}

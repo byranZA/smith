@@ -146,6 +146,8 @@ box.
 A **write-once** placement is still not overwritten on the way through — that
 is what write-once means, and resume does not make an exception of it.
 
+**Which worktrees get placements.** A session's worktree gets them when `start` stands it up, as above. On a box, the worktrees a [loop run](./loop.md#task-worktree-placements) works each task in get the repo's placements too, before they are prepared. Placements are meant for gitignored paths: the loop refuses to run when a destination is not ignored, and a session does not check, so an `.env` placed at a path the repo does not ignore shows up as an untracked file.
+
 ### Worktree preparation
 
 Before a human session launches, `start` installs the toolchain the repo's own mise config pins, with `mise install` pointed at the worktree, then runs the [prepare command](./loop.md#the-prepare-command) the worktree's repo file declares, if any, under `mise exec` ([ADR-0019](./adr/0019-worktree-preparation.md)). Their output streams to stderr as it is printed, over the relay too, so you watch the install before the session exists rather than finding it half-done inside `tmux`.

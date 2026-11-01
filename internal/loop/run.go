@@ -94,6 +94,9 @@ type Loop struct {
 	// Preparer prepares the task worktree before every agent attempt; nil
 	// prepares nothing.
 	Preparer Preparer
+	// Placements are put into each task worktree before it is prepared; nil,
+	// as off a box, places nothing.
+	Placements *Placements
 	// Presets chooses the preset each task is handed to, and so its agent,
 	// model and effort.
 	Presets preset.Choice
@@ -380,8 +383,9 @@ func (a attempt) agentFailure() bool { return a.failure != nil && !a.killed() }
 
 // hand marks task as worked and gives it to one agent run of cmd, on
 // resolved, in task's worktree, returning how the attempt went, and reports an agent that fails,
-// leaving it to the caller to judge. The worktree is prepared first, and a failed
-// preparation is an error naming it before task is marked or any agent runs.
+// leaving it to the caller to judge. The repo's files are placed into the worktree, then it is
+// prepared, and a failed placement or preparation is an error naming it before
+// task is marked or any agent runs.
 // The caller releases the mark, except on an error from an interrupted run or
 // a failed report of that failure, when hand has already removed it.
 func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resolved, cmd agent.Command) (attempt, error) {
@@ -390,6 +394,9 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resol
 		return attempt{}, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
+	if err := l.Placements.into(ctx, dir); err != nil {
+		return attempt{}, fmt.Errorf("place files into the worktree of #%d in %s: %w", task.Number, dir, err)
+	}
 	if err := l.prepare(ctx, task, dir); err != nil {
 		return attempt{}, err
 	}

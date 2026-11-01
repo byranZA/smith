@@ -104,6 +104,11 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	if err := refuseLive(cmd, env, run.repo, branch); err != nil {
 		return reportInvalid(cmd, err)
 	}
+	if source.Dir != "" {
+		if err := placementsOf(box, run.repo, w, inv).Check(cmd.Context(), source.Dir); err != nil {
+			return reportInvalid(cmd, err)
+		}
+	}
 	if _, err := fmt.Fprint(cmd.OutOrStdout(), settingsReport(settings)); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}
