@@ -189,3 +189,25 @@ func TestEveryVerbDeclaresItsTraits(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpAgentsMarksUpdateAsRunningLong(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd()
+	root.SetArgs([]string{"help", "agents"})
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errBuf.String())
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "- `smith update`") {
+			if !strings.Contains(line, "runs long") {
+				t.Errorf("smith update guide entry = %q, want it to say it runs long", line)
+			}
+			return
+		}
+	}
+	t.Errorf("smith help agents = %q, want an entry for smith update", out.String())
+}
