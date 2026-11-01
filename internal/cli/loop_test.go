@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/workbench"
 )
@@ -110,7 +110,7 @@ func inRepo(t *testing.T, w loopWiring) loopWiring {
 		w.pusher = (&fakeOrigin{}).at
 	}
 	if w.plan == nil {
-		w.plan = fakePlan
+		w.plan = planIn(clonedRepo(t))
 	}
 	if w.bench == nil {
 		w.bench = fakeBench
@@ -934,10 +934,25 @@ func TestLoopRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
 	}
 }
 
-// fakePlan stands in for git: origin's default branch is main, and a named
-// branch or base is used as named.
-func fakePlan(_ context.Context, _ string, req workbench.Request) (string, string, error) {
-	return cmp.Or(req.Branch, workbench.Branch(req.Number, req.Title)), cmp.Or(req.Base, "main"), nil
+// clonedRepo returns a real clone whose origin is a real bare repo with main
+// as its default branch.
+func clonedRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	remote, clone := filepath.Join(dir, "remote.git"), filepath.Join(dir, "clone")
+	gitIn(t, dir, "init", "--bare", "--initial-branch=main", remote)
+	gitIn(t, dir, "clone", remote, clone)
+	gitIn(t, clone, "checkout", "-B", "main")
+	gitIn(t, clone, "commit", "--allow-empty", "-m", "seed")
+	gitIn(t, clone, "push", "origin", "main")
+	return clone
+}
+
+// planIn is the real workbench.Plan, run with the real git against clone.
+func planIn(clone string) func(context.Context, string, workbench.Request) (string, string, error) {
+	return func(ctx context.Context, _ string, req workbench.Request) (string, string, error) {
+		return workbench.Plan(ctx, connection.System(), clone, req)
+	}
 }
 
 func TestLoopListNamesTheDefaultWorkBranchAndBase(t *testing.T) {
@@ -959,17 +974,29 @@ func TestLoopListCreatesNoBranch(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{
 		"42": `{"number":42,"title":"Agent guide","state":"OPEN","body":"","labels":[],"blockedBy":{"nodes":[]}}`,
 	}}
-	setUp := false
-	w := loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath,
-		bench: func(context.Context, string, workbench.Request) (loop.Bench, workbench.Lag, error) {
-			setUp = true
-			return nil, workbench.Lag{}, nil
-		}}
+	clone := clonedRepo(t)
+	refs := func() string { return gitIn(t, clone, "for-each-ref") + gitIn(t, clone, "worktree", "list") }
+	before := refs()
+	w := loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath, plan: planIn(clone)}
 
 	_, stderr, code := runLoopListIn(t, w, "42")
 
-	if code != 0 || setUp {
-		t.Errorf("exit code = %d, work branch set up = %v, want 0 and false (stderr: %s)", code, setUp, stderr)
+	if after := refs(); code != 0 || after != before {
+		t.Errorf("exit code = %d, refs after =\n%s\nwant 0 and refs unchanged from\n%s(stderr: %s)", code, after, before, stderr)
+	}
+}
+
+func TestLoopListNamesAnAdoptedWorkBranchOfTheSpecsNumber(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{
+		"42": `{"number":42,"title":"Agent guide","state":"OPEN","body":"","labels":[],"blockedBy":{"nodes":[]}}`,
+	}}
+	clone := clonedRepo(t)
+	gitIn(t, clone, "branch", "smith/42-old-title")
+
+	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath, plan: planIn(clone)}, "42")
+
+	if want := "branch: smith/42-old-title\nbase:   main\n"; code != 0 || !strings.Contains(stdout, want) {
+		t.Errorf("exit code = %d, stdout =\n%s\nwant 0 and %q (stderr: %s)", code, stdout, want, stderr)
 	}
 }
 
