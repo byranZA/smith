@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/byranZA/smith/internal/tailbuf"
 )
 
 // ErrConnect indicates ssh could not establish a connection to the box, as
@@ -97,9 +99,9 @@ func (s *SSH) RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reade
 // to connect as ErrConnect while still streaming stderr to the caller.
 func (s *SSH) run(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error {
 	args := append(append([]string{}, defaultSSHOptions...), s.target, remoteCmd)
-	var tail tailBuffer
+	tail := tailbuf.Buffer{Limit: stderrTailLimit}
 	if err := s.exec.Run(ctx, "ssh", args, stdin, stdout, teeTo(stderr, &tail)); err != nil {
-		return s.classify("ssh", err, string(tail.buf))
+		return s.classify("ssh", err, string(tail.Bytes()))
 	}
 	return nil
 }
@@ -171,24 +173,8 @@ func lastLine(text string) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
-// tailBuffer is an io.Writer that keeps only the last stderrTailLimit bytes
-// written to it.
-type tailBuffer struct {
-	buf []byte
-}
-
-// Write appends p, dropping the oldest bytes beyond stderrTailLimit. It never
-// fails.
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.buf = append(t.buf, p...)
-	if over := len(t.buf) - stderrTailLimit; over > 0 {
-		t.buf = t.buf[over:]
-	}
-	return len(p), nil
-}
-
 // teeTo writes to both w and tail, or to tail alone when w is nil.
-func teeTo(w io.Writer, tail *tailBuffer) io.Writer {
+func teeTo(w io.Writer, tail *tailbuf.Buffer) io.Writer {
 	if w == nil {
 		return tail
 	}
