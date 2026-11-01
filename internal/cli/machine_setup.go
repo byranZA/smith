@@ -52,8 +52,9 @@ const smithLogin = "smith"
 func newSetupCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var accessFlag, authKeyRef, blueprintName, boxName, boxTarget, smithVersion string
 	cmd := &cobra.Command{
-		Use:   "setup <login>@<host>",
-		Short: "Provision, secure, and make a fresh box reachable",
+		Use:         "setup <login>@<host>",
+		Annotations: verbTraits(false, true, false),
+		Short:       "Provision, secure, and make a fresh box reachable",
 		Long: `Connect to a box over its bootstrap login, run the preflight gate, then run
 the phases that leave it provisioned, secured and reachable as the smith user,
 and the stages on top: the access layer, the smith binary, the staged

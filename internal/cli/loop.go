@@ -292,8 +292,9 @@ func settingsReport(s loop.Settings) string {
 // itself never writes.
 func newLoopPromptCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "prompt",
-		Short: "Print the built-in loop prompt, to eject or diff against",
+		Use:         "prompt",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Print the built-in loop prompt, to eject or diff against",
 		Long: `Print the prompt the loop hands each task's agent, as built into smith, with
 its placeholders unfilled. It prints the built-in one even when the repo has
 its own: save the output as .smith/prompt.md to eject it, or diff a repo's
@@ -326,8 +327,9 @@ func newLoopRunCmd(w loopWiring) *cobra.Command {
 	var interactive, noPush, inSession bool
 	var branch, base, repo string
 	cmd := &cobra.Command{
-		Use:   "run [<box>] <issue>",
-		Short: "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
+		Use:         "run [<box>] <issue>",
+		Annotations: verbTraits(true, true, false),
+		Short:       "Work a spec's tasks, or a single task, to completion with a coding agent, on a work branch of its own",
 		Long: help(`Work an execution, a spec's tasks or a single task, handing each available
 task to a coding agent in its own task worktree, so no agent works in the
 checkout the loop runs from. Each closed task is merged into the execution's
@@ -588,8 +590,9 @@ func checkLimits(limits loop.Limits) error {
 func newLoopListCmd(w loopWiring) *cobra.Command {
 	var branch, base string
 	cmd := &cobra.Command{
-		Use:   "list <issue>",
-		Short: "Show the next task the loop would run, and what remains",
+		Use:         "list <issue>",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Show the next task the loop would run, and what remains",
 		Long: `Read a spec or a single task from the tracker and print the loop settings in
 force, the next task "smith loop run" would hand an agent, and what remains of
 the execution. It also names the work branch and the base branch a run would

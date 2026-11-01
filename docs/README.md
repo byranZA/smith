@@ -2,7 +2,7 @@
 
 Start at the repository [README](../README.md) for what smith is and a
 five-minute path from a fresh VPS to a running session. These pages carry the
-detail. Each verb's own `--help` has examples and the exit codes it can return, and `smith help exit-codes` lists every code smith exits with.
+detail. Each verb's own `--help` has examples and the exit codes it can return, `smith help exit-codes` lists every code smith exits with, and `smith help agents` is the guide for an agent that drives smith.
 
 ## Getting a box running
 

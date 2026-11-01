@@ -63,8 +63,9 @@ func readBuildStamp() buildStamp {
 // when the binary was built inside a git tree, the commit and build time.
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Print the smith version and build provenance",
+		Use:         "version",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Print the smith version and build provenance",
 		Long: `Print the version of this smith binary and, when it was built inside a git
 tree, the commit and build time it came from.
 

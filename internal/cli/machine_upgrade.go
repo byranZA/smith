@@ -34,8 +34,9 @@ func newUpgradeCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	converge := convergeNamedBox(resolve, exec)
 	var smithVersion string
 	cmd := &cobra.Command{
-		Use:   "upgrade <name-or-target>",
-		Short: "Converge the smith binary on a box to the version local smith runs",
+		Use:         "upgrade <name-or-target>",
+		Annotations: verbTraits(false, true, false),
+		Short:       "Converge the smith binary on a box to the version local smith runs",
 		Long: `Install on a box the smith version local smith runs, or the one
 --smith-version names, so the two sides have no version skew. A box ahead of
 local smith is moved back. Nothing else changes: no setup phase or stage runs

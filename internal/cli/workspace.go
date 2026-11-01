@@ -120,8 +120,9 @@ func newWorkspaceCmd(w workspaceWiring) *cobra.Command {
 // non-zero, and what the box already holds is left where it is.
 func newWorkspaceConvergeCmd(w workspaceWiring) *cobra.Command {
 	return &cobra.Command{
-		Use:   "converge [<box>]",
-		Short: "Bring a box's workspace up to what its blueprint declares",
+		Use:         "converge [<box>]",
+		Annotations: verbTraits(true, true, false),
+		Short:       "Bring a box's workspace up to what its blueprint declares",
 		Long: help(`Read the staged blueprint and converge the box's workspace to what it
 declares: its repos, tools, env and placements, streaming each step. It is the
 last stage of "smith machine setup", and re-runs it alone. It never deletes:

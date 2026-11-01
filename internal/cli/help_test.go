@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -138,5 +139,53 @@ func TestEveryRelayingVerbExamplesBothForms(t *testing.T) {
 	}
 	if relaying == 0 {
 		t.Error("found no verb whose Use takes [<box>], want the relaying verbs walked")
+	}
+}
+
+func TestHelpAgentsPrintsTheGuideAndMapsEveryVerbAndCode(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd()
+	root.SetArgs([]string{"help", "agents"})
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() err = %v (stderr: %s)", err, errBuf.String())
+	}
+	for path := range leaves(newRootCmd()) {
+		if !strings.Contains(out.String(), "`"+path+"`") {
+			t.Errorf("smith help agents lacks verb %s", path)
+		}
+	}
+	for _, c := range exitCodes {
+		if !strings.Contains(out.String(), fmt.Sprintf("- `%d`: %s", c.code, c.meaning)) {
+			t.Errorf("smith help agents lacks exit code %d with its meaning", c.code)
+		}
+	}
+	if !strings.Contains(out.String(), "`smith session attach`: ") || !strings.Contains(out.String(), "(relays to a box; needs a terminal)") {
+		t.Errorf("smith help agents = %q, want session attach marked as relaying and needing a terminal", out.String())
+	}
+}
+
+func TestAgentsIsAHelpTopic(t *testing.T) {
+	t.Parallel()
+	topic, _, err := newRootCmd().Find([]string{"agents"})
+	if err != nil {
+		t.Fatalf("Find(agents) err = %v", err)
+	}
+	if !topic.IsAdditionalHelpTopicCommand() {
+		t.Errorf("agents is not an additional help topic, want a help-only command with no Run")
+	}
+}
+
+func TestEveryVerbDeclaresItsTraits(t *testing.T) {
+	t.Parallel()
+	for path, verb := range leaves(newRootCmd()) {
+		for _, key := range []string{traitRelays, traitRunsLong, traitNeedsTerminal} {
+			if _, ok := verb.Annotations[key]; !ok {
+				t.Errorf("%s declares no %s annotation, want verbTraits(...)", path, key)
+			}
+		}
 	}
 }

@@ -30,8 +30,9 @@ func newRepoCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolv
 func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver) *cobra.Command {
 	var values repofile.Preset
 	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Scaffold the repo file with a commented starter",
+		Use:         "init",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Scaffold the repo file with a commented starter",
 		Long: `Write a commented starter repo file, .smith/repo.yaml, at the root of the git
 repo smith is run from, unless one is already there. It holds one preset,
 filled in from the flags, with the work role pointed at it.

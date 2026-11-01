@@ -22,8 +22,9 @@ import (
 // the placeholder left commented.
 func newInitCmd(resolve homeResolver, git gitidentity.Runner) *cobra.Command {
 	return &cobra.Command{
-		Use:   "init",
-		Short: "Scaffold the config home with starter preferences and a starter blueprint",
+		Use:         "init",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Scaffold the config home with starter preferences and a starter blueprint",
 		Long: `Create the config home and write a starter preferences file and a starter
 blueprint wherever no file is already there, then name the two commands that
 take it to a built box. A file already there is left alone. The git identity

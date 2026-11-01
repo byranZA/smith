@@ -69,8 +69,9 @@ func newUpdateCmd(w updateWiring) *cobra.Command {
 	var version string
 	var boxes, continuing bool
 	cmd := &cobra.Command{
-		Use:   "update",
-		Short: "Update local smith to the latest release, then offer to upgrade every box",
+		Use:         "update",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Update local smith to the latest release, then offer to upgrade every box",
 		Long: help(`Replace this smith binary with the latest release, or the one --version
 names, then offer to converge every box in the inventory to it, as
 "smith machine upgrade" does; --boxes upgrades them without asking. An update

@@ -64,8 +64,9 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 func newCreateCmd(resolve homeResolver, runner provider.Runner, dialer connection.Dialer, clock provider.Clock) *cobra.Command {
 	var blueprintName string
 	cmd := &cobra.Command{
-		Use:   "create <name>",
-		Short: "Create a box at the provider the adapter describes",
+		Use:         "create <name>",
+		Annotations: verbTraits(false, true, false),
+		Short:       "Create a box at the provider the adapter describes",
 		Long: `Create a box at a provider by running the create template of a provider
 adapter through the provider's own CLI, then wait until the box's ssh port
 answers. It stops once the box exists: nothing is written to the box, and it
@@ -211,8 +212,9 @@ nothing is provisioned yet. Run:
 func newListCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var probe bool
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List the boxes smith knows how to reach",
+		Use:         "list",
+		Annotations: verbTraits(false, false, false),
+		Short:       "List the boxes smith knows how to reach",
 		Long: `List the boxes in the box inventory, sorted by name. It is offline: no box is
 connected to unless --probe asks smith to try every box and report whether it
 answers. A box that does not answer is shown, never pruned, and does not fail
@@ -278,8 +280,9 @@ func probeBoxes(ctx context.Context, inv inventory.Inventory, exec connection.Ex
 // address to pass and the command that registers the box under a name.
 func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <name-or-target>",
-		Short: "Report how a box has drifted from what setup established",
+		Use:         "status <name-or-target>",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Report how a box has drifted from what setup established",
 		Long: `Connect to a box, read its live facts, and report how they have drifted from
 what its marker says setup established. It changes nothing on the box. The
 argument is a box name from the inventory or a raw ssh target: one with an "@"
@@ -413,8 +416,9 @@ func hostOf(target string) string {
 func newAddCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
-		Use:   "add <target>",
-		Short: "Register a box smith already provisioned",
+		Use:         "add <target>",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Register a box smith already provisioned",
 		Long: `Register a box smith already set up in the box inventory, so it can be named
 instead of addressed: the way back from a lost inventory, and the way a second
 machine learns a box the first one set up. smith connects, reads the box's
@@ -577,8 +581,9 @@ func hostOrTarget(target string) string {
 // entry they meant is still there.
 func newForgetCmd(resolve homeResolver) *cobra.Command {
 	return &cobra.Command{
-		Use:   "forget <name>",
-		Short: "Remove a box from the inventory, leaving the box itself alone",
+		Use:         "forget <name>",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Remove a box from the inventory, leaving the box itself alone",
 		Long: `Remove one box from the box inventory. No connection is opened and the box
 keeps running; "smith machine add" registers it again. A name no box is
 registered under is refused.
