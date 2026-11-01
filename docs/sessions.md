@@ -146,12 +146,7 @@ box.
 A **write-once** placement is still not overwritten on the way through — that
 is what write-once means, and resume does not make an exception of it.
 
-**Which worktrees get placements.** A session's worktree gets them when `start`
-stands it up, as above. On a box, the worktrees a [loop run](./loop.md#task-worktree-placements)
-works each task in get the repo's placements too, before they are prepared.
-Placements are meant for gitignored paths: the loop refuses to run when a
-destination is not ignored, and a session does not check, so an `.env` placed
-at a path the repo does not ignore shows up as an untracked file.
+**Which worktrees get placements.** A session's worktree gets them when `start` stands it up, as above. On a box, the worktrees a [loop run](./loop.md#task-worktree-placements) works each task in get the repo's placements too, before they are prepared. Placements are meant for gitignored paths: the loop refuses to run when a destination is not ignored, and a session does not check, so an `.env` placed at a path the repo does not ignore shows up as an untracked file.
 
 ### Worktree preparation
 
