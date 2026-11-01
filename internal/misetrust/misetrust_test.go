@@ -1,31 +1,24 @@
 package misetrust_test
 
 import (
-	"os"
+	"errors"
 	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/byranZA/smith/internal/misetrust"
 )
 
-// reportingMise is a stand-in mise that prints the config paths it was told to trust, then each argument in brackets.
-const reportingMise = `#!/bin/sh
-printf '%s|' "$MISE_TRUSTED_CONFIG_PATHS"
-for arg; do printf '[%s]' "$arg"; done
-`
-
 // runCommand runs Command for the stand-in mise with environ as its whole environment and returns what it printed.
 func runCommand(t *testing.T, dir string, environ []string, args ...string) string {
 	t.Helper()
-	mise := filepath.Join(t.TempDir(), "mise")
-	if err := os.WriteFile(mise, []byte(reportingMise), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	argv := misetrust.Command(mise, dir, args...)
 	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
 	cmd.Env = append([]string{"PATH=/usr/bin:/bin"}, environ...)
 	out, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		t.Fatalf("run %v: %v: %s", argv, err, exitErr.Stderr)
+	}
 	if err != nil {
 		t.Fatalf("run %v: %v", argv, err)
 	}
