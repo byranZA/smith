@@ -3,6 +3,7 @@ package loop_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"slices"
@@ -118,7 +119,9 @@ type chatty struct {
 }
 
 func (c chatty) Prepare(_ context.Context, _ string, out io.Writer) error {
-	_, _ = io.WriteString(out, c.output)
+	if _, err := io.WriteString(out, c.output); err != nil {
+		return fmt.Errorf("write preparation output: %w", err)
+	}
 	return c.fail
 }
 
@@ -162,7 +165,9 @@ func TestRunPrintsOnlyTheLastLinesOfOversizedFailedPreparationOutput(t *testing.
 	line := strings.Repeat("x", 99) + "\n"
 	l.Preparer = chatty{output: strings.Repeat(line, 1000) + "last\n", fail: errPrepare}
 
-	_, _ = l.Run(t.Context(), 42)
+	if _, err := l.Run(t.Context(), 42); !errors.Is(err, errPrepare) {
+		t.Fatalf("Run() error = %v, want the preparation error", err)
+	}
 
 	head := "smith: preparing the worktree of #43\nsmith: earlier preparation output was cut; showing the last 64 KiB\n"
 	body, ok := strings.CutPrefix(progress.String(), head)

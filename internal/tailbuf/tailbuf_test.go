@@ -8,8 +8,12 @@ import (
 
 func TestBufferKeepsOnlyTheLastLimitBytes(t *testing.T) {
 	b := tailbuf.Buffer{Limit: 5}
-	_, _ = b.Write([]byte("abcd"))
-	_, _ = b.Write([]byte("efgh"))
+	if _, err := b.Write([]byte("abcd")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if _, err := b.Write([]byte("efgh")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 
 	if got := string(b.Bytes()); got != "defgh" {
 		t.Errorf("Bytes() = %q, want %q", got, "defgh")
@@ -21,7 +25,9 @@ func TestBufferKeepsOnlyTheLastLimitBytes(t *testing.T) {
 
 func TestBufferWithinTheLimitDropsNothing(t *testing.T) {
 	b := tailbuf.Buffer{Limit: 8}
-	_, _ = b.Write([]byte("abcd"))
+	if _, err := b.Write([]byte("abcd")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
 
 	if string(b.Bytes()) != "abcd" || b.Dropped() {
 		t.Errorf("Bytes() = %q, Dropped() = %v; want %q and false", b.Bytes(), b.Dropped(), "abcd")
