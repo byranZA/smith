@@ -16,19 +16,19 @@ type workdirResolver func() (string, error)
 
 // newRepoCmd builds `smith repo`, the verbs that work with the repo file of
 // the git repo smith is run from. None is relayed to a box.
-func newRepoCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver) *cobra.Command {
+func newRepoCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver, term terminal) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repo",
 		Short: "Work with the repo file, the loop settings a repo commits",
 	}
-	cmd.AddCommand(newRepoInitCmd(resolve, git, workdir))
+	cmd.AddCommand(newRepoInitCmd(resolve, git, workdir, term))
 	return cmd
 }
 
 // newRepoInitCmd builds `smith repo init`, which writes a commented starter
 // repo file at the root of the current git repo unless one is already there:
 // one preset, filled in from the flags, with the work role pointed at it.
-func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver) *cobra.Command {
+func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirResolver, term terminal) *cobra.Command {
 	var values repofile.Preset
 	cmd := &cobra.Command{
 		Use:         "init",
@@ -37,6 +37,14 @@ func newRepoInitCmd(resolve homeResolver, git repofile.Runner, workdir workdirRe
 		Long: `Write a commented starter repo file, .smith/repo.yaml, at the root of the git
 repo smith is run from, unless one is already there. It holds one preset,
 filled in from the flags, with the work role pointed at it.
+
+It then offers to add a line pointing at the repo guide to the repo's agent
+instruction files, AGENTS.md and CLAUDE.md, naming the files it will touch.
+A file that already points at the guide is left alone, and when none needs the
+line nothing is asked.
+
+With nobody at the terminal the question is not asked: the line and the command
+that would add it are printed instead, and --yes adds it.
 
 ` + exits(0, 1),
 		Example: `  smith repo init
@@ -62,7 +70,7 @@ filled in from the flags, with the work role pointed at it.
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), repoOutcomeLines(outcomes)); err != nil {
 				return fmt.Errorf("write report: %w", err)
 			}
-			return nil
+			return offerPointer(cmd, repo, term)
 		},
 	}
 	cmd.Flags().StringVar(&values.Agent, "agent", "", "the agent of the starter's preset, which is named for it (default claude)")
@@ -91,4 +99,43 @@ func currentDir() (string, error) {
 		return "", fmt.Errorf("locate the current directory: %w", err)
 	}
 	return dir, nil
+}
+
+// offerPointer puts the pointer line to the operator: one [y/N] question
+// naming the files it will touch. Yes, up front with --yes or asked at the
+// terminal, writes it; anything else, including nobody at the terminal, writes
+// nothing and prints the line to paste, with the command that would add it.
+func offerPointer(cmd *cobra.Command, repo repofile.Repo, term terminal) error {
+	files, err := repofile.ReadInstructions(repo)
+	if err != nil {
+		return reportInvalid(cmd, err)
+	}
+	plan := repofile.PlanPointer(files)
+	if plan.Empty() {
+		return nil
+	}
+	out := cmd.OutOrStdout()
+	names := strings.Join(plan.Files(), " and ")
+	yes := assumeYes(cmd)
+	if !yes && attended(term) {
+		answer, err := term.ReadLine(fmt.Sprintf("Point %s at the repo guide, .smith/README.md? [y/N] ", names))
+		if err != nil {
+			return fmt.Errorf("ask whether to point %s at the repo guide: %w", names, err)
+		}
+		yes = accepted(answer)
+	}
+	if !yes {
+		_, err := fmt.Fprintf(out, "not pointing %s at the repo guide; add this line by hand, or run `smith repo init --yes`:\n%s\n", names, repofile.PointerLine)
+		if err != nil {
+			return fmt.Errorf("write pointer line: %w", err)
+		}
+		return nil
+	}
+	if err := repofile.ApplyPointer(repo, plan); err != nil {
+		return reportInvalid(cmd, err)
+	}
+	if _, err := fmt.Fprintf(out, "pointed %s at the repo guide\n", names); err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return nil
 }

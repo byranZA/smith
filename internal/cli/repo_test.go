@@ -30,7 +30,13 @@ func (g toplevelGit) Run(_ context.Context, _ string, args []string, _ io.Reader
 // runRepoInit runs `smith repo init` from workdir in a repo rooted at root.
 func runRepoInit(t *testing.T, root, workdir, home string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := newRepoCmd(func() (config.Home, error) { return config.NewHome(home), nil }, toplevelGit{root: root}, func() (string, error) { return workdir, nil })
+	return runRepoInitAt(t, nil, root, workdir, home, args...)
+}
+
+// runRepoInitAt is runRepoInit with term as the terminal; nil is nobody there.
+func runRepoInitAt(t *testing.T, term terminal, root, workdir, home string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	cmd := newRepoCmd(func() (config.Home, error) { return config.NewHome(home), nil }, toplevelGit{root: root}, func() (string, error) { return workdir, nil }, term)
 	cmd.SetArgs(append([]string{"init"}, args...))
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
@@ -42,6 +48,7 @@ func runRepoInit(t *testing.T, root, workdir, home string, args ...string) (stdo
 
 func TestRepoInitReportsTheRepoFileCreatedAtTheRepoRoot(t *testing.T) {
 	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "see .smith/README.md\n")
 
 	stdout, stderr, code := runRepoInit(t, root, filepath.Join(root, "internal"), t.TempDir())
 
@@ -57,6 +64,7 @@ func TestRepoInitReportsTheRepoFileCreatedAtTheRepoRoot(t *testing.T) {
 func TestRepoInitReportsAnExistingRepoFileAsLeftAlone(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".smith", "repo.yaml")
+	writeFile(t, filepath.Join(root, "AGENTS.md"), "see .smith/README.md\n")
 	writeFile(t, path, "push: false\n")
 
 	stdout, _, _ := runRepoInit(t, root, root, t.TempDir())
