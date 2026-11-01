@@ -65,13 +65,13 @@ func (p *Placements) into(ctx context.Context, dir string) error {
 }
 
 // unignored returns the destinations git, run in dir, does not ignore.
+// check-ignore exits 1 when it ignores none of the paths, which is an answer;
+// only a failure that says something on stderr is an error.
 func (p *Placements) unignored(ctx context.Context, dir string) ([]string, error) {
 	args := []string{"-C", dir, "check-ignore", "--stdin", "-z"}
 	stdin := strings.NewReader(strings.Join(p.To, "\x00") + "\x00")
 	var stdout, stderr bytes.Buffer
 	err := p.Git.Run(ctx, "git", args, stdin, &stdout, &stderr)
-	// check-ignore exits 1 when it ignores none of the paths, which is an
-	// answer; only a failure that says something is an error.
 	if err != nil && strings.TrimSpace(stderr.String()) != "" {
 		return nil, fmt.Errorf("check which placement destinations of repo %q are gitignored: %w: %s", p.Repo, err, strings.TrimSpace(stderr.String()))
 	}
