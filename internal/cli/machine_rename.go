@@ -21,8 +21,9 @@ import (
 // it to the operator's output and exit code.
 func newRenameCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rename <box> <new-name>",
-		Short: "Rename a box on its marker and in the inventory",
+		Use:         "rename <box> <new-name>",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Rename a box on its marker and in the inventory",
 		Long: `Rename a registered box. smith connects to it over its registered target,
 rewrites the name its marker records and nothing else, then moves its inventory
 entry to the new name. No setup phase or stage runs.

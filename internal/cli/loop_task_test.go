@@ -70,6 +70,7 @@ func TestLoopListNamesAnAvailableStandaloneTaskAsNextAndNothingElse(t *testing.T
 	stdout, stderr, code := runLoopList(t, standaloneTask(), "80")
 
 	want := defaultSettings +
+		"branch: smith/80-task-80\nbase:   main\n" +
 		"task #80 Task 80\n" +
 		"next: #80 Task 80\n" +
 		"  available: #80\n"
@@ -115,6 +116,7 @@ func TestLoopListShowsAnUnavailableTaskUnderItsState(t *testing.T) {
 	stdout, stderr, code := runLoopList(t, gh, "80")
 
 	want := defaultSettings +
+		"branch: smith/80-task-80\nbase:   main\n" +
 		"task #80 Task 80\n" +
 		"next: none\n" +
 		"  blocked: #80 (by #79)\n"
@@ -175,6 +177,7 @@ func TestLoopListOfAChildTaskShowsThatTaskAlone(t *testing.T) {
 	stdout, stderr, code := runLoopList(t, specWithChildren(), "44")
 
 	want := defaultSettings +
+		"branch: smith/42-the-loop\nbase:   main\n" +
 		"task #44 Task 44\n" +
 		"next: #44 Task 44\n" +
 		"  available: #44\n"
@@ -235,6 +238,7 @@ func TestLoopListLeavesANestedSpecOutOfTheAvailableTasks(t *testing.T) {
 	stdout, stderr, code := runLoopList(t, gh, "42")
 
 	want := defaultSettings +
+		"branch: smith/42-the-loop\nbase:   main\n" +
 		"spec #42 Spec: the loop\n" +
 		"next: #43 Task 43\n" +
 		"  available: #43\n" +

@@ -23,6 +23,9 @@ const fileName = "repo.yaml"
 // promptName is the name, inside dirName, of the loop prompt a repo ejects.
 const promptName = "prompt.md"
 
+// guideName is the name, inside dirName, of the repo guide.
+const guideName = "README.md"
+
 // ErrNotARepo is returned by Locate when the directory is not inside a git repo.
 var ErrNotARepo = errors.New("must be run inside a git repo")
 
@@ -50,6 +53,9 @@ func At(root string) Repo { return Repo{root: root} }
 
 // Path is where the repo's repo file is, whether or not it exists yet.
 func (r Repo) Path() string { return filepath.Join(r.root, dirName, fileName) }
+
+// GuidePath is where the repo's repo guide is, whether or not it exists yet.
+func (r Repo) GuidePath() string { return filepath.Join(r.root, dirName, guideName) }
 
 // PromptPath is where the repo's ejected loop prompt is, whether or not the
 // repo has ejected one.

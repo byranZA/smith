@@ -481,3 +481,11 @@ _Avoid_: project config, repo config, local config, config file.
 **Loop prompt**:
 The prompt the loop hands an agent for one task, with the task filled in through placeholders; the agent finds the spec from the task itself. smith ships a built-in one and uses it unless the repo has **ejected** its own copy to `.smith/prompt.md`. A repo that never ejects follows smith's latest default on every upgrade. A repo that has ejected owns the file, which smith never overwrites, and catches up by diffing against the printed built-in.
 _Avoid_: system prompt, template (reserved for an adapter's command lines).
+
+**Agent guide**:
+What `smith help agents` prints: how a coding agent that plans work drives smith — its mental model, the verbs, the exit codes, the issue shape the loop expects, and recipes for common workflows. It is for the agent that runs smith, never for a task's agent, which the loop prompt alone instructs. Built into the binary, so it always matches the installed smith, and never written to disk.
+_Avoid_: skill, docs, manual.
+
+**Repo guide**:
+`.smith/README.md`: the short note `smith repo init` writes so a coding agent working the repo knows smith drives it. It holds only pointers and rules that do not change between releases — read the **agent guide**, ask `smith loop list` for a spec's work branch before committing to it — so a repo owns it once written, as it owns an ejected **loop prompt**, and it never goes stale. The repo's `AGENTS.md` or `CLAUDE.md` points at it.
+_Avoid_: README (the file's name, not the term), skill, agent docs.

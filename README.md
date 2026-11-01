@@ -165,11 +165,11 @@ To reach the box over a tailnet instead of the public internet, add `--access ta
 
 ### 4. Get the repo ready for the loop
 
-In a checkout of the repo, write the repo file and commit it:
+In a checkout of the repo, write the repo file and the repo guide (`.smith/README.md`, which points a coding agent at `smith help agents`) and commit them:
 
 ```sh
 smith repo init --agent claude --model opus
-git add .smith/repo.yaml && git commit -m "chore: add the smith repo file"
+git add .smith/repo.yaml .smith/README.md && git commit -m "chore: add the smith repo file and guide"
 ```
 
 Then plan on GitHub: a spec issue with sub-issues for its tasks, each labelled `ready-for-agent` or `ready-for-human`. Check what the loop would do, without running anything:
@@ -185,6 +185,8 @@ smith loop run dev 42 --repo app
 smith session attach dev app-smith-42-login-flow    # watch, read-only
 smith session list dev                              # each session's state and outcome
 ```
+
+If you plan the work from inside a coding agent, point it at `smith help agents`: a guide built into the binary, with the mental model, the verb map, the exit codes and recipes that match the smith you have installed.
 
 On a new repo or prompt, try one task with you watching first: `smith loop run --interactive 42` in a checkout, on your machine or in a session on the box.
 

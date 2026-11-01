@@ -31,7 +31,7 @@ The loop hands out the first available task in the spec's order. It reads the tr
 
 ## `smith loop list`
 
-Shows the settings a run would use, the next task, and what remains, without running anything:
+Shows the settings a run would use, the work branch and base branch it would use, the next task, and what remains, without running anything:
 
 ```text
 preset: opus (repo file)
@@ -39,6 +39,8 @@ agent:  claude (repo file)
 model:  opus (repo file)
 effort: high (repo file)
 push:   on (built-in default)
+branch: smith/244-spec-the-loop-smith-loop-and-the-repo-file
+base:   main
 spec #244 Spec: the loop — smith loop and the repo file
 next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
   blocked: #254 (by #253; preset deep)
@@ -47,6 +49,8 @@ next: #253 Loop: smith runs its own loop — .smith/ config, prompt and docs
 ```
 
 Each setting names where its value came from. The first line is the preset the work role runs on (see [Presets and roles](#presets-and-roles)): its name, or `one-off` for a preset built from `--agent`, then its agent, model and effort, each with its own origin, so a `--model` or `--effort` flag shows against the preset it changed. A task whose `preset:` label chooses a preset of its own shows it after its number, beside any open blockers, as `#254 (by #253; preset deep)`; a task without one shows none. A kind of task with nothing in it is left out.
+
+The `branch:` line is the work branch a `loop run` of the issue would use, and `base:` the branch it would cut a new work branch from. Both are derived as `run` derives them (see [The work branch](#the-work-branch)): `smith/<n>-<slug>` from the issue, or the existing branch of that number, unless `--branch` names one, and origin's default branch unless `--base` names one. A task of a spec shows its spec's work branch. `list` only reads: it creates no branch, locally or on origin, so an agent can ask where a spec's work will land before committing to it.
 
 ## `smith loop run`
 
@@ -183,7 +187,7 @@ labels:
   spec: spec
 ```
 
-`smith repo init` writes a commented starter and reports `created <path>`. The starter defines one preset, named for its agent, and points the work role at it: `--agent`, `--model` and `--effort` fill that preset in, and without them it is `claude` with the agent's own model and effort. `smith repo init --agent codex --model gpt-6.1-sol --effort high` writes `presets: {codex: {agent: codex, model: gpt-6.1-sol, effort: high}}` and `roles: {work: codex}`. A starter that would not load, such as one for an unknown agent, is refused and nothing is written. It never overwrites an existing file: it reports `left alone <path>` instead. Outside a git repo it refuses: `must be run inside a git repo`. In a bare clone it refuses too, saying the directory is a bare repo.
+`smith repo init` writes a commented starter and the repo guide, `.smith/README.md`, a short note that tells a coding agent working the repo that smith drives it. It reports each file as `created <path>`. The starter defines one preset, named for its agent, and points the work role at it: `--agent`, `--model` and `--effort` fill that preset in, and without them it is `claude` with the agent's own model and effort. `smith repo init --agent codex --model gpt-6.1-sol --effort high` writes `presets: {codex: {agent: codex, model: gpt-6.1-sol, effort: high}}` and `roles: {work: codex}`. A starter that would not load, such as one for an unknown agent, is refused and nothing is written. It never overwrites an existing file: it reports `left alone <path>` instead, and writes the other, so running it again in a repo that has a repo file adds the repo guide. It then offers to add one line, pointing at the repo guide, to the repo's agent instruction files, with one [y/N] question naming the files it will touch: `AGENTS.md` alone, a `CLAUDE.md` alone (at the root or in `.claude/`), both when the `CLAUDE.md` has no line that is exactly `@AGENTS.md` or `@./AGENTS.md`, and a new `AGENTS.md` when there is none. A file that already mentions `.smith/README.md` is skipped, and when every file is, nothing is asked. Answering no, or running with nobody at the terminal, changes no file and prints the line and `smith repo init --yes`, which adds it; `--yes` answers yes. Outside a git repo it refuses: `must be run inside a git repo`. In a bare clone it refuses too, saying the directory is a bare repo.
 
 Each setting resolves most specific first:
 

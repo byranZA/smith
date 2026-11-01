@@ -323,8 +323,9 @@ func newSessionListCmd(w sessionWiring) *cobra.Command {
 	var repo string
 	var live, stopped, names bool
 	cmd := &cobra.Command{
-		Use:   "list [<box>]",
-		Short: "List the sessions on a box and whether they are running",
+		Use:         "list [<box>]",
+		Annotations: verbTraits(true, false, false),
+		Short:       "List the sessions on a box and whether they are running",
 		Long: help(`List the sessions on a box: each one's worktree and branch, whether its tmux
 session is live, whether the worktree is dirty, and how many commits it has
 not pushed. --names prints one bare session name per line, for composing a
@@ -394,8 +395,9 @@ func newSessionStartCmd(w sessionWiring) *cobra.Command {
 	var repo, branch, base string
 	var detach bool
 	cmd := &cobra.Command{
-		Use:   "start [<box>]",
-		Short: "Stand up a worktree and a tmux session for a branch",
+		Use:         "start [<box>]",
+		Annotations: verbTraits(true, false, true),
+		Short:       "Stand up a worktree and a tmux session for a branch",
 		Long: help(`Start a human-driven session: cut --branch from --base (else the repo's base
 in the blueprint, else its default branch) unless it exists, give it a
 worktree in the repo's workspace, prepare the worktree, and launch a tmux
@@ -443,8 +445,9 @@ the session is live instead.
 func newSessionAttachCmd(w sessionWiring) *cobra.Command {
 	var interact bool
 	cmd := &cobra.Command{
-		Use:   "attach [<box>] <name>",
-		Short: "Connect a terminal to a session, read-only to a loop-driven one unless asked to interact",
+		Use:         "attach [<box>] <name>",
+		Annotations: verbTraits(true, false, true),
+		Short:       "Connect a terminal to a session, read-only to a loop-driven one unless asked to interact",
 		Long: help(`Attach the terminal to a session's tmux session. The attach mode follows the
 session's driver: a human-driven session attaches writable, a loop-driven one
 read-only, and --interact attaches writable either way. Read-only guards
@@ -479,8 +482,9 @@ against typing into an agent's session by accident; it is not a permission.
 // is safe, and mean it at the one that is not.
 func newSessionStopCmd(w sessionWiring) *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop [<box>] <name>",
-		Short: "End a session's tmux session, keeping its worktree and branch",
+		Use:         "stop [<box>] <name>",
+		Annotations: verbTraits(true, false, false),
+		Short:       "End a session's tmux session, keeping its worktree and branch",
 		Long: help(`End a session's tmux session and leave its worktree and branch where they
 are. Nothing it does loses work, so it asks for no confirmation.
 
@@ -520,8 +524,9 @@ are. Nothing it does loses work, so it asks for no confirmation.
 func newSessionRemoveCmd(w sessionWiring) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "rm [<box>] <name>...",
-		Short: "Reclaim the worktrees of one or more sessions, keeping their branches",
+		Use:         "rm [<box>] <name>...",
+		Annotations: verbTraits(true, false, false),
+		Short:       "Reclaim the worktrees of one or more sessions, keeping their branches",
 		Long: help(`Remove the worktrees of the named sessions and keep their branches. A session
 whose tmux session is live or whose worktree is dirty refuses the whole batch:
 every offender is named, nothing is removed, and the --force command that

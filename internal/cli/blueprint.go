@@ -46,8 +46,9 @@ func newBlueprintCmd(resolve homeResolver) *cobra.Command {
 func newCheckCmd(resolve homeResolver) *cobra.Command {
 	var accessMode string
 	cmd := &cobra.Command{
-		Use:   "check [<name-or-path>]",
-		Short: "Validate a blueprint and print what smith would use",
+		Use:         "check [<name-or-path>]",
+		Annotations: verbTraits(false, false, false),
+		Short:       "Validate a blueprint and print what smith would use",
 		Long: `Validate a blueprint, named in the config home or given as a path, and print
 the resolved configuration smith would use: --access over the blueprint over
 preferences. With no blueprint named it checks preferences alone. It reaches

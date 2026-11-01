@@ -93,18 +93,11 @@ func Setup(ctx context.Context, git Runner, dir, state string, req Request) (Wor
 		return Workbench{}, err
 	}
 	w.root = root
-	found, err := w.find(ctx, req)
+	w, found, base, err := w.resolve(ctx, req)
 	if err != nil {
 		return Workbench{}, err
-	}
-	if found != nil {
-		w.branch = found.name
 	}
 	if _, err := w.cleanCheckout(ctx); err != nil {
-		return Workbench{}, err
-	}
-	base, err := w.base(ctx, req.Base)
-	if err != nil {
 		return Workbench{}, err
 	}
 	if found != nil {
@@ -118,6 +111,43 @@ func Setup(ctx context.Context, git Runner, dir, state string, req Request) (Wor
 		return Workbench{}, fmt.Errorf("cut work branch %s: %w", w.branch, err)
 	}
 	return w, nil
+}
+
+// Plan returns the work branch and base Setup would use for req, deciding them
+// the same way and refusing what Setup refuses about them, but only reading:
+// no branch is created or fetched, and no checkout is touched. The base is
+// origin's default branch when req names none, which is an error when origin
+// names no default branch.
+func Plan(ctx context.Context, git Runner, dir string, req Request) (branch, base string, err error) {
+	w := Workbench{git: git, dir: dir, branch: cmp.Or(req.Branch, Branch(req.Number, req.Title))}
+	w, found, base, err := w.resolve(ctx, req)
+	if err != nil {
+		return "", "", err
+	}
+	if found == nil && base == "" {
+		return "", "", errNoDefaultBranch
+	}
+	return w.branch, base, nil
+}
+
+// resolve is the one policy Setup and Plan decide the work branch and base by,
+// only reading: it returns w with its branch set to the existing work branch
+// found for req, if any, that branch, and the base. The base is empty when
+// origin names no default branch and req names none, which only a missing work
+// branch, to be cut, cannot do without.
+func (w Workbench) resolve(ctx context.Context, req Request) (Workbench, *match, string, error) {
+	found, err := w.find(ctx, req)
+	if err != nil {
+		return Workbench{}, nil, "", err
+	}
+	if found != nil {
+		w.branch = found.name
+	}
+	base, err := w.base(ctx, req.Base)
+	if err != nil {
+		return Workbench{}, nil, "", err
+	}
+	return w, found, base, nil
 }
 
 // base returns the branch a missing work branch is cut from: named, or
