@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/preset"
+	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -420,15 +422,47 @@ func presetPhrase(resolved preset.Resolved) string {
 	return "preset " + resolved.Name
 }
 
+// PrepareTailLimit bounds how much of a preparation's output the loop keeps
+// to show if a step fails.
+const PrepareTailLimit = 64 << 10
+
 // prepare prepares task's worktree at dir with the Preparer, when there is
-// one, streaming its output to Progress. A failure is an error naming
-// preparation, task and dir, since another agent attempt cannot fix it.
+// one, holding its output back and printing the last PrepareTailLimit bytes
+// only on failure. A failure is an error naming task and dir, since another
+// agent attempt cannot fix it.
 func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error {
 	if l.Preparer == nil {
 		return nil
 	}
-	if err := l.Preparer.Prepare(ctx, dir, l.Progress); err != nil {
+	if err := l.report("smith: preparing the worktree of #%d\n", task.Number); err != nil {
+		return err
+	}
+	captured := tailbuf.Buffer{Limit: PrepareTailLimit}
+	if err := l.Preparer.Prepare(ctx, dir, &captured); err != nil {
+		if rerr := l.reportTail(&captured); rerr != nil {
+			return rerr
+		}
 		return fmt.Errorf("prepare the worktree of #%d in %s: %w", task.Number, dir, err)
+	}
+	return nil
+}
+
+// reportTail writes the output captured in b to Progress. When b dropped
+// earlier output, it starts at the next full line, after a note saying so.
+func (l Loop) reportTail(b *tailbuf.Buffer) error {
+	out := b.Bytes()
+	if b.Dropped() {
+		if i := bytes.IndexByte(out, '\n'); i >= 0 {
+			out = out[i+1:]
+		} else {
+			out = nil
+		}
+		if err := l.report("smith: earlier preparation output was cut; showing the last %d KiB\n", PrepareTailLimit>>10); err != nil {
+			return err
+		}
+	}
+	if _, err := l.Progress.Write(out); err != nil {
+		return fmt.Errorf("write progress: %w", err)
 	}
 	return nil
 }
