@@ -1,7 +1,6 @@
 package staging
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -203,24 +202,24 @@ func TestReadValueRefusesOnABoxWithNothingStaged(t *testing.T) {
 	}
 }
 
-// TestConvergeStagesTheResolvedEnvOnTheBox proves the values the operator's
+// TestApplyStagesTheResolvedEnvOnTheBox proves the values the operator's
 // machine resolved are what reach the box, staged smith-owned at 0600 beside
 // the document, so on-box smith reads a value rather than resolving a
 // reference of its own.
-func TestConvergeStagesTheResolvedEnvOnTheBox(t *testing.T) {
+func TestApplyStagesTheResolvedEnvOnTheBox(t *testing.T) {
 	tree, err := Resolve(Plan([]byte("access: public\n"), declaresEnv(), Resolution{}), operatorValues, operatorValues)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	box := &fakeBox{}
+	d := newDisk(t)
 
-	if _, err := Converge(context.Background(), box, tree); err != nil {
-		t.Fatalf("Converge() error = %v", err)
+	d.mustApply(tree)
+
+	if got := d.read(EnvPath); got != string(tree.Env.File.Bytes) {
+		t.Errorf("staged env = %q, want %q", got, tree.Env.File.Bytes)
 	}
-
-	want := File{Path: EnvPath, Bytes: tree.Env.File.Bytes, Mode: "0600", Owner: "smith:smith"}
-	if !box.wrote(want) {
-		t.Errorf("the env was not staged smith-owned at 0600:\n%s", strings.Join(box.commands, "\n"))
+	if mode, owner := d.mode(EnvPath), d.owners[d.path(EnvPath)]; mode != 0o600 || owner != "smith:smith" {
+		t.Errorf("env is %v owned by %s, want smith-owned at 0600", mode, owner)
 	}
 	for _, value := range []string{"ghp_fromtheoperator", "debug"} {
 		if !strings.Contains(string(tree.Env.File.Bytes), value) {

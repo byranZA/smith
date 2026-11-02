@@ -1,67 +1,71 @@
 package cli
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
+	"github.com/byranZA/smith/internal/relay"
 	"github.com/byranZA/smith/internal/staging"
 )
 
 // fakeStagingBox stands in for a box reached over ssh during the staging
 // stage, so no test here reaches a real one.
 //
-// It is deliberately thin: what the staging stage does to a box is
-// internal/staging's own behavior, tested there against a box of its own. What
-// is tested here is the wiring — that the command surface reads the operator's
-// blueprint, resolves it, hands it to the stage, and maps a refusal to the
-// exit code the setup family answers it with — so this box answers every read
-// with one canned reply and either takes a write or rejects it.
+// It is deliberately thin: what applying does to the disk is internal/staging's
+// own behavior, tested there against a real directory. What is tested here is
+// the wiring — that the stage relays the whole tree in one call, through sudo,
+// with the bytes on stdin and none in argv.
 type fakeStagingBox struct {
-	// reply is what the box answers any read with. The only read the wiring
-	// makes is of the marker recording the blueprint the box was built from.
-	reply string
-	// writeErr rejects every write, standing in for a box that fails partway
-	// through the staging stage.
-	writeErr error
+	// err is what the box answers the relayed verb with.
+	err error
 
 	commands []string
 	inputs   []string
-	// writes are the commands that carried bytes, so a test can ask what the
-	// box was handed for one file without counting past the reads.
-	writes []string
 }
 
-func (f *fakeStagingBox) Run(_ context.Context, cmd string, stdout, _ io.Writer) error {
+func (f *fakeStagingBox) Run(_ context.Context, cmd string, _, _ io.Writer) error {
 	f.commands = append(f.commands, cmd)
-	_, err := io.WriteString(stdout, f.reply)
-	return err
+	return f.err
 }
 
-func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Reader, _, _ io.Writer) error {
+func (f *fakeStagingBox) RunWithInput(_ context.Context, cmd string, stdin io.Reader, stdout, _ io.Writer) error {
 	data, err := io.ReadAll(stdin)
 	if err != nil {
 		return err
 	}
 	f.commands = append(f.commands, cmd)
-	f.writes = append(f.writes, cmd)
 	f.inputs = append(f.inputs, string(data))
-	return f.writeErr
+	if _, err := io.WriteString(stdout, "  staged    box says hello\n"); err != nil {
+		return err
+	}
+	return f.err
 }
 
-// staged is the bytes the box was handed for the file at path, and whether it
-// was handed any at all. Every write names the path it lands at, so a test
-// asks about one file rather than about everything the stage wrote.
+// stage runs the stage against the box with fixed relay arguments.
+func (f *fakeStagingBox) stage(staged *stagedConfig, stdout io.Writer) error {
+	return stageConfig(context.Background(), f, "smith@10.0.0.7", "dev", "0.2.0", staged, stdout, io.Discard)
+}
+
+// staged is the bytes the relayed stream carried for the file at path.
 func (f *fakeStagingBox) staged(path string) (string, bool) {
-	for i, cmd := range f.writes {
-		if strings.Contains(cmd, path) {
-			return f.inputs[i], true
+	for _, in := range f.inputs {
+		bundle, err := staging.Decode(strings.NewReader(in))
+		if err != nil {
+			continue
+		}
+		for _, file := range bundle.Files {
+			if file.Path == path {
+				return string(file.Bytes), true
+			}
 		}
 	}
 	return "", false
@@ -127,14 +131,47 @@ func TestStageConfigStagesTheNamedBlueprintByteForByte(t *testing.T) {
 	box := &fakeStagingBox{}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), &out); err != nil {
+	if err := box.stage(stagedOrFatal(t, dir, "acme"), &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
-	if len(box.inputs) == 0 || box.inputs[0] != document {
-		t.Errorf("staged bytes = %q, want the blueprint byte for byte, %q", box.inputs, document)
+	if got, ok := box.staged(staging.DocumentPath); !ok || got != document {
+		t.Errorf("staged bytes = %q, want the blueprint byte for byte, %q", got, document)
 	}
-	if !strings.Contains(out.String(), staging.DocumentPath) {
-		t.Errorf("stageConfig() reported %q, want it to name the staged document", out.String())
+	if !strings.Contains(out.String(), "box says hello") {
+		t.Errorf("stageConfig() reported %q, want the box's report passed through", out.String())
+	}
+}
+
+func TestStageConfigRelaysTheWholeTreeInOneCallThroughSudoWithNoSecretInArgv(t *testing.T) {
+	const credential = "//registry.npmjs.org/:_authToken=s3cr3t"
+	t.Setenv("NPM_TOKEN", credential)
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "placements:\n  - from: env:NPM_TOKEN\n    to: ~/.npmrc\n")
+	staged := stagedOrFatal(t, dir, "acme")
+	box := &fakeStagingBox{}
+
+	if err := box.stage(staged, io.Discard); err != nil {
+		t.Fatalf("stageConfig() err = %v, want nil", err)
+	}
+
+	if len(box.commands) != 1 || len(box.inputs) != 1 {
+		t.Fatalf("stageConfig() made %d call(s), want exactly one RunWithInput: %q", len(box.commands), box.commands)
+	}
+	cmd := box.commands[0]
+	for _, want := range []string{"sudo -n " + relay.BoxSmith, "--relayed-from '0.2.0'", "stage-config"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("command = %q, want it to contain %q", cmd, want)
+		}
+	}
+	if strings.Contains(cmd, "s3cr3t") {
+		t.Errorf("command = %q, want no secret in argv", cmd)
+	}
+	got, err := staging.Decode(strings.NewReader(box.inputs[0]))
+	if err != nil {
+		t.Fatalf("stdin did not decode: %v", err)
+	}
+	if want := staging.BundleOf(staged.tree); !reflect.DeepEqual(got, want) {
+		t.Errorf("stdin decodes to %+v, want the tree %+v", got, want)
 	}
 }
 
@@ -142,7 +179,7 @@ func TestStageConfigStagesNothingWithoutABlueprint(t *testing.T) {
 	box := &fakeStagingBox{}
 	var out bytes.Buffer
 
-	if err := stageConfig(context.Background(), box, nil, &out); err != nil {
+	if err := box.stage(nil, &out); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 	if len(box.commands) != 0 {
@@ -169,10 +206,10 @@ func TestStageConfigNamesTheBlueprintTheBoxChokedOn(t *testing.T) {
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: tailscale\n")
 	staged := stagedOrFatal(t, dir, "acme")
-	box := &fakeStagingBox{writeErr: errors.New("permission denied")}
+	box := &fakeStagingBox{err: errors.New("permission denied")}
 	var out bytes.Buffer
 
-	err := stageConfig(context.Background(), box, staged, &out)
+	err := box.stage(staged, &out)
 	if err == nil {
 		t.Fatal("stageConfig() err = nil, want a box that rejected a write reported")
 	}
@@ -247,7 +284,7 @@ func TestStageConfigStagesTheResolvedEnvBeforeTheWorkspaceStageRelays(t *testing
 		"repos:\n  - url: https://forge.test/acme.git\n    env:\n      LOG_LEVEL: literal:debug\n")
 	box := &fakeStagingBox{}
 
-	if err := stageConfig(context.Background(), box, stagedOrFatal(t, dir, "acme"), io.Discard); err != nil {
+	if err := box.stage(stagedOrFatal(t, dir, "acme"), io.Discard); err != nil {
 		t.Fatalf("stageConfig() err = %v, want nil", err)
 	}
 
@@ -305,5 +342,34 @@ func TestSetupStillStagesTheBlueprintByteForByte(t *testing.T) {
 
 	if got, ok := ssh.stagedAt(staging.DocumentPath); !ok || got != document {
 		t.Errorf("staged blueprint = %q, want %q", got, document)
+	}
+}
+
+func TestStageConfigVerbIsHiddenAndRefusesAStreamThatReachesOutsideTheStateDirectory(t *testing.T) {
+	cmd := newStageConfigCmd()
+	if !cmd.Hidden {
+		t.Error("stage-config is visible, want it hidden: it is the two smiths talking")
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: "/etc/passwd", Mode: 0o644, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	cmd.SetIn(&buf)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("stage-config succeeded, want a path outside /etc/smith refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("stage-config reported %q before refusing, want nothing", out.String())
 	}
 }

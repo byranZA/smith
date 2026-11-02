@@ -603,3 +603,41 @@ func (f *chunkedSSH) Run(_ context.Context, _ string, _ []string, _ io.Reader, _
 	}
 	return f.err
 }
+
+// TestSendWithInputRelaysThroughSudoAndFeedsStdin pins the relay's way to
+// invoke on-box smith as root: `sudo -n` ahead of the same absolute path and
+// version declaration, with the payload on stdin and never in the command.
+func TestSendWithInputRelaysThroughSudoAndFeedsStdin(t *testing.T) {
+	ssh := &fakeSSH{}
+	conn := connection.New("smith@box", ssh)
+
+	err := SendWithInput(context.Background(), conn, Verb{
+		Target: "smith@box", Version: "0.2.0", Args: []string{"machine", "stage-config"}, Root: true,
+	}, strings.NewReader("payload"), io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("SendWithInput() err = %v", err)
+	}
+
+	line := strings.Join(ssh.calls[0], " ")
+	for _, want := range []string{"sudo -n /usr/local/bin/smith --relayed-from '0.2.0'", "'machine' 'stage-config'"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("ssh argv = %q, want it to contain %q", line, want)
+		}
+	}
+	if strings.Contains(line, "payload") {
+		t.Errorf("ssh argv = %q, want the payload on stdin only", line)
+	}
+}
+
+func TestSendWithInputClassifiesAMissingSmithBehindSudo(t *testing.T) {
+	ssh := &fakeSSH{stderr: "sudo: /usr/local/bin/smith: command not found\n", err: exitStatus(1)}
+	conn := connection.New("smith@box", ssh)
+
+	err := SendWithInput(context.Background(), conn, Verb{Target: "smith@box", Box: "dev", Version: "0.2.0", Root: true},
+		strings.NewReader(""), io.Discard, io.Discard)
+
+	var missing *NotInstalledError
+	if !errors.As(err, &missing) {
+		t.Fatalf("SendWithInput() err = %v, want a *NotInstalledError", err)
+	}
+}

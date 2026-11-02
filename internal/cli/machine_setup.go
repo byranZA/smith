@@ -372,29 +372,6 @@ func refuseSetup(stderr io.Writer, err error) error {
 	return &exitError{code: bootstrap.OutcomeRejected.ExitCode()}
 }
 
-// stageConfig runs the config-staging stage: it writes the staged blueprint,
-// its placement bytes and the resolved values of its env onto the box at
-// /etc/smith/, reporting what it staged and what it left alone.
-//
-// It converges rather than resolves: the document was parsed and every
-// reference resolved before the box was touched, so the only failures left here
-// are the box's own. It runs after the base layer because the staged placements are
-// owned by the smith user, who does not exist until then. Nothing to stage --
-// a run naming no blueprint -- leaves the box exactly as it was.
-func stageConfig(ctx context.Context, conn staging.Conn, staged *stagedConfig, stdout io.Writer) error {
-	if staged == nil {
-		return nil
-	}
-	result, err := staging.Converge(ctx, conn, staged.tree)
-	if err != nil {
-		return fmt.Errorf("stage blueprint %s: %w", staged.path, err)
-	}
-	if _, err := fmt.Fprint(stdout, result.Report()); err != nil {
-		return fmt.Errorf("write staging report: %w", err)
-	}
-	return nil
-}
-
 // convergeWorkspace runs the workspace stage: it relays `smith workspace
 // converge` to the box, which reads the blueprint just staged on it and
 // converges the box to the workspace that blueprint declares, streaming the

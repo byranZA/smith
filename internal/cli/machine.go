@@ -40,6 +40,7 @@ func newMachineCmd(resolve homeResolver, exec connection.Exec, dialer connection
 		newUpgradeCmd(resolve, exec),
 		newRenameCmd(resolve, exec),
 		newForgetCmd(resolve),
+		newStageConfigCmd(),
 	)
 	return cmd
 }

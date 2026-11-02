@@ -57,8 +57,9 @@ type pipelineRun struct {
 // run closes public SSH, so every later stage travels over the tailnet. Install
 // runs second because the stages after it run on the box's own smith, and a box
 // cannot install the binary that would have to be there to install it (see
-// docs/adr/0008). Config staging runs before the workspace stage because that
-// stage reads the document and the placement bytes staging writes. Access is
+// docs/adr/0008). Config staging runs after install because it relays to the box's own
+// smith (docs/adr/0024), and before the workspace stage because that stage
+// reads the document and the placement bytes staging writes. Access is
 // idle outside tailscale mode, which has no admin-side access layer.
 func (r *pipelineRun) stages(stdout, stderr io.Writer) []bootstrap.Stage {
 	return []bootstrap.Stage{
@@ -69,7 +70,7 @@ func (r *pipelineRun) stages(stdout, stderr io.Writer) []bootstrap.Stage {
 			return installSmith(ctx, connection.New(r.reach(), r.exec), r.smithVersion, r.box, stdout)
 		}},
 		{Name: "config", Run: func(ctx context.Context) error {
-			return stageConfig(ctx, connection.New(r.reach(), r.exec), r.staged, stdout)
+			return stageConfig(ctx, connection.New(r.reach(), r.exec), r.reach(), r.box, r.localVersion, r.staged, stdout, stderr)
 		}},
 		{Name: "workspace", Run: func(ctx context.Context) error {
 			return convergeWorkspace(ctx, r.exec, r.reach(), r.box, r.localVersion, r.staged, stdout, stderr)
