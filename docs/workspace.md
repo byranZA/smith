@@ -51,7 +51,7 @@ A step runs only if what it depends on converged. These are the prerequisites, a
 - **Every repo needs the box toolchain.** The clone runs under `mise exec`, so a failed box toolchain skips every repo.
 - **A repo needs its own toolchain override.** A repo's `tools` and `env` file is a prerequisite of that repo alone; a failed override skips that repo and no other. That override in turn needs the box toolchain.
 - **Groups need packages.** A package is what creates a group such as `docker`, so a failed `apt` install skips the groups step.
-- **Sibling repos are not each other's prerequisite**, and neither are the identity step and the orphans scan anyone's.
+- **Sibling repos are not each other's prerequisite**. The identity step and the orphans scan need nothing, so they always run.
 
 A skip propagates: a unit that needs a unit which failed or was itself skipped is skipped too, and its line names the failure at the root, once each, not the skipped unit between. Everything that does not depend on the failure still runs. One repo failing to clone leaves its siblings cloning, and the orphans scan runs on every converge, failures included. Nothing is attempted for a skipped unit, so nothing is changed on the box for it.
 
