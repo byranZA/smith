@@ -26,7 +26,7 @@ func TestOrderIsTheStageOrder(t *testing.T) {
 // TestPlan drives the pure derivation from a staged blueprint to the ordered
 // units of work the stage converges.
 func TestPlan(t *testing.T) {
-	orphans := Unit{Step: Orphans, Workspace: Workspace{Root: "/home/smith/workspace", Declared: []string{}}}
+	orphans := Unit{Step: Orphans, Label: "orphans", Workspace: Workspace{Root: "/home/smith/workspace", Declared: []string{}}}
 	tests := []struct {
 		name string
 		b    blueprint.Blueprint
@@ -40,12 +40,12 @@ func TestPlan(t *testing.T) {
 		{
 			name: "declared packages plan one packages unit",
 			b:    blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}},
-			want: []Unit{{Step: Packages, Packages: []string{"ripgrep", "jq"}}, orphans},
+			want: []Unit{{Step: Packages, Label: "packages", Packages: []string{"ripgrep", "jq"}}, orphans},
 		},
 		{
 			name: "declared groups plan one groups unit after the packages",
 			b:    blueprint.Blueprint{Packages: []string{"docker.io"}, Groups: []string{"docker", "kvm"}},
-			want: []Unit{{Step: Packages, Packages: []string{"docker.io"}}, {Step: Groups, Groups: []string{"docker", "kvm"}}, orphans},
+			want: []Unit{{Step: Packages, Label: "packages", Packages: []string{"docker.io"}}, {Step: Groups, Label: "groups", Needs: []string{"packages"}, Groups: []string{"docker", "kvm"}}, orphans},
 		},
 		{
 			name: "an empty groups list plans no groups unit",

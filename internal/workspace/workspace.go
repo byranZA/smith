@@ -80,6 +80,13 @@ type Unit struct {
 	// Step is the kind of work this unit is, which decides both when it runs
 	// and how it converges.
 	Step Step
+	// Label names the unit stably, its step plus its subject, such as
+	// "repos acme"; prerequisites and skips refer to a unit by it. A unit
+	// without one has no prerequisites and is no one's.
+	Label string
+	// Needs are the labels of the units this one is a prerequisite-bound
+	// dependent of: it is skipped when any of them did not converge.
+	Needs []string
 	// Packages are the apt packages a packages unit installs.
 	Packages []string
 	// Groups are the groups a groups unit adds the smith user to.

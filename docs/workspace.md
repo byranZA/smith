@@ -43,6 +43,18 @@ needs:
    longer declares. This runs on every converge, even when the blueprint
    declares no repos at all.
 
+## Prerequisites and skips
+
+A step runs only if what it depends on converged. These are the prerequisites, and nothing else is one:
+
+- **Every repo needs every box placement.** A failed placement means no forge credential, so every repo is skipped rather than cloned into an authentication error.
+- **Every repo needs the box toolchain.** The clone runs under `mise exec`, so a failed box toolchain skips every repo.
+- **A repo needs its own toolchain override.** A repo's `tools` and `env` file is a prerequisite of that repo alone; a failed override skips that repo and no other. That override in turn needs the box toolchain.
+- **Groups need packages.** A package is what creates a group such as `docker`, so a failed `apt` install skips the groups step.
+- **Sibling repos are not each other's prerequisite**. The identity step and the orphans scan need nothing, so they always run.
+
+A skip propagates: a unit that needs a unit which failed or was itself skipped is skipped too, and its line names the failure at the root, once each, not the skipped unit between. Everything that does not depend on the failure still runs. One repo failing to clone leaves its siblings cloning, and the orphans scan runs on every converge, failures included. Nothing is attempted for a skipped unit, so nothing is changed on the box for it.
+
 No worktree is created and no repo-scoped placement is materialized: those
 happen on `smith session start`. A converged box is one you can immediately
 start a session on, not one that already has a checkout.
@@ -217,8 +229,20 @@ workspace: 2 steps converged
 ```
 
 The count is one per unit: each placement, each repo and each toolchain file is
-a unit of its own. A run with failures ends `workspace: N steps converged, M
-failed` and restates each failed line, so it is the last thing on screen.
+a unit of its own. A run with failures or skips ends with a summary that counts both, and restates each one, failures first, so it is the last thing on screen. A skipped unit is reported apart from a failed one, because nothing was tried and so nothing broke:
+
+```text
+  placements  failed: write ~/.netrc: permission denied
+  repos       skipped: needs placements ~/.netrc, which failed
+  repos       skipped: needs placements ~/.netrc, which failed
+  orphans     no orphans under /home/smith/workspace
+workspace: 1 step converged, 1 failed, 2 skipped
+  placements  failed: write ~/.netrc: permission denied
+  repos       skipped: needs placements ~/.netrc, which failed
+  repos       skipped: needs placements ~/.netrc, which failed
+```
+
+A run with no skips ends `workspace: N steps converged, M failed`, with no skipped count. A skip naming several roots lists them joined by `and` (`needs placements ~/.netrc and toolchain (box), which failed`). Failures and skips both make the run exit non-zero.
 
 The stage **never deletes**. A step it cannot converge is reported and the run
 exits non-zero, having left what the box already holds exactly where it was.

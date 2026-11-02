@@ -372,6 +372,14 @@ its worktrees, and possibly unpushed work, so reclaiming it is a verb the operat
 reclaims bytes smith wrote and can write again.
 _Avoid_: stale repo, dangling repo.
 
+**Prerequisite**:
+A unit of `workspace converge` that another unit cannot be trusted to converge without: every box placement and the box toolchain for every repo, a repo's own toolchain override for that repo, and the packages for the groups. Sibling repos are never each other's prerequisite, and the orphan scan has none ([issue #405](https://github.com/byranZA/smith/issues/405)).
+_Avoid_: dependency (reserved for packages), blocker.
+
+**Skipped unit**:
+A unit of `workspace converge` not attempted because a prerequisite failed or was itself skipped. It names the failure that stopped it and leaves the run non-zero, like a failure, but is reported apart from one: nothing was tried, so nothing broke.
+_Avoid_: blocked, cancelled.
+
 **Placement**:
 The primitive that puts a file on the box: `source-reference → dest-path [converge|once]`.
 The source resolves to the referenced bytes exactly as they are, never trimmed, unlike an `env` value, whose `env:` and `file:` references are trimmed and whose `literal:` is taken verbatim.
