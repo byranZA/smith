@@ -26,18 +26,12 @@ import (
 // The error it returns is not a step's failure — those are in the result — but
 // the progress writer's own, which is the one thing a converge run cannot
 // report through.
-func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Result, error) {
-	var m mise
-	return convergeWith(ctx, plan, func(unit Unit) (string, error) {
-		return converge(ctx, env, &m, unit, progress)
-	}, progress)
-}
-
-// convergeWith walks the plan, attempting each unit through run unless a
-// prerequisite did not converge, and streams each outcome. A unit whose
+//
+// A unit is attempted unless a prerequisite did not converge. A unit whose
 // prerequisite failed or was itself skipped is skipped, naming the root
 // failures once each.
-func convergeWith(_ context.Context, plan []Unit, run func(Unit) (string, error), progress io.Writer) (Result, error) {
+func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Result, error) {
+	var m mise
 	var result Result
 	roots := map[string][]string{}
 	for _, unit := range plan {
@@ -45,7 +39,7 @@ func convergeWith(_ context.Context, plan []Unit, run func(Unit) (string, error)
 		if cause := rootFailures(unit.Needs, roots); len(cause) > 0 {
 			outcome.Skipped = cause
 		} else {
-			outcome.Summary, outcome.Err = run(unit)
+			outcome.Summary, outcome.Err = converge(ctx, env, &m, unit, progress)
 		}
 		switch {
 		case outcome.Skipped != nil:

@@ -3,6 +3,9 @@ package workspace
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -68,20 +71,45 @@ func TestPlanPutsEveryPrerequisiteBeforeItsDependent(t *testing.T) {
 	}
 }
 
-// convergeSkipping converges the plan with the named units failing and the rest succeeding.
-func convergeSkipping(t *testing.T, plan []Unit, fail ...string) (Result, string) {
+// failingInstall is a box whose mise install in one directory fails, the way a
+// toolchain that cannot be fetched does, while every other command is the box's.
+type failingInstall struct {
+	*fakeBox
+	dir string
+}
+
+func (f failingInstall) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if strings.Contains(strings.Join(untrusted(append([]string{name}, args...)), " "), "--cd "+f.dir+" install") {
+		f.calls = append(f.calls, append([]string{name}, args...))
+		return errors.New("fetch the pinned versions: no network")
+	}
+	return f.fakeBox.Run(ctx, name, args, stdin, stdout, stderr)
+}
+
+// convergeDeclared converges what a blueprint declares through Converge, with
+// the netrc placement staged unless left unstaged, and returns the home it ran
+// against.
+func convergeDeclared(t *testing.T, run Runner, b blueprint.Blueprint, home string, unstaged bool) (Result, string) {
 	t.Helper()
+	root := t.TempDir()
+	stageEnv(t, root, b)
+	if !unstaged {
+		stage(t, root, "~/.netrc", "machine forge.test\n")
+	}
 	var progress strings.Builder
-	result, err := convergeWith(context.Background(), plan, func(u Unit) (string, error) {
-		if slices.Contains(fail, u.Label) {
-			return "", errors.New("boom")
-		}
-		return "ok", nil
-	}, &progress)
+	env := Env{Command: run, StateRoot: root, Profile: filepath.Join(t.TempDir(), "smith.sh"), Proc: t.TempDir()}
+	result, err := Converge(context.Background(), env, Plan(b, resolved, home), &progress)
 	if err != nil {
-		t.Fatalf("convergeWith() error = %v", err)
+		t.Fatalf("Converge() error = %v", err)
 	}
 	return result, progress.String()
+}
+
+// readyBox is a box that holds mise and nothing else.
+func readyBox() *fakeBox {
+	box := newBox()
+	box.hasMise = true
+	return box
 }
 
 // skippedLabels are the labels of the skipped outcomes mapped to their causes.
@@ -96,8 +124,8 @@ func skippedLabels(r Result) map[string][]string {
 }
 
 func TestConvergeSkipsEveryRepoOnAFailedPlacement(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, progress := convergeSkipping(t, plan, "placements ~/.netrc")
+	box := readyBox()
+	result, progress := convergeDeclared(t, box, declaresEverything(), t.TempDir(), true)
 	want := map[string][]string{
 		"repos acme": {"placements ~/.netrc"},
 		"repos api":  {"placements ~/.netrc"},
@@ -108,11 +136,15 @@ func TestConvergeSkipsEveryRepoOnAFailedPlacement(t *testing.T) {
 	if !strings.Contains(progress, "  repos       skipped: needs placements ~/.netrc, which failed\n") {
 		t.Errorf("progress = %q, want the skip streamed naming the placement", progress)
 	}
+	if box.ran("git") {
+		t.Errorf("the run ran %v, want no git for repos skipped on a failed placement", box.calls)
+	}
 }
 
 func TestConvergeSkipsRepoUnitsOnAFailedBoxToolchainNamingTheRoot(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "toolchain (box)")
+	box := newBox()
+	box.miseErr = errors.New("no network")
+	result, _ := convergeDeclared(t, box, declaresEverything(), t.TempDir(), false)
 	want := map[string][]string{
 		"toolchain acme": {"toolchain (box)"},
 		"repos acme":     {"toolchain (box)"},
@@ -121,29 +153,41 @@ func TestConvergeSkipsRepoUnitsOnAFailedBoxToolchainNamingTheRoot(t *testing.T) 
 	if got := skippedLabels(result); !reflect.DeepEqual(got, want) {
 		t.Errorf("skipped = %v, want %v", got, want)
 	}
+	if box.ran("git") || box.ran("--cd") {
+		t.Errorf("the run ran %v, want no clone and no override install", box.calls)
+	}
 }
 
 func TestConvergeSkipsOnlyTheRepoWhoseOverrideFailed(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "toolchain acme")
+	home := t.TempDir()
+	box := readyBox()
+	result, _ := convergeDeclared(t, failingInstall{box, filepath.Join(home, "workspace", "acme")}, declaresEverything(), home, false)
 	want := map[string][]string{"repos acme": {"toolchain acme"}}
 	if got := skippedLabels(result); !reflect.DeepEqual(got, want) {
 		t.Errorf("skipped = %v, want %v", got, want)
 	}
+	if box.ran(forge) || !box.ran(apiURL) {
+		t.Errorf("the run ran %v, want api cloned and acme not", box.calls)
+	}
 }
 
 func TestConvergeSkipsGroupsOnFailedPackagesButRunsTheRest(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "packages")
+	box := readyBox()
+	box.aptErr = errors.New("out of disk")
+	result, _ := convergeDeclared(t, box, declaresEverything(), t.TempDir(), false)
 	want := map[string][]string{"groups": {"packages"}}
 	if got := skippedLabels(result); !reflect.DeepEqual(got, want) {
 		t.Errorf("skipped = %v, want %v", got, want)
 	}
+	if !box.ran(apiURL) {
+		t.Errorf("the run ran %v, want the repos cloned despite the packages failure", box.calls)
+	}
 }
 
 func TestConvergeKeepsSiblingReposConvergingPastAFailure(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "repos acme")
+	box := readyBox()
+	box.unreachable[forge] = true
+	result, _ := convergeDeclared(t, box, declaresEverything(), t.TempDir(), false)
 	if got := skippedLabels(result); len(got) != 0 {
 		t.Errorf("skipped = %v, want none", got)
 	}
@@ -153,16 +197,24 @@ func TestConvergeKeepsSiblingReposConvergingPastAFailure(t *testing.T) {
 }
 
 func TestConvergeStillScansOrphansAfterFailures(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "toolchain (box)")
-	if o := outcomesFor(result, Orphans); len(o) != 1 || o[0].Err != nil || o[0].Skipped != nil {
-		t.Errorf("orphans outcomes = %+v, want one that ran", o)
+	home := t.TempDir()
+	orphan := filepath.Join(home, "workspace", "gone", "repo.git")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatalf("leave an orphan on the box: %v", err)
+	}
+	box := newBox()
+	box.miseErr = errors.New("no network")
+	result, _ := convergeDeclared(t, box, declaresEverything(), home, false)
+	o := outcomesFor(result, Orphans)
+	if len(o) != 1 || o[0].Err != nil || o[0].Skipped != nil || !strings.Contains(o[0].Summary, "gone") {
+		t.Errorf("orphans outcomes = %+v, want one that ran and reported gone", o)
 	}
 }
 
 func TestConvergeNamesBothIndependentRootFailures(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "placements ~/.netrc", "toolchain (box)")
+	box := newBox()
+	box.miseErr = errors.New("no network")
+	result, _ := convergeDeclared(t, box, declaresEverything(), t.TempDir(), true)
 	want := []string{"placements ~/.netrc", "toolchain (box)"}
 	if got := skippedLabels(result)["repos api"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("repos api skipped for %v, want %v", got, want)
@@ -170,17 +222,21 @@ func TestConvergeNamesBothIndependentRootFailures(t *testing.T) {
 }
 
 func TestReportCountsFailuresAndSkipsAndRestatesBoth(t *testing.T) {
-	plan := Plan(declaresEverything(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "placements ~/.netrc")
+	b := declaresEverything()
+	b.Groups = nil
+	result, _ := convergeDeclared(t, readyBox(), b, t.TempDir(), true)
 	if !result.Failed() {
 		t.Error("Result.Failed() = false, want true on a skip")
 	}
-	want := "workspace: 5 steps converged, 1 failed, 2 skipped\n" +
-		"  placements  failed: boom\n" +
-		"  repos       skipped: needs placements ~/.netrc, which failed\n" +
-		"  repos       skipped: needs placements ~/.netrc, which failed\n"
-	if got := result.Report(); got != want {
-		t.Errorf("Report() = %q, want %q", got, want)
+	got := result.Report()
+	for _, want := range []string{
+		"1 failed, 2 skipped\n",
+		"  placements  failed: ",
+		"  repos       skipped: needs placements ~/.netrc, which failed\n  repos       skipped: needs placements ~/.netrc, which failed\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Report() = %q, want it to contain %q", got, want)
+		}
 	}
 }
 
@@ -212,7 +268,15 @@ func TestConvergeKeepsARepoNamedBoxApartFromTheBoxToolchain(t *testing.T) {
 	if override == "toolchain (box)" || override == "" {
 		t.Fatalf("override label = %q, want one distinct from the box toolchain", override)
 	}
-	result, _ := convergeSkipping(t, plan, override)
+	home := t.TempDir()
+	plan = Plan(boxNamedRepoBlueprint(), resolved, home)
+	var fragDir string
+	for _, u := range plan {
+		if u.Label == override {
+			fragDir = u.Fragment.Dir
+		}
+	}
+	result, _ := convergeDeclared(t, failingInstall{readyBox(), fragDir}, boxNamedRepoBlueprint(), home, false)
 	want := map[string][]string{"repos (box)": {override}}
 	if got := skippedLabels(result); !reflect.DeepEqual(got, want) {
 		t.Errorf("skipped = %v, want %v", got, want)
@@ -220,8 +284,9 @@ func TestConvergeKeepsARepoNamedBoxApartFromTheBoxToolchain(t *testing.T) {
 }
 
 func TestConvergeSkipsEverythingOnABoxToolchainFailureBesideARepoNamedBox(t *testing.T) {
-	plan := Plan(boxNamedRepoBlueprint(), resolved, "/home/smith")
-	result, _ := convergeSkipping(t, plan, "toolchain (box)")
+	box := newBox()
+	box.miseErr = errors.New("no network")
+	result, _ := convergeDeclared(t, box, boxNamedRepoBlueprint(), t.TempDir(), false)
 	for _, o := range result.Outcomes {
 		if (o.Step == Repos || o.Step == Toolchain && o.Label != "toolchain (box)") &&
 			!reflect.DeepEqual(o.Skipped, []string{"toolchain (box)"}) {
