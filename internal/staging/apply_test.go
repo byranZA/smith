@@ -18,9 +18,9 @@ import (
 // chown so the apply runs unprivileged.
 type owners map[string]string
 
-func (o owners) own(path, owner string) error {
+func (o owners) own(f *os.File, owner string) error {
 	// A file is owned while still at its temporary name beside the destination.
-	dest, _, _ := strings.Cut(path, ".staging-")
+	dest, _, _ := strings.Cut(f.Name(), ".staging-")
 	o[dest] = owner
 	return nil
 }
@@ -39,6 +39,11 @@ func newDisk(t *testing.T) *disk {
 
 // path is where a box path sits on the temporary disk.
 func (d *disk) path(boxPath string) string { return onDisk(d.root, boxPath) }
+
+// onDisk maps a path on the box to where it sits under root.
+func onDisk(root, boxPath string) string {
+	return filepath.Join(root, strings.TrimPrefix(boxPath, Root))
+}
 
 // apply runs Apply for the tree and returns what it reported on the way.
 func (d *disk) apply(tree Tree) (Result, string, error) {
@@ -384,7 +389,7 @@ func TestApplyFailsWhenTheOwnerStepFails(t *testing.T) {
 	d := newDisk(t)
 	boom := errors.New("no such user")
 
-	_, err := Apply(d.root, BundleOf(npmrcTree(t)), func(string, string) error { return boom }, &strings.Builder{})
+	_, err := Apply(d.root, BundleOf(npmrcTree(t)), func(*os.File, string) error { return boom }, &strings.Builder{})
 
 	if !errors.Is(err, boom) {
 		t.Errorf("Apply() error = %v, want it to wrap %v", err, boom)
@@ -468,5 +473,54 @@ func TestDecodeRefusalMeansNothingWasWritten(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(d.root); len(entries) != 0 {
 		t.Errorf("root holds %v, want nothing written", entries)
+	}
+}
+
+func TestApplyRefusesADirectoryLinkedOutsideTheRootAndLeavesTheTargetUntouched(t *testing.T) {
+	d := newDisk(t)
+	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(d.path(PlacementsDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, d.path(boxDirIn(Root))); err != nil {
+		t.Fatal(err)
+	}
+	stray := filepath.Join(PlacementsDir, "stray")
+	d.seed(stray, "x")
+
+	_, _, err := d.apply(npmrcTree(t))
+
+	if err == nil {
+		t.Fatal("Apply() succeeded, want a directory linked outside the root to fail the run")
+	}
+	if !strings.Contains(err.Error(), boxDirIn(Root)) {
+		t.Errorf("Apply() error = %v, want it to name %s", err, boxDirIn(Root))
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the linked directory holds %v, want nothing written through the link", entries)
+	}
+	info, statErr := os.Stat(outside)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Errorf("the linked directory mode = %v, want 0755 left alone", info.Mode().Perm())
+	}
+	if len(d.owners) > 0 {
+		for p := range d.owners {
+			if strings.HasPrefix(p, outside) {
+				t.Errorf("owner applied to %s outside the root", p)
+			}
+		}
+	}
+	if !d.exists(stray) {
+		t.Error("the run pruned after a failed write")
 	}
 }
