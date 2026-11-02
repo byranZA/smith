@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/byranZA/smith/internal/bootstrap"
@@ -26,10 +27,32 @@ import (
 // the progress writer's own, which is the one thing a converge run cannot
 // report through.
 func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Result, error) {
-	var result Result
 	var m mise
+	return convergeWith(ctx, plan, func(unit Unit) (string, error) {
+		return converge(ctx, env, &m, unit, progress)
+	}, progress)
+}
+
+// convergeWith walks the plan, attempting each unit through run unless a
+// prerequisite did not converge, and streams each outcome. A unit whose
+// prerequisite failed or was itself skipped is skipped, naming the root
+// failures once each.
+func convergeWith(_ context.Context, plan []Unit, run func(Unit) (string, error), progress io.Writer) (Result, error) {
+	var result Result
+	roots := map[string][]string{}
 	for _, unit := range plan {
-		outcome := converge(ctx, env, &m, unit, progress)
+		outcome := Outcome{Step: unit.Step, Label: unit.Label}
+		if cause := rootFailures(unit.Needs, roots); len(cause) > 0 {
+			outcome.Skipped = cause
+		} else {
+			outcome.Summary, outcome.Err = run(unit)
+		}
+		switch {
+		case outcome.Skipped != nil:
+			roots[unit.Label] = outcome.Skipped
+		case outcome.Err != nil:
+			roots[unit.Label] = []string{unit.Label}
+		}
 		result.Outcomes = append(result.Outcomes, outcome)
 		if _, err := io.WriteString(progress, outcome.line()); err != nil {
 			return result, fmt.Errorf("write %s progress: %w", unit.Step, err)
@@ -38,12 +61,24 @@ func Converge(ctx context.Context, env Env, plan []Unit, progress io.Writer) (Re
 	return result, nil
 }
 
-// converge applies one unit of work and reports what it did. A step that has
+// rootFailures are the labels of the failures behind the needed units that did
+// not converge, each once, in the order first met.
+func rootFailures(needs []string, roots map[string][]string) []string {
+	var causes []string
+	for _, need := range needs {
+		for _, root := range roots[need] {
+			if !slices.Contains(causes, root) {
+				causes = append(causes, root)
+			}
+		}
+	}
+	return causes
+}
+
+// converge applies one unit of work and returns what it did. A step that has
 // no converge yet reports itself as such rather than silently passing, so a
 // plan can never claim work the stage did not do.
-func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writer) Outcome {
-	var summary string
-	var err error
+func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writer) (summary string, err error) {
 	switch unit.Step {
 	case Placements:
 		summary, err = materialize(env, unit.Placement)
@@ -62,7 +97,7 @@ func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writ
 	default:
 		err = fmt.Errorf("the %s step is not built yet", unit.Step)
 	}
-	return Outcome{Step: unit.Step, Summary: summary, Err: err}
+	return summary, err
 }
 
 // installPackages installs the declared packages that the box does not already

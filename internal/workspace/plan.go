@@ -30,7 +30,65 @@ func Plan(b blueprint.Blueprint, r staging.Resolution, home string) []Unit {
 	for _, step := range Order() {
 		plan = append(plan, planStep(step, b, r, root, home)...)
 	}
+	for i := range plan {
+		plan[i].Label = labelOf(plan[i])
+	}
+	for i := range plan {
+		plan[i].Needs = prerequisites(plan[i], plan[:i])
+	}
 	return plan
+}
+
+// boxToolchain is the label of the box's own toolchain unit.
+const boxToolchain = "toolchain (box)"
+
+// labelOf is the stable name of a unit: its step plus its subject.
+func labelOf(u Unit) string {
+	switch u.Step {
+	case Placements:
+		return "placements " + u.Placement.Destination
+	case Toolchain:
+		if u.Fragment.Repo == "" {
+			return boxToolchain
+		}
+		return "toolchain " + u.Fragment.Repo
+	case Repos:
+		return "repos " + u.Repo.Name
+	case Identity, Packages, Groups, Orphans:
+		return string(u.Step)
+	default:
+		return string(u.Step)
+	}
+}
+
+// prerequisites are the labels of the earlier units u cannot be trusted to
+// converge without, in plan order. Sibling repos are never each other's, and
+// the orphans scan has none.
+func prerequisites(u Unit, earlier []Unit) []string {
+	var needs []string
+	for _, e := range earlier {
+		if isPrerequisite(e, u) {
+			needs = append(needs, e.Label)
+		}
+	}
+	return needs
+}
+
+// isPrerequisite reports whether dependent needs prereq to have converged.
+func isPrerequisite(prereq, dependent Unit) bool {
+	switch dependent.Step {
+	case Repos:
+		return prereq.Step == Placements || prereq.Label == boxToolchain ||
+			(prereq.Step == Toolchain && prereq.Fragment.Repo == dependent.Repo.Name)
+	case Toolchain:
+		return dependent.Fragment.Repo != "" && prereq.Label == boxToolchain
+	case Groups:
+		return prereq.Step == Packages
+	case Placements, Identity, Packages, Orphans:
+		return false
+	default:
+		return false
+	}
 }
 
 // planStep is what one step of the order plans from the blueprint and the

@@ -15,6 +15,11 @@ type Outcome struct {
 	Summary string
 	// Err is why the step failed, or nil when it converged.
 	Err error
+	// Label is the unit's stable name, the one a skip names its cause by.
+	Label string
+	// Skipped are the labels of the root failures that kept the unit from
+	// being attempted, nil when it was.
+	Skipped []string
 }
 
 // line renders the outcome as it is streamed while the stage runs.
@@ -25,6 +30,9 @@ func (o Outcome) line() string {
 // detail is what the outcome says about itself: its failure when it has one,
 // and what it did otherwise.
 func (o Outcome) detail() string {
+	if o.Skipped != nil {
+		return "skipped: needs " + strings.Join(o.Skipped, " and ") + ", which failed"
+	}
 	if o.Err != nil {
 		return "failed: " + o.Err.Error()
 	}
@@ -38,13 +46,13 @@ type Result struct {
 	Outcomes []Outcome
 }
 
-// Failed reports whether any step failed, which is what the caller exits
+// Failed reports whether any step failed or was skipped, which is what the caller exits
 // non-zero on. Every failure is in the result, not just the first: a run
 // converges what it can, so the operator is owed the whole picture rather than
 // one line at a time.
 func (r Result) Failed() bool {
 	for _, o := range r.Outcomes {
-		if o.Err != nil {
+		if o.Err != nil || o.Skipped != nil {
 			return true
 		}
 	}
@@ -59,20 +67,27 @@ func (r Result) Report() string {
 	if len(r.Outcomes) == 0 {
 		return "workspace: nothing to converge\n"
 	}
-	var failed []Outcome
+	var failed, skipped []Outcome
 	for _, o := range r.Outcomes {
-		if o.Err != nil {
+		switch {
+		case o.Skipped != nil:
+			skipped = append(skipped, o)
+		case o.Err != nil:
 			failed = append(failed, o)
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "workspace: %s converged", steps(len(r.Outcomes)-len(failed)))
-	if len(failed) == 0 {
+	fmt.Fprintf(&b, "workspace: %s converged", steps(len(r.Outcomes)-len(failed)-len(skipped)))
+	if len(failed)+len(skipped) == 0 {
 		b.WriteString("\n")
 		return b.String()
 	}
-	fmt.Fprintf(&b, ", %d failed\n", len(failed))
-	for _, o := range failed {
+	fmt.Fprintf(&b, ", %d failed", len(failed))
+	if len(skipped) > 0 {
+		fmt.Fprintf(&b, ", %d skipped", len(skipped))
+	}
+	b.WriteString("\n")
+	for _, o := range append(failed, skipped...) {
 		b.WriteString(o.line())
 	}
 	return b.String()
