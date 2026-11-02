@@ -1,20 +1,17 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/byranZA/smith/internal/blueprint"
-	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/checkout"
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/staging"
@@ -52,94 +49,22 @@ func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Place
 	return placementsOf(box, repoOf(ws, dir), w, inv), nil
 }
 
-// localPlacements returns the placements the config home's blueprints declare
-// for the repo whose origin the run's checkout has, to be copied from the top
-// level of that checkout, warning on warn of a blueprint it skips. A directory with no top level or origin, or whose
-// repo no blueprint declares, yields nil.
+// localPlacements adapts the checkout's placements to the loop, warning on
+// warn of a blueprint it skips.
 func (w loopWiring) localPlacements(ctx context.Context, warn io.Writer) (*loop.Placements, error) {
 	dir, err := w.workdir()
 	if err != nil {
 		return nil, fmt.Errorf("find the repo to work in: %w", err)
 	}
-	top, err := w.gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil, nil
-	}
-	origin, err := w.gitOutput(ctx, dir, "remote", "get-url", "origin")
-	if err != nil {
-		return nil, nil
-	}
 	home, err := w.home()
 	if err != nil {
 		return nil, err
 	}
-	declared, err := config.PlacementsFor(home, origin, warn)
+	placements, err := checkout.Placements(ctx, dir, home, w.git, warn)
 	if err != nil {
-		return nil, fmt.Errorf("find the blueprint placements for %s: %w", origin, err)
+		return nil, fmt.Errorf("place from the checkout: %w", err)
 	}
-	if len(declared) == 0 {
-		return nil, nil
-	}
-	placements := make([]blueprint.Placement, len(declared))
-	for i, d := range declared {
-		if err := w.checkSource(ctx, top, d); err != nil {
-			return nil, err
-		}
-		placements[i] = d.Placement
-	}
-	return &loop.Placements{
-		Repo:   filepath.Base(top),
-		To:     placedAt(placements),
-		Placer: checkoutPlacer{checkout: top, placements: placements},
-		Git:    w.git,
-	}, nil
-}
-
-// checkSource refuses a declared placement whose source is missing from the
-// checkout at top, or is a file the repo tracks, which is already in every
-// worktree and would carry uncommitted edits into the task if copied.
-func (w loopWiring) checkSource(ctx context.Context, top string, d config.Declared) error {
-	source := filepath.Join(top, d.Placement.To)
-	if _, err := os.Stat(source); err != nil {
-		return fmt.Errorf("placement source %s is missing from the checkout %s, declared by blueprint %s: %w", source, top, d.Blueprint, err)
-	}
-	tracked, err := w.gitOutput(ctx, top, "ls-files", "--", d.Placement.To)
-	if err != nil {
-		return fmt.Errorf("check whether placement source %s is tracked: %w", source, err)
-	}
-	if tracked != "" {
-		return fmt.Errorf("placement source %s, declared by blueprint %s, is a tracked file the loop will not copy: it is already in the worktree", source, d.Blueprint)
-	}
-	if err := w.git.Run(ctx, "git", []string{"-C", top, "check-ignore", "-q", "--", d.Placement.To}, nil, io.Discard, io.Discard); err != nil {
-		return fmt.Errorf("placement source %s, declared by blueprint %s, is not gitignored in the checkout: add %s to its .gitignore", source, d.Blueprint, d.Placement.To)
-	}
-	return nil
-}
-
-// gitOutput returns the trimmed output of git run in dir with args.
-func (w loopWiring) gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
-	var stdout, stderr bytes.Buffer
-	if err := w.git.Run(ctx, "git", append([]string{"-C", dir}, args...), nil, &stdout, &stderr); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
-	}
-	return strings.TrimSpace(stdout.String()), nil
-}
-
-// checkoutPlacer places a repo's declared placements into a worktree by
-// copying the same paths from the operator's checkout.
-type checkoutPlacer struct {
-	// checkout is the top level of the worktree the loop was started in.
-	checkout string
-	// placements are the files to place.
-	placements []blueprint.Placement
-}
-
-// Place converges the placements into the worktree at dir from the checkout.
-func (p checkoutPlacer) Place(repo, dir string) error {
-	if _, err := staging.PlaceFromCheckout(p.checkout, dir, p.placements); err != nil {
-		return fmt.Errorf("place the files of repo %q from %s into %s: %w", repo, p.checkout, dir, err)
-	}
-	return nil
+	return placements, nil
 }
 
 // placementsOf returns the placements box declares for the repo called name,

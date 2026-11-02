@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/checkout"
+
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
@@ -185,7 +187,7 @@ func TestLoopRunOffABoxRefusesADestinationTheRepoDoesNotIgnore(t *testing.T) {
 
 func TestLoopRunOffABoxRefusesASourceMissingFromTheCheckout(t *testing.T) {
 	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
-	top, err := w.gitOutput(context.Background(), w.mustWorkdir(t), "rev-parse", "--show-toplevel")
+	top, err := checkout.TopLevel(context.Background(), w.git, w.mustWorkdir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +204,7 @@ func TestLoopRunOffABoxRefusesASourceMissingFromTheCheckout(t *testing.T) {
 
 func TestLoopRunOffABoxRefusesASourceTheCheckoutDoesNotIgnore(t *testing.T) {
 	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
-	top, err := w.gitOutput(context.Background(), w.mustWorkdir(t), "rev-parse", "--show-toplevel")
+	top, err := checkout.TopLevel(context.Background(), w.git, w.mustWorkdir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
