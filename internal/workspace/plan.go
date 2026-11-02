@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/byranZA/smith/internal/blueprint"
@@ -51,7 +52,7 @@ func labelOf(u Unit) string {
 		if u.Fragment.Repo == "" {
 			return boxToolchain
 		}
-		return "toolchain " + u.Fragment.Repo
+		return "toolchain " + subject(u.Fragment.Repo)
 	case Repos:
 		return "repos " + u.Repo.Name
 	case Identity, Packages, Groups, Orphans:
@@ -59,6 +60,22 @@ func labelOf(u Unit) string {
 	default:
 		return string(u.Step)
 	}
+}
+
+// subject is a repo name as a toolchain label spells it. A name that would read
+// as the box's "(box)" marker, or as an already quoted subject, is quoted, so no
+// repo can take the label of the box toolchain and quoting stays injective.
+func subject(name string) string {
+	if name == "(box)" || strings.HasPrefix(name, `"`) {
+		return strconv.Quote(name)
+	}
+	return name
+}
+
+// isBoxToolchain reports whether u is the box's own toolchain unit, by what it
+// is rather than by what it is called.
+func isBoxToolchain(u Unit) bool {
+	return u.Step == Toolchain && u.Fragment.Repo == ""
 }
 
 // prerequisites are the labels of the earlier units u cannot be trusted to
@@ -78,10 +95,10 @@ func prerequisites(u Unit, earlier []Unit) []string {
 func isPrerequisite(prereq, dependent Unit) bool {
 	switch dependent.Step {
 	case Repos:
-		return prereq.Step == Placements || prereq.Label == boxToolchain ||
+		return prereq.Step == Placements || isBoxToolchain(prereq) ||
 			(prereq.Step == Toolchain && prereq.Fragment.Repo == dependent.Repo.Name)
 	case Toolchain:
-		return dependent.Fragment.Repo != "" && prereq.Label == boxToolchain
+		return dependent.Fragment.Repo != "" && isBoxToolchain(prereq)
 	case Groups:
 		return prereq.Step == Packages
 	case Placements, Identity, Packages, Orphans:

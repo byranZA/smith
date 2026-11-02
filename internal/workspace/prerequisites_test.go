@@ -190,3 +190,42 @@ func TestSkipAloneLeavesTheRunFailed(t *testing.T) {
 		t.Error("Result.Failed() = false, want true")
 	}
 }
+
+func boxNamedRepoBlueprint() blueprint.Blueprint {
+	return blueprint.Blueprint{
+		Tools: map[string]string{"node": "22"},
+		Repos: []blueprint.Repo{
+			{Name: "(box)", URL: forge, Tools: map[string]string{"go": "1.24"}},
+			{Name: "api", URL: apiURL},
+		},
+	}
+}
+
+func TestConvergeKeepsARepoNamedBoxApartFromTheBoxToolchain(t *testing.T) {
+	plan := Plan(boxNamedRepoBlueprint(), resolved, "/home/smith")
+	var override string
+	for _, u := range plan {
+		if u.Step == Toolchain && u.Fragment.Repo == "(box)" {
+			override = u.Label
+		}
+	}
+	if override == "toolchain (box)" || override == "" {
+		t.Fatalf("override label = %q, want one distinct from the box toolchain", override)
+	}
+	result, _ := convergeSkipping(t, plan, override)
+	want := map[string][]string{"repos (box)": {override}}
+	if got := skippedLabels(result); !reflect.DeepEqual(got, want) {
+		t.Errorf("skipped = %v, want %v", got, want)
+	}
+}
+
+func TestConvergeSkipsEverythingOnABoxToolchainFailureBesideARepoNamedBox(t *testing.T) {
+	plan := Plan(boxNamedRepoBlueprint(), resolved, "/home/smith")
+	result, _ := convergeSkipping(t, plan, "toolchain (box)")
+	for _, o := range result.Outcomes {
+		if (o.Step == Repos || o.Step == Toolchain && o.Label != "toolchain (box)") &&
+			!reflect.DeepEqual(o.Skipped, []string{"toolchain (box)"}) {
+			t.Errorf("%s skipped = %v, want [toolchain (box)]", o.Label, o.Skipped)
+		}
+	}
+}
