@@ -1,7 +1,6 @@
 package staging
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -134,45 +133,43 @@ func TestLoadResolutionRefusesInvalidJSONAsMalformed(t *testing.T) {
 	}
 }
 
-func TestConvergeStagesTheResolutionRootOwnedAt0644(t *testing.T) {
+func TestApplyStagesTheResolutionRootOwnedAt0644(t *testing.T) {
 	tree := resolvedTreeOf(t, adasResolution())
-	box := &fakeBox{}
+	d := newDisk(t)
 
-	result, err := Converge(context.Background(), box, tree)
-	if err != nil {
-		t.Fatalf("Converge() error = %v", err)
+	result := d.mustApply(tree)
+
+	if got := d.read(ResolutionPath); got != string(tree.Resolution.File.Bytes) {
+		t.Errorf("staged resolution = %q, want %q", got, tree.Resolution.File.Bytes)
 	}
-	want := File{Path: ResolutionPath, Bytes: tree.Resolution.File.Bytes, Mode: "0644", Owner: "root:root"}
-	if !box.wrote(want) {
-		t.Errorf("the resolution was not put in place root-owned at 0644:\n%s", strings.Join(box.commands, "\n"))
+	if mode, owner := d.mode(ResolutionPath), d.owners[d.path(ResolutionPath)]; mode != 0o644 || owner != "root:root" {
+		t.Errorf("resolution is %v owned by %s, want root-owned at 0644", mode, owner)
 	}
 	if change, ok := changeOf(result, ResolutionPath); !ok || change != Staged {
 		t.Errorf("Result reported %s as %v, want it staged", ResolutionPath, change)
 	}
 }
 
-func TestConvergeLeavesAnUnchangedResolutionAlone(t *testing.T) {
+func TestApplyLeavesAnUnchangedResolutionAlone(t *testing.T) {
 	tree := resolvedTreeOf(t, adasResolution())
-	box := &fakeBox{files: map[string]string{ResolutionPath: string(tree.Resolution.File.Bytes)}}
+	d := newDisk(t)
+	d.seed(ResolutionPath, string(tree.Resolution.File.Bytes))
 
-	result, err := Converge(context.Background(), box, tree)
-	if err != nil {
-		t.Fatalf("Converge() error = %v", err)
-	}
+	result := d.mustApply(tree)
+
 	if change, ok := changeOf(result, ResolutionPath); !ok || change != Unchanged {
 		t.Errorf("Result reported %s as %v, want it unchanged", ResolutionPath, change)
 	}
 }
 
-func TestConvergeReportsAChangedResolutionAsUpdated(t *testing.T) {
+func TestApplyReportsAChangedResolutionAsUpdated(t *testing.T) {
 	before := resolvedTreeOf(t, Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"})
 	tree := resolvedTreeOf(t, Resolution{Access: "public", Terminal: "tmux", Workspace: "~/code"})
-	box := &fakeBox{files: map[string]string{ResolutionPath: string(before.Resolution.File.Bytes)}}
+	d := newDisk(t)
+	d.seed(ResolutionPath, string(before.Resolution.File.Bytes))
 
-	result, err := Converge(context.Background(), box, tree)
-	if err != nil {
-		t.Fatalf("Converge() error = %v", err)
-	}
+	result := d.mustApply(tree)
+
 	if change, ok := changeOf(result, ResolutionPath); !ok || change != Updated {
 		t.Errorf("Result reported %s as %v, want it updated", ResolutionPath, change)
 	}

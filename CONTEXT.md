@@ -84,9 +84,10 @@ One step of `machine setup`'s pipeline on the operator's machine, driven from lo
 (staging the blueprint), `workspace`, in that order. The names are what each stage reports itself
 as. Unlike a phase, a stage is not in the marker's `completed_phases` and does not touch the base
 layer; a failed stage names itself, skips every stage after it, and exits partial, because the box
-is provisioned and what stopped sits on top of it. `install` and `config` must precede `workspace`,
-because on-box smith is what runs it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)), and
-`install` is also reachable alone as `smith machine upgrade`. Every stage reaches the box as the
+is provisioned and what stopped sits on top of it. `install` must precede `config` and `workspace`,
+because on-box smith is what applies both: local smith resolves the staged tree and relays it, and the
+box writes it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md), [ADR-0024](./docs/adr/0024-the-config-stage-applies-the-staged-tree-on-the-box.md)).
+`config` precedes `workspace`, which reads what it staged. `install` is also reachable alone as `smith machine upgrade`. Every stage reaches the box as the
 smith user, never the bootstrap login — over the public host until `access` proves the tailnet
 door, and over the tailnet after.
 _Avoid_: phase (reserved for the base-layer sequence), step.

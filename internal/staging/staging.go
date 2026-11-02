@@ -11,10 +11,10 @@
 // desired staged tree from a blueprint document and touches nothing; Resolve
 // turns each placement's source reference into the bytes it names and each env
 // value's reference into the value it names, which only the operator's machine
-// can do; Converge applies that tree to a box over a
-// narrow connection, comparing digests before it writes so a re-run that
-// changes nothing rewrites nothing. Load is the read half, running on the box:
-// it re-validates the staged document through the same strict parser and
+// can do; Encode and Decode carry the resolved tree to the box as one tar
+// stream; Apply writes it on the box, comparing digests before it writes so a
+// re-run that changes nothing rewrites nothing (docs/adr/0024). Load is the read half, running on the box: it
+// re-validates the staged document through the same strict parser and
 // refuses one it cannot trust rather than running a verb against a
 // half-understood blueprint.
 //

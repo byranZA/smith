@@ -49,6 +49,9 @@ type Verb struct {
 	// command line spelled them minus the box target — "session", "list",
 	// "--names".
 	Args []string
+	// Root runs the verb as root, through `sudo -n`. -n makes a box without
+	// passwordless sudo fail at once rather than wait on a prompt nobody sees.
+	Root bool
 }
 
 // Local is a verb's local implementation, run when no box was named. It is
@@ -99,9 +102,32 @@ type Conn interface {
 // the drift between the two sides that this relay exists to prevent. One
 // implementation, on the box, reached through here.
 func Send(ctx context.Context, conn Conn, v Verb, stdout, stderr io.Writer) error {
+	return send(v, stdout, stderr, func(out, errw io.Writer) error {
+		return conn.Run(ctx, v.remoteCmd(), out, errw)
+	})
+}
+
+// InputConn is a Conn that can also feed the remote command its stdin.
+type InputConn interface {
+	Conn
+	// RunWithInput runs remoteCmd on the box with stdin delivered to it.
+	RunWithInput(ctx context.Context, remoteCmd string, stdin io.Reader, stdout, stderr io.Writer) error
+}
+
+// SendWithInput is Send for a verb that reads its stdin: the bytes travel over
+// the connection's stdin, never in the command line, which is readable by every
+// process on the box. The outcome is classified exactly as Send's is.
+func SendWithInput(ctx context.Context, conn InputConn, v Verb, stdin io.Reader, stdout, stderr io.Writer) error {
+	return send(v, stdout, stderr, func(out, errw io.Writer) error {
+		return conn.RunWithInput(ctx, v.remoteCmd(), stdin, out, errw)
+	})
+}
+
+// send runs one relayed invocation through run and classifies what came back.
+func send(v Verb, stdout, stderr io.Writer, run func(stdout, stderr io.Writer) error) error {
 	watched := &strings.Builder{}
 	spoken := &wireStripper{to: stderr}
-	err := conn.Run(ctx, v.remoteCmd(), stdout, io.MultiWriter(spoken, watched))
+	err := run(stdout, io.MultiWriter(spoken, watched))
 	flushed := spoken.flush()
 	if err != nil {
 		return classify(v, watched.String(), err)
@@ -263,7 +289,7 @@ func classify(v Verb, stderr string, err error) error {
 		return err
 	}
 	switch code := coder.ExitCode(); {
-	case code == NotInstalledExitCode || strings.Contains(stderr, BoxSmith+": No such file or directory"):
+	case code == NotInstalledExitCode || strings.Contains(stderr, BoxSmith+": No such file or directory") || strings.Contains(stderr, BoxSmith+": command not found"):
 		return &NotInstalledError{Box: v.named()}
 	case code == RefusalExitCode:
 		return &MismatchError{Target: v.Target, Box: boxVersion(stderr), Local: v.Version}
@@ -408,6 +434,9 @@ func (v Verb) remoteCmd() string {
 	parts := []string{BoxSmith, "--relayed-from", connection.ShellArg(v.Version), "--relayed-box", connection.ShellArg(v.named())}
 	for _, arg := range v.Args {
 		parts = append(parts, connection.ShellArg(arg))
+	}
+	if v.Root {
+		parts = append([]string{"sudo", "-n"}, parts...)
 	}
 	return strings.Join(parts, " ")
 }

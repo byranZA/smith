@@ -16,6 +16,7 @@ import (
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/marker"
 	"github.com/byranZA/smith/internal/provider"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // setupSSH stands in for every local binary a `machine setup` run launches: the
@@ -176,11 +177,21 @@ func readInput(stdin io.Reader) (string, error) {
 	return string(data), err
 }
 
-// stagedAt is the bytes the box was handed for the staged file at path, if any.
+// stagedAt is the bytes the relayed stage-config stream carried for the staged
+// file at path, if any.
 func (s *setupSSH) stagedAt(path string) (string, bool) {
 	for i, cmd := range s.commands {
-		if strings.Contains(cmd, "tee "+connection.ShellArg(path+".staging")) {
-			return s.inputs[i], true
+		if !strings.Contains(cmd, "stage-config") {
+			continue
+		}
+		bundle, err := staging.Decode(strings.NewReader(s.inputs[i]))
+		if err != nil {
+			return "", false
+		}
+		for _, f := range bundle.Files {
+			if f.Path == path {
+				return string(f.Bytes), true
+			}
 		}
 	}
 	return "", false
