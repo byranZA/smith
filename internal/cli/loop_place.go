@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,13 +30,13 @@ import (
 // nothing.
 func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Placements, error) {
 	if w.box == nil {
-		return w.localPlacements(cmd.Context())
+		return w.localPlacements(cmd.Context(), cmd.ErrOrStderr())
 	}
 	inv := invocation(cmd, "loop run", typed(cmd, []string{fmt.Sprint(ref.Number)}))
 	box, err := w.box(inv)
 	var absent *staging.AbsentError
 	if errors.As(err, &absent) {
-		return w.localPlacements(cmd.Context())
+		return w.localPlacements(cmd.Context(), cmd.ErrOrStderr())
 	}
 	if err != nil {
 		return nil, err
@@ -53,9 +54,9 @@ func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Place
 
 // localPlacements returns the placements the config home's blueprints declare
 // for the repo whose origin the run's checkout has, to be copied from the top
-// level of that checkout. A directory with no top level or origin, or whose
+// level of that checkout, warning on warn of a blueprint it skips. A directory with no top level or origin, or whose
 // repo no blueprint declares, yields nil.
-func (w loopWiring) localPlacements(ctx context.Context) (*loop.Placements, error) {
+func (w loopWiring) localPlacements(ctx context.Context, warn io.Writer) (*loop.Placements, error) {
 	dir, err := w.workdir()
 	if err != nil {
 		return nil, fmt.Errorf("find the repo to work in: %w", err)
@@ -72,7 +73,7 @@ func (w loopWiring) localPlacements(ctx context.Context) (*loop.Placements, erro
 	if err != nil {
 		return nil, err
 	}
-	declared, err := config.PlacementsFor(home, origin)
+	declared, err := config.PlacementsFor(home, origin, warn)
 	if err != nil {
 		return nil, fmt.Errorf("find the blueprint placements for %s: %w", origin, err)
 	}

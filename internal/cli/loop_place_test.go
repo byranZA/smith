@@ -221,3 +221,22 @@ func (w loopWiring) mustWorkdir(t *testing.T) string {
 	}
 	return dir
 }
+
+func TestLoopRunOffABoxWarnsOfAnUnreadableBlueprintAndPlacesTheRest(t *testing.T) {
+	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
+	home, err := w.home()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(home.Path(), "blueprints", "bad.yaml")
+	if err := os.WriteFile(bad, []byte("repos: [unclosed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code != 0 || len(preparer.read) != 1 || preparer.read[0] != "TOKEN=local\n" || len(agent.handed) != 1 ||
+		!strings.Contains(stderr, "smith: warning: skipping blueprint "+bad) {
+		t.Errorf("exit %d, prepare read %q (stderr %q); want the placement made and a warning naming %s", code, preparer.read, stderr, bad)
+	}
+}
