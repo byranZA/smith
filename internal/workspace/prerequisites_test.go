@@ -14,8 +14,6 @@ import (
 	"github.com/byranZA/smith/internal/blueprint"
 )
 
-// declaresEverything is a blueprint with every kind of unit, and a repo that
-// overrides the box toolchain beside one that does not.
 func declaresEverything() blueprint.Blueprint {
 	return blueprint.Blueprint{
 		Placements: []blueprint.Placement{{From: "file:/op/.netrc", To: "~/.netrc"}},
@@ -74,8 +72,7 @@ func TestPlanPutsEveryPrerequisiteBeforeItsDependent(t *testing.T) {
 	}
 }
 
-// failingInstall is a box whose mise install in one directory fails, the way a
-// toolchain that cannot be fetched does, while every other command is the box's.
+// failingInstall is a box whose mise install in dir fails.
 type failingInstall struct {
 	*fakeBox
 	dir string
@@ -89,9 +86,7 @@ func (f failingInstall) Run(ctx context.Context, name string, args []string, std
 	return f.fakeBox.Run(ctx, name, args, stdin, stdout, stderr)
 }
 
-// convergeDeclared converges what a blueprint declares through Converge, with
-// the netrc placement staged unless left unstaged, and returns the home it ran
-// against.
+// convergeDeclared converges b through Converge and returns the result and home.
 func convergeDeclared(t *testing.T, run Runner, b blueprint.Blueprint, home string, unstaged bool) (Result, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -270,8 +265,7 @@ func boxNamedRepoBlueprint() blueprint.Blueprint {
 	}
 }
 
-// boxNamedOverride is the toolchain unit of the repo named (box) in a plan
-// homed at home.
+// boxNamedOverride is the toolchain unit of the repo named (box).
 func boxNamedOverride(t *testing.T, home string) Unit {
 	t.Helper()
 	for _, u := range Plan(boxNamedRepoBlueprint(), resolved, home) {

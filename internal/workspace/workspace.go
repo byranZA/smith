@@ -81,9 +81,8 @@ type Unit struct {
 	// and how it converges.
 	Step Step
 	// Label names the unit stably, its step plus its subject, such as
-	// "repos acme". A prerequisite refers to a unit by it, and a skip names
-	// its cause by it. A unit built without one has no prerequisites and is
-	// no one's.
+	// "repos acme"; prerequisites and skips refer to a unit by it. A unit
+	// without one has no prerequisites and is no one's.
 	Label string
 	// Needs are the labels of the units this one is a prerequisite-bound
 	// dependent of: it is skipped when any of them did not converge.
