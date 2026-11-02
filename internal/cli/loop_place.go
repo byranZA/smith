@@ -1,34 +1,33 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/byranZA/smith/internal/checkout"
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// placements returns the repo files a loop run puts into each task worktree:
-// what the staged blueprint declares for the repo the run's directory is in,
-// placed from the bytes `machine setup` staged. Off a box, where nothing is
-// staged, or in a directory outside the box's workspace or of a repo the
-// blueprint does not declare, it returns nil, which places nothing.
+// placements returns the repo files a loop run puts into each task worktree: on a box, the staged blueprint's placements for the run's repo; off one, the config home's placements for the checkout's origin. A directory outside the box's workspace, or of a repo nothing declares, yields nil, which places nothing.
 func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Placements, error) {
 	if w.box == nil {
-		return nil, nil
+		return w.localPlacements(cmd.Context(), cmd.ErrOrStderr())
 	}
 	inv := invocation(cmd, "loop run", typed(cmd, []string{fmt.Sprint(ref.Number)}))
 	box, err := w.box(inv)
 	var absent *staging.AbsentError
 	if errors.As(err, &absent) {
-		return nil, nil
+		return w.localPlacements(cmd.Context(), cmd.ErrOrStderr())
 	}
 	if err != nil {
 		return nil, err
@@ -42,6 +41,24 @@ func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Place
 		return nil, err
 	}
 	return placementsOf(box, repoOf(ws, dir), w, inv), nil
+}
+
+// localPlacements adapts the checkout's placements to the loop, warning on
+// warn of a blueprint it skips.
+func (w loopWiring) localPlacements(ctx context.Context, warn io.Writer) (*loop.Placements, error) {
+	dir, err := w.workdir()
+	if err != nil {
+		return nil, fmt.Errorf("find the repo to work in: %w", err)
+	}
+	home, err := w.home()
+	if err != nil {
+		return nil, err
+	}
+	placements, err := checkout.Placements(ctx, dir, home, w.git, warn)
+	if err != nil {
+		return nil, fmt.Errorf("place from the checkout: %w", err)
+	}
+	return placements, nil
 }
 
 // placementsOf returns the placements box declares for the repo called name,

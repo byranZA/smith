@@ -184,6 +184,8 @@ placements:
   file:~/.config/acme/agent-instructions.md -> ~/.config/acme/agent-instructions.md (once, 0644)
 ```
 
+A repo's `placements` also reach [local loop runs](./loop.md#task-worktree-placements). Off a box, the loop finds the blueprints in your config home that declare a repo whose `url` names the same repo as your checkout's `origin` (SSH and HTTPS forms match, ignoring case and `.git`), and copies each placement's `to` path from your checkout into every task worktree, with the same `mode` and `perms`. The `from` is not read there. On Windows only the read-only bit of `perms` takes effect, and a read-only placement cannot be replaced by a later `converge`.
+
 check also resolves every `env:` and `file:` reference the blueprint declares — each placement source and env value, at the box and in each repo — exactly as `machine setup` will, and says whether they all resolve on this machine. When some don't, it lists each one with its scope and the reason, as setup's refusal would, and prints no value:
 
 ```text
