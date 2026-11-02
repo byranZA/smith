@@ -461,18 +461,19 @@ func TestDecodeRefusesAStreamThatReachesOutsideTheStateDirectory(t *testing.T) {
 	}
 }
 
-func TestDecodeRefusalMeansNothingWasWritten(t *testing.T) {
-	d := newDisk(t)
+func TestDecodeRefusalHandsBackNothingToApply(t *testing.T) {
 	stream := tarOf(t,
 		tar.Header{Typeflag: tar.TypeReg, Name: DocumentPath, Mode: 0o644},
 		tar.Header{Typeflag: tar.TypeSymlink, Name: Root + "/link", Linkname: "/etc/shadow"},
 	)
 
-	if _, err := Decode(stream); err == nil {
+	got, err := Decode(stream)
+
+	if err == nil {
 		t.Fatal("Decode() succeeded, want the symlink refused")
 	}
-	if entries, _ := os.ReadDir(d.root); len(entries) != 0 {
-		t.Errorf("root holds %v, want nothing written", entries)
+	if len(got.Dirs) != 0 || len(got.Files) != 0 {
+		t.Errorf("Decode() handed back %+v, want an empty bundle so nothing reaches Apply", got)
 	}
 }
 
