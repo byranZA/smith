@@ -2,6 +2,8 @@
 
 > **Amended by [ADR-0017](./0017-the-loop-starts-its-own-session-on-a-box.md).** A loop-driven session is started by `loop run <box>`, not `session start --driver agent`, and smith reports the outcome a loop recorded alongside liveness.
 
+> **Amended by [ADR-0024](./0024-the-config-stage-applies-the-staged-tree-on-the-box.md).** The config stage is no longer an operator-side write: local smith resolves the staged tree and relays it to on-box smith, which applies it.
+
 ## Context
 
 Until this decision, smith was entirely a laptop-side tool: it reached a box over SSH, ran a
