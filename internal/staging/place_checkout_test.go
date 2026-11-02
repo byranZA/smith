@@ -28,6 +28,7 @@ func readFile(t *testing.T, path string) string {
 }
 
 func TestPlaceFromCheckoutCopiesTheFileWithDeclaredPerms(t *testing.T) {
+	t.Parallel()
 	checkout, tree := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(checkout, "config", ".env"), "A=1\n")
 
@@ -40,6 +41,7 @@ func TestPlaceFromCheckoutCopiesTheFileWithDeclaredPerms(t *testing.T) {
 }
 
 func TestPlaceFromCheckoutConvergeFollowsTheCheckout(t *testing.T) {
+	t.Parallel()
 	checkout, tree := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(checkout, ".env"), "new\n")
 	writeFile(t, filepath.Join(tree, ".env"), "old\n")
@@ -52,6 +54,7 @@ func TestPlaceFromCheckoutConvergeFollowsTheCheckout(t *testing.T) {
 }
 
 func TestPlaceFromCheckoutOnceLeavesTheWorktreesFile(t *testing.T) {
+	t.Parallel()
 	checkout, tree := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(checkout, ".env"), "new\n")
 	writeFile(t, filepath.Join(tree, ".env"), "agent\n")
@@ -64,6 +67,7 @@ func TestPlaceFromCheckoutOnceLeavesTheWorktreesFile(t *testing.T) {
 }
 
 func TestPlaceFromCheckoutWritesAFileNotALink(t *testing.T) {
+	t.Parallel()
 	checkout, tree := t.TempDir(), t.TempDir()
 	writeFile(t, filepath.Join(checkout, ".env"), "A=1\n")
 

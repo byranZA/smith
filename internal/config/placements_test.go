@@ -40,6 +40,7 @@ const apiBlueprint = `repos:
 `
 
 func TestPlacementsForNoMatchIsEmpty(t *testing.T) {
+	t.Parallel()
 	home := homeWith(t, map[string]string{"a.yaml": apiBlueprint})
 
 	got, err := PlacementsFor(home, "git@github.com:other/api.git", io.Discard)
@@ -50,6 +51,7 @@ func TestPlacementsForNoMatchIsEmpty(t *testing.T) {
 }
 
 func TestPlacementsForMissingHomeIsEmpty(t *testing.T) {
+	t.Parallel()
 	got, err := PlacementsFor(NewHome(filepath.Join(t.TempDir(), "absent")), "github.com/acme/api", io.Discard)
 
 	if err != nil || len(got) != 0 {
@@ -58,6 +60,7 @@ func TestPlacementsForMissingHomeIsEmpty(t *testing.T) {
 }
 
 func TestPlacementsForMatchCarriesTheDeclaringBlueprint(t *testing.T) {
+	t.Parallel()
 	home := homeWith(t, map[string]string{"a.yaml": apiBlueprint})
 
 	got, err := PlacementsFor(home, "git@github.com:Acme/API.git", io.Discard)
@@ -72,6 +75,7 @@ func TestPlacementsForMatchCarriesTheDeclaringBlueprint(t *testing.T) {
 }
 
 func TestPlacementsForJoinsEveryBlueprintByPathPlacingEachOnce(t *testing.T) {
+	t.Parallel()
 	home := homeWith(t, map[string]string{
 		"a.yaml": "repos:\n  - url: https://github.com/acme/api\n    placements:\n      - {from: \"file:~/1\", to: .env, mode: converge}\n      - {from: \"file:~/2\", to: a.txt, mode: once}\n",
 		"b.yaml": "repos:\n  - url: https://github.com/acme/api\n    placements:\n      - {from: \"file:~/1\", to: .env, mode: converge}\n      - {from: \"file:~/3\", to: b.txt, mode: once}\n",
@@ -89,6 +93,7 @@ func TestPlacementsForJoinsEveryBlueprintByPathPlacingEachOnce(t *testing.T) {
 }
 
 func TestPlacementsForConvergeWinsWhereModesDisagree(t *testing.T) {
+	t.Parallel()
 	home := homeWith(t, map[string]string{
 		"a.yaml": "repos:\n  - url: https://github.com/acme/api\n    placements:\n      - {from: \"file:~/1\", to: .env, mode: once}\n",
 		"b.yaml": "repos:\n  - url: https://github.com/acme/api\n    placements:\n      - {from: \"file:~/1\", to: .env, mode: converge}\n",
@@ -102,6 +107,7 @@ func TestPlacementsForConvergeWinsWhereModesDisagree(t *testing.T) {
 }
 
 func TestPlacementsForWarnsOfAnUnreadableBlueprintAndGoesOn(t *testing.T) {
+	t.Parallel()
 	home := homeWith(t, map[string]string{
 		"bad.yaml": "repos: [unclosed",
 		"ok.yaml":  "repos:\n  - url: https://github.com/acme/api\n    placements:\n      - {from: \"file:~/1\", to: .env, mode: once}\n",

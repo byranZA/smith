@@ -3,6 +3,7 @@ package blueprint
 import "testing"
 
 func TestSameRepo(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		a, b string
@@ -20,6 +21,7 @@ func TestSameRepo(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := SameRepo(tc.a, tc.b); got != tc.want {
 				t.Errorf("SameRepo(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
