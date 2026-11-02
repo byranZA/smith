@@ -5,6 +5,7 @@ package checkout
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,17 +21,18 @@ import (
 // Placements returns the placements the config home's blueprints declare for
 // the repo whose origin the checkout containing dir has, to be copied from the
 // top level of that checkout, warning on warn of a blueprint it skips. A dir
-// with no top level or origin, or whose repo no blueprint declares, yields
-// nil, which places nothing. A declared source that is missing from the
+// that git reports is in no checkout or has no origin, or whose repo no
+// blueprint declares, yields nil, which places nothing; any other failure of
+// those git probes is returned. A declared source that is missing from the
 // checkout, tracked by git, or not gitignored is refused.
 func Placements(ctx context.Context, dir string, home config.Home, git loop.Runner, warn io.Writer) (*loop.Placements, error) {
-	top, err := gitOutput(ctx, git, dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil, nil
+	top, present, err := gitProbe(ctx, git, dir, "not a git repository", "rev-parse", "--show-toplevel")
+	if err != nil || !present {
+		return nil, err
 	}
-	origin, err := gitOutput(ctx, git, dir, "remote", "get-url", "origin")
-	if err != nil {
-		return nil, nil
+	origin, present, err := gitProbe(ctx, git, dir, "No such remote", "remote", "get-url", "origin")
+	if err != nil || !present {
+		return nil, err
 	}
 	declared, err := config.PlacementsFor(home, origin, warn)
 	if err != nil {
@@ -85,11 +87,34 @@ func TopLevel(ctx context.Context, git loop.Runner, dir string) (string, error) 
 
 // gitOutput returns the trimmed output of git run in dir with args.
 func gitOutput(ctx context.Context, git loop.Runner, dir string, args ...string) (string, error) {
-	var stdout, stderr bytes.Buffer
-	if err := git.Run(ctx, "git", append([]string{"-C", dir}, args...), nil, &stdout, &stderr); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+	out, _, err := gitRun(ctx, git, dir, args...)
+	return out, err
+}
+
+// gitProbe returns the trimmed output of git run in dir with args, and whether
+// the thing probed is present. Git exiting non-zero with absent in its
+// diagnostic means it is absent and is no error; any other failure is
+// returned, so a cancelled or broken run is not mistaken for absence.
+func gitProbe(ctx context.Context, git loop.Runner, dir, absent string, args ...string) (string, bool, error) {
+	out, stderr, err := gitRun(ctx, git, dir, args...)
+	if err == nil {
+		return out, true, nil
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) && ctx.Err() == nil && strings.Contains(stderr, absent) {
+		return "", false, nil
+	}
+	return "", false, err
+}
+
+// gitRun returns the trimmed output and diagnostics of git run in dir with args.
+func gitRun(ctx context.Context, git loop.Runner, dir string, args ...string) (stdout, stderr string, err error) {
+	var out, errOut bytes.Buffer
+	if err := git.Run(ctx, "git", append([]string{"-C", dir}, args...), nil, &out, &errOut); err != nil {
+		diag := strings.TrimSpace(errOut.String())
+		return "", diag, fmt.Errorf("git %s: %w: %s", args[0], err, diag)
+	}
+	return strings.TrimSpace(out.String()), strings.TrimSpace(errOut.String()), nil
 }
 
 // placer places declared placements into a worktree by copying the same paths

@@ -19,9 +19,14 @@ type toplevelGit struct {
 	root string
 }
 
-func (g toplevelGit) Run(_ context.Context, _ string, args []string, _ io.Reader, stdout, _ io.Writer) error {
-	if g.root == "" || len(args) != 4 || args[2] != "rev-parse" {
-		return errors.New("exit status 128")
+func (g toplevelGit) Run(_ context.Context, _ string, args []string, _ io.Reader, stdout, stderr io.Writer) error {
+	if g.root == "" {
+		_, _ = io.WriteString(stderr, "fatal: not a git repository")
+		return exitStatus(128)
+	}
+	if len(args) != 4 || args[2] != "rev-parse" {
+		_, _ = io.WriteString(stderr, "error: No such remote 'origin'")
+		return exitStatus(2)
 	}
 	_, err := fmt.Fprintln(stdout, g.root)
 	return err

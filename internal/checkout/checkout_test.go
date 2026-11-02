@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -152,5 +153,60 @@ func TestPlacementsRefusesASourceTheCheckoutDoesNotIgnore(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), ".gitignore") {
 		t.Errorf("got %v; want a not-gitignored refusal", err)
+	}
+}
+
+func TestPlacementsOfACheckoutWithoutOriginIsNil(t *testing.T) {
+	checkout, home := fixture(t, ".env\n")
+	gitIn(t, checkout, "remote", "remove", "origin")
+
+	got, err := resolve(t, checkout, home)
+
+	if err != nil || got != "nil" {
+		t.Errorf("got %q, %v; want nil placements", got, err)
+	}
+}
+
+// failingGit fails every git run whose arguments contain failOn, writing a
+// diagnostic to stderr, and otherwise runs real git.
+type failingGit struct {
+	failOn string
+	err    error
+}
+
+func (f failingGit) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	for _, a := range args {
+		if a == f.failOn {
+			_, _ = io.WriteString(stderr, "fatal: boom diagnostic")
+			return f.err
+		}
+	}
+	return execGit{}.Run(ctx, name, args, stdin, stdout, stderr)
+}
+
+func TestPlacementsReturnsAFailedProbeInsteadOfDisablingPlacements(t *testing.T) {
+	for _, probe := range []string{"rev-parse", "get-url"} {
+		t.Run(probe, func(t *testing.T) {
+			checkout, home := fixture(t, ".env\n")
+			cause := errors.New("exec failed")
+
+			p, err := Placements(context.Background(), checkout, home, failingGit{failOn: probe, err: cause}, io.Discard)
+
+			if p != nil || !errors.Is(err, cause) || !strings.Contains(err.Error(), "boom diagnostic") {
+				t.Errorf("got %+v, %v; want the probe failure with its diagnostic", p, err)
+			}
+		})
+	}
+}
+
+func TestPlacementsKeepsCancellationIdentifiable(t *testing.T) {
+	checkout, home := fixture(t, ".env\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Placements(ctx, checkout, home, execGit{}, io.Discard)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("got %v; want context.Canceled", err)
 	}
 }
