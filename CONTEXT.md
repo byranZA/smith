@@ -377,8 +377,9 @@ The primitive that puts a file on the box: `source-reference → dest-path [conv
 The source resolves to the referenced bytes exactly as they are, never trimmed, unlike an `env` value, whose `env:` and `file:` references are trimmed and whose `literal:` is taken verbatim.
 `converge` (default) whole-file replaces on every pass; `once` writes only if absent, and the
 worktree owns it thereafter. Scope is set by declaration site — under a `repos[]` entry it is
-worktree-relative and materializes on session start, at top level it is an absolute box path and
+worktree-relative and materializes in a session's worktree and the loop's task worktrees, at top level it is an absolute box path and
 materializes at `machine setup`. File-level only in v1.
+A repo-scoped placement is declared once, in the blueprint, and supplied wherever the loop runs: on a box from the bytes `machine setup` staged, and off a box from the same path in the checkout the loop was started in, found by matching the blueprint repo's URL to the checkout's `origin` rather than by resolving its source reference ([ADR-0023](./docs/adr/0023-local-task-worktrees-take-placements-from-the-checkout.md)).
 _Avoid_: template, sync, copy.
 
 **Toolchain selection**:
