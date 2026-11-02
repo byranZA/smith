@@ -32,12 +32,7 @@ func BundleOf(tree Tree) Bundle {
 	return Bundle{Dirs: tree.Dirs, Files: files}
 }
 
-// Encode writes the tree as one tar stream: a directory entry per Dir and a
-// file entry per File carrying its bytes, its mode and its owner by name.
-//
-// The stream is transport only. It is read off stdin by the box's own smith
-// and never written down, so no second on-box format exists, and it carries no
-// compatibility promise: the relay's version gate pins both ends to one smith.
+// Encode writes the tree as one tar stream of a directory entry per Dir and a file entry per File. The stream is transport only and carries no compatibility promise.
 func Encode(tree Tree) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -80,13 +75,7 @@ func header(kind byte, path, mode, owner string, size int64) (*tar.Header, error
 	return &tar.Header{Typeflag: kind, Name: path, Mode: m, Uname: user, Gname: group, Size: size}, nil
 }
 
-// Decode reads a stream Encode wrote and checks every entry before handing any
-// of it back, so a refusal means the box has written nothing.
-//
-// The box never trusts the operator's paths on the grounds that the two sides
-// ought to agree. A name outside /etc/smith/, one with a ".." element, one that
-// is not already clean, and any entry that is not a plain directory or a
-// regular file — a symlink and a hardlink above all — refuses the whole run.
+// Decode reads a stream Encode wrote and checks every entry before returning any of it. A name outside /etc/smith/, an unclean name, or an entry that is not a plain directory or regular file refuses the whole stream.
 func Decode(r io.Reader) (Bundle, error) {
 	var b Bundle
 	tr := tar.NewReader(r)

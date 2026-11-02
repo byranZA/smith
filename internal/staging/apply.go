@@ -94,21 +94,7 @@ func ChownByName(f *os.File, owner string) error {
 	return nil
 }
 
-// Apply writes the bundle under root, which is Root on a box and a temporary
-// directory in a test, and prints one report line per file to report as each
-// lands. It runs as root on the box, so the writes are Go calls, not commands.
-//
-// It is check-before-change: a file whose digest already matches is left
-// alone, so a re-run of an unchanged blueprint rewrites nothing and moves no
-// modification time. Absence is a stat result: a destination that does not
-// exist is staged, and any other failure to read it stops the run.
-//
-// Each file is written to a temporary path beside its destination, given its
-// mode and owner there, and renamed into place, so a destination is wholly old
-// or wholly new and a secret never exists with a wider mode. The run stops at
-// the first failure, names the path, and prunes nothing. Prune runs only after
-// every write succeeded, and a walk of the placements directory that fails is
-// an error, never an empty listing.
+// Apply writes the bundle under root, leaving a file whose digest already matches untouched, and prints one report line per file to report. It stops at the first failure naming the path, and prunes only after every write succeeded.
 func Apply(root string, b Bundle, own Owner, report io.Writer) (Result, error) {
 	var result Result
 	if err := os.MkdirAll(root, 0o700); err != nil {

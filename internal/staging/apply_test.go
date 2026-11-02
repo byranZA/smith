@@ -19,7 +19,6 @@ import (
 type owners map[string]string
 
 func (o owners) own(f *os.File, owner string) error {
-	// A file is owned while still at its temporary name beside the destination.
 	dest, _, _ := strings.Cut(f.Name(), ".staging-")
 	o[dest] = owner
 	return nil
@@ -336,10 +335,6 @@ func TestApplyPrunesAStrayFileLeftInTheStagedTree(t *testing.T) {
 	}
 }
 
-// A destination that cannot be read for any reason but its absence is an
-// error: here a directory sits where the resolution belongs. The run stops at
-// that file, so the files before it hold new bytes, the ones after hold old
-// bytes, and nothing is pruned.
 func TestApplyStopsAtTheFirstFailureLeavingEarlierNewLaterOldAndNothingPruned(t *testing.T) {
 	d := newDisk(t)
 	placement := BoxPlacementPathIn(Root, "/home/smith/.npmrc")

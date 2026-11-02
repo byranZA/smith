@@ -12,13 +12,7 @@ import (
 	"github.com/byranZA/smith/internal/staging"
 )
 
-// newStageConfigCmd builds the hidden `smith machine stage-config`, the on-box
-// half of the config stage (docs/adr/0024). It reads the tar stream
-// `machine setup` relays on stdin, checks all of it, and applies it under
-// /etc/smith/, printing one line per file as it lands.
-//
-// It is hidden because it is the two smiths talking to each other: nobody
-// types it, and it runs as root, so it touches nothing outside /etc/smith/.
+// newStageConfigCmd builds the hidden `smith machine stage-config`, which applies the tar stream on stdin under /etc/smith/. It is the on-box half of the config stage (docs/adr/0024).
 func newStageConfigCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:          "stage-config",
@@ -43,14 +37,7 @@ func newStageConfigCmd() *cobra.Command {
 	}
 }
 
-// stageConfig runs the config-staging stage: it relays the resolved tree to the
-// box's `machine stage-config` in one call, as a tar stream on stdin through
-// `sudo -n`, and streams the box's report to the operator.
-//
-// The tree was resolved before the box was touched, so the only failures left
-// are the box's own. It runs after install because the verb it relays is the
-// box's own smith. Nothing to stage — a run naming no blueprint — leaves the
-// box exactly as it was.
+// stageConfig relays the resolved tree to the box's `machine stage-config` in one call and streams the box's report. A nil staged tree leaves the box untouched.
 func stageConfig(ctx context.Context, conn relay.InputConn, target, box, version string, staged *stagedConfig, stdout, stderr io.Writer) error {
 	if staged == nil {
 		return nil
