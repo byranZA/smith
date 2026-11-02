@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -80,6 +81,9 @@ func (w loopWiring) localPlacements(ctx context.Context) (*loop.Placements, erro
 	}
 	placements := make([]blueprint.Placement, len(declared))
 	for i, d := range declared {
+		if err := w.checkSource(ctx, top, d); err != nil {
+			return nil, err
+		}
 		placements[i] = d.Placement
 	}
 	return &loop.Placements{
@@ -88,6 +92,24 @@ func (w loopWiring) localPlacements(ctx context.Context) (*loop.Placements, erro
 		Placer: checkoutPlacer{checkout: top, placements: placements},
 		Git:    w.git,
 	}, nil
+}
+
+// checkSource refuses a declared placement whose source is missing from the
+// checkout at top, or is a file the repo tracks, which is already in every
+// worktree and would carry uncommitted edits into the task if copied.
+func (w loopWiring) checkSource(ctx context.Context, top string, d config.Declared) error {
+	source := filepath.Join(top, d.Placement.To)
+	if _, err := os.Stat(source); err != nil {
+		return fmt.Errorf("placement source %s is missing from the checkout %s, declared by blueprint %s: %w", source, top, d.Blueprint, err)
+	}
+	tracked, err := w.gitOutput(ctx, top, "ls-files", "--", d.Placement.To)
+	if err != nil {
+		return fmt.Errorf("check whether placement source %s is tracked: %w", source, err)
+	}
+	if tracked != "" {
+		return fmt.Errorf("placement source %s, declared by blueprint %s, is a tracked file the loop will not copy: it is already in the worktree", source, d.Blueprint)
+	}
+	return nil
 }
 
 // gitOutput returns the trimmed output of git run in dir with args.

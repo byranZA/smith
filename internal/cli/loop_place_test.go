@@ -182,3 +182,42 @@ func TestLoopRunOffABoxRefusesADestinationTheRepoDoesNotIgnore(t *testing.T) {
 		t.Errorf("exit %d, handed %v, prepared %d (stderr %q); want a refusal naming .gitignore", code, agent.handed, len(preparer.read), stderr)
 	}
 }
+
+func TestLoopRunOffABoxRefusesASourceMissingFromTheCheckout(t *testing.T) {
+	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
+	top, err := w.gitOutput(context.Background(), w.mustWorkdir(t), "rev-parse", "--show-toplevel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(top, ".env")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || len(agent.handed) != 0 || len(preparer.read) != 0 || !strings.Contains(stderr, filepath.Join(top, ".env")) || !strings.Contains(stderr, "acme.yaml") {
+		t.Errorf("exit %d, handed %v, prepared %d (stderr %q); want a refusal naming the source path, the checkout and the blueprint", code, agent.handed, len(preparer.read), stderr)
+	}
+}
+
+func TestLoopRunOffABoxRefusesATrackedSource(t *testing.T) {
+	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
+	dir := w.mustWorkdir(t)
+	gitIn(t, dir, "add", "-f", ".env")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || len(agent.handed) != 0 || len(preparer.read) != 0 || !strings.Contains(stderr, "tracked file the loop will not copy") || !strings.Contains(stderr, ".env") {
+		t.Errorf("exit %d, handed %v, prepared %d (stderr %q); want a refusal naming .env as a tracked file the loop will not copy", code, agent.handed, len(preparer.read), stderr)
+	}
+}
+
+// mustWorkdir returns the directory the wiring runs in.
+func (w loopWiring) mustWorkdir(t *testing.T) string {
+	t.Helper()
+	dir, err := w.workdir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
