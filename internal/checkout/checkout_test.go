@@ -60,7 +60,7 @@ func fixture(t *testing.T, ignore string) (checkout string, home config.Home) {
 
 func resolve(t *testing.T, dir string, home config.Home) (string, error) {
 	t.Helper()
-	p, err := Placements(context.Background(), dir, home, execGit{}, io.Discard)
+	p, err := Placements(t.Context(), dir, home, execGit{}, io.Discard)
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +79,7 @@ func resolve(t *testing.T, dir string, home config.Home) (string, error) {
 }
 
 func TestPlacementsCopiesDeclaredSourceFromTheCheckoutTopLevel(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, ".env\n")
 	sub := filepath.Join(checkout, "pkg")
 	write(t, filepath.Join(sub, "x"), "")
@@ -91,9 +92,10 @@ func TestPlacementsCopiesDeclaredSourceFromTheCheckoutTopLevel(t *testing.T) {
 }
 
 func TestPlacementsNamesTheDestinationsAndTheRepo(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, ".env\n")
 
-	p, err := Placements(context.Background(), checkout, home, execGit{}, io.Discard)
+	p, err := Placements(t.Context(), checkout, home, execGit{}, io.Discard)
 
 	if err != nil || p == nil || p.Repo != filepath.Base(checkout) || !reflect.DeepEqual(p.To, []string{".env"}) {
 		t.Errorf("got %+v, %v; want repo %q placing .env", p, err, filepath.Base(checkout))
@@ -101,6 +103,7 @@ func TestPlacementsNamesTheDestinationsAndTheRepo(t *testing.T) {
 }
 
 func TestPlacementsOfAnUndeclaredOriginIsNil(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, ".env\n")
 	gitIn(t, checkout, "remote", "set-url", "origin", "https://github.com/acme/other")
 
@@ -112,6 +115,7 @@ func TestPlacementsOfAnUndeclaredOriginIsNil(t *testing.T) {
 }
 
 func TestPlacementsOutsideAGitCheckoutIsNil(t *testing.T) {
+	t.Parallel()
 	_, home := fixture(t, ".env\n")
 
 	got, err := resolve(t, t.TempDir(), home)
@@ -122,6 +126,7 @@ func TestPlacementsOutsideAGitCheckoutIsNil(t *testing.T) {
 }
 
 func TestPlacementsRefusesASourceMissingFromTheCheckout(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, ".env\n")
 	if err := os.Remove(filepath.Join(checkout, ".env")); err != nil {
 		t.Fatal(err)
@@ -135,6 +140,7 @@ func TestPlacementsRefusesASourceMissingFromTheCheckout(t *testing.T) {
 }
 
 func TestPlacementsRefusesATrackedSource(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, "other\n")
 	gitIn(t, checkout, "add", ".env")
 
@@ -146,6 +152,7 @@ func TestPlacementsRefusesATrackedSource(t *testing.T) {
 }
 
 func TestPlacementsRefusesASourceTheCheckoutDoesNotIgnore(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, "other\n")
 
 	_, err := resolve(t, checkout, home)
@@ -156,6 +163,7 @@ func TestPlacementsRefusesASourceTheCheckoutDoesNotIgnore(t *testing.T) {
 }
 
 func TestPlacementsOfACheckoutWithoutOriginIsNil(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, ".env\n")
 	gitIn(t, checkout, "remote", "remove", "origin")
 
@@ -184,12 +192,14 @@ func (f failingGit) Run(ctx context.Context, name string, args []string, stdin i
 }
 
 func TestPlacementsReturnsAFailedProbeInsteadOfDisablingPlacements(t *testing.T) {
+	t.Parallel()
 	for _, probe := range []string{"rev-parse", "get-url"} {
 		t.Run(probe, func(t *testing.T) {
+			t.Parallel()
 			checkout, home := fixture(t, ".env\n")
 			cause := errors.New("exec failed")
 
-			p, err := Placements(context.Background(), checkout, home, failingGit{failOn: probe, err: cause}, io.Discard)
+			p, err := Placements(t.Context(), checkout, home, failingGit{failOn: probe, err: cause}, io.Discard)
 
 			if p != nil || !errors.Is(err, cause) || !strings.Contains(err.Error(), "boom diagnostic") {
 				t.Errorf("got %+v, %v; want the probe failure with its diagnostic", p, err)
@@ -199,8 +209,9 @@ func TestPlacementsReturnsAFailedProbeInsteadOfDisablingPlacements(t *testing.T)
 }
 
 func TestPlacementsKeepsCancellationIdentifiable(t *testing.T) {
+	t.Parallel()
 	checkout, home := fixture(t, ".env\n")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := Placements(ctx, checkout, home, execGit{}, io.Discard)
