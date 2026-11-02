@@ -56,7 +56,7 @@ func Place(root, repo, worktree string, placements []blueprint.Placement, inv hi
 func PlaceFromCheckout(checkout, worktree string, placements []blueprint.Placement) (Result, error) {
 	return placeAll(worktree, placements, func(p blueprint.Placement, _ string) ([]byte, error) {
 		source := filepath.Join(checkout, p.To)
-		data, err := os.ReadFile(source) // #nosec G304 -- the source is the blueprint's path under the operator's checkout.
+		data, err := os.ReadFile(source)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the checkout: %w", source, err)
 		}

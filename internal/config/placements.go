@@ -19,13 +19,7 @@ type Declared struct {
 	Placement blueprint.Placement
 }
 
-// PlacementsFor returns the placements every blueprint in the config home
-// declares for the repo whose clone URL is url, matching repo entries by URL
-// alone. The placements are joined by destination path, each path once, in
-// the order first declared; where entries disagree on a path's mode, the
-// converge one wins. A home with no blueprints, or none declaring the repo,
-// yields none. A blueprint that cannot be read or parsed is skipped, with one
-// "smith: warning:" line naming it written to warn.
+// PlacementsFor returns the placements every blueprint in the config home declares for the repo with clone URL url, joined by destination path in first-declared order, with converge winning a mode disagreement. A blueprint that cannot be read or parsed is skipped, with a "smith: warning:" line naming it written to warn.
 func PlacementsFor(home Home, url string, warn io.Writer) ([]Declared, error) {
 	dir := filepath.Join(home.path, "blueprints")
 	entries, err := os.ReadDir(dir)
@@ -42,7 +36,7 @@ func PlacementsFor(home Home, url string, warn io.Writer) ([]Declared, error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path) // #nosec G304 -- a file listed in the operator's config home.
+		data, err := os.ReadFile(path)
 		var b blueprint.Blueprint
 		if err == nil {
 			b, err = blueprint.Parse(data)

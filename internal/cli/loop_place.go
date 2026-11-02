@@ -18,13 +18,7 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// placements returns the repo files a loop run puts into each task worktree.
-// On a box that is what the staged blueprint declares for the repo the run's
-// directory is in, placed from the bytes `machine setup` staged; off one,
-// where nothing is staged, it is what the config home's blueprints declare for
-// the checkout's origin, copied from the checkout. A directory outside the
-// box's workspace, or of a repo nothing declares, yields nil, which places
-// nothing.
+// placements returns the repo files a loop run puts into each task worktree: on a box, the staged blueprint's placements for the run's repo; off one, the config home's placements for the checkout's origin. A directory outside the box's workspace, or of a repo nothing declares, yields nil, which places nothing.
 func (w loopWiring) placements(cmd *cobra.Command, ref tracker.Ref) (*loop.Placements, error) {
 	if w.box == nil {
 		return w.localPlacements(cmd.Context(), cmd.ErrOrStderr())
