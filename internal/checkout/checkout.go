@@ -18,13 +18,7 @@ import (
 	"github.com/byranZA/smith/internal/staging"
 )
 
-// Placements returns the placements the config home's blueprints declare for
-// the repo whose origin the checkout containing dir has, to be copied from the
-// top level of that checkout, warning on warn of a blueprint it skips. A dir
-// that git reports is in no checkout or has no origin, or whose repo no
-// blueprint declares, yields nil, which places nothing; any other failure of
-// those git probes is returned. A declared source that is missing from the
-// checkout, tracked by git, or not gitignored is refused.
+// Placements returns the placements the config home's blueprints declare for the repo whose origin the checkout containing dir has, or nil when dir has no checkout, origin or declaring blueprint. It returns an error for a failed git probe or a declared source that is missing, tracked or not gitignored, and warns on warn of a blueprint it skips.
 func Placements(ctx context.Context, dir string, home config.Home, git loop.Runner, warn io.Writer) (*loop.Placements, error) {
 	top, present, err := gitProbe(ctx, git, dir, "not a git repository", "rev-parse", "--show-toplevel")
 	if err != nil || !present {

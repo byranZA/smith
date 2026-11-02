@@ -40,8 +40,7 @@ func write(t *testing.T, path, body string) {
 	}
 }
 
-// fixture builds a checkout of acme/api ignoring .env and holding one, and a
-// config home whose blueprint declares .env for it.
+// fixture builds an acme/api checkout holding .env and a config home declaring it.
 func fixture(t *testing.T, ignore string) (checkout string, home config.Home) {
 	t.Helper()
 	checkout = t.TempDir()
