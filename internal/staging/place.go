@@ -41,10 +41,38 @@ const dirMode = 0o750
 // place, so a destination never exists holding partial content or a wider mode
 // than the placement declares. A refusal spells its suggested command for inv.
 func Place(root, repo, worktree string, placements []blueprint.Placement, inv hint.Invocation) (Result, error) {
+	return placeAll(worktree, placements, func(p blueprint.Placement, destination string) ([]byte, error) {
+		staged, err := ReadPlacement(root, repo, p.To, inv)
+		if err != nil {
+			return nil, fmt.Errorf("place the file for repo %q at %s: %w", repo, destination, err)
+		}
+		return staged, nil
+	})
+}
+
+// PlaceFromCheckout materializes placements into a worktree with the same
+// rules as Place, taking each file's bytes from the same path under checkout,
+// the operator's own clone, as a whole-file copy that is never a link.
+func PlaceFromCheckout(checkout, worktree string, placements []blueprint.Placement) (Result, error) {
+	return placeAll(worktree, placements, func(p blueprint.Placement, _ string) ([]byte, error) {
+		source := filepath.Join(checkout, p.To)
+		data, err := os.ReadFile(source) // #nosec G304 -- the source is the blueprint's path under the operator's checkout.
+		if err != nil {
+			return nil, fmt.Errorf("read %s from the checkout: %w", source, err)
+		}
+		return data, nil
+	})
+}
+
+// source supplies the bytes a placement puts at destination.
+type source func(p blueprint.Placement, destination string) ([]byte, error)
+
+// placeAll applies each placement to worktree with bytes from read.
+func placeAll(worktree string, placements []blueprint.Placement, read source) (Result, error) {
 	var result Result
 	for _, p := range placements {
 		destination := filepath.Join(worktree, p.To)
-		change, err := place(root, repo, p, destination, inv)
+		change, err := place(read, p, destination)
 		if err != nil {
 			return Result{}, err
 		}
@@ -54,7 +82,7 @@ func Place(root, repo, worktree string, placements []blueprint.Placement, inv hi
 }
 
 // place materializes one placement at destination and reports what it did.
-func place(root, repo string, p blueprint.Placement, destination string, inv hint.Invocation) (Change, error) {
+func place(read source, p blueprint.Placement, destination string) (Change, error) {
 	current, exists, err := held(destination)
 	if err != nil {
 		return Unchanged, err
@@ -62,9 +90,9 @@ func place(root, repo string, p blueprint.Placement, destination string, inv hin
 	if exists && p.Mode == onceMode {
 		return Unchanged, nil
 	}
-	staged, err := ReadPlacement(root, repo, p.To, inv)
+	staged, err := read(p, destination)
 	if err != nil {
-		return Unchanged, fmt.Errorf("place the file for repo %q at %s: %w", repo, destination, err)
+		return Unchanged, err
 	}
 	if exists && bytes.Equal(current, staged) {
 		return Unchanged, nil

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/staging"
@@ -91,5 +92,93 @@ func TestLoopRunOnABoxRefusesAPlacementThatIsNotGitignored(t *testing.T) {
 
 	if code == 0 || len(agent.handed) != 0 || len(preparer.read) != 0 || !strings.Contains(stderr, ".env") || !strings.Contains(stderr, ".gitignore") {
 		t.Errorf("exit %d, handed %v, prepared %d (stderr %q); want non-zero, no agent run and .env named with .gitignore", code, agent.handed, len(preparer.read), stderr)
+	}
+}
+
+// localPlacingLoop is loop wiring off a box, run from subdir of a real checkout of api with a gitignored .env holding TOKEN=local, whose origin is origin and whose config home holds a blueprint declaring the https://github.com/acme/api repo with a placement at .env.
+func localPlacingLoop(t *testing.T, origin, subdir string) (loopWiring, *readingPreparer, *fakeAgent, string) {
+	t.Helper()
+	checkout := t.TempDir()
+	gitIn(t, checkout, "init", "-b", "main")
+	gitIn(t, checkout, "remote", "add", "origin", origin)
+	if err := os.WriteFile(filepath.Join(checkout, ".gitignore"), []byte(".env\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, ".env"), []byte("TOKEN=local\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := filepath.Join(checkout, subdir)
+	if err := os.MkdirAll(run, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	task := t.TempDir()
+	gitIn(t, task, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(task, ".gitignore"), []byte(".env\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "blueprints"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	doc := "repos:\n  - url: https://github.com/acme/api\n    placements:\n      - from: file:~/x\n        to: .env\n        mode: converge\n"
+	if err := os.WriteFile(filepath.Join(home, "blueprints", "acme.yaml"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeTracker{issues: map[string]string{
+		"42": specJSON(43),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+	}}
+	agent, preparer := &fakeAgent{gh: gh}, &readingPreparer{name: ".env"}
+	bench := func(ctx context.Context, _ string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
+		fake, lag, err := fakeBench(ctx, task, req)
+		return openingAt{Bench: fake, dir: task}, lag, err
+	}
+	return loopWiring{
+		gh: gh, launcher: agent, lookPath: onPath, preparer: preparer, bench: bench,
+		git: connection.System(), workdir: func() (string, error) { return run, nil },
+		home: func() (config.Home, error) { return config.NewHome(home), nil },
+	}, preparer, agent, task
+}
+
+func TestLoopRunOffABoxPlacesTheCheckoutsFileBeforePreparation(t *testing.T) {
+	w, preparer, agent, _ := localPlacingLoop(t, "git@github.com:Acme/API.git", ".")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code != 0 || len(preparer.read) != 1 || preparer.read[0] != "TOKEN=local\n" || len(agent.handed) != 1 {
+		t.Errorf("exit %d, prepare read %q, handed %v (stderr %q); want 0, the checkout's bytes and one agent run", code, preparer.read, agent.handed, stderr)
+	}
+}
+
+func TestLoopRunOffABoxFromASubdirectoryPlacesFromTheTopLevel(t *testing.T) {
+	w, preparer, _, _ := localPlacingLoop(t, "https://github.com/acme/api", "pkg/deep")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code != 0 || len(preparer.read) != 1 || preparer.read[0] != "TOKEN=local\n" {
+		t.Errorf("exit %d, prepare read %q (stderr %q); want the top level's bytes", code, preparer.read, stderr)
+	}
+}
+
+func TestLoopRunOffABoxOfAnUndeclaredRepoPlacesNothing(t *testing.T) {
+	w, preparer, _, _ := localPlacingLoop(t, "https://github.com/other/api", ".")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code != 0 || len(preparer.read) != 1 || preparer.read[0] != "absent" || strings.Contains(stderr, "placement") {
+		t.Errorf("exit %d, prepare read %q (stderr %q); want nothing placed and no placement output", code, preparer.read, stderr)
+	}
+}
+
+func TestLoopRunOffABoxRefusesADestinationTheRepoDoesNotIgnore(t *testing.T) {
+	w, preparer, agent, task := localPlacingLoop(t, "https://github.com/acme/api", ".")
+	if err := os.WriteFile(filepath.Join(task, ".gitignore"), []byte("other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || len(agent.handed) != 0 || len(preparer.read) != 0 || !strings.Contains(stderr, ".gitignore") {
+		t.Errorf("exit %d, handed %v, prepared %d (stderr %q); want a refusal naming .gitignore", code, agent.handed, len(preparer.read), stderr)
 	}
 }
