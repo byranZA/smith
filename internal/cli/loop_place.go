@@ -110,6 +110,9 @@ func (w loopWiring) checkSource(ctx context.Context, top string, d config.Declar
 	if tracked != "" {
 		return fmt.Errorf("placement source %s, declared by blueprint %s, is a tracked file the loop will not copy: it is already in the worktree", source, d.Blueprint)
 	}
+	if err := w.git.Run(ctx, "git", []string{"-C", top, "check-ignore", "-q", "--", d.Placement.To}, nil, io.Discard, io.Discard); err != nil {
+		return fmt.Errorf("placement source %s, declared by blueprint %s, is not gitignored in the checkout: add %s to its .gitignore", source, d.Blueprint, d.Placement.To)
+	}
 	return nil
 }
 

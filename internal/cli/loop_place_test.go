@@ -200,6 +200,23 @@ func TestLoopRunOffABoxRefusesASourceMissingFromTheCheckout(t *testing.T) {
 	}
 }
 
+func TestLoopRunOffABoxRefusesASourceTheCheckoutDoesNotIgnore(t *testing.T) {
+	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
+	top, err := w.gitOutput(context.Background(), w.mustWorkdir(t), "rev-parse", "--show-toplevel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(top, ".gitignore"), []byte("other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || len(agent.handed) != 0 || len(preparer.read) != 0 || !strings.Contains(stderr, filepath.Join(top, ".env")) || !strings.Contains(stderr, ".gitignore") {
+		t.Errorf("exit %d, handed %v, prepared %d (stderr %q); want a refusal naming the source and .gitignore", code, agent.handed, len(preparer.read), stderr)
+	}
+}
+
 func TestLoopRunOffABoxRefusesATrackedSource(t *testing.T) {
 	w, preparer, agent, _ := localPlacingLoop(t, "https://github.com/acme/api", ".")
 	dir := w.mustWorkdir(t)
