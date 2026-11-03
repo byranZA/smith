@@ -3,11 +3,11 @@
 The **loop** works a spec's tasks, or a single task, with a coding agent, one task per agent run. It asks the tracker which task is next, hands exactly that task to an agent, and reads the tracker again afterwards to see whether the agent closed it. The loop decides when it is done, not the agent.
 
 ```text
-smith loop list <issue>
+smith loop list <issue> [--branch <name>] [--base <branch>]
 smith loop run  [<box>] <issue> [--preset <name> | --agent <name> [--model <name>] | --model <name>] [--effort low|medium|high]
                         [--max-iterations <n>] [--max-attempts <n>] [--interactive] [--no-push] [--no-review]
                         [--branch <name>] [--base <branch>] [--repo <name>]
-smith loop prompt
+smith loop prompt [work|review]
 smith repo init [--agent <name>] [--model <name>] [--effort low|medium|high]
 ```
 

@@ -60,14 +60,14 @@ bootstrap phase has completed. Each reports itself by name:
 | --- | --- |
 | `access` | enrolls the box on the tailnet and closes public SSH (tailscale mode only) |
 | `install` | converges the box's smith binary |
-| `config` | stages the blueprint and its placement bytes onto the box |
+| `config` | stages the blueprint and its placement bytes onto the box — applied by on-box smith |
 | `workspace` | converges repos, packages and toolchain — relayed to on-box smith |
 
 A stage is not a bootstrap *phase*: phases are the base layer, run by
 `bootstrap.sh` on the box and recorded in the marker; stages run from your
 machine, on top of a box that is already provisioned, and are recorded nowhere.
 The order is forced — `install` must precede `config` and `workspace` because
-on-box smith is what runs the workspace stage.
+on-box smith is what applies the staged config and runs the workspace stage.
 
 The install stage never uploads your binary. You are likely `darwin/arm64` and
 the box `linux/amd64`, and smith is a binary rather than a toolchain, so it
@@ -111,9 +111,9 @@ first phase that changes the box. If any fails, setup is refused with
 - `env.json` — the resolved value of every `env` variable.
 - `resolved.json` — the staged resolution: the `access`, `terminal`, `workspace` and git identity `smith blueprint check` shows you, each resolved on your machine down flag → blueprint → preferences → default. It holds values only, never the provider, and is root-owned and world-readable. On-box smith reads these fields from here and resolves nothing itself, so a `workspace` set only in your preferences still reaches the box.
 
-The bytes travel over stdin, never in an argument. A file whose digest already
+The bytes travel over stdin, never in an argument: your machine sends the whole tree in one call to on-box smith, which applies it under `sudo`. The box checks every entry before it writes anything, and refuses the whole tree if one would land outside `/etc/smith/`. Each file is written to a temp path beside its destination, given its mode and owner there, then moved into place. The first write that fails stops the stage, naming the file, and nothing is pruned. A file whose digest already
 matches is left alone, and a placement you drop from the blueprint is deleted
-from `placements/` and reported. Nothing outside `/etc/smith/` is touched: a
+from `placements/` and reported, once every write has landed. Nothing outside `/etc/smith/` is touched: a
 changed placement reaches a worktree on its next `session start`.
 
 The resolved values sit on the box **in plaintext**, readable by the smith user
