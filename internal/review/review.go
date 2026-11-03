@@ -199,6 +199,7 @@ type ledger struct {
 	Sha      string     `json:"sha"`
 	Findings []Finding  `json:"findings"`
 	NotFiled []NotFiled `json:"not_filed,omitempty"`
+	Done     bool       `json:"done,omitempty"`
 }
 
 // marker opens the hidden block of a review comment, which is what tells a
@@ -210,6 +211,9 @@ const marker = "<!-- smith:review "
 type Ledger struct {
 	Sha  string
 	File File
+	// Done reports that the review was filed and its issue marked reviewed,
+	// so a missing mark afterwards is a request to review again.
+	Done bool
 }
 
 // ParseLedger reads the ledger out of a comment body. found is false for a
@@ -243,7 +247,7 @@ func ParseLedger(body string) (l Ledger, found bool, err error) {
 	if err := file.check(); err != nil {
 		return Ledger{}, true, fmt.Errorf("the smith:review block is not valid: %w", err)
 	}
-	return Ledger{Sha: raw.Sha, File: file}, true, nil
+	return Ledger{Sha: raw.Sha, File: file, Done: raw.Done}, true, nil
 }
 
 // Sub is a sub-issue of the issue under review: its number and body.
@@ -291,6 +295,16 @@ func Pending(l Ledger, number int, subs []Sub) (tasks map[int]int, unfiled []int
 // sha reviewed. tasks maps the position of each finding already filed to the
 // number of its task, which the comment names; nil names none.
 func Comment(file File, number int, sha string, tasks map[int]int) string {
+	return comment(file, number, sha, tasks, false)
+}
+
+// CommentDone renders the review as Comment does, its ledger marked done: the
+// comment of a review whose findings are filed and whose issue is marked.
+func CommentDone(file File, number int, sha string, tasks map[int]int) string {
+	return comment(file, number, sha, tasks, true)
+}
+
+func comment(file File, number int, sha string, tasks map[int]int, done bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "smith review of #%d\n\n", number)
 	ids := IDs(file.Findings)
@@ -329,7 +343,7 @@ func Comment(file File, number int, sha string, tasks map[int]int) string {
 	}
 	b.WriteString(".\n\n")
 	// json.Marshal escapes ">", so the block cannot end the comment early.
-	block, err := json.Marshal(ledger{Sha: sha, Findings: file.Findings, NotFiled: file.NotFiled})
+	block, err := json.Marshal(ledger{Sha: sha, Findings: file.Findings, NotFiled: file.NotFiled, Done: done})
 	if err != nil {
 		panic(fmt.Sprintf("marshal the review ledger: %v", err))
 	}

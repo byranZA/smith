@@ -221,12 +221,18 @@ func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger rev
 	if err := l.Tracker.MarkReviewed(ctx, number); err != nil {
 		return stopped(fmt.Errorf("mark #%d as reviewed: %w", number, err))
 	}
+	// Only now is the review finished: a ledger marked done is history, and
+	// removing the reviewed mark afterwards asks for a fresh review.
+	if err := l.warnIf(l.Tracker.EditComment(ctx, id, review.CommentDone(ledger.File, number, ledger.Sha, tasks)), "could not mark the review of #%d as done", number); err != nil {
+		return filed, nil, err
+	}
 	return filed, nil, nil
 }
 
 // ledgerOf finds the ledger a review left among the comments of execution,
 // when the run owes the execution a review: the latest comment that holds one.
-// A comment that holds a ledger it cannot read is an error.
+// A ledger marked done is a finished review, so it is not found. A comment
+// that holds a ledger it cannot read is an error.
 func (l Loop) ledgerOf(execution tracker.Execution) (ledger review.Ledger, id int64, found bool, err error) {
 	if l.Review == nil || !reviewable(execution) {
 		return review.Ledger{}, 0, false, nil
@@ -240,6 +246,9 @@ func (l Loop) ledgerOf(execution tracker.Execution) (ledger review.Ledger, id in
 		if ok {
 			ledger, id, found = got, c.ID, true
 		}
+	}
+	if ledger.Done {
+		return review.Ledger{}, 0, false, nil
 	}
 	return ledger, id, found, nil
 }

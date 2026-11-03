@@ -103,7 +103,7 @@ func TestRunReviewsOnceAfterTheLastTaskClosesAndMarksTheSpecReviewed(t *testing.
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"start 43", "launch 43", "stop 43", "start 44", "launch 44", "stop 44", "start review 42", "open review 42", "launch review", "post review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start 43", "launch 43", "stop 43", "start 44", "launch 44", "stop 44", "start review 42", "open review 42", "launch review", "post review", "mark reviewed 42", "edit review", "stop review 42"}
 	if err != nil || !outcome.Complete() || outcome.Ending() != loop.Complete || !slices.Equal(b.events, want) {
 		t.Errorf("Run() = %+v, %v with events %q; want complete with events %q", outcome, err, b.events, want)
 	}
@@ -166,7 +166,7 @@ func TestRunOnACompleteUnreviewedSpecOnlyReviews(t *testing.T) {
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"start review 42", "open review 42", "launch review", "post review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start review 42", "open review 42", "launch review", "post review", "mark reviewed 42", "edit review", "stop review 42"}
 	if err != nil || !outcome.Complete() || !slices.Equal(b.events, want) {
 		t.Errorf("Run() = %+v, %v with events %q; want only the review %q", outcome, err, b.events, want)
 	}
@@ -427,7 +427,7 @@ func TestReviewFilesEachFindingAsATaskInSpecOrderThenWorksTheAgentOnes(t *testin
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"start review 42", "open review 42", "launch review", "post review", "file S one", "file St one", "file Q one", "edit review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start review 42", "open review 42", "launch review", "post review", "file S one", "file St one", "file Q one", "edit review", "mark reviewed 42", "edit review", "stop review 42"}
 	if err != nil || !slices.Equal(b.events[:len(want)], want) {
 		t.Fatalf("Run() = %+v, %v with events %q; want it to start with %q", outcome, err, b.events, want)
 	}
@@ -547,7 +547,7 @@ func TestRunFilesOnlyTheMissingFindingsOfALedgerWithoutReviewingAgain(t *testing
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"start review 42", "file S two", "file Q one", "edit review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start review 42", "file S two", "file Q one", "edit review", "mark reviewed 42", "edit review", "stop review 42"}
 	if err != nil || !slices.Equal(b.events[:len(want)], want) {
 		t.Fatalf("Run() = %+v, %v with events %q; want it to start with %q", outcome, err, b.events, want)
 	}
@@ -605,7 +605,7 @@ func TestFailedEditAfterEveryTaskIsFiledEndsIncompleteAndTheNextRunOnlyEditsAndM
 	filedBefore := len(b.filed)
 	outcome, err = l.Run(t.Context(), 42)
 
-	want := []string{"start review 42", "edit review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start review 42", "edit review", "mark reviewed 42", "edit review", "stop review 42"}
 	if err != nil || len(b.filed) != filedBefore || !slices.Equal(b.events[:len(want)], want) {
 		t.Errorf("second Run() = %+v, %v with events %q, filed %d; want only an edit and a mark", outcome, err, b.events, len(b.filed))
 	}
@@ -721,5 +721,45 @@ func TestRunWithNoReviewSaysNothingOfAReviewForAnExecutionThatNeverReviews(t *te
 
 	if report := outcome.Report("task #43", loop.Limits{}); err != nil || strings.Contains(report, "not reviewed") {
 		t.Errorf("Run() = %v, report %q; want no not-reviewed line for a child task", err, report)
+	}
+}
+
+func TestRemovingTheReviewedMarkAfterACompletedReviewStartsAFreshReview(t *testing.T) {
+	b := ledgerBoard(t, tip, true)
+	file, err := review.Parse([]byte(findingsFile("", finding("spec", "major", "agent", "S one"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.existing[1].Body = review.CommentDone(file, 42, tip, map[int]int{0: 101})
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || !slices.Contains(b.events, "launch review") || !slices.Contains(b.events, "mark reviewed 42") {
+		t.Errorf("Run() = %+v, %v with events %q; want a fresh review agent run and the issue marked reviewed", outcome, err, b.events)
+	}
+}
+
+func TestFinishedFilingMarksTheReviewCommentDoneAfterTheIssueIsMarked(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "agent", "S one")))
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"mark reviewed 42", "edit review", "stop review 42"}
+	i := slices.Index(b.events, "mark reviewed 42")
+	if i < 0 || !slices.Equal(b.events[i:i+len(want)], want) {
+		t.Errorf("events %q; want the mark followed by a final comment edit", b.events)
+	}
+	var got review.Ledger
+	for _, c := range b.comments {
+		if l, ok, err := review.ParseLedger(c.body); err == nil && ok {
+			got = l
+		}
+	}
+	if !got.Done {
+		t.Errorf("ledger = %+v; want it done", got)
 	}
 }
