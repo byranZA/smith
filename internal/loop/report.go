@@ -66,7 +66,7 @@ func (o Outcome) Ending() Ending {
 // broken names the task, the agent's last failure and the machine to check.
 func (o Outcome) Report(name string, limits Limits) string {
 	if o.Complete() {
-		return name + " complete\n"
+		return name + " complete\n" + o.filedLine()
 	}
 	var b strings.Builder
 	switch {
@@ -89,7 +89,21 @@ func (o Outcome) Report(name string, limits Limits) string {
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString(o.filedLine())
 	return b.String()
+}
+
+// filedLine names the tasks the run's review filed, or nothing when it filed
+// none.
+func (o Outcome) filedLine() string {
+	if len(o.Filed) == 0 {
+		return ""
+	}
+	named := make([]string, 0, len(o.Filed))
+	for _, f := range o.Filed {
+		named = append(named, fmt.Sprintf("#%d (%s)", f.Number, f.ID))
+	}
+	return "  review filed: " + strings.Join(named, ", ") + "\n"
 }
 
 // cause says how the agent failed on the task the run stopped on, with its

@@ -43,6 +43,7 @@ type reviewed struct {
 	dir     string
 	failure error
 	capped  bool
+	filed   []Filed
 }
 
 // review runs the review agent on execution's work branch, up to MaxAttempts
@@ -88,7 +89,8 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 			}
 			continue
 		}
-		return result, l.postReview(ctx, number, findings, tip)
+		result.filed, err = l.postReview(ctx, number, findings, tip)
+		return result, err
 	}
 	return result, nil
 }
@@ -137,15 +139,40 @@ func (l Loop) reviewAttempt(ctx context.Context, number int, file string, cmd ag
 }
 
 // postReview posts findings, of the work branch at tip, as the review of
-// issue number, then marks it reviewed.
-func (l Loop) postReview(ctx context.Context, number int, findings review.File, tip string) error {
-	if err := l.Tracker.Comment(ctx, number, review.Comment(findings, number, tip)); err != nil {
-		return fmt.Errorf("post the review on #%d: %w", number, err)
+// issue number, files each as a task under it, blockers first, edits the
+// review to name the tasks, then marks the issue reviewed. It returns the
+// tasks it filed in the order it filed them.
+func (l Loop) postReview(ctx context.Context, number int, findings review.File, tip string) ([]Filed, error) {
+	id, err := l.Tracker.Post(ctx, number, review.Comment(findings, number, tip, nil))
+	if err != nil {
+		return nil, fmt.Errorf("post the review on #%d: %w", number, err)
+	}
+	ids := review.IDs(findings.Findings)
+	tasks := map[int]int{}
+	var filed []Filed
+	for _, i := range review.Order(findings.Findings) {
+		f := findings.Findings[i]
+		task := tracker.NewTask{Title: f.Title, Body: review.TaskBody(f, ids[i], number), For: tracker.Agent}
+		if f.Who == "human" {
+			task.For = tracker.Human
+		}
+		for _, b := range f.BlockedBy {
+			task.BlockedBy = append(task.BlockedBy, tasks[b-1])
+		}
+		if tasks[i], err = l.Tracker.File(ctx, number, task); err != nil {
+			return filed, fmt.Errorf("file finding %s of the review of #%d (%d of %d filed): %w", ids[i], number, len(filed), len(findings.Findings), err)
+		}
+		filed = append(filed, Filed{Number: tasks[i], ID: ids[i]})
+	}
+	if len(filed) > 0 {
+		if err := l.Tracker.EditComment(ctx, id, review.Comment(findings, number, tip, tasks)); err != nil {
+			return filed, fmt.Errorf("name the filed tasks in the review of #%d: %w", number, err)
+		}
 	}
 	if err := l.Tracker.MarkReviewed(ctx, number); err != nil {
-		return fmt.Errorf("mark #%d as reviewed: %w", number, err)
+		return filed, fmt.Errorf("mark #%d as reviewed: %w", number, err)
 	}
-	return nil
+	return filed, nil
 }
 
 // stopReviewDetached removes the reviewing mark from issue number as a

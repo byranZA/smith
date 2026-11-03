@@ -325,6 +325,72 @@ func (g GitHub) Comment(ctx context.Context, number int, body string) error {
 	return nil
 }
 
+// Post posts body as a comment on issue number and returns the comment's id.
+func (g GitHub) Post(ctx context.Context, number int, body string) (int64, error) {
+	var stdout, stderr bytes.Buffer
+	if err := g.gh.Run(ctx, "gh", []string{"issue", "comment", strconv.Itoa(number), "--body", body}, nil, &stdout, &stderr); err != nil {
+		return 0, failure(stderr.String(), err)
+	}
+	_, id, found := strings.Cut(strings.TrimSpace(stdout.String()), "#issuecomment-")
+	n, err := strconv.ParseInt(id, 10, 64)
+	if !found || err != nil {
+		return 0, fmt.Errorf("read the id of the comment on #%d from gh's answer %q", number, strings.TrimSpace(stdout.String()))
+	}
+	return n, nil
+}
+
+// EditComment replaces the body of the comment with the given id, in the repo
+// gh resolves for the working directory.
+func (g GitHub) EditComment(ctx context.Context, id int64, body string) error {
+	args := []string{"api", "-X", "PATCH", "repos/{owner}/{repo}/issues/comments/" + strconv.FormatInt(id, 10), "-f", "body=" + body}
+	if stderr, err := g.run(ctx, args); err != nil {
+		return failure(stderr, err)
+	}
+	return nil
+}
+
+// File creates task as a sub-issue of issue parent, labelled for the audience
+// it is meant for and blocked by the issues it names, and returns its number.
+// A gh without the flags that link them gets the same links as lines at the
+// head of the body.
+func (g GitHub) File(ctx context.Context, parent int, task NewTask) (int, error) {
+	label := g.labels.Agent
+	if task.For == Human {
+		label = g.labels.Human
+	}
+	create := func(body string, links []string) (int, string, error) {
+		args := append([]string{"issue", "create", "--title", task.Title, "--body", body, "--label", label}, links...)
+		var stdout, stderr bytes.Buffer
+		if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
+			return 0, stderr.String(), err
+		}
+		ref, err := ParseRef(strings.TrimSpace(stdout.String()))
+		if err != nil {
+			return 0, "", fmt.Errorf("read the number of the task filed under #%d from gh's answer: %w", parent, err)
+		}
+		return ref.Number, "", nil
+	}
+	links := []string{"--parent", strconv.Itoa(parent)}
+	for _, n := range task.BlockedBy {
+		links = append(links, "--blocked-by", strconv.Itoa(n))
+	}
+	number, stderr, err := create(task.Body, links)
+	if err != nil && strings.Contains(stderr, "unknown flag") {
+		lines := fmt.Sprintf("Part of #%d\n", parent)
+		for _, n := range task.BlockedBy {
+			lines += fmt.Sprintf("Blocked by #%d\n", n)
+		}
+		number, stderr, err = create(lines+"\n"+task.Body, nil)
+	}
+	if err != nil {
+		if stderr == "" {
+			return 0, err
+		}
+		return 0, failure(stderr, err)
+	}
+	return number, nil
+}
+
 // edit adds and removes labels on issue number in one gh issue edit. Each time
 // gh reports a label the repo does not have, it creates that label and retries
 // the edit, once per label, since gh names only one missing label at a time.

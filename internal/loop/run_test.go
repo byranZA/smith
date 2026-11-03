@@ -40,6 +40,10 @@ type board struct {
 	single bool
 	// reviewed and reviewing are the review marks the issue carries.
 	reviewed, reviewing bool
+	// filed holds each task filed under the spec, in order, and refuseFile
+	// makes the filing of the task with that many already filed fail.
+	filed      []tracker.NewTask
+	refuseFile *int
 }
 
 // posted is a comment posted on issue number.
@@ -57,6 +61,33 @@ func (b *board) Comment(ctx context.Context, number int, body string) error {
 	}
 	b.comments = append(b.comments, posted{number: number, body: body})
 	return nil
+}
+
+func (b *board) Post(ctx context.Context, number int, body string) (int64, error) {
+	if err := b.Comment(ctx, number, body); err != nil {
+		return 0, err
+	}
+	b.events = append(b.events, "post review")
+	return int64(len(b.comments) - 1), nil
+}
+
+func (b *board) EditComment(_ context.Context, id int64, body string) error {
+	b.events = append(b.events, "edit review")
+	b.comments[id].body = body
+	return nil
+}
+
+// File adds the task to the spec as the next issue after those it has, open
+// and meant for who the task says.
+func (b *board) File(_ context.Context, _ int, task tracker.NewTask) (int, error) {
+	if b.refuseFile != nil && len(b.filed) == *b.refuseFile {
+		return 0, errors.New("HTTP 502")
+	}
+	b.events = append(b.events, "file "+task.Title)
+	b.filed = append(b.filed, task)
+	number := 100 + len(b.filed)
+	b.tasks = append(b.tasks, tracker.Task{Number: number, Title: task.Title, Open: true, For: task.For})
+	return number, nil
 }
 
 func (b *board) Start(ctx context.Context, number int) error {

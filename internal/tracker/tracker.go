@@ -59,6 +59,16 @@ type Task struct {
 	Presets []string
 }
 
+// NewTask is a task to file: what it says, who it is meant for and the issues
+// that block it.
+type NewTask struct {
+	Title string
+	Body  string
+	For   Audience
+	// BlockedBy holds the numbers of the issues blocking the task.
+	BlockedBy []int
+}
+
 // Audience is who a task is meant for.
 type Audience int
 

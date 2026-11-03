@@ -1,6 +1,7 @@
 package review_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,7 +28,6 @@ func TestParseRefusesAFileItCannotRead(t *testing.T) {
 		"no findings key":      `{"not_filed": []}`,
 		"an unknown key":       `{"findings": [], "extra": 1}`,
 		"a restructuring bare": `{"findings": [], "not_filed": [{"title": "", "summary": "s"}]}`,
-		"findings to file":     `{"findings": [{"axis": "spec", "severity": "major", "title": "t", "who": "agent", "body": "b"}]}`,
 	} {
 		if _, err := review.Parse([]byte(data)); err == nil {
 			t.Errorf("Parse(%s) error = nil, want one for %s", data, name)
@@ -42,7 +42,7 @@ func TestCommentReadsByAxisWithTheLedgerHidden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := review.Comment(file, 42, "abc123")
+	got := review.Comment(file, 42, "abc123", nil)
 
 	for _, want := range []string{
 		"## Spec\n\nNo findings.",
@@ -60,5 +60,95 @@ func TestCommentReadsByAxisWithTheLedgerHidden(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(got), "-->") {
 		t.Errorf("Comment() = %q, want the hidden ledger block last", got)
+	}
+}
+
+func finding(axis, severity, who string, blockedBy ...int) review.Finding {
+	return review.Finding{Axis: axis, Severity: severity, Title: axis + " title", Who: who, Body: axis + " body", BlockedBy: blockedBy}
+}
+
+func TestParseRefusesAFindingThatIsNotWhole(t *testing.T) {
+	t.Parallel()
+	one := func(field, value string) string {
+		f := map[string]string{"axis": "spec", "severity": "major", "title": "t", "who": "agent", "body": "b"}
+		f[field] = value
+		return `{"findings": [{"axis": "` + f["axis"] + `", "severity": "` + f["severity"] + `", "title": "` + f["title"] + `", "who": "` + f["who"] + `", "body": "` + f["body"] + `"}]}`
+	}
+	for name, data := range map[string]string{
+		"an unknown axis":           one("axis", "style"),
+		"an unknown severity":       one("severity", "critical"),
+		"an unknown who":            one("who", "robot"),
+		"a blank title":             one("title", " "),
+		"a blank body":              one("body", ""),
+		"a blocker off the list":    `{"findings": [{"axis": "spec", "severity": "major", "title": "t", "who": "agent", "body": "b", "blocked_by": [2]}]}`,
+		"a finding blocking itself": `{"findings": [{"axis": "spec", "severity": "major", "title": "t", "who": "agent", "body": "b", "blocked_by": [1]}]}`,
+		"blockers in a cycle": `{"findings": [
+			{"axis": "spec", "severity": "major", "title": "a", "who": "agent", "body": "b", "blocked_by": [2]},
+			{"axis": "spec", "severity": "major", "title": "c", "who": "agent", "body": "b", "blocked_by": [1]}]}`,
+	} {
+		if _, err := review.Parse([]byte(data)); err == nil {
+			t.Errorf("Parse() error = nil, want one for %s", name)
+		}
+	}
+}
+
+func TestIDsCountEachAxisFromOne(t *testing.T) {
+	t.Parallel()
+	findings := []review.Finding{finding("quality", "minor", "agent"), finding("spec", "major", "agent"), finding("standards", "minor", "human"), finding("quality", "minor", "agent"), finding("spec", "minor", "agent")}
+
+	got := review.IDs(findings)
+
+	want := []string{"Q1", "S1", "St1", "Q2", "S2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("IDs() = %v, want %v", got, want)
+	}
+}
+
+func TestOrderFilesSpecThenStandardsThenQualityBlockersFirst(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		findings []review.Finding
+		want     []int
+	}{
+		"by axis":        {[]review.Finding{finding("quality", "minor", "agent"), finding("standards", "minor", "agent"), finding("spec", "minor", "agent")}, []int{2, 1, 0}},
+		"in file order":  {[]review.Finding{finding("quality", "minor", "agent"), finding("quality", "minor", "agent")}, []int{0, 1}},
+		"blocker first":  {[]review.Finding{finding("spec", "minor", "agent", 2), finding("quality", "minor", "agent")}, []int{1, 0}},
+		"chain of three": {[]review.Finding{finding("spec", "minor", "agent", 2), finding("spec", "minor", "agent", 3), finding("spec", "minor", "agent")}, []int{2, 1, 0}},
+	} {
+		if got := review.Order(tc.findings); !slices.Equal(got, tc.want) {
+			t.Errorf("Order() for %s = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestTaskBodyEndsWithItsSourceLine(t *testing.T) {
+	t.Parallel()
+	got := review.TaskBody(finding("quality", "major", "agent"), "Q1", 42)
+
+	want := "quality body\n\nSource: Quality axis, major, finding Q1, review of #42\n"
+	if got != want {
+		t.Errorf("TaskBody() = %q, want %q", got, want)
+	}
+}
+
+func TestCommentListsFindingsByAxisTalliesThemAndNamesFiledTasks(t *testing.T) {
+	t.Parallel()
+	file := review.File{Findings: []review.Finding{finding("spec", "minor", "agent"), finding("spec", "blocker", "human"), finding("quality", "major", "agent")}}
+
+	unfiled := review.Comment(file, 42, "abc", nil)
+	filed := review.Comment(file, 42, "abc", map[int]int{0: 101, 1: 102, 2: 103})
+
+	for _, want := range []string{"- **minor**: spec title", "- **blocker**: spec title", "Standards\n\nNo findings.", "2 Spec, 0 Standards, 1 Quality", "Worst: **blocker** spec title (S2)"} {
+		if !strings.Contains(unfiled, want) {
+			t.Errorf("Comment() = %q, want it to hold %q", unfiled, want)
+		}
+	}
+	if strings.Contains(unfiled, "#101") {
+		t.Errorf("Comment() = %q, want no task named before filing", unfiled)
+	}
+	for _, want := range []string{"(#101)", "(#102)", "(#103)"} {
+		if !strings.Contains(filed, want) {
+			t.Errorf("Comment() with tasks = %q, want it to hold %q", filed, want)
+		}
 	}
 }

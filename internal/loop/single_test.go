@@ -49,6 +49,12 @@ func (s *sprouting) Fail(context.Context, int) error { return nil }
 
 func (s *sprouting) Comment(context.Context, int, string) error { return nil }
 
+func (s *sprouting) Post(context.Context, int, string) (int64, error) { return 1, nil }
+
+func (s *sprouting) EditComment(context.Context, int64, string) error { return nil }
+
+func (s *sprouting) File(context.Context, int, tracker.NewTask) (int, error) { return 0, nil }
+
 func (s *sprouting) StartReview(context.Context, int) error { return nil }
 
 func (s *sprouting) StopReview(context.Context, int) error { return nil }

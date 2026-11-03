@@ -3,6 +3,7 @@ package loop_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -95,7 +96,7 @@ func TestRunReviewsOnceAfterTheLastTaskClosesAndMarksTheSpecReviewed(t *testing.
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"start 43", "launch 43", "stop 43", "start 44", "launch 44", "stop 44", "start review 42", "open review 42", "launch review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start 43", "launch 43", "stop 43", "start 44", "launch 44", "stop 44", "start review 42", "open review 42", "launch review", "post review", "mark reviewed 42", "stop review 42"}
 	if err != nil || !outcome.Complete() || outcome.Ending() != loop.Complete || !slices.Equal(b.events, want) {
 		t.Errorf("Run() = %+v, %v with events %q; want complete with events %q", outcome, err, b.events, want)
 	}
@@ -158,7 +159,7 @@ func TestRunOnACompleteUnreviewedSpecOnlyReviews(t *testing.T) {
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	want := []string{"start review 42", "open review 42", "launch review", "mark reviewed 42", "stop review 42"}
+	want := []string{"start review 42", "open review 42", "launch review", "post review", "mark reviewed 42", "stop review 42"}
 	if err != nil || !outcome.Complete() || !slices.Equal(b.events, want) {
 		t.Errorf("Run() = %+v, %v with events %q; want only the review %q", outcome, err, b.events, want)
 	}
@@ -267,5 +268,116 @@ func TestRunClearsAStaleReviewingMarkBeforeAnyAgentRuns(t *testing.T) {
 
 	if len(b.events) < 2 || b.events[0] != "stop review 42" {
 		t.Errorf("events = %q, want the stale review mark removed first", b.events)
+	}
+}
+
+// finding renders one finding of a findings file.
+func finding(axis, severity, who, title string, blockedBy ...int) string {
+	blocked := ""
+	if len(blockedBy) > 0 {
+		blocked = `, "blocked_by": [` + strings.Trim(strings.Join(strings.Fields(strings.Trim(fmt.Sprint(blockedBy), "[]")), ", "), " ") + `]`
+	}
+	return `{"axis": "` + axis + `", "severity": "` + severity + `", "title": "` + title + `", "who": "` + who + `", "body": "` + title + ` body"` + blocked + `}`
+}
+
+func findingsFile(not string, findings ...string) string {
+	return `{"findings": [` + strings.Join(findings, ", ") + `], "not_filed": [` + not + `]}`
+}
+
+func TestReviewFilesEachFindingAsATaskInSpecOrderThenWorksTheAgentOnes(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, findingsFile("",
+		finding("quality", "minor", "agent", "Q one"),
+		finding("standards", "major", "human", "St one"),
+		finding("spec", "blocker", "agent", "S one"),
+	))
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	want := []string{"start review 42", "open review 42", "launch review", "post review", "file S one", "file St one", "file Q one", "edit review", "mark reviewed 42", "stop review 42"}
+	if err != nil || !slices.Equal(b.events[:len(want)], want) {
+		t.Fatalf("Run() = %+v, %v with events %q; want it to start with %q", outcome, err, b.events, want)
+	}
+	if got := b.filed[0].For; got != tracker.Agent || b.filed[1].For != tracker.Human || b.filed[2].For != tracker.Agent {
+		t.Errorf("filed audiences = %v, %v, %v; want agent, human, agent", got, b.filed[1].For, b.filed[2].For)
+	}
+	if body := b.filed[0].Body; body != "S one body\n\nSource: Spec axis, blocker, finding S1, review of #42\n" {
+		t.Errorf("filed body = %q, want the finding's body and its Source line", body)
+	}
+	if handed := b.handed(); !slices.Equal(handed[len(handed)-2:], []string{"101", "103"}) {
+		t.Errorf("handed %v, want the agent tasks #101 and #103 worked last", handed)
+	}
+	if got := b.comments[0].body; !strings.Contains(got, "S one (#101)") || !strings.Contains(got, "Q one (#103)") {
+		t.Errorf("review comment = %q, want the filed tasks named", got)
+	}
+}
+
+func TestReviewRunEndsWaitingOnAHumanWhenItFiledOnlyHumanTasks(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "human", "S one")))
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.WaitingOnHuman || strings.Count(strings.Join(b.events, "|"), "launch review") != 1 {
+		t.Errorf("Run() = %+v, %v with events %q; want waiting on human after one review", outcome, err, b.events)
+	}
+}
+
+func TestReviewRunEndsCompleteWithoutASecondReviewAndNamesTheFiledTasks(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "agent", "S one"), finding("quality", "minor", "agent", "Q one")))
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.Complete || strings.Count(strings.Join(b.events, "|"), "launch review") != 1 {
+		t.Fatalf("Run() = %+v, %v with events %q; want complete after one review", outcome, err, b.events)
+	}
+	report := outcome.Report("spec #42", l.Limits)
+	stop := b.comments[len(b.comments)-1].body
+	for _, got := range []string{report, stop} {
+		if !strings.Contains(got, "#101 (S1)") || !strings.Contains(got, "#102 (Q1)") {
+			t.Errorf("report = %q, want it to name the filed tasks #101 and #102", got)
+		}
+	}
+}
+
+func TestReviewLinksAFindingToTheTaskItIsBlockedBy(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, findingsFile("",
+		finding("quality", "minor", "agent", "Q two", 2),
+		finding("quality", "minor", "agent", "Q one"),
+	))
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if b.filed[0].Title != "Q one" || !slices.Equal(b.filed[1].BlockedBy, []int{101}) {
+		t.Errorf("filed %+v, want Q one first and Q two blocked by #101", b.filed)
+	}
+}
+
+func TestReviewNeverFilesARestructuringTooLargeForATask(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, findingsFile(`{"title": "Split the loop", "summary": "Too big."}`, finding("spec", "major", "agent", "S one")))
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(b.filed) != 1 || !strings.Contains(b.comments[0].body, "**Not filed**") || !strings.Contains(b.comments[0].body, "Split the loop") {
+		t.Errorf("filed %+v, comment %q; want one task and the restructuring under Not filed", b.filed, b.comments[0].body)
+	}
+}
+
+func TestReviewStopsAtOnceWhenFilingFailsLeavingTheSpecUnmarked(t *testing.T) {
+	second := 1
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}, refuseFile: &second}
+	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "agent", "S one"), finding("spec", "minor", "agent", "S two")))
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err == nil || !strings.Contains(err.Error(), "1 of 2 filed") || slices.Contains(b.events, "mark reviewed 42") || !slices.Contains(b.events, "stop review 42") {
+		t.Errorf("Run() = %+v, %v with events %q; want a failure naming 1 of 2 filed, no reviewed mark and the review mark removed", outcome, err, b.events)
 	}
 }

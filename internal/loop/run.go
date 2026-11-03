@@ -35,6 +35,13 @@ type Tracker interface {
 	Fail(ctx context.Context, number int) error
 	// Comment posts body, as the loop wrote it, on issue number.
 	Comment(ctx context.Context, number int, body string) error
+	// Post posts body, as the loop wrote it, on issue number and returns the
+	// comment's id.
+	Post(ctx context.Context, number int, body string) (int64, error)
+	// EditComment replaces the body of the comment with the given id.
+	EditComment(ctx context.Context, id int64, body string) error
+	// File files task as a sub-issue of issue parent and returns its number.
+	File(ctx context.Context, parent int, task tracker.NewTask) (int, error)
 	// StartReview marks issue number as under review, while its review runs.
 	StartReview(ctx context.Context, number int) error
 	// StopReview removes the mark StartReview made.
@@ -165,6 +172,15 @@ type Outcome struct {
 	ReviewFailure error
 	// ReviewDir is the worktree a failed review was left in.
 	ReviewDir string
+	// Filed is the tasks the run's review filed, in the order it filed them.
+	Filed []Filed
+}
+
+// Filed is a task a review filed for one of its findings.
+type Filed struct {
+	Number int
+	// ID is the finding's id in the review: S1, St1, Q1.
+	ID string
 }
 
 // Broken is the task a run stopped on because every attempt at it was an
@@ -216,8 +232,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	worktrees := map[int]string{}
 	runs := 0
 	reviewedAlready := false
+	var filed []Filed
 	stopped := func(remaining Remaining) Outcome {
-		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
+		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed), Filed: filed}
 	}
 	if err := l.Presets.Check(current); err != nil {
 		return Outcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
@@ -237,6 +254,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 				return l.reviewStopped(ctx, stopped(remaining), result)
 			}
 			reviewedAlready = true
+			filed = result.filed
 			if current, err = l.refresh(ctx, spec, current); err != nil {
 				return Outcome{}, err
 			}
