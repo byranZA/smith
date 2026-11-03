@@ -9,7 +9,7 @@ import (
 )
 
 // Agents names, once each and in task order, the agents a run of execution
-// may hand a task to under presets: interactive, the agent of the task
+// may hand a task, or its review, to under presets: interactive, the agent of the task
 // Pairing hands out alone, and otherwise every open task's that is meant for an agent. It
 // refuses a task whose preset presets cannot resolve.
 func Agents(presets preset.Choice, execution tracker.Execution, interactive bool) ([]string, error) {
@@ -22,6 +22,9 @@ func Agents(presets preset.Choice, execution tracker.Execution, interactive bool
 		if !slices.Contains(names, resolved.Agent.Value) {
 			names = append(names, resolved.Agent.Value)
 		}
+	}
+	if review, ok := presets.Review(); ok && !interactive && reviewable(execution) && !slices.Contains(names, review.Agent.Value) {
+		names = append(names, review.Agent.Value)
 	}
 	return names, nil
 }

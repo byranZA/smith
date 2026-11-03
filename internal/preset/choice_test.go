@@ -348,3 +348,26 @@ func TestChoiceCheckOfAPinnedRunPassesOverEveryLabel(t *testing.T) {
 		t.Errorf("Check(%+v) error = %v, want none", execution, err)
 	}
 }
+
+func TestReviewIsTheReviewRolesPresetAndUnsetWithoutOne(t *testing.T) {
+	t.Parallel()
+	file := repoFile
+	file.Roles = map[string]string{"work": "opus", "review": "codex"}
+
+	with, err := preset.Choose(file, preset.Flags{})
+	if err != nil {
+		t.Fatalf("Choose() error = %v", err)
+	}
+	without, err := preset.Choose(repoFile, preset.Flags{})
+	if err != nil {
+		t.Fatalf("Choose() error = %v", err)
+	}
+
+	got, ok := with.Review()
+	if !ok || got.Name != "codex" || got.Agent != fromFile("codex") {
+		t.Errorf("Review() with roles.review codex = %+v, %v; want preset codex from the repo file", got, ok)
+	}
+	if _, ok := without.Review(); ok {
+		t.Error("Review() with no review role = set, want unset")
+	}
+}

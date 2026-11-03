@@ -35,6 +35,12 @@ type Tracker interface {
 	Fail(ctx context.Context, number int) error
 	// Comment posts body, as the loop wrote it, on issue number.
 	Comment(ctx context.Context, number int, body string) error
+	// StartReview marks issue number as under review, while its review runs.
+	StartReview(ctx context.Context, number int) error
+	// StopReview removes the mark StartReview made.
+	StopReview(ctx context.Context, number int) error
+	// MarkReviewed marks issue number as reviewed, so no run reviews it again.
+	MarkReviewed(ctx context.Context, number int) error
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -59,8 +65,18 @@ type Bench interface {
 	TaskBranch(task int) string
 	// Ahead counts the commits task's branch has beyond the work branch.
 	Ahead(ctx context.Context, task int) (int, error)
+	// OpenReview returns the directory of the worktree the review runs in:
+	// the recycled one, or a new one, detached at the work branch's tip with
+	// no branch of its own. issue is the execution's issue.
+	OpenReview(ctx context.Context, issue int) (string, error)
+	// ReviewBase returns the commit the work branch left its base at, and the
+	// work branch's tip: the range the review reads.
+	ReviewBase(ctx context.Context) (mergeBase, tip string, err error)
+	// FindingsFile is the absolute path the review of issue writes its
+	// findings to.
+	FindingsFile(issue int) string
 	// Finish removes the worktree landed tasks were recycled through, once
-	// every task has landed.
+	// every task has landed and the review is done.
 	Finish(ctx context.Context) error
 }
 
@@ -101,7 +117,9 @@ type Loop struct {
 	// model and effort.
 	Presets preset.Choice
 	Prompt  Prompt
-	Limits  Limits
+	// Review turns the review of a complete execution on; nil turns it off.
+	Review *Review
+	Limits Limits
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
 	// Hostname names the machine the loop runs on, for the comment on a
@@ -140,6 +158,13 @@ type Outcome struct {
 	// Broken is the task the run stopped on as agent broken; nil when it
 	// did not stop that way.
 	Broken *Broken
+	// ReviewOwed reports that every task is closed but the run reached its
+	// cap before it could review, so a later run only reviews.
+	ReviewOwed bool
+	// ReviewFailure is why the review failed, nil when it did not.
+	ReviewFailure error
+	// ReviewDir is the worktree a failed review was left in.
+	ReviewDir string
 }
 
 // Broken is the task a run stopped on because every attempt at it was an
@@ -151,8 +176,11 @@ type Broken struct {
 	Machine string
 }
 
-// Complete reports whether the run ended with every task of the spec closed.
-func (o Outcome) Complete() bool { return o.Remaining.Complete() }
+// Complete reports whether the run ended with every task of the spec closed
+// and, when it reviews, the review done.
+func (o Outcome) Complete() bool {
+	return o.Remaining.Complete() && !o.ReviewOwed && o.ReviewFailure == nil
+}
 
 // Run first refuses spec when one of its open tasks has a preset the run
 // cannot resolve, then clears the worked marks a run that died left on spec's tasks, then
@@ -187,6 +215,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	killed := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
+	reviewedAlready := false
 	stopped := func(remaining Remaining) Outcome {
 		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
 	}
@@ -199,6 +228,20 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	for {
 		remaining := survey(current, skipped)
 		next, ok := remaining.Next()
+		if !ok && l.reviewDue(current, remaining, reviewedAlready) {
+			result, err := l.review(ctx, current, &runs)
+			if err != nil {
+				return Outcome{}, err
+			}
+			if result.failure != nil || result.capped {
+				return l.reviewStopped(ctx, stopped(remaining), result)
+			}
+			reviewedAlready = true
+			if current, err = l.refresh(ctx, spec, current); err != nil {
+				return Outcome{}, err
+			}
+			continue
+		}
 		if !ok {
 			return stopped(remaining), l.finish(ctx, remaining)
 		}
@@ -247,6 +290,18 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			}
 		}
 	}
+}
+
+// reviewStopped ends a run whose review stopped as result says: failed, which
+// keeps the review worktree for the operator, or capped before it could run,
+// when every task has landed and the recycled worktree is removed.
+func (l Loop) reviewStopped(ctx context.Context, outcome Outcome, result reviewed) (Outcome, error) {
+	if result.capped {
+		outcome.Capped, outcome.ReviewOwed = true, true
+		return outcome, l.finish(ctx, outcome.Remaining)
+	}
+	outcome.ReviewFailure, outcome.ReviewDir = result.failure, result.dir
+	return outcome, nil
 }
 
 // broken ends a run that stopped as outcome on task, whose agent last failed
@@ -487,9 +542,16 @@ func (l Loop) reportFailure(task tracker.Task, err error, killed bool) error {
 // was, for whatever reports it.
 const KilledCause = "killed (likely out of memory)"
 
-// sweep removes the mark from each of execution's tasks marked as worked,
-// which a run that died left behind, before any agent runs.
+// sweep removes the mark from each of execution's tasks marked as worked, and
+// the review mark from its issue, which a run that died left behind, before
+// any agent runs.
 func (l Loop) sweep(ctx context.Context, execution tracker.Execution) error {
+	if execution.Reviewing {
+		number, _ := execution.Issue()
+		if err := l.warnIf(l.Tracker.StopReview(ctx, number), "could not remove the review mark from #%d", number); err != nil {
+			return err
+		}
+	}
 	for _, task := range execution.Tasks {
 		if !task.Working {
 			continue

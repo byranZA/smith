@@ -101,7 +101,7 @@ func TestParseValidatesEveryPresetWhetherOrNotItIsUsed(t *testing.T) {
 
 func TestParseRefusesARoleSmithDoesNotDefine(t *testing.T) {
 	t.Parallel()
-	data := "presets:\n  opus: {agent: claude}\nroles:\n  work: opus\n  review: opus\n"
+	data := "presets:\n  opus: {agent: claude}\nroles:\n  work: opus\n  audit: opus\n"
 
 	_, err := repofile.Parse([]byte(data))
 
@@ -109,7 +109,7 @@ func TestParseRefusesARoleSmithDoesNotDefine(t *testing.T) {
 	if !errors.As(err, &verr) {
 		t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
 	}
-	want := []blueprint.Finding{{Line: 5, Path: "roles.review", Message: `smith has no role "review": the only role is work`}}
+	want := []blueprint.Finding{{Line: 5, Path: "roles.audit", Message: `smith has no role "audit": the roles are work, review`}}
 	if !reflect.DeepEqual(verr.Findings, want) {
 		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
 	}
@@ -133,7 +133,7 @@ func TestParseRefusesARoleNamingAnUndefinedPreset(t *testing.T) {
 
 func TestParseRefusesInvalidPresetsAndRolesSetThroughAMerge(t *testing.T) {
 	t.Parallel()
-	data := "<<:\n  presets:\n    Bad: {agent: cursor, effort: maximum}\n  roles:\n    review: Bad\n    work: missing\n"
+	data := "<<:\n  presets:\n    Bad: {agent: cursor, effort: maximum}\n  roles:\n    audit: Bad\n    work: missing\n"
 
 	_, err := repofile.Parse([]byte(data))
 
@@ -145,7 +145,7 @@ func TestParseRefusesInvalidPresetsAndRolesSetThroughAMerge(t *testing.T) {
 		{Line: 3, Path: "presets.Bad", Message: `preset name "Bad" may hold only lowercase letters, digits and hyphens`},
 		{Line: 3, Path: "presets.Bad.agent", Message: `unknown agent "cursor": known agents are claude, codex, pi`},
 		{Line: 3, Path: "presets.Bad.effort", Message: `unknown effort "maximum": the scale is low, medium, high`},
-		{Line: 5, Path: "roles.review", Message: `smith has no role "review": the only role is work`},
+		{Line: 5, Path: "roles.audit", Message: `smith has no role "audit": the roles are work, review`},
 		{Line: 6, Path: "roles.work", Message: `role work names preset "missing", which presets does not define`},
 	}
 	if !reflect.DeepEqual(verr.Findings, want) {

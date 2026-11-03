@@ -61,10 +61,12 @@ Prints the same settings block as `list`, then works the spec or task unattended
 - **The agent left a task open on every attempt**: see attempts below. Exit 1.
 - **The agent failed on every attempt at a task**, or **could not be started**: see agent failures below. Exit 1.
 - **Reached the cap of N agent runs**: see iterations below. Exit 1.
+- **The review failed**: see [the review](#the-review). Exit 1.
 
 However the run stops, the loop also posts its stop report as a comment from smith on the issue it was given: the spec, or the task for a run of one task. The comment names the run's **outcome**, then carries the report and its `work branch:` line, so you can read how a run ended from anywhere, and GitHub notifies whoever follows the issue ([ADR-0017](./adr/0017-the-loop-starts-its-own-session-on-a-box.md)). The outcome is one of:
 
-- **`complete`**: every task is closed.
+- **`complete`**: every task is closed and, when the repo turns the [review](#the-review) on, the review is done.
+- **`review failed`**: the review ran out of attempts without a valid findings file. The report says why and where the review worktree is.
 - **`waiting on human`**: no task is available for an agent.
 - **`attempts exhausted`**: the agent left a task open on every attempt.
 - **`cap reached`**: the run reached its cap of agent runs.
@@ -90,6 +92,20 @@ A run the agent CLI ends with a non-zero exit is an **agent failure**: it says t
 Ctrl-C stops the running agent and starts no further task.
 
 While an agent runs on a task, the loop labels the task `smith:working` on GitHub, and removes the label after every attempt, whether the agent closed the task, left it open or used its last attempt, when you interrupt the run, and when the tracker cannot be read after the agent exits, so you can see on the tracker which task is being worked. A run that is killed, or whose machine is lost, can leave the label behind, so an unattended run first removes `smith:working` from every task it is about to work, the spec's or the one task named, and from no other issue. The labels are signals for people: the loop never reads them to choose a task ([ADR-0015](./adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)). A repo without one of these labels gets it created the first time it is needed. A label write that fails costs no work, so it is a `smith: warning: …` line on stderr naming the task, and the run carries on. `--interactive` marks its task the same way, but never hands a task to a human: a task it leaves open keeps the triage label it had, `ready-for-agent` or `ready-for-human`.
+
+### The review
+
+A repo turns the review on by setting the `review` role in its [repo file](#presets-and-roles). With it unset, nothing is ever reviewed.
+
+An unattended run reviews when `roles.review` is set, every task is closed, and the issue is not labelled `smith:reviewed`. So it reviews once, after the run has worked the last task, and a run on a spec whose tasks were all closed earlier only reviews. It does not review a spec with a task left for a human, blocked or skipped, a child task run on its own (its spec's run reviews the whole branch), or an `--interactive` run. A task with no parent reviews as a spec of its own.
+
+The review runs one agent, on the preset `roles.review` names; a task's `preset:` label never chooses it. The agent works in the recycled worktree, prepared like a task's, checked out detached at the work branch's tip with no task branch, so it has nothing to land. It is handed the [review prompt](#the-review-prompt) with the spec's number and title, the merge-base of the work branch and the base branch as a commit, and the absolute path of the findings file. It never commits or changes the tracker.
+
+The agent writes its findings to that file, a JSON object with a `findings` list and a `not_filed` list, under the git directory's `smith/` directory and keyed by issue number. The loop deletes any stale file before each attempt, and an attempt succeeds when the agent exits cleanly and leaves a valid file. A review gets `--max-attempts` attempts, each counting against `--max-iterations`; a review that would start past the cap waits for the next run, which only reviews.
+
+This release files nothing yet, so a file with findings is refused as an invalid attempt. On a file with no findings the loop posts the review as a comment on the issue, each of Spec, Standards and Quality reading "No findings.", with a hidden `<!-- smith:review … -->` block holding the findings and the work branch sha reviewed, labels the issue `smith:reviewed` and ends `complete`. Remove `smith:reviewed` by hand to review again.
+
+While the review runs the issue carries `smith:reviewing`, removed on every way the review ends, and cleared by the start-up sweep when a killed run left it. Both labels are created the first time they are needed.
 
 ### The work branch
 
@@ -203,7 +219,7 @@ The file is validated strictly: an unknown key is refused with its line, and so 
 
 A **preset** is a named agent, model and effort, chosen whole, so a model never outlives the agent it belongs to. A repo defines as many presets as it likes under `presets:`, each with an `agent` and, optionally, a `model` and `effort`. One that leaves out its model or effort leaves it to the agent's own default.
 
-A **role** is a job smith hands an agent. smith defines the roles, and `roles:` says which preset each one runs on. `work`, the only role, works every task, unattended or with `--interactive`. With no `work` role, or no repo file, tasks run on the built-in `default` preset: `claude` with no model and no effort, even when the file defines presets.
+A **role** is a job smith hands an agent. smith defines the roles, and `roles:` says which preset each one runs on. `work` works every task, unattended or with `--interactive`. `review` reviews the whole work branch once, after the last task closes, and is off unless the file sets it (see [the review](#the-review)). With no `work` role, or no repo file, tasks run on the built-in `default` preset: `claude` with no model and no effort, even when the file defines presets.
 
 Every preset is checked when the repo file loads, used or not, and each problem is refused with its line before any agent runs:
 
@@ -211,7 +227,7 @@ Every preset is checked when the repo file loads, used or not, and each problem 
 - its agent is one smith has an adapter for (`claude`, `codex` or `pi`)
 - its effort is on smith's scale (`low`, `medium`, `high`)
 
-A role smith does not define (`smith has no role "review"`) and a role naming a preset `presets:` does not define are refused too. The flat top-level `agent`, `model` and `effort` keys of earlier versions are refused with their line and the presets shape that replaces them.
+A role smith does not define (`smith has no role "audit": the roles are work, review`) and a role naming a preset `presets:` does not define are refused too. The flat top-level `agent`, `model` and `effort` keys of earlier versions are refused with their line and the presets shape that replaces them.
 
 The run flags change the preset for one run, without editing the file:
 
@@ -255,7 +271,7 @@ Each key is optional, and one left out keeps its default. A name set to nothing 
 labels: agent go (repo file), human ready-for-human (built-in default), spec epic (repo file)
 ```
 
-`smith:working` and `smith:failed` keep their names, and no triage label may take either one: the loop marks its own work with them, so they never say who a task is for.
+`smith:working`, `smith:failed`, `smith:reviewing` and `smith:reviewed` keep their names, and no triage label may take any of them: the loop marks its own work with them, so they never say who a task is for.
 
 Before any agent runs, `run` reads the repo's labels once and writes a `smith: warning: …` line to stderr for each label the repo file sets that the repo does not have, then carries on:
 
@@ -263,6 +279,10 @@ Before any agent runs, `run` reads the repo's labels once and writes a `smith: w
 - **`human`**: smith creates it the first time it skips a task, as it does the default.
 
 A label left to its default is never checked, so a repo file with no `labels:` reads no labels at all. If the labels cannot be read, `run` warns that it could not check them and carries on.
+
+### The review prompt
+
+The review has its own built-in prompt, `internal/loop/review.md`, with the placeholders `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{MERGE_BASE}}` and `{{FINDINGS_FILE}}`. It starts three subagents with fresh contexts, one for each of the Spec, Standards and Quality axes, and has the agent write what they return to the findings file.
 
 ## The loop prompt
 

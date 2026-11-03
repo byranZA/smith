@@ -149,7 +149,10 @@ func fakeBench(_ context.Context, _ string, req workbench.Request) (loop.Bench, 
 }
 
 // benchAt is a bench on branch whose task worktrees sit under /bench and land without fault.
-type benchAt struct{ branch string }
+type benchAt struct {
+	noReview
+	branch string
+}
 
 func (b benchAt) WorkBranch() string { return b.branch }
 
@@ -1017,3 +1020,16 @@ func TestLoopListNamesTheBranchAndBaseTheFlagsGive(t *testing.T) {
 		t.Errorf("stdout =\n%s\nwant it to contain %q", out.String(), want)
 	}
 }
+
+// noReview is the part of a bench for a test that never reviews: its review methods fail.
+type noReview struct{}
+
+func (noReview) OpenReview(context.Context, int) (string, error) {
+	return "", errors.New("unexpected review")
+}
+
+func (noReview) ReviewBase(context.Context) (string, string, error) {
+	return "", "", errors.New("unexpected review")
+}
+
+func (noReview) FindingsFile(int) string { return "" }

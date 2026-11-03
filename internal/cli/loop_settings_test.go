@@ -177,17 +177,18 @@ func TestLoopRunRefusesInvalidSettingsBeforeAnyAgentRuns(t *testing.T) {
 		flags    []string
 		want     []string
 	}{
-		"unknown key":            {"push: true\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
-		"flat agent key":         {"push: true\nagent: claude\n", nil, []string{"line 2", "agent is set in a preset now", "roles: {work: opus}"}},
-		"unknown agent":          {"presets:\n  g: {agent: gemini}\n", nil, []string{"line 2", `"gemini"`, "known agents are claude, codex, pi"}},
-		"malformed name":         {"presets:\n  Fast: {agent: claude}\n", nil, []string{"line 2", `preset name "Fast"`}},
-		"unknown role":           {"presets:\n  opus: {agent: claude}\nroles:\n  review: opus\n", nil, []string{"line 4", `smith has no role "review"`}},
-		"undefined preset":       {"roles:\n  work: missing\n", nil, []string{"line 2", `role work names preset "missing"`}},
-		"unknown agent flag":     {"", []string{"--agent", "gemini"}, []string{"--agent", `"gemini"`}},
-		"effort off scale":       {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
-		"undefined preset flag":  {opusRepoFile, []string{"--preset", "missing"}, []string{`--preset names preset "missing"`}},
-		"preset and agent flags": {opusRepoFile, []string{"--preset", "codex", "--agent", "claude"}, []string{"--preset", "--agent", "a preset already names its agent and model"}},
-		"preset and model flags": {opusRepoFile, []string{"--preset", "codex", "--model", "sonnet"}, []string{"--preset", "--model", "a preset already names its agent and model"}},
+		"unknown key":             {"push: true\n\nmodle: opus\n", nil, []string{"modle", "line 3"}},
+		"flat agent key":          {"push: true\nagent: claude\n", nil, []string{"line 2", "agent is set in a preset now", "roles: {work: opus}"}},
+		"unknown agent":           {"presets:\n  g: {agent: gemini}\n", nil, []string{"line 2", `"gemini"`, "known agents are claude, codex, pi"}},
+		"malformed name":          {"presets:\n  Fast: {agent: claude}\n", nil, []string{"line 2", `preset name "Fast"`}},
+		"unknown role":            {"presets:\n  opus: {agent: claude}\nroles:\n  audit: opus\n", nil, []string{"line 4", `smith has no role "audit"`, "work, review"}},
+		"undefined review preset": {"roles:\n  review: missing\n", nil, []string{"line 2", `role review names preset "missing"`}},
+		"undefined preset":        {"roles:\n  work: missing\n", nil, []string{"line 2", `role work names preset "missing"`}},
+		"unknown agent flag":      {"", []string{"--agent", "gemini"}, []string{"--agent", `"gemini"`}},
+		"effort off scale":        {"", []string{"--effort", "extreme"}, []string{`"extreme"`, "low, medium, high"}},
+		"undefined preset flag":   {opusRepoFile, []string{"--preset", "missing"}, []string{`--preset names preset "missing"`}},
+		"preset and agent flags":  {opusRepoFile, []string{"--preset", "codex", "--agent", "claude"}, []string{"--preset", "--agent", "a preset already names its agent and model"}},
+		"preset and model flags":  {opusRepoFile, []string{"--preset", "codex", "--model", "sonnet"}, []string{"--preset", "--model", "a preset already names its agent and model"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}

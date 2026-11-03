@@ -61,6 +61,11 @@ type Workbench struct {
 	dir    string
 	root   string
 	branch string
+	// baseBranch is the branch on origin the work branch was cut from, or is
+	// compared with; empty when origin names no default branch.
+	baseBranch string
+	// common is the repo's git common directory, absolute.
+	common string
 	lag    Lag
 }
 
@@ -93,10 +98,14 @@ func Setup(ctx context.Context, git Runner, dir, state string, req Request) (Wor
 		return Workbench{}, err
 	}
 	w.root = root
+	if w.common, err = w.run(ctx, w.dir, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
+		return Workbench{}, fmt.Errorf("find the repo's git directory: %w", err)
+	}
 	w, found, base, err := w.resolve(ctx, req)
 	if err != nil {
 		return Workbench{}, err
 	}
+	w.baseBranch = base
 	if _, err := w.cleanCheckout(ctx); err != nil {
 		return Workbench{}, err
 	}
@@ -261,6 +270,61 @@ func (w Workbench) Land(ctx context.Context, task int) error {
 		return fmt.Errorf("remove task branch %s: %w", w.TaskBranch(task), err)
 	}
 	return nil
+}
+
+// OpenReview returns the directory of the worktree the review of the work
+// branch is run in: a landed task's recycled worktree, or a new one, either
+// way detached at the work branch's tip with no branch of its own, so the
+// review has nothing to land. issue names a new worktree's directory.
+func (w Workbench) OpenReview(ctx context.Context, issue int) (string, error) {
+	trees, err := w.worktrees(ctx)
+	if err != nil {
+		return "", err
+	}
+	if i := slices.IndexFunc(trees, w.recycled); i >= 0 {
+		dir := trees[i].dir
+		if _, err := w.run(ctx, dir, "switch", "--quiet", "--detach", branchRefPrefix+w.branch); err != nil {
+			return "", fmt.Errorf("detach worktree %s at work branch %s: %w", dir, w.branch, err)
+		}
+		return dir, nil
+	}
+	dir := w.worktree(issue)
+	if _, err := os.Lstat(dir); err == nil {
+		return "", fmt.Errorf("%s is not a worktree of this execution, so cannot hold the review: move it aside, then run again", dir)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("look for worktree %s: %w", dir, err)
+	}
+	if _, err := w.run(ctx, w.dir, "worktree", "add", "--detach", dir, branchRefPrefix+w.branch); err != nil {
+		return "", fmt.Errorf("add worktree %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// ReviewBase returns where the work branch left its base, as a commit, and
+// the work branch's tip: the range the review reads. The base is fetched
+// first, so a base that moved on does not count as work under review.
+func (w Workbench) ReviewBase(ctx context.Context) (mergeBase, tip string, err error) {
+	if w.baseBranch == "" {
+		return "", "", errNoDefaultBranch
+	}
+	base, err := w.fetch(ctx, w.baseBranch)
+	if err != nil {
+		return "", "", err
+	}
+	if tip, err = w.run(ctx, w.dir, "rev-parse", "--verify", branchRefPrefix+w.branch+"^{commit}"); err != nil {
+		return "", "", fmt.Errorf("read work branch %s: %w", w.branch, err)
+	}
+	if mergeBase, err = w.run(ctx, w.dir, "merge-base", tip, base); err != nil {
+		return "", "", fmt.Errorf("find where work branch %s left %s: %w", w.branch, w.baseBranch, err)
+	}
+	return mergeBase, tip, nil
+}
+
+// FindingsFile is where the review of issue writes its findings: an absolute
+// path in the repo's git common directory, so a run on a box and a run here
+// agree on it.
+func (w Workbench) FindingsFile(issue int) string {
+	return filepath.Join(w.common, "smith", "review-"+strconv.Itoa(issue)+".json")
 }
 
 // Finish removes the execution's recycled worktrees, those landed tasks left,

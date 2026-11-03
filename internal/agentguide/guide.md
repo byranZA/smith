@@ -22,7 +22,7 @@ The **loop** works one spec to completion. You write a **spec** on GitHub and sp
 - **Task**: one unit of work, handed to an agent or a human. An agent gets exactly one task per run.
 - **Work branch**: the spec's branch, the one branch the loop pushes. A human may commit to it before a run.
 - **Task branch**: the branch one task is worked on, merged into the work branch once the task closes.
-- **Outcome**: how a loop run ended, such as `complete`, `waiting on human`, `attempts exhausted` or `agent broken`.
+- **Outcome**: how a loop run ended, such as `complete`, `waiting on human`, `attempts exhausted`, `agent broken` or `review failed`.
 - **Triage label**: the label saying what an issue is for: `ready-for-agent`, `ready-for-human` or `spec` by default.
 - **Repo file**: `.smith/repo.yaml`, the repo's committed smith configuration.
 - **Preset**: a named agent, model and effort, chosen whole and by name in the repo file.
@@ -32,7 +32,8 @@ The **loop** works one spec to completion. You write a **spec** on GitHub and sp
 - A **spec** is a GitHub issue with a sub-issue per task, in the order the loop should work them. A spec not yet split into tasks carries the `spec` triage label.
 - Every task carries a triage label: `ready-for-agent` for one an unattended run may work, `ready-for-human` for one that needs a person present. A task with neither is not handed out.
 - A task's **blockers** are its GitHub "blocked by" links, plus any issue named in a `## Blocked by` section of its body. A task is available when it is open, labelled `ready-for-agent` and every blocker is closed.
-- The loop labels a task `smith:working` while an agent runs on it and removes the label afterwards. A task that used up its attempts is moved to `ready-for-human` and labelled `smith:failed`, with a comment saying where its worktree is. Moving it back to `ready-for-agent` sends it back to the loop. These two labels are signals for people; never set them by hand to steer the loop.
+- The loop labels a task `smith:working` while an agent runs on it and removes the label afterwards. A task that used up its attempts is moved to `ready-for-human` and labelled `smith:failed`, with a comment saying where its worktree is. Moving it back to `ready-for-agent` sends it back to the loop. These two labels are signals for people; never set them by hand to steer the loop (`smith:reviewed` is the one exception, removed to review again).
+- A repo turns on the **review** by setting `roles.review` in its repo file. An unattended run then reviews the work branch once, after the last task closes: one agent reads the whole branch and writes its findings to a file the loop reads, and the loop posts the review as a comment on the spec and labels it `smith:reviewed` (`smith:reviewing` while it runs). A review with no valid findings file ends the run `review failed`. A child task run on its own and an `--interactive` run never review. Remove `smith:reviewed` by hand to review again.
 - A task body that stands alone is the whole brief. A task with a parent is read together with its spec.
 
 ## Recipes

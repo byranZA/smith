@@ -38,6 +38,8 @@ type board struct {
 	refuseComment error
 	// single, when set, makes the board a task named on its own.
 	single bool
+	// reviewed and reviewing are the review marks the issue carries.
+	reviewed, reviewing bool
 }
 
 // posted is a comment posted on issue number.
@@ -59,6 +61,18 @@ func (b *board) Comment(ctx context.Context, number int, body string) error {
 
 func (b *board) Start(ctx context.Context, number int) error {
 	return b.write(ctx, "start", number)
+}
+
+func (b *board) StartReview(ctx context.Context, number int) error {
+	return b.write(ctx, "start review", number)
+}
+
+func (b *board) StopReview(ctx context.Context, number int) error {
+	return b.write(ctx, "stop review", number)
+}
+
+func (b *board) MarkReviewed(ctx context.Context, number int) error {
+	return b.write(ctx, "mark reviewed", number)
 }
 
 func (b *board) Stop(ctx context.Context, number int) error {
@@ -98,7 +112,7 @@ func deadlineOf(ctx context.Context) time.Duration {
 
 func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks)}, nil
+	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks), Reviewed: b.reviewed, Reviewing: b.reviewing}, nil
 }
 
 func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {
@@ -361,6 +375,7 @@ func loopOn(t *testing.T, b *board, launcher loop.Launcher) loop.Loop {
 
 // trees is a bench whose every task worktree opens and lands without fault, each task branch ahead of the work branch by ahead commits, or unreadable with aheadErr.
 type trees struct {
+	noReview
 	ahead    int
 	aheadErr error
 }
@@ -838,3 +853,16 @@ func TestRunOnATrackerThatCannotAuthenticateStopsBeforeMarkingAnyTask(t *testing
 		t.Errorf("Run() error = %v after gh %q and %d launches, want %q with no label write and no launch", err, gh.ran, len(b.launched), want)
 	}
 }
+
+// noReview is the part of a bench for a test that never reviews: its review methods fail.
+type noReview struct{}
+
+func (noReview) OpenReview(context.Context, int) (string, error) {
+	return "", errors.New("unexpected review")
+}
+
+func (noReview) ReviewBase(context.Context) (string, string, error) {
+	return "", "", errors.New("unexpected review")
+}
+
+func (noReview) FindingsFile(int) string { return "" }

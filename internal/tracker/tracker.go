@@ -18,6 +18,18 @@ type Execution struct {
 	Title  string
 	Single bool
 	Tasks  []Task
+	// Reviewed reports whether the issue the work is reviewed under carries
+	// the mark that says its review is done, and Reviewing the mark that says
+	// a review is running. Both are read for a spec and a standalone task, and
+	// are false for a child task run on its own, which never reviews.
+	Reviewed  bool
+	Reviewing bool
+}
+
+// Standalone reports whether the execution is a task with no parent, named on
+// its own: the only single task that reviews, as a spec of its own.
+func (e Execution) Standalone() bool {
+	return e.Single && len(e.Tasks) == 1 && e.Tasks[0].Number == e.Number
 }
 
 // Issue returns the number and title of the issue the execution was read for:

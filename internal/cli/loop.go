@@ -437,6 +437,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
+	if resolved, ok := presets.Review(); ok {
+		l.Review = &loop.Review{Preset: resolved, Prompt: loop.BuiltinReviewPrompt()}
+	}
 	if l.Pusher, err = w.origin(settings); err != nil {
 		return admitted.execution, err
 	}

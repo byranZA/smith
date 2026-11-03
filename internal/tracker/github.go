@@ -20,6 +20,10 @@ const (
 	workingLabel = "smith:working"
 	// failedLabel is on a task the loop skipped and handed to a human.
 	failedLabel = "smith:failed"
+	// reviewingLabel is on a spec, or a standalone task, while its review runs.
+	reviewingLabel = "smith:reviewing"
+	// reviewedLabel is on a spec, or a standalone task, once its review is done.
+	reviewedLabel = "smith:reviewed"
 )
 
 // PresetPrefix leads a label that chooses the preset a task runs on. It is
@@ -29,7 +33,7 @@ const PresetPrefix = "preset:"
 // IsMark reports whether name is one of the labels the loop marks its own
 // work with, which no triage label may share.
 func IsMark(name string) bool {
-	return name == workingLabel || name == failedLabel
+	return name == workingLabel || name == failedLabel || name == reviewingLabel || name == reviewedLabel
 }
 
 // The issue fields read for a spec and for a task.
@@ -213,7 +217,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		}
 		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets()})
 	}
-	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
+	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks, Reviewed: spec.labelled(reviewedLabel), Reviewing: spec.labelled(reviewingLabel)}, nil
 }
 
 // single reads the task viewed as an execution of that task alone, whose
@@ -225,7 +229,7 @@ func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
 		return Execution{}, err
 	}
 	if viewed.Parent == nil {
-		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}}, nil
+		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}, Reviewed: viewed.labelled(reviewedLabel), Reviewing: viewed.labelled(reviewingLabel)}, nil
 	}
 	repo := viewed.repo()
 	if ref := (issueNode{Number: viewed.Parent.Number, URL: viewed.Parent.URL}).ref().in(repo); ref.Repo != "" {
@@ -277,6 +281,21 @@ func (g GitHub) Stop(ctx context.Context, number int) error {
 // worked or carrying the agent label, but carries the human label.
 func (g GitHub) Fail(ctx context.Context, number int) error {
 	return g.edit(ctx, number, []string{g.labels.Human, failedLabel}, []string{workingLabel, g.labels.Agent})
+}
+
+// StartReview labels issue number as under review, while its review runs.
+func (g GitHub) StartReview(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{reviewingLabel}, nil)
+}
+
+// StopReview removes the label that marks issue number as under review.
+func (g GitHub) StopReview(ctx context.Context, number int) error {
+	return g.edit(ctx, number, nil, []string{reviewingLabel})
+}
+
+// MarkReviewed labels issue number as reviewed, so no run reviews it again.
+func (g GitHub) MarkReviewed(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{reviewedLabel}, nil)
 }
 
 // Labels returns the names of the labels the repo gh resolves for the working

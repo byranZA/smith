@@ -16,10 +16,13 @@ presets:
     # model: opus
     # effort: high
 
-# The preset each role runs on. work, the only role, works each task, attached
-# or not. Unset, it runs claude with the agent's own model and effort.
+# The preset each role runs on. work works each task, attached or not. Unset,
+# it runs claude with the agent's own model and effort.
 roles:
   work: claude
+  # review runs once on the work branch when an unattended run closes the last
+  # task, and files what it finds as tasks. Unset, nothing is reviewed.
+  # review: claude
 
 # Whether the loop pushes the work branch to origin, under its own name, after
 # each task it lands. Unset, it pushes; `smith loop run --no-push` turns it off

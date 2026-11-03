@@ -213,3 +213,17 @@ func TestLoopRunOnABoxChecksTheAgentsItsTasksPresetsUse(t *testing.T) {
 		})
 	}
 }
+
+func TestLoopRunRefusesAMissingReviewAgentBeforeSettingUpTheWorkBranch(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	idle := &idleAgent{}
+	w, _ := repoWith(t, gh, idle, opusRepoFile+"  review: codex\n")
+	w.lookPath = installedOnly("claude")
+	w, benches := countingBench(w)
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if want := "agent codex is not installed"; code == 0 || !strings.Contains(stderr, want) || *benches != 0 || idle.runs != 0 {
+		t.Errorf("exit %d, stderr %q, %d work branches, %d agent runs; want non-zero naming %q, no work branch and no agent", code, stderr, *benches, idle.runs, want)
+	}
+}
