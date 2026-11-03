@@ -234,7 +234,27 @@ func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger rev
 // A ledger marked done is a finished review, so it is not found. A comment
 // that holds a ledger it cannot read is an error.
 func (l Loop) ledgerOf(execution tracker.Execution) (ledger review.Ledger, id int64, found bool, err error) {
-	if l.Review == nil || !reviewable(execution) {
+	if l.Review == nil {
+		return review.Ledger{}, 0, false, nil
+	}
+	return openLedger(execution)
+}
+
+// NeedsReviewAgent reports whether a review enabled for execution would run
+// a fresh review agent: it is reviewable and carries no unfinished ledger
+// whose findings a run files without one.
+func NeedsReviewAgent(execution tracker.Execution) (bool, error) {
+	if !reviewable(execution) {
+		return false, nil
+	}
+	_, _, found, err := openLedger(execution)
+	return !found, err
+}
+
+// openLedger finds the unfinished ledger among the comments of a reviewable
+// execution, or none.
+func openLedger(execution tracker.Execution) (ledger review.Ledger, id int64, found bool, err error) {
+	if !reviewable(execution) {
 		return review.Ledger{}, 0, false, nil
 	}
 	number, _ := execution.Issue()

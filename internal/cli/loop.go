@@ -475,12 +475,18 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
-	if resolved, ok := presets.Review(); ok && !interactive && !ejected && resolved.Agent.Value == "pi" {
-		return tracker.Execution{}, reportInvalid(cmd, errPiReview)
-	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh, interactive)
 	if err != nil {
 		return tracker.Execution{}, err
+	}
+	if resolved, ok := presets.Review(); ok && !interactive && !ejected && resolved.Agent.Value == "pi" {
+		fresh, err := loop.NeedsReviewAgent(admitted.execution)
+		if err != nil {
+			return admitted.execution, reportInvalid(cmd, err)
+		}
+		if fresh {
+			return admitted.execution, reportInvalid(cmd, errPiReview)
+		}
 	}
 	if err := checkPresets(cmd, presets, admitted.execution); err != nil {
 		return admitted.execution, err

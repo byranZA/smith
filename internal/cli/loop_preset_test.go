@@ -363,3 +363,28 @@ func TestLoopPromptRefusesAnUnknownRoleNamingTheKnownOnes(t *testing.T) {
 		t.Errorf("exit %d, stdout %q, stderr %q; want non-zero, nothing printed, naming audit, work and review", code, stdout, stderr)
 	}
 }
+
+func TestLoopRunDoesNotRefusePiWhenNoFreshReviewAgentWouldRun(t *testing.T) {
+	file := strings.Replace(opusRepoFile, "presets:\n", piPreset, 1) + "  review: pirev\n"
+	reviewed := strings.Replace(specJSON(43), `"labels":[`, `"labels":[{"name":"smith:reviewed"},`, 1)
+	tests := []struct {
+		name   string
+		target string
+		issues map[string]string
+	}{
+		{"an already reviewed execution", "42", map[string]string{"42": reviewed, "43": taskJSON(43, "OPEN", "ready-for-agent")}},
+		{"a child task run alone", "43", map[string]string{"43": strings.Replace(taskJSON(43, "OPEN", "ready-for-agent"), `"labels":`, `"parent":{"number":42,"title":"Spec"},"labels":`, 1)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &fakeTracker{issues: tt.issues}
+			w, _ := repoWith(t, gh, &idleAgent{}, file)
+
+			_, stderr, _ := runLoopRun(t, w, tt.target)
+
+			if strings.Contains(stderr, "review.md") {
+				t.Errorf("stderr %q; want the run not refused for a missing pi review prompt", stderr)
+			}
+		})
+	}
+}
