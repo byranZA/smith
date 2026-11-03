@@ -40,6 +40,8 @@ func TestBlockersInReadTheBlockedBySection(t *testing.T) {
 		"short form":               {"## Blocked by\n\n- other/repo#43\n- #44\n", []Ref{{Repo: "other/repo", Number: 43}, {Number: 44}}},
 		"same number in two repos": {"## Blocked by\n\n- #43\n- https://github.com/other/repo/issues/43\n", []Ref{{Number: 43}, {Repo: "other/repo", Number: 43}}},
 		"repeats kept once":        {"## Blocked by\n#3 and #3\n", []Ref{{Number: 3}}},
+		"fallback header lines":    {"Part of #42\nBlocked by #7\nBlocked by #8\n\n## What\n\nBlocked by #9\n", []Ref{{Number: 7}, {Number: 8}}},
+		"header and section":       {"Blocked by #7\n\n## Blocked by\n\n- #7\n- #8\n", []Ref{{Number: 7}, {Number: 8}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

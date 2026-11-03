@@ -18,6 +18,28 @@ type Execution struct {
 	Title  string
 	Single bool
 	Tasks  []Task
+	// Reviewed reports whether the issue the work is reviewed under carries
+	// the mark that says its review is done, and Reviewing the mark that says
+	// a review is running. Both are read for a spec and a standalone task, and
+	// are false for a child task run on its own, which never reviews.
+	Reviewed  bool
+	Reviewing bool
+	// Comments holds the comments on the issue the work is reviewed under,
+	// oldest first, read where Reviewed is: the loop finds a review's ledger
+	// among them.
+	Comments []Comment
+}
+
+// Comment is a comment on an issue: its id, as an edit names it, and its body.
+type Comment struct {
+	ID   int64
+	Body string
+}
+
+// Standalone reports whether the execution is a task with no parent, named on
+// its own: the only single task that reviews, as a spec of its own.
+func (e Execution) Standalone() bool {
+	return e.Single && len(e.Tasks) == 1 && e.Tasks[0].Number == e.Number
 }
 
 // Issue returns the number and title of the issue the execution was read for:
@@ -45,6 +67,18 @@ type Task struct {
 	// order. Which one it runs on, and whether two is too many, is for the
 	// preset choice to decide.
 	Presets []string
+	// Body is the task's body, which names the finding of a review it files.
+	Body string
+}
+
+// NewTask is a task to file: what it says, who it is meant for and the issues
+// that block it.
+type NewTask struct {
+	Title string
+	Body  string
+	For   Audience
+	// BlockedBy holds the numbers of the issues blocking the task.
+	BlockedBy []int
 }
 
 // Audience is who a task is meant for.

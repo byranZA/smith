@@ -18,12 +18,15 @@ const (
 	rolesKey   = "roles"
 )
 
-// WorkRole is the role that works a spec's tasks, attached or not. It is the
-// only role smith defines.
+// WorkRole is the role that works a spec's tasks, attached or not.
 const WorkRole = "work"
 
+// ReviewRole is the role that reviews a spec's work branch once every task is
+// closed. A repo that does not set it is never reviewed.
+const ReviewRole = "review"
+
 // roles is every role smith defines.
-var roles = []string{WorkRole}
+var roles = []string{WorkRole, ReviewRole}
 
 // presetName is the shape of a preset's name, which a task label carries.
 var presetName = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -107,7 +110,7 @@ func roleFindings(data []byte, presets map[string]Preset) []blueprint.Finding {
 		role, value := e.key, e.value
 		path := rolesKey + "." + role.Value
 		if !slices.Contains(roles, role.Value) {
-			report = append(report, blueprint.Finding{Line: role.Line, Path: path, Message: fmt.Sprintf("smith has no role %q: the only role is %s", role.Value, strings.Join(roles, ", "))})
+			report = append(report, blueprint.Finding{Line: role.Line, Path: path, Message: fmt.Sprintf("smith has no role %q: the roles are %s", role.Value, strings.Join(roles, ", "))})
 			continue
 		}
 		if _, ok := presets[value.Value]; !ok {

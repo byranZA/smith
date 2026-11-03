@@ -429,7 +429,7 @@ _Avoid_: view mode, permission.
 ### The loop
 
 **Loop**:
-The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. It reads the execution before anything else, so a tracker it cannot reach or authenticate to stops the run before any task is touched. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs. Locally it runs in the foreground, in the repo it is invoked from. Pointed at a box (`loop run <box>`), it does the same work there as the root process of a new loop-driven session, so it outlives the operator's connection; it is this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). No agent works in the checkout the loop is invoked from: the loop creates or adopts the execution's work branch from a base branch, and works each task in its own task worktree on its own task branch. It runs the tasks one after another, so each closed task's branch fast-forwards the work branch (in whichever clean worktree has it checked out), and a task branch that cannot is an error that stops the run. After each merge the loop pushes the work branch to `origin` under the same name, never forcing, and a failed push stops the run, so closed work is never left on one machine only. Task branches are never pushed ([ADR-0013](./docs/adr/0013-the-loop-works-in-task-worktrees.md)).
+The driver that works one **execution** to completion, one **task** per iteration: it asks the tracker which task is next, hands exactly that task to an agent, and checks the tracker afterward to see whether the agent finished. It reads the execution before anything else, so a tracker it cannot reach or authenticate to stops the run before any task is touched. The loop, not the agent, decides when it is done, and it exits when no task is left for an agent to pick up. It is one verb that runs wherever smith runs. Locally it runs in the foreground, in the repo it is invoked from. Pointed at a box (`loop run <box>`), it does the same work there as the root process of a new loop-driven session, so it outlives the operator's connection; it is this same verb, never a reimplementation of it ([ADR-0008](./docs/adr/0008-smith-runs-on-the-box.md)). No agent works in the checkout the loop is invoked from: the loop creates or adopts the execution's work branch from a base branch, and works each task in its own task worktree on its own task branch. Once every task is closed, a run that reviews hands the execution to a **review** before it ends, then works whatever the review filed. It runs the tasks one after another, so each closed task's branch fast-forwards the work branch (in whichever clean worktree has it checked out), and a task branch that cannot is an error that stops the run. After each merge the loop pushes the work branch to `origin` under the same name, never forcing, and a failed push stops the run, so closed work is never left on one machine only. Task branches are never pushed ([ADR-0013](./docs/adr/0013-the-loop-works-in-task-worktrees.md)).
 _Avoid_: ralph, runner, orchestrator, delegation loop (the old name for it).
 
 **Base branch**:
@@ -437,7 +437,7 @@ The branch an execution starts from, and the one its work is eventually proposed
 _Avoid_: target branch, main (one common base, not the term).
 
 **Work branch**:
-The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to review. An existing work branch is adopted, local or on `origin`, and the loop warns before any agent runs when the base branch has commits it lacks, then carries on; a missing one is cut from the base branch. It is what a reviewer sees.
+The execution's branch, and the one branch the loop pushes. The loop adds to it only by merging task branches, though a human may commit to it first, such as the docs a spec was designed with. It is never `origin`'s default branch or the base branch: the loop refuses to start on either. The loop never brings the base branch's later commits into it; that integration belongs to the human reviewing the work branch, not to the loop's **review**. An existing work branch is adopted, local or on `origin`, and the loop warns before any agent runs when the base branch has commits it lacks, then carries on; a missing one is cut from the base branch. It is what a reviewer sees.
 _Avoid_: feature branch, execution branch.
 
 **Task branch**:
@@ -457,11 +457,11 @@ An agent run that the agent CLI itself ends in failure, as opposed to a **failed
 _Avoid_: crash, agent error.
 
 **Outcome / stop report**:
-How a loop run ended, one of `complete`, `waiting on human`, `attempts exhausted`, `cap reached`, `agent broken`, `stopped` or `failed`. Once the run's issue is admitted, the loop posts its **stop report**, the outcome and the run's report, as a comment on that issue, so a run is readable from anywhere. A loop-driven session also writes the outcome into its session record, where `session list` shows it under `OUTCOME` ([ADR-0017](./docs/adr/0017-the-loop-starts-its-own-session-on-a-box.md)).
+How a loop run ended, one of `complete`, `waiting on human`, `attempts exhausted`, `cap reached`, `agent broken`, `review failed`, `review incomplete`, `stopped` or `failed`. In a repo with the `review` role on, `complete` means every task is closed and the execution reviewed, unless the run was told not to review. `review failed` says the review agent or its prompt never produced findings the loop could file; `review incomplete` says the tracker failed while the loop was filing them. Once the run's issue is admitted, the loop posts its **stop report**, the outcome and the run's report, as a comment on that issue, so a run is readable from anywhere. A loop-driven session also writes the outcome into its session record, where `session list` shows it under `OUTCOME` ([ADR-0017](./docs/adr/0017-the-loop-starts-its-own-session-on-a-box.md)).
 _Avoid_: result, status, exit code.
 
 **Triage label**:
-One of the three tracker labels that say what an issue is for: the agent label (`ready-for-agent`) and the human label (`ready-for-human`) say who a task is meant for, and the spec label (`spec`) marks a spec not yet split into tasks. A repo names its own in its **repo file**, each one defaulting to the name shown. A task carrying both the agent and the human label is the human's, so no two may share a name. The loop's own marks, `smith:working` and `smith:failed`, are signals for people, not triage labels, and cannot be renamed ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)).
+One of the three tracker labels that say what an issue is for: the agent label (`ready-for-agent`) and the human label (`ready-for-human`) say who a task is meant for, and the spec label (`spec`) marks a spec not yet split into tasks. A repo names its own in its **repo file**, each one defaulting to the name shown. A task carrying both the agent and the human label is the human's, so no two may share a name. The loop's own marks, `smith:working`, `smith:failed`, `smith:reviewing` and `smith:reviewed`, are signals for people, not triage labels, and cannot be renamed ([ADR-0015](./docs/adr/0015-the-loop-marks-tasks-as-a-signal-not-a-claim.md)).
 _Avoid_: status label, tag.
 
 **Tracker**:
@@ -477,11 +477,11 @@ smith's own small scale for how hard an agent should think, which each agent ada
 _Avoid_: thinking level, reasoning effort (each agent's own name for it).
 
 **Preset**:
-A named, complete agent setting: an **agent**, a **model** valid for that agent, and an **effort**. A preset is always chosen whole and by name, so a model never outlives the agent it belongs to, which separate agent and model settings let happen. A repo defines its own presets under names it chooses, in its **repo file**. A **role** names the preset it uses by default, and a **task** may name another for itself ([ADR-0022](./docs/adr/0022-presets-and-roles.md)).
+A named, complete agent setting: an **agent**, a **model** valid for that agent, and an **effort**. A preset is always chosen whole and by name, so a model never outlives the agent it belongs to, which separate agent and model settings let happen. A repo defines its own presets under names it chooses, in its **repo file**. A **role** names the preset it uses by default, and a **task** may name another for its own work, though never for the **review** ([ADR-0022](./docs/adr/0022-presets-and-roles.md)).
 _Avoid_: profile (already avoided for the blueprint), persona, tier, agent config.
 
 **Role**:
-A job smith hands to an agent, such as working a task. smith defines the roles, because smith decides when each one runs, and a repo only says which **preset** each one uses. `work` is the only role for now, and it covers the interactive loop too: being attached to a terminal is a way of running a role, not a role of its own.
+A job smith hands to an agent, such as working a task. smith defines the roles, because smith decides when each one runs, and a repo only says which **preset** each one uses. There are two: `work`, which works a task, and `review`, which runs the **review** and is off until the repo file names a preset for it. `work` covers the interactive loop too: being attached to a terminal is a way of running a role, not a role of its own.
 _Avoid_: mode, stage, step.
 
 **Repo file**:
@@ -491,6 +491,18 @@ _Avoid_: project config, repo config, local config, config file.
 **Loop prompt**:
 The prompt the loop hands an agent for one task, with the task filled in through placeholders; the agent finds the spec from the task itself. smith ships a built-in one and uses it unless the repo has **ejected** its own copy to `.smith/prompt.md`. A repo that never ejects follows smith's latest default on every upgrade. A repo that has ejected owns the file, which smith never overwrites, and catches up by diffing against the printed built-in.
 _Avoid_: system prompt, template (reserved for an adapter's command lines).
+
+**Review**:
+The loop's last step for an execution: once every task is closed, an agent reads the whole work branch against where it left the base branch, along three axes (does it do what the spec asks, does it follow the repo's standards, is it maintainable), and the loop files what it found as new tasks under the execution's issue, which the same run then works. An execution is reviewed once, never per task and never again after its own fixes. Only unattended runs review, only when the repo file turns the `review` role on, and a child task run on its own never does: its spec's run reviews the whole branch. The review agent never commits and never touches the tracker; it hands back **findings**, and the loop files them, keeping the review comment on the issue as a ledger so a later run on any machine finishes a half-filed review instead of reviewing again ([ADR-0025](./docs/adr/0025-the-loop-files-the-reviews-findings.md)). It is not the human's review of the work branch, which still decides whether and how the work reaches the base branch.
+_Avoid_: code review (the human's), PR review, audit, QA.
+
+**Finding**:
+One thing a **review** found: which axis found it, how severe it is, whether an agent can fix it alone or it needs a human, and the task body that fixes it. Each finding becomes exactly one task, meant for an agent or a human as the finding says. A restructuring too large for one task is reported in the review comment but never filed.
+_Avoid_: issue (the tracker's word), comment, defect.
+
+**Review prompt**:
+The prompt the loop hands the agent for a **review**, built in and ejectable like the **loop prompt**, to `.smith/review.md`. The built-in one has the agent start a fresh-context subagent per axis. An ejected one owns how the review is done, but must still leave its findings in the shape the loop files.
+_Avoid_: review skill, review template.
 
 **Agent guide**:
 What `smith help agents` prints: how a coding agent that plans work drives smith — its mental model, the verbs, the exit codes, the issue shape the loop expects, and recipes for common workflows. It is for the agent that runs smith, never for a task's agent, which the loop prompt alone instructs. Built into the binary, so it always matches the installed smith, and never written to disk.

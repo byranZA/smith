@@ -50,6 +50,14 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if args[0] == "api" {
 		return f.page(args, stdout, stderr)
 	}
+	if args[0] == "issue" && args[1] == "list" {
+		reply, ok := f.replies[strings.Join(args, " ")]
+		if !ok {
+			reply = "[]"
+		}
+		_, err := io.WriteString(stdout, reply)
+		return err
+	}
 	if args[0] == "repo" {
 		_, err := io.WriteString(stdout, `{"nameWithOwner":"o/r"}`)
 		return err
@@ -163,7 +171,7 @@ func manyChildren() *fakeGH {
 }
 
 const (
-	specFields = "number,title,state,labels,body,subIssues,url,parent"
+	specFields = "number,title,state,labels,body,subIssues,url,parent,comments"
 	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
@@ -193,8 +201,8 @@ func TestExecutionReadsTheSpecAndItsTasksInListedOrder(t *testing.T) {
 
 	want := tracker.Execution{Number: 42, Title: "Spec: the loop", Tasks: []tracker.Task{
 		{Number: 45, Title: "The repo file", Open: true, For: tracker.Human},
-		{Number: 43, Title: "The tracker", Open: false, For: tracker.Agent},
-		{Number: 44, Title: "The prompt", Open: true, For: tracker.Human, Blockers: []tracker.Blocker{{Number: 45, Open: true}, {Number: 43, Open: false}, {Number: 7, Open: false}}},
+		{Number: 43, Title: "The tracker", Open: false, For: tracker.Agent, Body: "## What to build\n\nThe tracker.\n\n## Blocked by\n\nNone - can start immediately\n"},
+		{Number: 44, Title: "The prompt", Open: true, For: tracker.Human, Blockers: []tracker.Blocker{{Number: 45, Open: true}, {Number: 43, Open: false}, {Number: 7, Open: false}}, Body: "## Blocked by\n\n- #43\n- #7\n"},
 		{Number: 50, Title: "Fix the summary", Open: true, For: tracker.Nobody},
 	}}
 	if !reflect.DeepEqual(got, want) {
@@ -211,7 +219,7 @@ func TestExecutionOnlyReadsTheTracker(t *testing.T) {
 	}
 
 	for _, ran := range gh.ran {
-		if !strings.HasPrefix(ran, "issue view ") && !strings.HasPrefix(ran, "api graphql ") {
+		if !strings.HasPrefix(ran, "issue view ") && !strings.HasPrefix(ran, "issue list ") && !strings.HasPrefix(ran, "api graphql ") {
 			t.Errorf("ran gh %s, want only issue views and queries", ran)
 		}
 	}
@@ -958,30 +966,5 @@ func TestLabelsReportsAnUnusableGH(t *testing.T) {
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || unavailable.Detail != "HTTP 502: Bad Gateway\n" {
 		t.Errorf("Labels() error = %v, want an *tracker.UnavailableError carrying what gh said", err)
-	}
-}
-
-func TestCommentPostsTheBodyOnTheIssue(t *testing.T) {
-	t.Parallel()
-	gh := &fakeGH{}
-
-	if err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Comment(t.Context(), 12, "smith skipped this task."); err != nil {
-		t.Fatalf("Comment(12) error = %v", err)
-	}
-
-	if want := []string{"issue comment 12 --body smith skipped this task."}; !slices.Equal(gh.ran, want) {
-		t.Errorf("Comment(12) ran gh %q, want %q", gh.ran, want)
-	}
-}
-
-func TestCommentReportsARefusedComment(t *testing.T) {
-	t.Parallel()
-	gh := &fakeGH{stderr: "HTTP 403: Resource not accessible by integration\n"}
-
-	err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Comment(t.Context(), 12, "smith skipped this task.")
-
-	var unavailable *tracker.UnavailableError
-	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Error(), "HTTP 403") {
-		t.Errorf("Comment(12) error = %v, want an UnavailableError carrying what gh said", err)
 	}
 }

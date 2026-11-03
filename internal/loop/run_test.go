@@ -38,6 +38,26 @@ type board struct {
 	refuseComment error
 	// single, when set, makes the board a task named on its own.
 	single bool
+	// parent, when set with single, is the spec the single task is a child of;
+	// siblings are its other tasks.
+	parent   int
+	siblings []tracker.Task
+	// standalone makes the board a task with no parent until the review files
+	// a sub-issue under it, when it reads as a spec of the same number.
+	standalone bool
+	// reviewed and reviewing are the review marks the issue carries.
+	reviewed, reviewing bool
+	// refuseStartReview, when set, is what adding the reviewing mark fails with.
+	refuseStartReview error
+	// filed holds each task filed under the spec, in order, and refuseFile
+	// makes the filing of the task with that many already filed fail.
+	filed      []tracker.NewTask
+	refuseFile *int
+	// existing holds the comments the issue already carries, which an
+	// execution reads, and refuseEdit and refuseMark make the edit of a
+	// comment and the mark of the issue as reviewed fail.
+	existing               []tracker.Comment
+	refuseEdit, refuseMark error
 }
 
 // posted is a comment posted on issue number.
@@ -57,8 +77,56 @@ func (b *board) Comment(ctx context.Context, number int, body string) error {
 	return nil
 }
 
+func (b *board) Post(ctx context.Context, number int, body string) (int64, error) {
+	if err := b.Comment(ctx, number, body); err != nil {
+		return 0, err
+	}
+	b.events = append(b.events, "post review")
+	return int64(len(b.comments) - 1), nil
+}
+
+func (b *board) EditComment(_ context.Context, id int64, body string) error {
+	b.events = append(b.events, "edit review")
+	if b.refuseEdit != nil {
+		return b.refuseEdit
+	}
+	b.comments[id].body = body
+	return nil
+}
+
+// File adds the task to the spec as the next issue after those it has, open
+// and meant for who the task says.
+func (b *board) File(_ context.Context, _ int, task tracker.NewTask) (int, error) {
+	if b.refuseFile != nil && len(b.filed) == *b.refuseFile {
+		return 0, errors.New("HTTP 502")
+	}
+	b.events = append(b.events, "file "+task.Title)
+	b.filed = append(b.filed, task)
+	number := 100 + len(b.filed)
+	b.tasks = append(b.tasks, tracker.Task{Number: number, Title: task.Title, Open: true, For: task.For, Body: task.Body})
+	return number, nil
+}
+
 func (b *board) Start(ctx context.Context, number int) error {
 	return b.write(ctx, "start", number)
+}
+
+func (b *board) StartReview(ctx context.Context, number int) error {
+	if err := b.write(ctx, "start review", number); err != nil {
+		return err
+	}
+	return b.refuseStartReview
+}
+
+func (b *board) StopReview(ctx context.Context, number int) error {
+	return b.write(ctx, "stop review", number)
+}
+
+func (b *board) MarkReviewed(ctx context.Context, number int) error {
+	if b.refuseMark != nil {
+		return b.refuseMark
+	}
+	return b.write(ctx, "mark reviewed", number)
 }
 
 func (b *board) Stop(ctx context.Context, number int) error {
@@ -98,7 +166,16 @@ func deadlineOf(ctx context.Context) time.Duration {
 
 func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks)}, nil
+	if b.parent != 0 && number == b.parent {
+		return tracker.Execution{Number: number, Title: "spec", Tasks: append(slices.Clone(b.siblings), b.tasks...), Reviewed: b.reviewed}, nil
+	}
+	if b.parent != 0 {
+		return tracker.Execution{Number: b.parent, Title: "spec", Single: true, Tasks: slices.Clone(b.tasks)}, nil
+	}
+	if b.standalone && len(b.filed) == 0 {
+		return tracker.Execution{Number: number, Title: "task", Single: true, Tasks: slices.Clone(b.tasks[:1]), Reviewed: b.reviewed}, nil
+	}
+	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks), Reviewed: b.reviewed, Reviewing: b.reviewing, Comments: slices.Clone(b.existing)}, nil
 }
 
 func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {
@@ -361,6 +438,7 @@ func loopOn(t *testing.T, b *board, launcher loop.Launcher) loop.Loop {
 
 // trees is a bench whose every task worktree opens and lands without fault, each task branch ahead of the work branch by ahead commits, or unreadable with aheadErr.
 type trees struct {
+	noReview
 	ahead    int
 	aheadErr error
 }
@@ -838,3 +916,20 @@ func TestRunOnATrackerThatCannotAuthenticateStopsBeforeMarkingAnyTask(t *testing
 		t.Errorf("Run() error = %v after gh %q and %d launches, want %q with no label write and no launch", err, gh.ran, len(b.launched), want)
 	}
 }
+
+// noReview is the part of a bench for a test that never reviews: its review methods fail.
+type noReview struct{}
+
+func (noReview) OpenReview(context.Context, int) (string, error) {
+	return "", errors.New("unexpected review")
+}
+
+func (noReview) ReviewBase(context.Context) (string, string, error) {
+	return "", "", errors.New("unexpected review")
+}
+
+func (noReview) ReviewStrays(context.Context, string, string) (loop.Strays, error) {
+	return loop.Strays{}, errors.New("unexpected review")
+}
+
+func (noReview) FindingsFile(int) string { return "" }

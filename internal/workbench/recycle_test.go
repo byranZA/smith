@@ -328,3 +328,119 @@ func landedOn(t *testing.T, clone, branch string) string {
 	}
 	return dir
 }
+
+func TestOpenReviewRecyclesALandedWorktreeDetachedAtTheWorkBranchTip(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	first, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+	commitIn(t, first, "431.txt")
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) error = %v", err)
+	}
+
+	dir, err := bench.OpenReview(t.Context(), 430)
+	if err != nil {
+		t.Fatalf("OpenReview(430) error = %v", err)
+	}
+
+	got := []string{dir, git(t, dir, "rev-parse", "HEAD"), git(t, dir, "branch", "--show-current"), git(t, clone, "branch", "--list", "smith/tasks/*")}
+	want := []string{first, git(t, clone, "rev-parse", bench.WorkBranch()), "", ""}
+	if !slices.Equal(got, want) {
+		t.Errorf("OpenReview(430) worktree, HEAD, branch and task branches = %q, want %q", got, want)
+	}
+}
+
+func TestOpenReviewAddsADetachedWorktreeWhenNoneWasRecycled(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+
+	dir, err := bench.OpenReview(t.Context(), 430)
+	if err != nil {
+		t.Fatalf("OpenReview(430) error = %v", err)
+	}
+
+	got := []string{git(t, dir, "rev-parse", "HEAD"), git(t, dir, "branch", "--show-current"), git(t, clone, "branch", "--list", "smith/tasks/*")}
+	want := []string{git(t, clone, "rev-parse", bench.WorkBranch()), "", ""}
+	if !slices.Equal(got, want) {
+		t.Errorf("OpenReview(430) HEAD, branch and task branches = %q, want %q", got, want)
+	}
+	if err := bench.Finish(t.Context()); err != nil {
+		t.Fatalf("Finish() error = %v", err)
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Finish() left the review worktree %s: Lstat error = %v, want it removed", dir, err)
+	}
+}
+
+func TestReviewBaseNamesWhereTheWorkBranchLeftItsBaseAndItsTip(t *testing.T) {
+	t.Parallel()
+	clone, remote := cloned(t)
+	bench := setup(t, clone)
+	forked := git(t, clone, "rev-parse", "origin/main")
+	first, err := bench.Open(t.Context(), 431)
+	if err != nil {
+		t.Fatalf("Open(431) error = %v", err)
+	}
+	tip := commitIn(t, first, "431.txt")
+	if err := bench.Land(t.Context(), 431); err != nil {
+		t.Fatalf("Land(431) error = %v", err)
+	}
+	later := filepath.Join(t.TempDir(), "later")
+	git(t, filepath.Dir(later), "clone", remote, later)
+	git(t, later, "commit", "--allow-empty", "-m", "since the work branch was cut")
+	git(t, later, "push", "origin", "main")
+
+	mergeBase, got, err := bench.ReviewBase(t.Context())
+
+	if err != nil || mergeBase != forked || got != tip {
+		t.Errorf("ReviewBase() = %q, %q, %v; want the commit the branch was cut at %q, its tip %q", mergeBase, got, err, forked, tip)
+	}
+}
+
+func TestFindingsFileIsAbsoluteUnderTheGitDirectoryKeyedByTheIssue(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+
+	got := bench.FindingsFile(430)
+
+	common := git(t, clone, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if want := filepath.Join(common, "smith", "review-430.json"); got != want {
+		t.Errorf("FindingsFile(430) = %q, want %q", got, want)
+	}
+}
+
+func TestReviewStraysNamesCommitsAndChangedFilesTheReviewLeft(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	dir, err := bench.OpenReview(t.Context(), 430)
+	if err != nil {
+		t.Fatalf("OpenReview(430) error = %v", err)
+	}
+	tip := git(t, dir, "rev-parse", "HEAD")
+
+	clean, err := bench.ReviewStrays(t.Context(), dir, tip)
+	if err != nil || clean.Any() {
+		t.Fatalf("ReviewStrays() on an untouched worktree = %+v, %v; want nothing", clean, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := bench.ReviewStrays(t.Context(), dir, tip)
+	if err != nil || len(changed.Commits) != 0 || !slices.Equal(changed.Changed, []string{"?? scratch.txt"}) {
+		t.Errorf("ReviewStrays() with a new file = %+v, %v; want it named as changed", changed, err)
+	}
+
+	commitIn(t, dir, "fix.txt")
+	committed, err := bench.ReviewStrays(t.Context(), dir, tip)
+	if err != nil || len(committed.Commits) != 1 {
+		t.Errorf("ReviewStrays() after a commit = %+v, %v; want one stray commit", committed, err)
+	}
+}

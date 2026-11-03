@@ -30,14 +30,14 @@ func TestLoopRunWithABoxRelaysTheRunAndEveryLoopFlag(t *testing.T) {
 
 	_, stderr, code := runLoopRun(t, laptopLoop(t, ssh, gh), "dev", "42", "--repo", "smith",
 		"--agent", "codex", "--model", "o3", "--effort", "high", "--max-iterations", "3", "--max-attempts", "2",
-		"--branch", "feat/x", "--base", "dev", "--no-push")
+		"--branch", "feat/x", "--base", "dev", "--no-push", "--no-review")
 
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
 	}
 	line := ssh.line(t)
 	want := "/usr/local/bin/smith --relayed-from '0.2.0' --relayed-box 'dev' 'loop' 'run' '42' '--agent=codex' '--base=dev' '--branch=feat/x' " +
-		"'--effort=high' '--max-attempts=2' '--max-iterations=3' '--model=o3' '--no-push=true' '--repo=smith'"
+		"'--effort=high' '--max-attempts=2' '--max-iterations=3' '--model=o3' '--no-push=true' '--no-review=true' '--repo=smith'"
 	if !strings.HasPrefix(line, "ssh") || !strings.Contains(line, "smith@100.92.14.7") || !strings.Contains(line, want) {
 		t.Errorf("ssh argv = %q, want it to reach smith@100.92.14.7 running %q", line, want)
 	}

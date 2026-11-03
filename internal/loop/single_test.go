@@ -19,6 +19,7 @@ const (
 
 // sprouting is a tracker, launcher, bench and pusher for #80 named on its own, which the agent's attempt changes as becomes says, closing it unless leaveOpen.
 type sprouting struct {
+	noReview
 	becomes   int
 	leaveOpen bool
 	changed   bool
@@ -47,6 +48,18 @@ func (s *sprouting) Stop(context.Context, int) error { return nil }
 func (s *sprouting) Fail(context.Context, int) error { return nil }
 
 func (s *sprouting) Comment(context.Context, int, string) error { return nil }
+
+func (s *sprouting) Post(context.Context, int, string) (int64, error) { return 1, nil }
+
+func (s *sprouting) EditComment(context.Context, int64, string) error { return nil }
+
+func (s *sprouting) File(context.Context, int, tracker.NewTask) (int, error) { return 0, nil }
+
+func (s *sprouting) StartReview(context.Context, int) error { return nil }
+
+func (s *sprouting) StopReview(context.Context, int) error { return nil }
+
+func (s *sprouting) MarkReviewed(context.Context, int) error { return nil }
 
 func (s *sprouting) task() tracker.Task {
 	task := tracker.Task{Number: 80, Title: "Fix X", Open: s.open, For: tracker.Agent}

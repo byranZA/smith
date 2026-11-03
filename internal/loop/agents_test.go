@@ -80,3 +80,34 @@ func blockedBy(task tracker.Task, blocker tracker.Blocker) tracker.Task {
 	task.Blockers = append(task.Blockers, blocker)
 	return task
 }
+
+func TestAgentsAddsTheReviewAgentOfAReviewableUnattendedRun(t *testing.T) {
+	t.Parallel()
+	file := presetFile
+	file.Roles = map[string]string{"work": "opus", "review": "codex"}
+	choice, err := preset.Choose(file, preset.Flags{})
+	if err != nil {
+		t.Fatalf("Choose() error = %v", err)
+	}
+	tests := []struct {
+		name        string
+		execution   tracker.Execution
+		interactive bool
+		want        []string
+	}{
+		{"a spec is reviewed", tracker.Execution{Number: 42, Tasks: []tracker.Task{agentTask(43)}}, false, []string{"claude", "codex"}},
+		{"a reviewed spec is not", tracker.Execution{Number: 42, Reviewed: true, Tasks: []tracker.Task{agentTask(43)}}, false, []string{"claude"}},
+		{"a child task run alone is not", tracker.Execution{Number: 42, Single: true, Tasks: []tracker.Task{agentTask(43)}}, false, []string{"claude"}},
+		{"a standalone task is", tracker.Execution{Number: 43, Single: true, Tasks: []tracker.Task{agentTask(43)}}, false, []string{"claude", "codex"}},
+		{"an interactive run is not", tracker.Execution{Number: 42, Tasks: []tracker.Task{agentTask(43)}}, true, []string{"claude"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := loop.Agents(choice, tc.execution, tc.interactive)
+
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Agents() = %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}

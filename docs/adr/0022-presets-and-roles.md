@@ -1,6 +1,8 @@
 # Agent settings are named presets, chosen by role and by task
 
 > Amends [ADR-0012](./0012-the-repo-file.md), which gave the repo file one flat `agent`, `model` and `effort`, each overridable on its own.
+>
+> **Amended by [ADR-0025](./0025-the-loop-files-the-reviews-findings.md).** `review` is a second role, off until the repo file names a preset for it. A task's `preset:` label never chooses it, and a pinning run flag (`--preset`, `--agent` or `--model`) pins it with the rest of the run; `--effort` applies to it too.
 
 ## Context
 

@@ -152,7 +152,7 @@ func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 	off := false
 	want := repofile.File{
 		Presets: map[string]repofile.Preset{"claude": {Agent: "claude", Model: "opus", Effort: "high"}},
-		Roles:   map[string]string{"work": "claude"},
+		Roles:   map[string]string{"work": "claude", "review": "claude"},
 		Push:    &off, Prepare: "uv sync",
 		Labels: repofile.Labels{Agent: "ready-for-agent", Human: "ready-for-human", Spec: "spec"},
 	}

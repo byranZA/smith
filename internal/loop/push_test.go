@@ -16,6 +16,7 @@ import (
 
 // journal is a launcher, bench and pusher that logs each worktree opened, agent run, landing, push and finish, in order, over a board.
 type journal struct {
+	noReview
 	board     *board
 	events    []string
 	landErr   error

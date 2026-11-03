@@ -20,6 +20,10 @@ const (
 	workingLabel = "smith:working"
 	// failedLabel is on a task the loop skipped and handed to a human.
 	failedLabel = "smith:failed"
+	// reviewingLabel is on a spec, or a standalone task, while its review runs.
+	reviewingLabel = "smith:reviewing"
+	// reviewedLabel is on a spec, or a standalone task, once its review is done.
+	reviewedLabel = "smith:reviewed"
 )
 
 // PresetPrefix leads a label that chooses the preset a task runs on. It is
@@ -29,12 +33,12 @@ const PresetPrefix = "preset:"
 // IsMark reports whether name is one of the labels the loop marks its own
 // work with, which no triage label may share.
 func IsMark(name string) bool {
-	return name == workingLabel || name == failedLabel
+	return name == workingLabel || name == failedLabel || name == reviewingLabel || name == reviewedLabel
 }
 
 // The issue fields read for a spec and for a task.
 const (
-	specFields = "number,title,state,labels,body,subIssues,url,parent"
+	specFields = "number,title,state,labels,body,subIssues,url,parent,comments"
 	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
@@ -102,6 +106,28 @@ type issue struct {
 	SubIssues connection `json:"subIssues"`
 	BlockedBy connection `json:"blockedBy"`
 	Parent    *parent    `json:"parent"`
+	Comments  []comment  `json:"comments"`
+}
+
+// comment is a comment as gh lists it on an issue. gh's id is a node id, so
+// the numeric one is read from the comment's URL.
+type comment struct {
+	URL  string `json:"url"`
+	Body string `json:"body"`
+}
+
+// commentsOf returns the comments of the issue with the numeric ids edits
+// name, leaving out any whose URL carries none.
+func (i issue) commentsOf() []Comment {
+	var comments []Comment
+	for _, c := range i.Comments {
+		_, id, found := strings.Cut(c.URL, "#issuecomment-")
+		n, err := strconv.ParseInt(id, 10, 64)
+		if found && err == nil {
+			comments = append(comments, Comment{ID: n, Body: c.Body})
+		}
+	}
+	return comments
 }
 
 // parent is the spec an issue is a sub-issue of, as gh gives it.
@@ -181,7 +207,11 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	if err != nil {
 		return Execution{}, err
 	}
-	if !spec.isSpec(g.labels) {
+	filedUnder, err := g.partOf(ctx, number)
+	if err != nil {
+		return Execution{}, err
+	}
+	if !spec.isSpec(g.labels) && len(filedUnder) == 0 {
 		return g.single(ctx, spec)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
@@ -197,6 +227,11 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		}
 		children = append(children, child.Number)
 	}
+	for _, n := range filedUnder {
+		if !slices.Contains(children, n) {
+			children = append(children, n)
+		}
+	}
 	issues := map[int]issue{}
 	for _, n := range children {
 		task, err := g.task(ctx, n)
@@ -211,9 +246,9 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		if err != nil {
 			return Execution{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets()})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets(), Body: issues[n].Body})
 	}
-	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks}, nil
+	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks, Reviewed: spec.labelled(reviewedLabel), Reviewing: spec.labelled(reviewingLabel), Comments: spec.commentsOf()}, nil
 }
 
 // single reads the task viewed as an execution of that task alone, whose
@@ -225,7 +260,14 @@ func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
 		return Execution{}, err
 	}
 	if viewed.Parent == nil {
-		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}}, nil
+		if n, _ := fallbackLinks(viewed.Body); n != 0 {
+			head, err := g.view(ctx, Ref{Number: n}, "number,title")
+			if err != nil {
+				return Execution{}, fmt.Errorf("read the parent #%d of task #%d: %w", n, viewed.Number, err)
+			}
+			return Execution{Number: head.Number, Title: head.Title, Single: true, Tasks: []Task{only}}, nil
+		}
+		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}, Reviewed: viewed.labelled(reviewedLabel), Reviewing: viewed.labelled(reviewingLabel), Comments: viewed.commentsOf()}, nil
 	}
 	repo := viewed.repo()
 	if ref := (issueNode{Number: viewed.Parent.Number, URL: viewed.Parent.URL}).ref().in(repo); ref.Repo != "" {
@@ -247,6 +289,30 @@ func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
 		return Task{}, err
 	}
 	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Working: task.labelled(workingLabel), Presets: task.presets()}, nil
+}
+
+// partOf returns the numbers of the issues whose body says, in the "Part of"
+// line a gh without --parent left in its place, that they are part of issue
+// number.
+func (g GitHub) partOf(ctx context.Context, number int) ([]int, error) {
+	line := fmt.Sprintf("Part of #%d", number)
+	args := []string{"issue", "list", "--state", "all", "--limit", "1000", "--search", strconv.Quote(line) + " in:body", "--json", "number,body"}
+	var stdout, stderr bytes.Buffer
+	if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
+		return nil, failure(stderr.String(), err)
+	}
+	var found []issue
+	if err := json.Unmarshal(stdout.Bytes(), &found); err != nil {
+		return nil, fmt.Errorf("read gh's answer for the issues part of #%d: %w", number, err)
+	}
+	var numbers []int
+	for _, i := range found {
+		if parent, _ := fallbackLinks(i.Body); parent == number && i.Number != number {
+			numbers = append(numbers, i.Number)
+		}
+	}
+	slices.Sort(numbers)
+	return numbers, nil
 }
 
 // task reads task number with every issue linked as blocking it.
@@ -279,6 +345,21 @@ func (g GitHub) Fail(ctx context.Context, number int) error {
 	return g.edit(ctx, number, []string{g.labels.Human, failedLabel}, []string{workingLabel, g.labels.Agent})
 }
 
+// StartReview labels issue number as under review, while its review runs.
+func (g GitHub) StartReview(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{reviewingLabel}, nil)
+}
+
+// StopReview removes the label that marks issue number as under review.
+func (g GitHub) StopReview(ctx context.Context, number int) error {
+	return g.edit(ctx, number, nil, []string{reviewingLabel})
+}
+
+// MarkReviewed labels issue number as reviewed, so no run reviews it again.
+func (g GitHub) MarkReviewed(ctx context.Context, number int) error {
+	return g.edit(ctx, number, []string{reviewedLabel}, nil)
+}
+
 // Labels returns the names of the labels the repo gh resolves for the working
 // directory has, up to labelLimit of them.
 func (g GitHub) Labels(ctx context.Context) ([]string, error) {
@@ -304,6 +385,72 @@ func (g GitHub) Comment(ctx context.Context, number int, body string) error {
 		return failure(stderr, err)
 	}
 	return nil
+}
+
+// Post posts body as a comment on issue number and returns the comment's id.
+func (g GitHub) Post(ctx context.Context, number int, body string) (int64, error) {
+	var stdout, stderr bytes.Buffer
+	if err := g.gh.Run(ctx, "gh", []string{"issue", "comment", strconv.Itoa(number), "--body", body}, nil, &stdout, &stderr); err != nil {
+		return 0, failure(stderr.String(), err)
+	}
+	_, id, found := strings.Cut(strings.TrimSpace(stdout.String()), "#issuecomment-")
+	n, err := strconv.ParseInt(id, 10, 64)
+	if !found || err != nil {
+		return 0, fmt.Errorf("read the id of the comment on #%d from gh's answer %q", number, strings.TrimSpace(stdout.String()))
+	}
+	return n, nil
+}
+
+// EditComment replaces the body of the comment with the given id, in the repo
+// gh resolves for the working directory.
+func (g GitHub) EditComment(ctx context.Context, id int64, body string) error {
+	args := []string{"api", "-X", "PATCH", "repos/{owner}/{repo}/issues/comments/" + strconv.FormatInt(id, 10), "-f", "body=" + body}
+	if stderr, err := g.run(ctx, args); err != nil {
+		return failure(stderr, err)
+	}
+	return nil
+}
+
+// File creates task as a sub-issue of issue parent, labelled for the audience
+// it is meant for and blocked by the issues it names, and returns its number.
+// A gh without the flags that link them gets the same links as lines at the
+// head of the body.
+func (g GitHub) File(ctx context.Context, parent int, task NewTask) (int, error) {
+	label := g.labels.Agent
+	if task.For == Human {
+		label = g.labels.Human
+	}
+	create := func(body string, links []string) (int, string, error) {
+		args := append([]string{"issue", "create", "--title", task.Title, "--body", body, "--label", label}, links...)
+		var stdout, stderr bytes.Buffer
+		if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
+			return 0, stderr.String(), err
+		}
+		ref, err := ParseRef(strings.TrimSpace(stdout.String()))
+		if err != nil {
+			return 0, "", fmt.Errorf("read the number of the task filed under #%d from gh's answer: %w", parent, err)
+		}
+		return ref.Number, "", nil
+	}
+	links := []string{"--parent", strconv.Itoa(parent)}
+	for _, n := range task.BlockedBy {
+		links = append(links, "--blocked-by", strconv.Itoa(n))
+	}
+	number, stderr, err := create(task.Body, links)
+	if err != nil && strings.Contains(stderr, "unknown flag") {
+		lines := fmt.Sprintf("Part of #%d\n", parent)
+		for _, n := range task.BlockedBy {
+			lines += fmt.Sprintf("Blocked by #%d\n", n)
+		}
+		number, stderr, err = create(lines+"\n"+task.Body, nil)
+	}
+	if err != nil {
+		if stderr == "" {
+			return 0, err
+		}
+		return 0, failure(stderr, err)
+	}
+	return number, nil
 }
 
 // edit adds and removes labels on issue number in one gh issue edit. Each time

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
@@ -35,6 +36,19 @@ type Tracker interface {
 	Fail(ctx context.Context, number int) error
 	// Comment posts body, as the loop wrote it, on issue number.
 	Comment(ctx context.Context, number int, body string) error
+	// Post posts body, as the loop wrote it, on issue number and returns the
+	// comment's id.
+	Post(ctx context.Context, number int, body string) (int64, error)
+	// EditComment replaces the body of the comment with the given id.
+	EditComment(ctx context.Context, id int64, body string) error
+	// File files task as a sub-issue of issue parent and returns its number.
+	File(ctx context.Context, parent int, task tracker.NewTask) (int, error)
+	// StartReview marks issue number as under review, while its review runs.
+	StartReview(ctx context.Context, number int) error
+	// StopReview removes the mark StartReview made.
+	StopReview(ctx context.Context, number int) error
+	// MarkReviewed marks issue number as reviewed, so no run reviews it again.
+	MarkReviewed(ctx context.Context, number int) error
 }
 
 // Launcher is the one seam through which the loop starts a process.
@@ -59,9 +73,48 @@ type Bench interface {
 	TaskBranch(task int) string
 	// Ahead counts the commits task's branch has beyond the work branch.
 	Ahead(ctx context.Context, task int) (int, error)
+	// OpenReview returns the directory of the worktree the review runs in:
+	// the recycled one, or a new one, detached at the work branch's tip with
+	// no branch of its own. issue is the execution's issue.
+	OpenReview(ctx context.Context, issue int) (string, error)
+	// ReviewBase returns the commit the work branch left its base at, and the
+	// work branch's tip: the range the review reads.
+	ReviewBase(ctx context.Context) (mergeBase, tip string, err error)
+	// ReviewStrays reports what the review left in its worktree dir: the
+	// commits HEAD carries beyond tip, the work branch's tip it started at,
+	// and the files changed from it.
+	ReviewStrays(ctx context.Context, dir, tip string) (Strays, error)
+	// FindingsFile is the absolute path the review of issue writes its
+	// findings to.
+	FindingsFile(issue int) string
 	// Finish removes the worktree landed tasks were recycled through, once
-	// every task has landed.
+	// every task has landed and the review is done.
 	Finish(ctx context.Context) error
+}
+
+// Strays is what a review left behind in its worktree, which it must not
+// change.
+type Strays struct {
+	// Commits describes each commit HEAD carries beyond the work branch tip,
+	// or says HEAD moved off it.
+	Commits []string
+	// Changed names each file modified, added or removed.
+	Changed []string
+}
+
+// Any reports whether the review left anything behind.
+func (s Strays) Any() bool { return len(s.Commits) > 0 || len(s.Changed) > 0 }
+
+// String says what the review left behind.
+func (s Strays) String() string {
+	var parts []string
+	if len(s.Commits) > 0 {
+		parts = append(parts, "it made commits: "+strings.Join(s.Commits, "; "))
+	}
+	if len(s.Changed) > 0 {
+		parts = append(parts, "it left changed files: "+strings.Join(s.Changed, ", "))
+	}
+	return strings.Join(parts, " and ")
 }
 
 // Preparer is the seam through which the loop makes a task worktree ready to
@@ -101,7 +154,12 @@ type Loop struct {
 	// model and effort.
 	Presets preset.Choice
 	Prompt  Prompt
-	Limits  Limits
+	// Review turns the review of a complete execution on; nil turns it off.
+	Review *Review
+	// NoReview reports that the review role is set but --no-review skips it
+	// for this run: nothing is reviewed or marked, and the report says so.
+	NoReview bool
+	Limits   Limits
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
 	// Hostname names the machine the loop runs on, for the comment on a
@@ -140,6 +198,29 @@ type Outcome struct {
 	// Broken is the task the run stopped on as agent broken; nil when it
 	// did not stop that way.
 	Broken *Broken
+	// ReviewOwed reports that every task is closed but the run reached its
+	// cap before it could review, so a later run only reviews.
+	ReviewOwed bool
+	// ReviewFailure is why the review failed, nil when it did not.
+	ReviewFailure error
+	// ReviewDir is the worktree a failed review was left in.
+	ReviewDir string
+	// Filed is the tasks the run's review filed, in the order it filed them.
+	Filed []Filed
+	// ReviewIncomplete is set when a tracker failure stopped the filing of
+	// the review's findings.
+	ReviewIncomplete *Incomplete
+	// Note is something the report says about the review beyond how it ended.
+	Note string
+	// Hint is a line ending the report that says what to run next.
+	Hint string
+}
+
+// Filed is a task a review filed for one of its findings.
+type Filed struct {
+	Number int
+	// ID is the finding's id in the review: S1, St1, Q1.
+	ID string
 }
 
 // Broken is the task a run stopped on because every attempt at it was an
@@ -149,10 +230,16 @@ type Broken struct {
 	Task    tracker.Task
 	Failure error
 	Machine string
+	// Review reports that Task is the issue under review, not a task: the
+	// failure is of the review's agent.
+	Review bool
 }
 
-// Complete reports whether the run ended with every task of the spec closed.
-func (o Outcome) Complete() bool { return o.Remaining.Complete() }
+// Complete reports whether the run ended with every task of the spec closed
+// and, when it reviews, the review done.
+func (o Outcome) Complete() bool {
+	return o.Remaining.Complete() && !o.ReviewOwed && o.ReviewFailure == nil && o.ReviewIncomplete == nil && o.Broken == nil
+}
 
 // Run first refuses spec when one of its open tasks has a preset the run
 // cannot resolve, then clears the worked marks a run that died left on spec's tasks, then
@@ -187,19 +274,61 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	killed := map[int]bool{}
 	worktrees := map[int]string{}
 	runs := 0
+	reviewedAlready := false
+	var filed []Filed
+	var note, hint string
 	stopped := func(remaining Remaining) Outcome {
-		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed)}
+		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed), Filed: filed, Note: note, Hint: hint}
 	}
 	if err := l.Presets.Check(current); err != nil {
 		return Outcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
+	}
+	pending, pendingID, resuming, err := l.ledgerOf(current)
+	if err != nil {
+		return Outcome{}, err
 	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
 	for {
 		remaining := survey(current, skipped)
+		if resuming {
+			resuming = false
+			result, err := l.resume(ctx, current, pending, pendingID)
+			if err != nil {
+				return Outcome{}, err
+			}
+			reviewedAlready = true
+			filed, note = result.filed, result.note
+			if result.incomplete != nil {
+				return l.reviewStopped(ctx, stopped(remaining), current, result)
+			}
+			if current, err = l.reread(ctx, spec, current); err != nil {
+				return Outcome{}, err
+			}
+			continue
+		}
 		next, ok := remaining.Next()
+		if !ok && l.reviewDue(current, remaining, reviewedAlready) {
+			result, err := l.review(ctx, current, &runs)
+			if err != nil {
+				return Outcome{}, err
+			}
+			filed = result.filed
+			if result.failure != nil || result.capped || result.incomplete != nil {
+				return l.reviewStopped(ctx, stopped(remaining), current, result)
+			}
+			reviewedAlready = true
+			if current, err = l.reread(ctx, spec, current); err != nil {
+				return Outcome{}, err
+			}
+			continue
+		}
 		if !ok {
+			if l.NoReview && reviewable(current) && remaining.Complete() {
+				note = "not reviewed: `--no-review`"
+			}
+			hint = l.reviewHint(ctx, current, remaining)
 			return stopped(remaining), l.finish(ctx, remaining)
 		}
 		if runs >= l.Limits.MaxIterations {
@@ -249,6 +378,27 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	}
 }
 
+// reviewStopped ends a run whose review stopped as result says: failed, which
+// keeps the review worktree for the operator, or capped before it could run,
+// when every task has landed and the recycled worktree is removed.
+func (l Loop) reviewStopped(ctx context.Context, outcome Outcome, execution tracker.Execution, result reviewed) (Outcome, error) {
+	if result.broken {
+		number, _ := execution.Issue()
+		return l.brokenOn(outcome, tracker.Task{Number: number}, result.failure, true)
+	}
+	if result.capped {
+		outcome.Capped, outcome.ReviewOwed = true, true
+		return outcome, l.finish(ctx, outcome.Remaining)
+	}
+	outcome.Filed = result.filed
+	if result.incomplete != nil {
+		outcome.ReviewIncomplete = result.incomplete
+		return outcome, nil
+	}
+	outcome.ReviewFailure, outcome.ReviewDir = result.failure, result.dir
+	return outcome, nil
+}
+
 // broken ends a run that stopped as outcome on task, whose agent last failed
 // with failure: it removes task's worked mark, leaving task for the next run
 // rather than handing it to a human, and names this machine, unknown with a
@@ -257,11 +407,17 @@ func (l Loop) broken(ctx context.Context, outcome Outcome, task tracker.Task, fa
 	if err := l.unmark(ctx, task); err != nil {
 		return Outcome{}, err
 	}
+	return l.brokenOn(outcome, task, failure, false)
+}
+
+// brokenOn ends a run as outcome with its agent broken on task, the issue
+// under review when review is set, naming this machine.
+func (l Loop) brokenOn(outcome Outcome, task tracker.Task, failure error, review bool) (Outcome, error) {
 	host, err := l.hostname()
 	if err := l.warnIf(err, "could not read this machine's hostname"); err != nil {
 		return Outcome{}, err
 	}
-	outcome.Broken = &Broken{Task: task, Failure: failure, Machine: host}
+	outcome.Broken = &Broken{Task: task, Failure: failure, Machine: host, Review: review}
 	return outcome, nil
 }
 
@@ -364,6 +520,40 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 	}
 	current.Tasks = []tracker.Task{task}
 	return current, nil
+}
+
+// reread reads current again after a review, which may have filed tasks under
+// it. A standalone task is read as an execution again, not as that task: with
+// tasks filed under it, it now reads as a spec of the same number, on the same
+// work branch, and its own issue stays closed.
+func (l Loop) reread(ctx context.Context, number int, current tracker.Execution) (tracker.Execution, error) {
+	if !current.Standalone() {
+		return l.refresh(ctx, number, current)
+	}
+	execution, err := l.Tracker.Execution(ctx, number)
+	if err != nil {
+		return tracker.Execution{}, fmt.Errorf("read #%d: %w", number, err)
+	}
+	return execution, nil
+}
+
+// reviewHint returns the line telling the operator that running the spec
+// reviews it, when current is a child task run on its own that leaves its
+// spec with every task closed and unreviewed, and the review role is set.
+// A spec that cannot be read leaves no hint, with a warning.
+func (l Loop) reviewHint(ctx context.Context, current tracker.Execution, remaining Remaining) string {
+	if l.Review == nil || !current.Single || current.Standalone() || !remaining.Complete() {
+		return ""
+	}
+	spec, err := l.Tracker.Execution(ctx, current.Number)
+	if err != nil {
+		_ = l.warnIf(err, "could not read spec #%d to see whether it is ready for review", current.Number)
+		return ""
+	}
+	if spec.Reviewed || !Survey(spec).Complete() {
+		return ""
+	}
+	return fmt.Sprintf("spec #%d has every task closed: `smith loop run %d` reviews it", current.Number, current.Number)
 }
 
 // attempt is how one agent run on a task went: the task worktree it ran in,
@@ -487,9 +677,16 @@ func (l Loop) reportFailure(task tracker.Task, err error, killed bool) error {
 // was, for whatever reports it.
 const KilledCause = "killed (likely out of memory)"
 
-// sweep removes the mark from each of execution's tasks marked as worked,
-// which a run that died left behind, before any agent runs.
+// sweep removes the mark from each of execution's tasks marked as worked, and
+// the review mark from its issue, which a run that died left behind, before
+// any agent runs.
 func (l Loop) sweep(ctx context.Context, execution tracker.Execution) error {
+	if execution.Reviewing {
+		number, _ := execution.Issue()
+		if err := l.warnIf(l.Tracker.StopReview(ctx, number), "could not remove the review mark from #%d", number); err != nil {
+			return err
+		}
+	}
 	for _, task := range execution.Tasks {
 		if !task.Working {
 			continue

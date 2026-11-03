@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -22,7 +23,39 @@ func listedTasks(body string) []Ref {
 // blockersIn returns the issues a task body's "## Blocked by" section
 // names, each once. A section that says "None" names none.
 func blockersIn(body string) []Ref {
-	return refsIn(section(body, "Blocked by"))
+	_, header := fallbackLinks(body)
+	blockers := slices.Clone(header)
+	for _, ref := range refsIn(section(body, "Blocked by")) {
+		if !slices.Contains(blockers, ref) {
+			blockers = append(blockers, ref)
+		}
+	}
+	return blockers
+}
+
+// fallbackLink matches a line of the head of a body that a gh without the link
+// flags was given in their place, capturing which link it is and its issue.
+var fallbackLink = regexp.MustCompile(`^(Part of|Blocked by) #(\d+)\s*$`)
+
+// fallbackLinks reads the "Part of #N" and "Blocked by #N" lines that head a
+// body, up to its first other line: the issue it is part of, or 0 when it is
+// part of none, and the issues blocking it.
+func fallbackLinks(body string) (parent int, blockers []Ref) {
+	for line := range strings.SplitSeq(body, "\n") {
+		m := fallbackLink.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		n, err := strconv.Atoi(m[2])
+		switch {
+		case err != nil:
+		case m[1] == "Part of":
+			parent = n
+		default:
+			blockers = append(blockers, Ref{Number: n})
+		}
+	}
+	return parent, blockers
 }
 
 // section returns the lines under the first heading titled name, matched

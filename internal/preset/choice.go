@@ -93,6 +93,9 @@ var ErrPresetWithAgent = errors.New("--preset cannot be combined with --agent or
 type Choice struct {
 	file repofile.File
 	work Resolved
+	// review is the preset the review role runs on, when the repo file sets it.
+	review    Resolved
+	reviewSet bool
 	// pinned reports whether a run flag chose the preset of every task, over
 	// its labels.
 	pinned bool
@@ -133,8 +136,40 @@ func Choose(file repofile.File, flags Flags) (Choice, error) {
 	if flags.Effort != "" {
 		work.Effort = flagged(flags.Effort)
 	}
+	choice := Choice{file: file}
 	pinned := flags.Preset != "" || flags.Agent != "" || flags.Model != ""
-	return Choice{file: file, work: work, pinned: pinned, effort: flags.Effort}, nil
+	if name, ok := file.Roles[repofile.ReviewRole]; ok {
+		if choice.review, err = named(file, name, "role "+repofile.ReviewRole, config.FromRepoFile); err != nil {
+			return Choice{}, err
+		}
+		choice.reviewSet = true
+		switch {
+		case flags.Preset != "" || flags.Agent != "":
+			// A preset or agent flag pins the review with the rest of the run.
+			choice.review = work
+		case flags.Model != "":
+			// A model flag alone changes only the review's model.
+			choice.review.Model = flagged(flags.Model)
+			if flags.Effort != "" {
+				choice.review.Effort = flagged(flags.Effort)
+			}
+		case flags.Effort != "":
+			choice.review.Effort = flagged(flags.Effort)
+		}
+	}
+	choice.work, choice.pinned, choice.effort = work, pinned, flags.Effort
+	return choice, nil
+}
+
+// Review returns the preset the review role runs on in this run, and false
+// when the repo file does not set the role, which turns the review off.
+func (c Choice) Review() (Resolved, bool) { return c.review, c.reviewSet }
+
+// WithoutReview returns c with the review role unset, as a run that skips the
+// review has it.
+func (c Choice) WithoutReview() Choice {
+	c.review, c.reviewSet = Resolved{}, false
+	return c
 }
 
 // Work returns the preset the work role runs on in this run.
