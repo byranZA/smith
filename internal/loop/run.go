@@ -209,6 +209,8 @@ type Outcome struct {
 	ReviewIncomplete *Incomplete
 	// Note is something the report says about the review beyond how it ended.
 	Note string
+	// Hint is a line ending the report that says what to run next.
+	Hint string
 }
 
 // Filed is a task a review filed for one of its findings.
@@ -271,9 +273,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	runs := 0
 	reviewedAlready := false
 	var filed []Filed
-	var note string
+	var note, hint string
 	stopped := func(remaining Remaining) Outcome {
-		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed), Filed: filed, Note: note}
+		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed), Filed: filed, Note: note, Hint: hint}
 	}
 	if err := l.Presets.Check(current); err != nil {
 		return Outcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
@@ -298,7 +300,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			if result.incomplete != nil {
 				return l.reviewStopped(ctx, stopped(remaining), current, result)
 			}
-			if current, err = l.refresh(ctx, spec, current); err != nil {
+			if current, err = l.reread(ctx, spec, current); err != nil {
 				return Outcome{}, err
 			}
 			continue
@@ -314,12 +316,13 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 				return l.reviewStopped(ctx, stopped(remaining), current, result)
 			}
 			reviewedAlready = true
-			if current, err = l.refresh(ctx, spec, current); err != nil {
+			if current, err = l.reread(ctx, spec, current); err != nil {
 				return Outcome{}, err
 			}
 			continue
 		}
 		if !ok {
+			hint = l.reviewHint(ctx, current, remaining)
 			return stopped(remaining), l.finish(ctx, remaining)
 		}
 		if runs >= l.Limits.MaxIterations {
@@ -511,6 +514,40 @@ func (l Loop) refresh(ctx context.Context, number int, current tracker.Execution
 	}
 	current.Tasks = []tracker.Task{task}
 	return current, nil
+}
+
+// reread reads current again after a review, which may have filed tasks under
+// it. A standalone task is read as an execution again, not as that task: with
+// tasks filed under it, it now reads as a spec of the same number, on the same
+// work branch, and its own issue stays closed.
+func (l Loop) reread(ctx context.Context, number int, current tracker.Execution) (tracker.Execution, error) {
+	if !current.Standalone() {
+		return l.refresh(ctx, number, current)
+	}
+	execution, err := l.Tracker.Execution(ctx, number)
+	if err != nil {
+		return tracker.Execution{}, fmt.Errorf("read #%d: %w", number, err)
+	}
+	return execution, nil
+}
+
+// reviewHint returns the line telling the operator that running the spec
+// reviews it, when current is a child task run on its own that leaves its
+// spec with every task closed and unreviewed, and the review role is set.
+// A spec that cannot be read leaves no hint, with a warning.
+func (l Loop) reviewHint(ctx context.Context, current tracker.Execution, remaining Remaining) string {
+	if l.Review == nil || !current.Single || current.Standalone() || !remaining.Complete() {
+		return ""
+	}
+	spec, err := l.Tracker.Execution(ctx, current.Number)
+	if err != nil {
+		_ = l.warnIf(err, "could not read spec #%d to see whether it is ready for review", current.Number)
+		return ""
+	}
+	if spec.Reviewed || !Survey(spec).Complete() {
+		return ""
+	}
+	return fmt.Sprintf("spec #%d has every task closed: `smith loop run %d` reviews it", current.Number, current.Number)
 }
 
 // attempt is how one agent run on a task went: the task worktree it ran in,

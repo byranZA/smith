@@ -38,6 +38,13 @@ type board struct {
 	refuseComment error
 	// single, when set, makes the board a task named on its own.
 	single bool
+	// parent, when set with single, is the spec the single task is a child of;
+	// siblings are its other tasks.
+	parent   int
+	siblings []tracker.Task
+	// standalone makes the board a task with no parent until the review files
+	// a sub-issue under it, when it reads as a spec of the same number.
+	standalone bool
 	// reviewed and reviewing are the review marks the issue carries.
 	reviewed, reviewing bool
 	// refuseStartReview, when set, is what adding the reviewing mark fails with.
@@ -159,6 +166,15 @@ func deadlineOf(ctx context.Context) time.Duration {
 
 func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
+	if b.parent != 0 && number == b.parent {
+		return tracker.Execution{Number: number, Title: "spec", Tasks: append(slices.Clone(b.siblings), b.tasks...), Reviewed: b.reviewed}, nil
+	}
+	if b.parent != 0 {
+		return tracker.Execution{Number: b.parent, Title: "spec", Single: true, Tasks: slices.Clone(b.tasks)}, nil
+	}
+	if b.standalone && len(b.filed) == 0 {
+		return tracker.Execution{Number: number, Title: "task", Single: true, Tasks: slices.Clone(b.tasks[:1]), Reviewed: b.reviewed}, nil
+	}
 	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks), Reviewed: b.reviewed, Reviewing: b.reviewing, Comments: slices.Clone(b.existing)}, nil
 }
 

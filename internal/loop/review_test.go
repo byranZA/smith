@@ -622,3 +622,62 @@ func TestFailedMarkEndsReviewIncomplete(t *testing.T) {
 		t.Errorf("Run() = %+v, %v; want review incomplete", outcome, err)
 	}
 }
+
+func hintOf(report string) string {
+	for _, line := range strings.Split(report, "\n") {
+		if strings.Contains(line, "smith loop run") {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestChildTaskRunAloneHintsAtReviewingTheSpecItCompleted(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(80)}, single: true, parent: 42, siblings: []tracker.Task{closed(agentTask(81))}}
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 80)
+
+	report := outcome.Report("task #80", l.Limits)
+	if err != nil || !outcome.Complete() || slices.Contains(b.events, "launch review") || !strings.HasSuffix(report, "`smith loop run 42` reviews it\n") || hintOf(report) == "" {
+		t.Errorf("Run() = %+v, %v, report %q; want complete, no review and a hint ending the report", outcome, err, report)
+	}
+}
+
+func TestChildTaskRunAloneHasNoHintUnlessTheSpecIsCompleteUnreviewedAndReviewIsSet(t *testing.T) {
+	tests := map[string]struct {
+		siblings []tracker.Task
+		reviewed bool
+		unset    bool
+	}{
+		"the spec still has open tasks": {siblings: []tracker.Task{agentTask(81)}},
+		"the spec is reviewed":          {siblings: []tracker.Task{closed(agentTask(81))}, reviewed: true},
+		"the review role is unset":      {siblings: []tracker.Task{closed(agentTask(81))}, unset: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			b := &board{tasks: []tracker.Task{agentTask(80)}, single: true, parent: 42, siblings: tc.siblings, reviewed: tc.reviewed}
+			l, _ := reviewingLoop(t, b, noFindings)
+			if tc.unset {
+				l.Review = nil
+			}
+
+			outcome, err := l.Run(t.Context(), 80)
+
+			if report := outcome.Report("task #80", l.Limits); err != nil || hintOf(report) != "" {
+				t.Errorf("Run() error = %v, report %q; want no hint", err, report)
+			}
+		})
+	}
+}
+
+func TestStandaloneTaskIsReviewedAndTheTasksItFilesAreWorkedUnderItClosed(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(90)}, single: true, standalone: true}
+	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "agent", "S one")))
+
+	outcome, err := l.Run(t.Context(), 90)
+
+	if err != nil || !outcome.Complete() || !slices.Contains(b.events, "launch 101") || b.tasks[0].Open || b.events[len(b.events)-1] != "stop 101" {
+		t.Errorf("Run() = %+v, %v with events %q; want the filed #101 worked after the review and #90 still closed", outcome, err, b.events)
+	}
+}

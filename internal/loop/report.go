@@ -71,7 +71,7 @@ func (o Outcome) Ending() Ending {
 // broken names the task, the agent's last failure and the machine to check.
 func (o Outcome) Report(name string, limits Limits) string {
 	if o.Complete() {
-		return name + " complete\n" + o.noteLine() + o.filedLine()
+		return name + " complete\n" + o.noteLine() + o.filedLine() + o.hintLine()
 	}
 	var b strings.Builder
 	switch {
@@ -98,6 +98,7 @@ func (o Outcome) Report(name string, limits Limits) string {
 	}
 	b.WriteString(o.noteLine())
 	b.WriteString(o.filedLine())
+	b.WriteString(o.hintLine())
 	return b.String()
 }
 
@@ -107,6 +108,14 @@ func (o Outcome) noteLine() string {
 		return ""
 	}
 	return "  note: " + o.Note + "\n"
+}
+
+// hintLine says what to run next, or nothing.
+func (o Outcome) hintLine() string {
+	if o.Hint == "" {
+		return ""
+	}
+	return "  hint: " + o.Hint + "\n"
 }
 
 // filedLine names the tasks the run's review filed, or nothing when it filed
