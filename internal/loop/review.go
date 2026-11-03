@@ -42,8 +42,11 @@ func (l Loop) reviewDue(execution tracker.Execution, remaining Remaining, done b
 type reviewed struct {
 	dir     string
 	failure error
-	capped  bool
-	filed   []Filed
+	// broken reports that failure is of the review's agent on every attempt,
+	// or that it could not be started.
+	broken bool
+	capped bool
+	filed  []Filed
 }
 
 // review runs the review agent on execution's work branch, up to MaxAttempts
@@ -71,71 +74,92 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 	defer func() { err = errors.Join(err, l.stopReviewDetached(ctx, number)) }()
 	file := l.Bench.FindingsFile(number)
 	prompt := l.Review.Prompt.Render(ReviewTarget{Number: number, Title: title, MergeBase: mergeBase, FindingsFile: file})
+	agentFailures := 0
 	for attempt := 1; attempt <= l.Limits.MaxAttempts; attempt++ {
 		if *runs >= l.Limits.MaxIterations {
 			return reviewed{dir: result.dir, capped: true}, nil
 		}
 		var findings review.File
-		if findings, result.dir, result.failure, err = l.reviewAttempt(ctx, number, file, adapter.Unattended(prompt, l.Review.Preset.Options())); err != nil {
+		var agentFailed bool
+		if findings, result.dir, result.failure, agentFailed, err = l.reviewAttempt(ctx, number, file, tip, adapter.Unattended(prompt, l.Review.Preset.Options())); err != nil {
 			return reviewed{}, err
 		}
-		*runs++
-		if result.failure != nil {
-			if err := l.report("smith: the review of #%d failed: %v\n", number, result.failure); err != nil {
-				return reviewed{}, err
-			}
-			if errors.Is(result.failure, ErrNotStarted) {
-				return result, nil
-			}
-			continue
+		if errors.Is(result.failure, ErrNotStarted) {
+			result.broken = true
+			return result, l.report("smith: the review of #%d failed: %v\n", number, result.failure)
 		}
-		result.filed, err = l.postReview(ctx, number, findings, tip)
-		return result, err
+		*runs++
+		if result.failure == nil {
+			result.filed, err = l.postReview(ctx, number, findings, tip)
+			return result, err
+		}
+		if err := l.report("smith: the review of #%d failed: %v\n", number, result.failure); err != nil {
+			return reviewed{}, err
+		}
+		if errors.Is(result.failure, errStrayWork) {
+			return result, nil
+		}
+		if agentFailed {
+			agentFailures++
+		}
 	}
+	result.broken = agentFailures > 0 && agentFailures == l.Limits.MaxAttempts
 	return result, nil
 }
+
+// errStrayWork is what a review that changed its worktree fails with.
+var errStrayWork = errors.New("the review changed the work branch it was to leave alone")
 
 // reviewAttempt makes one attempt at the review: it opens and prepares the
 // worktree, removes the findings file an earlier attempt left, runs cmd there
 // and reads the file it leaves. A failed attempt is returned as failure; err
-// is the run failing.
-func (l Loop) reviewAttempt(ctx context.Context, number int, file string, cmd agent.Command) (findings review.File, dir string, failure, err error) {
+// is the run failing. agentFailed reports that failure is the agent's own
+// exit, not a file it left invalid. A review that commits or changes files
+// fails with errStrayWork, naming what it left, whatever else it did.
+func (l Loop) reviewAttempt(ctx context.Context, number int, file, tip string, cmd agent.Command) (findings review.File, dir string, failure error, agentFailed bool, err error) {
 	dir, err = l.Bench.OpenReview(ctx, number)
 	if err != nil {
-		return review.File{}, "", nil, fmt.Errorf("open a worktree for the review of #%d: %w", number, err)
+		return review.File{}, "", nil, false, fmt.Errorf("open a worktree for the review of #%d: %w", number, err)
 	}
 	cmd.Dir = dir
 	if err := l.Placements.into(ctx, dir); err != nil {
-		return review.File{}, dir, nil, fmt.Errorf("place files into the review worktree of #%d in %s: %w", number, dir, err)
+		return review.File{}, dir, nil, false, fmt.Errorf("place files into the review worktree of #%d in %s: %w", number, dir, err)
 	}
 	if err := l.prepare(ctx, tracker.Task{Number: number}, dir); err != nil {
-		return review.File{}, dir, nil, err
+		return review.File{}, dir, nil, false, err
 	}
 	if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return review.File{}, dir, nil, fmt.Errorf("remove the findings file %s: %w", file, err)
+		return review.File{}, dir, nil, false, fmt.Errorf("remove the findings file %s: %w", file, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-		return review.File{}, dir, nil, fmt.Errorf("make room for the findings file %s: %w", file, err)
+		return review.File{}, dir, nil, false, fmt.Errorf("make room for the findings file %s: %w", file, err)
 	}
 	if err := l.report("smith: handing the review of #%d to %s on %s in %s\n", number, l.Review.Preset.Agent.Value, presetPhrase(l.Review.Preset), dir); err != nil {
-		return review.File{}, dir, nil, err
+		return review.File{}, dir, nil, false, err
 	}
 	failure = l.Launcher.Launch(ctx, cmd)
 	if ctx.Err() != nil {
-		return review.File{}, dir, nil, fmt.Errorf("review of #%d interrupted: %w", number, ctx.Err())
+		return review.File{}, dir, nil, false, fmt.Errorf("review of #%d interrupted: %w", number, ctx.Err())
+	}
+	strays, serr := l.Bench.ReviewStrays(ctx, dir, tip)
+	if serr != nil {
+		return review.File{}, dir, nil, false, fmt.Errorf("check the review worktree %s for changes: %w", dir, serr)
+	}
+	if strays.Any() {
+		return review.File{}, dir, fmt.Errorf("%w in %s: %s", errStrayWork, dir, strays), false, nil
 	}
 	if failure != nil {
-		return review.File{}, dir, fmt.Errorf("run the review agent: %w", failure), nil
+		return review.File{}, dir, fmt.Errorf("run the review agent: %w", failure), !errors.Is(failure, ErrKilled), nil
 	}
 	data, rerr := os.ReadFile(file)
 	if rerr != nil {
-		return review.File{}, dir, fmt.Errorf("the agent left no findings file at %s: %w", file, rerr), nil
+		return review.File{}, dir, fmt.Errorf("the agent left no findings file at %s: %w", file, rerr), false, nil
 	}
 	findings, perr := review.Parse(data)
 	if perr != nil {
-		return review.File{}, dir, fmt.Errorf("read the findings file %s: %w", file, perr), nil
+		return review.File{}, dir, fmt.Errorf("read the findings file %s: %w", file, perr), false, nil
 	}
-	return findings, dir, nil, nil
+	return findings, dir, nil, false, nil
 }
 
 // postReview posts findings, of the work branch at tip, as the review of

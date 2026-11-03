@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/byranZA/smith/internal/gitlock"
+	"github.com/byranZA/smith/internal/loop"
 )
 
 // errNoDefaultBranch is why Setup cannot cut a work branch when origin names
@@ -318,6 +319,42 @@ func (w Workbench) ReviewBase(ctx context.Context) (mergeBase, tip string, err e
 		return "", "", fmt.Errorf("find where work branch %s left %s: %w", w.branch, w.baseBranch, err)
 	}
 	return mergeBase, tip, nil
+}
+
+// ReviewStrays reports what the review left in its worktree dir, which it must
+// not change: the commits HEAD carries beyond tip, or HEAD having moved off it
+// without any, and the files changed.
+func (w Workbench) ReviewStrays(ctx context.Context, dir, tip string) (loop.Strays, error) {
+	var strays loop.Strays
+	log, err := w.run(ctx, dir, "log", "--oneline", tip+"..HEAD")
+	if err != nil {
+		return strays, fmt.Errorf("read commits made in %s: %w", dir, err)
+	}
+	strays.Commits = lines(log)
+	head, err := w.run(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return strays, fmt.Errorf("read HEAD of %s: %w", dir, err)
+	}
+	if head != tip && len(strays.Commits) == 0 {
+		strays.Commits = []string{"HEAD moved to " + head + ", off the work branch tip " + tip}
+	}
+	status, err := w.run(ctx, dir, "status", "--porcelain")
+	if err != nil {
+		return strays, fmt.Errorf("read changes in %s: %w", dir, err)
+	}
+	strays.Changed = lines(status)
+	return strays, nil
+}
+
+// lines splits out into its non-empty lines.
+func lines(out string) []string {
+	var got []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			got = append(got, line)
+		}
+	}
+	return got
 }
 
 // FindingsFile is where the review of issue writes its findings: an absolute

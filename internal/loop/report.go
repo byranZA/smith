@@ -27,7 +27,7 @@ const (
 	// attempt at, or could not be started on, so likely broken itself.
 	AgentBroken Ending = "agent broken"
 	// ReviewFailed is a run whose review ran out of attempts without a valid
-	// findings file.
+	// findings file, or changed the work branch it was to leave alone.
 	ReviewFailed Ending = "review failed"
 	// Stopped is a run interrupted by a signal.
 	Stopped Ending = "stopped"
@@ -73,7 +73,7 @@ func (o Outcome) Report(name string, limits Limits) string {
 	case o.Broken != nil:
 		fmt.Fprintf(&b, "%s stopped: %s; check that the agent runs on %s\n", name, o.Broken.cause(), o.Broken.Machine)
 	case o.ReviewFailure != nil:
-		fmt.Fprintf(&b, "%s stopped: the review failed on every attempt (%v); its worktree is %s\n", name, o.ReviewFailure, o.ReviewDir)
+		fmt.Fprintf(&b, "%s stopped: the review failed (%v); its worktree is %s\n", name, o.ReviewFailure, o.ReviewDir)
 	case o.Capped:
 		fmt.Fprintf(&b, "%s stopped: reached the cap of %d agent runs\n", name, limits.MaxIterations)
 	case len(o.Remaining.Skipped) > 0:
@@ -109,10 +109,14 @@ func (o Outcome) filedLine() string {
 // cause says how the agent failed on the task the run stopped on, with its
 // last error.
 func (b Broken) cause() string {
-	if errors.Is(b.Failure, ErrNotStarted) {
-		return fmt.Sprintf("the agent could not be started on #%d (%v)", b.Task.Number, b.Failure)
+	what := fmt.Sprintf("#%d", b.Task.Number)
+	if b.Review {
+		what = fmt.Sprintf("the review of #%d", b.Task.Number)
 	}
-	return fmt.Sprintf("the agent failed on every attempt at #%d (%v)", b.Task.Number, b.Failure)
+	if errors.Is(b.Failure, ErrNotStarted) {
+		return fmt.Sprintf("the agent could not be started on %s (%v)", what, b.Failure)
+	}
+	return fmt.Sprintf("the agent failed on every attempt at %s (%v)", what, b.Failure)
 }
 
 // WorkBranchReport renders the line naming the work branch a run's closed

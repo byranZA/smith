@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
@@ -79,12 +80,41 @@ type Bench interface {
 	// ReviewBase returns the commit the work branch left its base at, and the
 	// work branch's tip: the range the review reads.
 	ReviewBase(ctx context.Context) (mergeBase, tip string, err error)
+	// ReviewStrays reports what the review left in its worktree dir: the
+	// commits HEAD carries beyond tip, the work branch's tip it started at,
+	// and the files changed from it.
+	ReviewStrays(ctx context.Context, dir, tip string) (Strays, error)
 	// FindingsFile is the absolute path the review of issue writes its
 	// findings to.
 	FindingsFile(issue int) string
 	// Finish removes the worktree landed tasks were recycled through, once
 	// every task has landed and the review is done.
 	Finish(ctx context.Context) error
+}
+
+// Strays is what a review left behind in its worktree, which it must not
+// change.
+type Strays struct {
+	// Commits describes each commit HEAD carries beyond the work branch tip,
+	// or says HEAD moved off it.
+	Commits []string
+	// Changed names each file modified, added or removed.
+	Changed []string
+}
+
+// Any reports whether the review left anything behind.
+func (s Strays) Any() bool { return len(s.Commits) > 0 || len(s.Changed) > 0 }
+
+// String says what the review left behind.
+func (s Strays) String() string {
+	var parts []string
+	if len(s.Commits) > 0 {
+		parts = append(parts, "it made commits: "+strings.Join(s.Commits, "; "))
+	}
+	if len(s.Changed) > 0 {
+		parts = append(parts, "it left changed files: "+strings.Join(s.Changed, ", "))
+	}
+	return strings.Join(parts, " and ")
 }
 
 // Preparer is the seam through which the loop makes a task worktree ready to
@@ -190,12 +220,15 @@ type Broken struct {
 	Task    tracker.Task
 	Failure error
 	Machine string
+	// Review reports that Task is the issue under review, not a task: the
+	// failure is of the review's agent.
+	Review bool
 }
 
 // Complete reports whether the run ended with every task of the spec closed
 // and, when it reviews, the review done.
 func (o Outcome) Complete() bool {
-	return o.Remaining.Complete() && !o.ReviewOwed && o.ReviewFailure == nil
+	return o.Remaining.Complete() && !o.ReviewOwed && o.ReviewFailure == nil && o.Broken == nil
 }
 
 // Run first refuses spec when one of its open tasks has a preset the run
@@ -251,7 +284,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 				return Outcome{}, err
 			}
 			if result.failure != nil || result.capped {
-				return l.reviewStopped(ctx, stopped(remaining), result)
+				return l.reviewStopped(ctx, stopped(remaining), current, result)
 			}
 			reviewedAlready = true
 			filed = result.filed
@@ -313,7 +346,11 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 // reviewStopped ends a run whose review stopped as result says: failed, which
 // keeps the review worktree for the operator, or capped before it could run,
 // when every task has landed and the recycled worktree is removed.
-func (l Loop) reviewStopped(ctx context.Context, outcome Outcome, result reviewed) (Outcome, error) {
+func (l Loop) reviewStopped(ctx context.Context, outcome Outcome, execution tracker.Execution, result reviewed) (Outcome, error) {
+	if result.broken {
+		number, _ := execution.Issue()
+		return l.brokenOn(outcome, tracker.Task{Number: number}, result.failure, true)
+	}
 	if result.capped {
 		outcome.Capped, outcome.ReviewOwed = true, true
 		return outcome, l.finish(ctx, outcome.Remaining)
@@ -330,11 +367,17 @@ func (l Loop) broken(ctx context.Context, outcome Outcome, task tracker.Task, fa
 	if err := l.unmark(ctx, task); err != nil {
 		return Outcome{}, err
 	}
+	return l.brokenOn(outcome, task, failure, false)
+}
+
+// brokenOn ends a run as outcome with its agent broken on task, the issue
+// under review when review is set, naming this machine.
+func (l Loop) brokenOn(outcome Outcome, task tracker.Task, failure error, review bool) (Outcome, error) {
 	host, err := l.hostname()
 	if err := l.warnIf(err, "could not read this machine's hostname"); err != nil {
 		return Outcome{}, err
 	}
-	outcome.Broken = &Broken{Task: task, Failure: failure, Machine: host}
+	outcome.Broken = &Broken{Task: task, Failure: failure, Machine: host, Review: review}
 	return outcome, nil
 }
 

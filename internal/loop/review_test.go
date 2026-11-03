@@ -24,6 +24,8 @@ type reviewBench struct {
 	trees
 	board *board
 	file  string
+	// strays is what the bench reports the review left behind in its worktree.
+	strays loop.Strays
 }
 
 const (
@@ -39,6 +41,10 @@ func (r reviewBench) OpenReview(_ context.Context, issue int) (string, error) {
 func (reviewBench) ReviewBase(context.Context) (string, string, error) { return mergeBase, tip, nil }
 
 func (r reviewBench) FindingsFile(int) string { return r.file }
+
+func (r reviewBench) ReviewStrays(context.Context, string, string) (loop.Strays, error) {
+	return r.strays, nil
+}
 
 // reviewer is a launcher that works tasks as the board does and, handed the review prompt, leaves written in the findings file and exits with exit.
 type reviewer struct {
@@ -245,15 +251,141 @@ func TestReviewAttemptCountsAgainstTheCap(t *testing.T) {
 	}
 }
 
-func TestReviewEveryAttemptAnAgentFailureEndsReviewFailed(t *testing.T) {
+func TestReviewEveryAttemptAnAgentFailureEndsAgentBroken(t *testing.T) {
 	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
 	l, launcher := reviewingLoop(t, b, noFindings)
+	l.Limits.MaxAttempts = 2
 	launcher.exit = errors.New("exit status 1")
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	if err != nil || outcome.Ending() != loop.ReviewFailed || slices.Contains(b.events, "mark reviewed 42") {
-		t.Errorf("Run() = %+v, %v; want review failed and not marked reviewed", outcome, err)
+	launches := 0
+	for _, e := range b.events {
+		if e == "launch review" {
+			launches++
+		}
+	}
+	if err != nil || outcome.Ending() != loop.AgentBroken || launches != 2 || slices.Contains(b.events, "mark reviewed 42") || !slices.Contains(b.events, "stop review 42") {
+		t.Errorf("Run() = %+v, %v with events %q; want agent broken after two attempts, no marks", outcome, err, b.events)
+	}
+	if got := outcome.Report("spec #42", l.Limits); !strings.Contains(got, "the review of #42") || !strings.Contains(got, "exit status 1") {
+		t.Errorf("Report() = %q, want it to name the review and the agent's error", got)
+	}
+}
+
+func TestReviewAgentFailingOnlyOnceIsReviewFailedNotBroken(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, launcher := reviewingLoop(t, b, "")
+	l.Limits.MaxAttempts = 2
+	l.Launcher = &flaky{reviewer: launcher}
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.ReviewFailed {
+		t.Errorf("Run() = %+v, %v; want review failed, one attempt being a clean exit without a file", outcome, err)
+	}
+}
+
+// flaky is a launcher whose review agent fails its first launch and exits cleanly after.
+type flaky struct {
+	*reviewer
+	launches int
+}
+
+func (f *flaky) Launch(ctx context.Context, cmd agent.Command) error {
+	f.launches++
+	f.exit = nil
+	if f.launches == 1 {
+		f.exit = errors.New("exit status 1")
+	}
+	return f.reviewer.Launch(ctx, cmd)
+}
+
+func TestReviewAgentThatCannotStartEndsAgentBrokenWithoutCountingAnAttempt(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, launcher := reviewingLoop(t, b, noFindings)
+	launcher.exit = fmt.Errorf("run codex: %w: not found", loop.ErrNotStarted)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	launches := slices.DeleteFunc(slices.Clone(b.events), func(e string) bool { return e != "launch review" })
+	if err != nil || outcome.Ending() != loop.AgentBroken || len(launches) != 1 || !strings.Contains(outcome.Report("spec #42", l.Limits), "could not be started") {
+		t.Errorf("Run() = %+v, %v with events %q; want agent broken on the first launch", outcome, err, b.events)
+	}
+}
+
+func TestReviewThatCommitsOrChangesFilesStopsAtOnceKeepingTheWorktree(t *testing.T) {
+	tests := []struct {
+		name   string
+		strays loop.Strays
+		want   string
+	}{
+		{"commit", loop.Strays{Commits: []string{"abc1234 sneaky fix"}}, "abc1234 sneaky fix"},
+		{"changed file", loop.Strays{Changed: []string{"internal/x.go"}}, "internal/x.go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+			l, launcher := reviewingLoop(t, b, noFindings)
+			l.Limits.MaxAttempts = 3
+			l.Bench = reviewBench{board: b, file: launcher.file, strays: tt.strays}
+
+			outcome, err := l.Run(t.Context(), 42)
+
+			report := outcome.Report("spec #42", l.Limits)
+			if err != nil || outcome.Ending() != loop.ReviewFailed || !strings.Contains(report, tt.want) || !strings.Contains(report, "/bench/review") {
+				t.Errorf("Run() = %+v, %v with report %q; want review failed naming %q and the worktree", outcome, err, report, tt.want)
+			}
+			if slices.Contains(b.events, "mark reviewed 42") || !slices.Contains(b.events, "stop review 42") || len(b.filed) != 0 || len(b.comments) != 1 {
+				t.Errorf("events = %q, filed %v, comments %v; want no marks, no filing and only the stop report", b.events, b.filed, b.comments)
+			}
+			if got := slices.DeleteFunc(slices.Clone(b.events), func(e string) bool { return e != "launch review" }); len(got) != 1 {
+				t.Errorf("review launched %d times, want 1 with no retry", len(got))
+			}
+		})
+	}
+}
+
+func TestReviewAFailedStartMarkIsAWarningAndTheReviewStillRuns(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}, refuseStartReview: errors.New("HTTP 403")}
+	l, _ := reviewingLoop(t, b, noFindings)
+	var progress strings.Builder
+	l.Progress = &progress
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	want := []string{"smith: warning: could not mark #42 as under review: HTTP 403"}
+	if err != nil || !outcome.Complete() || !containsLines(progress.String(), want) || !slices.Contains(b.events, "launch review") {
+		t.Errorf("Run() = %+v, %v with progress\n%s\nwant the warning and the review run", outcome, err, progress.String())
+	}
+}
+
+func TestReviewInvalidFilesFailTheAttemptWithTheirError(t *testing.T) {
+	good := finding("quality", "minor", "agent", "Q one")
+	tests := map[string]string{
+		"not json":              `not json`,
+		"unknown axis":          findingsFile("", strings.Replace(good, "quality", "style", 1)),
+		"unknown severity":      findingsFile("", strings.Replace(good, "minor", "trivial", 1)),
+		"unknown who":           findingsFile("", strings.Replace(good, `"agent"`, `"robot"`, 1)),
+		"empty title":           findingsFile("", strings.Replace(good, `"Q one"`, `""`, 1)),
+		"empty body":            findingsFile("", strings.Replace(good, `"Q one body"`, `""`, 1)),
+		"blocked by a stranger": findingsFile("", finding("quality", "minor", "agent", "Q one", 7)),
+		"blocked by itself":     findingsFile("", finding("quality", "minor", "agent", "Q one", 1)),
+	}
+	for name, written := range tests {
+		t.Run(name, func(t *testing.T) {
+			b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+			l, _ := reviewingLoop(t, b, written)
+			l.Limits.MaxAttempts = 1
+			var progress strings.Builder
+			l.Progress = &progress
+
+			outcome, err := l.Run(t.Context(), 42)
+
+			if err != nil || outcome.Ending() != loop.ReviewFailed || !strings.Contains(progress.String(), "the review of #42 failed: read the findings file") || len(b.filed) != 0 || len(b.comments) != 1 || slices.Contains(b.events, "post review") {
+				t.Errorf("Run() = %+v, %v with progress %q, events %q; want a failed attempt reporting its validation error and nothing filed", outcome, err, progress.String(), b.events)
+			}
+		})
 	}
 }
 

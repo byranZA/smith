@@ -1032,4 +1032,8 @@ func (noReview) ReviewBase(context.Context) (string, string, error) {
 	return "", "", errors.New("unexpected review")
 }
 
+func (noReview) ReviewStrays(context.Context, string, string) (loop.Strays, error) {
+	return loop.Strays{}, errors.New("unexpected review")
+}
+
 func (noReview) FindingsFile(int) string { return "" }

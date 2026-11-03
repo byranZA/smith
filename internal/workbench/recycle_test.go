@@ -414,3 +414,33 @@ func TestFindingsFileIsAbsoluteUnderTheGitDirectoryKeyedByTheIssue(t *testing.T)
 		t.Errorf("FindingsFile(430) = %q, want %q", got, want)
 	}
 }
+
+func TestReviewStraysNamesCommitsAndChangedFilesTheReviewLeft(t *testing.T) {
+	t.Parallel()
+	clone, _ := cloned(t)
+	bench := setup(t, clone)
+	dir, err := bench.OpenReview(t.Context(), 430)
+	if err != nil {
+		t.Fatalf("OpenReview(430) error = %v", err)
+	}
+	tip := git(t, dir, "rev-parse", "HEAD")
+
+	clean, err := bench.ReviewStrays(t.Context(), dir, tip)
+	if err != nil || clean.Any() {
+		t.Fatalf("ReviewStrays() on an untouched worktree = %+v, %v; want nothing", clean, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := bench.ReviewStrays(t.Context(), dir, tip)
+	if err != nil || len(changed.Commits) != 0 || !slices.Equal(changed.Changed, []string{"?? scratch.txt"}) {
+		t.Errorf("ReviewStrays() with a new file = %+v, %v; want it named as changed", changed, err)
+	}
+
+	commitIn(t, dir, "fix.txt")
+	committed, err := bench.ReviewStrays(t.Context(), dir, tip)
+	if err != nil || len(committed.Commits) != 1 {
+		t.Errorf("ReviewStrays() after a commit = %+v, %v; want one stray commit", committed, err)
+	}
+}

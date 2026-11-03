@@ -40,6 +40,8 @@ type board struct {
 	single bool
 	// reviewed and reviewing are the review marks the issue carries.
 	reviewed, reviewing bool
+	// refuseStartReview, when set, is what adding the reviewing mark fails with.
+	refuseStartReview error
 	// filed holds each task filed under the spec, in order, and refuseFile
 	// makes the filing of the task with that many already filed fail.
 	filed      []tracker.NewTask
@@ -95,7 +97,10 @@ func (b *board) Start(ctx context.Context, number int) error {
 }
 
 func (b *board) StartReview(ctx context.Context, number int) error {
-	return b.write(ctx, "start review", number)
+	if err := b.write(ctx, "start review", number); err != nil {
+		return err
+	}
+	return b.refuseStartReview
 }
 
 func (b *board) StopReview(ctx context.Context, number int) error {
@@ -894,6 +899,10 @@ func (noReview) OpenReview(context.Context, int) (string, error) {
 
 func (noReview) ReviewBase(context.Context) (string, string, error) {
 	return "", "", errors.New("unexpected review")
+}
+
+func (noReview) ReviewStrays(context.Context, string, string) (loop.Strays, error) {
+	return loop.Strays{}, errors.New("unexpected review")
 }
 
 func (noReview) FindingsFile(int) string { return "" }
