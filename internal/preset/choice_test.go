@@ -384,7 +384,8 @@ func TestReviewFollowsThePinningFlagsAndTakesOnlyTheEffortFlagOverItsOwnPreset(t
 		{"no flags: the review role's preset", preset.Flags{}, preset.Resolved{Name: "codex", Origin: config.FromRepoFile, Agent: fromFile("codex"), Model: fromFile("gpt-6.1-sol"), Effort: fromFile("high")}},
 		{"--preset pins the review", preset.Flags{Preset: "opus"}, preset.Resolved{Name: "opus", Origin: config.FromFlag, Agent: fromFlag("claude"), Model: fromFlag("opus"), Effort: fromFlag("medium")}},
 		{"--agent pins the review", preset.Flags{Agent: "claude", Model: "sonnet"}, preset.Resolved{Origin: config.FromFlag, Agent: fromFlag("claude"), Model: fromFlag("sonnet"), Effort: fromFlag("")}},
-		{"--model pins the review to the work preset under that model", preset.Flags{Model: "sonnet"}, preset.Resolved{Name: "opus", Origin: config.FromRepoFile, Agent: fromFile("claude"), Model: fromFlag("sonnet"), Effort: fromFile("medium")}},
+		{"--model alone keeps the review's agent and effort under that model", preset.Flags{Model: "sonnet"}, preset.Resolved{Name: "codex", Origin: config.FromRepoFile, Agent: fromFile("codex"), Model: fromFlag("sonnet"), Effort: fromFile("high")}},
+		{"--model with --effort overrides the review's effort", preset.Flags{Model: "sonnet", Effort: "low"}, preset.Resolved{Name: "codex", Origin: config.FromRepoFile, Agent: fromFile("codex"), Model: fromFlag("sonnet"), Effort: fromFlag("low")}},
 		{"--effort alone keeps the review preset", preset.Flags{Effort: "low"}, preset.Resolved{Name: "codex", Origin: config.FromRepoFile, Agent: fromFile("codex"), Model: fromFile("gpt-6.1-sol"), Effort: fromFlag("low")}},
 		{"--preset with --effort pins and sets the effort", preset.Flags{Preset: "opus", Effort: "low"}, preset.Resolved{Name: "opus", Origin: config.FromFlag, Agent: fromFlag("claude"), Model: fromFlag("opus"), Effort: fromFlag("low")}},
 	}

@@ -144,9 +144,15 @@ func Choose(file repofile.File, flags Flags) (Choice, error) {
 		}
 		choice.reviewSet = true
 		switch {
-		case pinned:
-			// A pinning flag pins the review with the rest of the run.
+		case flags.Preset != "" || flags.Agent != "":
+			// A preset or agent flag pins the review with the rest of the run.
 			choice.review = work
+		case flags.Model != "":
+			// A model flag alone changes only the review's model.
+			choice.review.Model = flagged(flags.Model)
+			if flags.Effort != "" {
+				choice.review.Effort = flagged(flags.Effort)
+			}
 		case flags.Effort != "":
 			choice.review.Effort = flagged(flags.Effort)
 		}
