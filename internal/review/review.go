@@ -342,7 +342,6 @@ func comment(file File, number int, sha string, tasks map[int]int, done bool) st
 		fmt.Fprintf(&b, ". Worst: **%s** %s (%s)", f.Severity, f.Title, ids[worst])
 	}
 	b.WriteString(".\n\n")
-	// json.Marshal escapes ">", so the block cannot end the comment early.
 	block, err := json.Marshal(ledger{Sha: sha, Findings: file.Findings, NotFiled: file.NotFiled, Done: done})
 	if err != nil {
 		panic(fmt.Sprintf("marshal the review ledger: %v", err))

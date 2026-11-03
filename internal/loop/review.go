@@ -60,12 +60,9 @@ type Incomplete struct {
 	Err          error
 }
 
-// review runs the review agent on execution's work branch, up to MaxAttempts
-// times while the run's cap of agent runs, counted in runs, allows, and when
-// the agent leaves a valid findings file posts the review on the execution's
-// issue and marks it reviewed. The issue carries the reviewing mark while it
-// runs, removed on every exit. An error is the run failing; a review that
-// fails is reported in the result.
+// review runs the review agent on execution's work branch within the run's cap
+// of agent runs, counted in runs, and posts a valid review on its issue. An
+// error is the run failing; a review that fails is reported in the result.
 func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int) (result reviewed, err error) {
 	if *runs >= l.Limits.MaxIterations {
 		return reviewed{capped: true}, nil
@@ -121,12 +118,9 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 // errStrayWork is what a review that changed its worktree fails with.
 var errStrayWork = errors.New("the review changed the work branch it was to leave alone")
 
-// reviewAttempt makes one attempt at the review: it opens and prepares the
-// worktree, removes the findings file an earlier attempt left, runs cmd there
-// and reads the file it leaves. A failed attempt is returned as failure; err
-// is the run failing. agentFailed reports that failure is the agent's own
-// exit, not a file it left invalid. A review that commits or changes files
-// fails with errStrayWork, naming what it left, whatever else it did.
+// reviewAttempt runs cmd once in a fresh review worktree and reads the findings
+// file it leaves. A failed attempt is returned as failure, with agentFailed set
+// when the agent itself exited badly; err is the run failing.
 func (l Loop) reviewAttempt(ctx context.Context, number int, file, tip string, cmd agent.Command) (findings review.File, dir string, failure error, agentFailed bool, err error) {
 	dir, err = l.Bench.OpenReview(ctx, number)
 	if err != nil {
@@ -185,17 +179,12 @@ func (l Loop) postReview(ctx context.Context, number int, findings review.File, 
 	return l.fileFindings(ctx, number, id, ledger, map[int]int{}, review.Order(findings.Findings))
 }
 
-// fileFindings files the findings of ledger at the positions in todo, blockers
-// first, as tasks under issue number, whose review is the comment id. tasks
-// maps the position of each finding already filed to its task, and gains each
-// one filed here. It returns every task tasks maps, in filing order. It then edits the comment to name every task and marks the
-// issue reviewed. A tracker failure stops it at once, without retrying, and is
-// returned as incomplete.
+// fileFindings files the findings of ledger at the positions in todo as tasks
+// under issue number, records them in tasks and returns every filed task. A
+// tracker failure stops it at once and is returned as incomplete.
 func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger review.Ledger, tasks map[int]int, todo []int) ([]Filed, *Incomplete, error) {
 	findings := ledger.File.Findings
 	ids := review.IDs(findings)
-	// reported lists every task the ledger maps, in filing order, including
-	// those earlier runs filed.
 	reported := func() []Filed {
 		var all []Filed
 		for _, i := range review.Order(findings) {
