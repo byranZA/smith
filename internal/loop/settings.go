@@ -16,6 +16,8 @@ type Flags struct {
 	Preset preset.Flags
 	// Push turns pushing after each closed task on or off.
 	Push *bool
+	// NoReview skips the review for this run.
+	NoReview bool
 }
 
 // Settings are the resolved loop settings, each carrying where it came from.

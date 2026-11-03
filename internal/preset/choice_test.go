@@ -371,3 +371,61 @@ func TestReviewIsTheReviewRolesPresetAndUnsetWithoutOne(t *testing.T) {
 		t.Error("Review() with no review role = set, want unset")
 	}
 }
+
+func TestReviewFollowsThePinningFlagsAndTakesOnlyTheEffortFlagOverItsOwnPreset(t *testing.T) {
+	t.Parallel()
+	file := repoFile
+	file.Roles = map[string]string{"work": "opus", "review": "codex"}
+	tests := []struct {
+		name  string
+		flags preset.Flags
+		want  preset.Resolved
+	}{
+		{"no flags: the review role's preset", preset.Flags{}, preset.Resolved{Name: "codex", Origin: config.FromRepoFile, Agent: fromFile("codex"), Model: fromFile("gpt-6.1-sol"), Effort: fromFile("high")}},
+		{"--preset pins the review", preset.Flags{Preset: "opus"}, preset.Resolved{Name: "opus", Origin: config.FromFlag, Agent: fromFlag("claude"), Model: fromFlag("opus"), Effort: fromFlag("medium")}},
+		{"--agent pins the review", preset.Flags{Agent: "claude", Model: "sonnet"}, preset.Resolved{Origin: config.FromFlag, Agent: fromFlag("claude"), Model: fromFlag("sonnet"), Effort: fromFlag("")}},
+		{"--model pins the review to the work preset under that model", preset.Flags{Model: "sonnet"}, preset.Resolved{Name: "opus", Origin: config.FromRepoFile, Agent: fromFile("claude"), Model: fromFlag("sonnet"), Effort: fromFile("medium")}},
+		{"--effort alone keeps the review preset", preset.Flags{Effort: "low"}, preset.Resolved{Name: "codex", Origin: config.FromRepoFile, Agent: fromFile("codex"), Model: fromFile("gpt-6.1-sol"), Effort: fromFlag("low")}},
+		{"--preset with --effort pins and sets the effort", preset.Flags{Preset: "opus", Effort: "low"}, preset.Resolved{Name: "opus", Origin: config.FromFlag, Agent: fromFlag("claude"), Model: fromFlag("opus"), Effort: fromFlag("low")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			choice, err := preset.Choose(file, tt.flags)
+			if err != nil {
+				t.Fatalf("Choose(%+v) error = %v", tt.flags, err)
+			}
+			got, ok := choice.Review()
+			if !ok || got != tt.want {
+				t.Errorf("Review() = %+v, %v; want %+v", got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestReviewStaysOffWhenFlagsPinTheRunButTheRepoFileSetsNoReviewRole(t *testing.T) {
+	t.Parallel()
+	choice, err := preset.Choose(repoFile, preset.Flags{Preset: "codex"})
+	if err != nil {
+		t.Fatalf("Choose() error = %v", err)
+	}
+	if _, ok := choice.Review(); ok {
+		t.Error("Review() = set, want unset: flags do not turn the review on")
+	}
+}
+
+func TestATaskLabelNeverChoosesTheReviewPreset(t *testing.T) {
+	t.Parallel()
+	file := repoFile
+	file.Roles = map[string]string{"work": "opus", "review": "opus"}
+	choice, err := preset.Choose(file, preset.Flags{})
+	if err != nil {
+		t.Fatalf("Choose() error = %v", err)
+	}
+	if _, err := choice.Task(tracker.Task{Number: 2, Presets: []string{"codex"}}); err != nil {
+		t.Fatalf("Task() error = %v", err)
+	}
+	if got, _ := choice.Review(); got.Name != "opus" {
+		t.Errorf("Review() preset = %q, want opus whatever the task's label", got.Name)
+	}
+}

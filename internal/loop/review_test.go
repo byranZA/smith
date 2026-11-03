@@ -681,3 +681,45 @@ func TestStandaloneTaskIsReviewedAndTheTasksItFilesAreWorkedUnderItClosed(t *tes
 		t.Errorf("Run() = %+v, %v with events %q; want the filed #101 worked after the review and #90 still closed", outcome, err, b.events)
 	}
 }
+
+func TestRunWithNoReviewSkipsTheReviewLeavesNoMarkAndSaysSo(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	l, _ := reviewingLoop(t, b, noFindings)
+	l.Review, l.NoReview = nil, true
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	report := outcome.Report("spec #42", loop.Limits{})
+	if err != nil || outcome.Ending() != loop.Complete || !strings.Contains(report, "not reviewed: `--no-review`") {
+		t.Errorf("Run() = %+v, %v; want complete with report %q naming --no-review", outcome, err, report)
+	}
+	for _, event := range b.events {
+		if strings.Contains(event, "review") {
+			t.Errorf("events = %q, want no review step or mark", b.events)
+		}
+	}
+}
+
+func TestRunWithNoReviewOnACompleteUnreviewedSpecHasNothingToDo(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, noFindings)
+	l.Review, l.NoReview = nil, true
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.Complete || len(b.events) != 0 || len(b.handed()) != 0 {
+		t.Errorf("Run() = %+v, %v with events %q; want complete and nothing done", outcome, err, b.events)
+	}
+}
+
+func TestRunWithNoReviewSaysNothingOfAReviewForAnExecutionThatNeverReviews(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, single: true}
+	l, _ := reviewingLoop(t, b, noFindings)
+	l.Review, l.NoReview = nil, true
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if report := outcome.Report("task #43", loop.Limits{}); err != nil || strings.Contains(report, "not reviewed") {
+		t.Errorf("Run() = %v, report %q; want no not-reviewed line for a child task", err, report)
+	}
+}

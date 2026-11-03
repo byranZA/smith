@@ -137,13 +137,20 @@ func Choose(file repofile.File, flags Flags) (Choice, error) {
 		work.Effort = flagged(flags.Effort)
 	}
 	choice := Choice{file: file}
+	pinned := flags.Preset != "" || flags.Agent != "" || flags.Model != ""
 	if name, ok := file.Roles[repofile.ReviewRole]; ok {
 		if choice.review, err = named(file, name, "role "+repofile.ReviewRole, config.FromRepoFile); err != nil {
 			return Choice{}, err
 		}
 		choice.reviewSet = true
+		switch {
+		case pinned:
+			// A pinning flag pins the review with the rest of the run.
+			choice.review = work
+		case flags.Effort != "":
+			choice.review.Effort = flagged(flags.Effort)
+		}
 	}
-	pinned := flags.Preset != "" || flags.Agent != "" || flags.Model != ""
 	choice.work, choice.pinned, choice.effort = work, pinned, flags.Effort
 	return choice, nil
 }
@@ -151,6 +158,13 @@ func Choose(file repofile.File, flags Flags) (Choice, error) {
 // Review returns the preset the review role runs on in this run, and false
 // when the repo file does not set the role, which turns the review off.
 func (c Choice) Review() (Resolved, bool) { return c.review, c.reviewSet }
+
+// WithoutReview returns c with the review role unset, as a run that skips the
+// review has it.
+func (c Choice) WithoutReview() Choice {
+	c.review, c.reviewSet = Resolved{}, false
+	return c
+}
 
 // Work returns the preset the work role runs on in this run.
 func (c Choice) Work() Resolved { return c.work }

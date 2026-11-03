@@ -227,3 +227,27 @@ func TestLoopRunRefusesAMissingReviewAgentBeforeSettingUpTheWorkBranch(t *testin
 		t.Errorf("exit %d, stderr %q, %d work branches, %d agent runs; want non-zero naming %q, no work branch and no agent", code, stderr, *benches, idle.runs, want)
 	}
 }
+
+func TestLoopRunNoReviewSkipsTheReviewAndSaysSo(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+	w, _ := repoWith(t, gh, claude, opusRepoFile+"  review: codex\n")
+	w.lookPath = installedOnly("claude")
+
+	stdout, stderr, code := runLoopRun(t, w, "42", "--no-review")
+
+	if want := "not reviewed: `--no-review`"; code != 0 || !strings.Contains(stdout, want) || len(claude.commands) != 1 {
+		t.Errorf("exit %d, stdout %q, stderr %q, %d agent runs; want 0, %q and the task alone worked, without codex", code, stdout, stderr, len(claude.commands), want)
+	}
+}
+
+func TestLoopRunNoReviewIsRefusedWithInteractiveBeforeAnythingIsRead(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &idleAgent{}, opusRepoFile)
+
+	_, stderr, code := runLoopRun(t, w, "42", "--no-review", "--interactive")
+
+	if want := "--no-review cannot be combined with --interactive"; code == 0 || !strings.Contains(stderr, want) || len(gh.ran) != 0 {
+		t.Errorf("exit %d, stderr %q, gh %v; want non-zero naming %q and nothing read", code, stderr, gh.ran, want)
+	}
+}

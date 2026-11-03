@@ -156,7 +156,10 @@ type Loop struct {
 	Prompt  Prompt
 	// Review turns the review of a complete execution on; nil turns it off.
 	Review *Review
-	Limits Limits
+	// NoReview reports that the review role is set but --no-review skips it
+	// for this run: nothing is reviewed or marked, and the report says so.
+	NoReview bool
+	Limits   Limits
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
 	// Hostname names the machine the loop runs on, for the comment on a
@@ -322,6 +325,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			continue
 		}
 		if !ok {
+			if l.NoReview && reviewable(current) && remaining.Complete() {
+				note = "not reviewed: `--no-review`"
+			}
 			hint = l.reviewHint(ctx, current, remaining)
 			return stopped(remaining), l.finish(ctx, remaining)
 		}

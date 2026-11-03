@@ -352,6 +352,9 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			box, args := leading(args, 1)
+			if interactive && flags.NoReview {
+				return reportInvalid(cmd, errors.New("--no-review cannot be combined with --interactive: an interactive run never reviews"))
+			}
 			if interactive && !attended(w.term) {
 				return refuseUnattended(cmd, "loop run --interactive", attachedInstead(cmd, box, args))
 			}
@@ -398,6 +401,7 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 	cmd.Flags().StringVar(&flags.Preset.Agent, "agent", "", "the agent to hand each task to, in a one-off preset that takes its model from --model alone")
 	cmd.Flags().StringVar(&flags.Preset.Model, "model", "", "the model the agent runs, over the work preset's")
 	cmd.Flags().StringVar(&flags.Preset.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the preset's")
+	cmd.Flags().BoolVar(&flags.NoReview, "no-review", false, "skip the review of a complete execution for this run, leaving it unmarked so a later run reviews it")
 	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
@@ -421,6 +425,10 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	settings, presets, err := w.settings(cmd.Context(), flags)
 	if err != nil {
 		return tracker.Execution{}, err
+	}
+	if flags.NoReview {
+		_, l.NoReview = presets.Review()
+		presets = presets.WithoutReview()
 	}
 	prompt, err := w.prompt(cmd.Context())
 	if err != nil {
