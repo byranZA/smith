@@ -6,6 +6,8 @@
 >
 > **Amended by [ADR-0020](./0020-the-loop-stops-on-a-broken-agent.md).** A task whose every attempt was an agent failure is not skipped; the run stops as `agent broken` instead.
 >
+> **Amended by [ADR-0025](./0025-the-loop-files-the-reviews-findings.md).** The loop also marks an execution's issue `smith:reviewing` while its review runs and `smith:reviewed` once the review's findings are filed. Both are loop-owned like the others.
+>
 > **Amended by [#470](https://github.com/byranZA/smith/issues/470).** An interactive run may work a task meant for a human when it is named on its own; left open, the task stays the human's.
 
 ## Context
