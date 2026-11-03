@@ -23,6 +23,9 @@ const fileName = "repo.yaml"
 // promptName is the name, inside dirName, of the loop prompt a repo ejects.
 const promptName = "prompt.md"
 
+// reviewName is the name, inside dirName, of the review prompt a repo ejects.
+const reviewName = "review.md"
+
 // guideName is the name, inside dirName, of the repo guide.
 const guideName = "README.md"
 
@@ -60,6 +63,10 @@ func (r Repo) GuidePath() string { return filepath.Join(r.root, dirName, guideNa
 // PromptPath is where the repo's ejected loop prompt is, whether or not the
 // repo has ejected one.
 func (r Repo) PromptPath() string { return filepath.Join(r.root, dirName, promptName) }
+
+// ReviewPromptPath is where the repo's ejected review prompt is, whether or not
+// the repo has ejected one.
+func (r Repo) ReviewPromptPath() string { return filepath.Join(r.root, dirName, reviewName) }
 
 // Locate finds the root of the git repo dir is inside, asking git. It returns
 // ErrNotARepo when git finds none, ErrBareRepo when the repo has no working

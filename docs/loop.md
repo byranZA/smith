@@ -294,6 +294,16 @@ A label left to its default is never checked, so a repo file with no `labels:` r
 
 The review has its own built-in prompt, `internal/loop/review.md`, with the placeholders `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{MERGE_BASE}}` and `{{FINDINGS_FILE}}`. It starts three subagents with fresh contexts, one for each of the Spec, Standards and Quality axes, and has the agent write what they return to the findings file.
 
+Eject it like the loop prompt, with the role named:
+
+```sh
+smith loop prompt review > .smith/review.md
+```
+
+`smith loop prompt` takes an optional role, `work` by default; any other role than `work` and `review` is refused. Once `.smith/review.md` exists the review agent is handed it instead of the built-in, with the placeholders filled in. An unknown placeholder stops the run before any agent runs, and no placeholder is required. An ejected prompt must still make the agent write the findings file (see the agent guide for its contract).
+
+pi has no subagents, which the built-in prompt relies on. An unattended run that would review, whose review preset runs pi (from `roles.review` or a pinning flag such as `--agent pi`), and that has no `.smith/review.md`, stops before any agent runs. Eject the review prompt and point it at a subagent tool, or pass `--no-review`.
+
 ## The loop prompt
 
 The loop hands each agent run the **loop prompt**. smith ships a built-in one:

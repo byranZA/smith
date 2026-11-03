@@ -17,14 +17,19 @@ type Commit struct {
 	Prompt []byte
 	// Ejected reports whether the commit holds an ejected loop prompt.
 	Ejected bool
+	// ReviewPrompt is the ejected review prompt, meaningful only when
+	// ReviewEjected.
+	ReviewPrompt []byte
+	// ReviewEjected reports whether the commit holds an ejected review prompt.
+	ReviewEjected bool
 }
 
 // Committed reads the repo file and the ejected loop prompt as ref holds them
 // in the git repo at gitDir, bare or not, with no checkout. Either may be
 // absent; a ref the repo lacks and a repo file that does not parse are refused.
 func Committed(ctx context.Context, git Runner, gitDir, ref string) (Commit, error) {
-	filePath, promptPath := dirName+"/"+fileName, dirName+"/"+promptName
-	listed, err := gitOut(ctx, git, gitDir, "ls-tree", "--name-only", ref, "--", filePath, promptPath)
+	filePath, promptPath, reviewPath := dirName+"/"+fileName, dirName+"/"+promptName, dirName+"/"+reviewName
+	listed, err := gitOut(ctx, git, gitDir, "ls-tree", "--name-only", ref, "--", filePath, promptPath, reviewPath)
 	if err != nil {
 		return Commit{}, fmt.Errorf("read the repo file at %s in %s: %w", ref, gitDir, err)
 	}
@@ -44,6 +49,12 @@ func Committed(ctx context.Context, git Runner, gitDir, ref string) (Commit, err
 			return Commit{}, fmt.Errorf("read the loop prompt at %s in %s: %w", ref, gitDir, err)
 		}
 		c.Ejected = true
+	}
+	if slices.Contains(present, reviewPath) {
+		if c.ReviewPrompt, err = gitOut(ctx, git, gitDir, "show", ref+":"+reviewPath); err != nil {
+			return Commit{}, fmt.Errorf("read the review prompt at %s in %s: %w", ref, gitDir, err)
+		}
+		c.ReviewEjected = true
 	}
 	return c, nil
 }

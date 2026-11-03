@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -249,5 +250,116 @@ func TestLoopRunNoReviewIsRefusedWithInteractiveBeforeAnythingIsRead(t *testing.
 
 	if want := "--no-review cannot be combined with --interactive"; code == 0 || !strings.Contains(stderr, want) || len(gh.ran) != 0 {
 		t.Errorf("exit %d, stderr %q, gh %v; want non-zero naming %q and nothing read", code, stderr, gh.ran, want)
+	}
+}
+
+const piPreset = "presets:\n  pirev: {agent: pi, model: m, effort: low}\n"
+
+func ejectReviewPrompt(t *testing.T, w loopWiring, content string) {
+	t.Helper()
+	path := filepath.Join(rootOf(t, w), ".smith", "review.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoopRunRefusesAReviewOnPiWithoutAnEjectedPromptBeforeAnyAgentRuns(t *testing.T) {
+	tests := []struct {
+		name  string
+		file  string
+		flags []string
+	}{
+		{"through roles.review", strings.Replace(opusRepoFile, "presets:\n", piPreset, 1) + "  review: pirev\n", nil},
+		{"through --agent pi", opusRepoFile + "  review: opus\n", []string{"--agent", "pi"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+			idle := &idleAgent{}
+			w, _ := repoWith(t, gh, idle, tt.file)
+
+			_, stderr, code := runLoopRun(t, w, "42", tt.flags...)
+
+			if code == 0 || !strings.Contains(stderr, ".smith/review.md") || !strings.Contains(stderr, "--no-review") || idle.runs != 0 {
+				t.Errorf("exit %d, stderr %q, %d agent runs; want non-zero naming .smith/review.md and --no-review, no agent", code, stderr, idle.runs)
+			}
+		})
+	}
+}
+
+func TestLoopRunDoesNotStopAReviewOnPiWithAnEjectedPromptOrNoReview(t *testing.T) {
+	file := strings.Replace(opusRepoFile, "presets:\n", piPreset, 1) + "  review: pirev\n"
+	for name, eject := range map[string]bool{"an ejected prompt": true, "--no-review": false} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+			claude := &recordingAgent{fakeAgent: fakeAgent{gh: gh}}
+			w, _ := repoWith(t, gh, claude, file)
+			w.lookPath = onPath
+			var flags []string
+			if eject {
+				ejectReviewPrompt(t, w, "Run our review skill; write {{FINDINGS_FILE}}.\n")
+			} else {
+				flags = append(flags, "--no-review")
+			}
+
+			_, stderr, code := runLoopRun(t, w, "42", flags...)
+
+			if strings.Contains(stderr, "review.md") {
+				t.Errorf("exit %d, stderr %q; want the run not stopped for the review prompt", code, stderr)
+			}
+		})
+	}
+}
+
+func TestLoopRunRefusesAnUnknownPlaceholderInAnEjectedReviewPromptBeforeAnyAgentRuns(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	idle := &idleAgent{}
+	w, _ := repoWith(t, gh, idle, opusRepoFile)
+	ejectReviewPrompt(t, w, "Review {{TASK_NUMBER}}.\n")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || !strings.Contains(stderr, "{{TASK_NUMBER}}") || !strings.Contains(stderr, "{{FINDINGS_FILE}}") || idle.runs != 0 {
+		t.Errorf("exit %d, stderr %q, %d agent runs; want non-zero naming the placeholder and the known ones, no agent", code, stderr, idle.runs)
+	}
+}
+
+func runLoopPromptRole(t *testing.T, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	w, _ := repoWith(t, &fakeTracker{}, &idleAgent{}, "")
+	cmd := newLoopCmd(inRepo(t, w))
+	cmd.SetArgs(append([]string{"prompt"}, args...))
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	code = codeFromError(cmd.Execute())
+	return out.String(), errBuf.String(), code
+}
+
+func TestLoopPromptReviewPrintsTheBuiltInReviewPrompt(t *testing.T) {
+	stdout, _, code := runLoopPromptRole(t, "review")
+
+	if code != 0 || stdout != string(loop.BuiltinReviewPrompt()) || !strings.Contains(stdout, "{{FINDINGS_FILE}}") {
+		t.Errorf("exit %d, stdout %.60q; want 0 and the built-in review prompt unfilled", code, stdout)
+	}
+}
+
+func TestLoopPromptWorkPrintsTheLoopPrompt(t *testing.T) {
+	stdout, _, code := runLoopPromptRole(t, "work")
+
+	if code != 0 || stdout != string(loop.BuiltinPrompt()) {
+		t.Errorf("exit %d, stdout %.60q; want 0 and the built-in loop prompt", code, stdout)
+	}
+}
+
+func TestLoopPromptRefusesAnUnknownRoleNamingTheKnownOnes(t *testing.T) {
+	stdout, stderr, code := runLoopPromptRole(t, "audit")
+
+	if code == 0 || stdout != "" || !strings.Contains(stderr, "audit") || !strings.Contains(stderr, "work") || !strings.Contains(stderr, "review") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want non-zero, nothing printed, naming audit, work and review", code, stdout, stderr)
 	}
 }

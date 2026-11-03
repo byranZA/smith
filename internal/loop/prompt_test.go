@@ -131,3 +131,41 @@ func TestParsePromptKeepsTheEjectedText(t *testing.T) {
 		t.Errorf("ParsePrompt() = %q, %v; want the text as given", got, err)
 	}
 }
+
+func TestParseReviewPromptRefusesAnUnknownPlaceholderNamingItsSource(t *testing.T) {
+	_, err := loop.ParseReviewPrompt("main:.smith/review.md", []byte("Review {{TASK_NUMBER}}.\n"))
+
+	want := "main:.smith/review.md: unknown placeholder {{TASK_NUMBER}}: known placeholders are {{ISSUE_NUMBER}}, {{ISSUE_TITLE}}, {{MERGE_BASE}}, {{FINDINGS_FILE}}"
+	if err == nil || err.Error() != want {
+		t.Errorf("ParseReviewPrompt() err = %v, want %q", err, want)
+	}
+}
+
+func TestParseReviewPromptRequiresNoPlaceholder(t *testing.T) {
+	got, err := loop.ParseReviewPrompt("review.md", []byte("Run our review skill.\n"))
+
+	if err != nil || got != "Run our review skill.\n" {
+		t.Errorf("ParseReviewPrompt() = %q, %v; want the text as given", got, err)
+	}
+}
+
+func TestLoadReviewPromptReadsAnEjectedFileAndSaysSo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review.md")
+	if err := os.WriteFile(path, []byte("Our review of #{{ISSUE_NUMBER}}.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ejected, err := loop.LoadReviewPrompt(path)
+
+	if err != nil || !ejected || got != "Our review of #{{ISSUE_NUMBER}}.\n" {
+		t.Errorf("LoadReviewPrompt() = %q, %v, %v; want the file's text, ejected", got, ejected, err)
+	}
+}
+
+func TestLoadReviewPromptFallsBackToTheBuiltInWhenNothingIsEjected(t *testing.T) {
+	got, ejected, err := loop.LoadReviewPrompt(filepath.Join(t.TempDir(), "review.md"))
+
+	if err != nil || ejected || got != loop.BuiltinReviewPrompt() {
+		t.Errorf("LoadReviewPrompt() ejected = %v, err = %v, built-in = %v; want the built-in, not ejected", ejected, err, got == loop.BuiltinReviewPrompt())
+	}
+}

@@ -186,6 +186,31 @@ func (w loopWiring) prompt(ctx context.Context) (loop.Prompt, error) {
 	return promptIn(repo)
 }
 
+// errPiReview is the refusal of a review on pi with no ejected review prompt:
+// pi has no subagents, which the built-in review prompt relies on.
+var errPiReview = errors.New("the review would run on pi, which has no subagents, and the built-in review prompt needs them: " +
+	"eject the review prompt with `smith loop prompt review > .smith/review.md` and point it at a subagent tool, or pass --no-review")
+
+// reviewPrompt loads the review prompt for the repo smith is run from, and
+// reports whether the repo ejected one: its copy when it has one, otherwise
+// the built-in.
+func (w loopWiring) reviewPrompt(ctx context.Context) (prompt loop.ReviewPrompt, ejected bool, err error) {
+	repo, err := w.repo(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("load review prompt: %w", err)
+	}
+	return reviewPromptIn(repo)
+}
+
+// reviewPromptIn loads the review prompt as repo's checkout holds it.
+func reviewPromptIn(repo repofile.Repo) (loop.ReviewPrompt, bool, error) {
+	prompt, ejected, err := loop.LoadReviewPrompt(repo.ReviewPromptPath())
+	if err != nil {
+		return "", false, fmt.Errorf("load review prompt: %w", err)
+	}
+	return prompt, ejected, nil
+}
+
 // promptIn loads the loop prompt as repo's checkout holds it: its ejected copy
 // when it has one, otherwise the built-in.
 func promptIn(repo repofile.Repo) (loop.Prompt, error) {
@@ -286,26 +311,38 @@ func settingsReport(s loop.Settings) string {
 	return b.String()
 }
 
-// newLoopPromptCmd builds `smith loop prompt`, which prints the built-in loop
-// prompt with its placeholders unfilled, whether or not the repo has ejected
-// its own. Ejecting is saving this output as .smith/prompt.md, which smith
-// itself never writes.
+// newLoopPromptCmd builds `smith loop prompt [role]`, which prints the
+// built-in prompt of a role, work by default, with its placeholders unfilled,
+// whether or not the repo has ejected its own. Ejecting is saving this output
+// as .smith/prompt.md, or .smith/review.md for the review, which smith itself
+// never writes.
 func newLoopPromptCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:         "prompt",
+		Use:         "prompt [work|review]",
 		Annotations: verbTraits(false, false, false),
-		Short:       "Print the built-in loop prompt, to eject or diff against",
-		Long: `Print the prompt the loop hands each task's agent, as built into smith, with
-its placeholders unfilled. It prints the built-in one even when the repo has
-its own: save the output as .smith/prompt.md to eject it, or diff a repo's
-prompt against it.
+		Short:       "Print a built-in loop prompt, to eject or diff against",
+		Long: `Print the prompt the loop hands the agent of a role, as built into smith, with
+its placeholders unfilled. The role is work, the default, for each task's
+agent, or review, for the review agent. It prints the built-in one even when
+the repo has its own: save the output as .smith/prompt.md (work) or
+.smith/review.md (review) to eject it, or diff a repo's prompt against it.
 
 ` + exits(0, 1),
 		Example: `  smith loop prompt > .smith/prompt.md
+  smith loop prompt review > .smith/review.md
   smith loop prompt | diff - .smith/prompt.md`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), loop.BuiltinPrompt()); err != nil {
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var text string
+			switch role := append(args, "work")[0]; role {
+			case "work":
+				text = string(loop.BuiltinPrompt())
+			case "review":
+				text = string(loop.BuiltinReviewPrompt())
+			default:
+				return reportInvalid(cmd, fmt.Errorf("unknown role %q: the roles with a prompt are work and review", role))
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), text); err != nil {
 				return fmt.Errorf("write loop prompt: %w", err)
 			}
 			return nil
@@ -434,6 +471,13 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
+	reviewPrompt, ejected, err := w.reviewPrompt(cmd.Context())
+	if err != nil {
+		return tracker.Execution{}, err
+	}
+	if resolved, ok := presets.Review(); ok && !interactive && !ejected && resolved.Agent.Value == "pi" {
+		return tracker.Execution{}, reportInvalid(cmd, errPiReview)
+	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh, interactive)
 	if err != nil {
 		return tracker.Execution{}, err
@@ -446,7 +490,7 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
 	if resolved, ok := presets.Review(); ok {
-		l.Review = &loop.Review{Preset: resolved, Prompt: loop.BuiltinReviewPrompt()}
+		l.Review = &loop.Review{Preset: resolved, Prompt: reviewPrompt}
 	}
 	if l.Pusher, err = w.origin(settings); err != nil {
 		return admitted.execution, err

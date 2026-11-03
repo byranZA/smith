@@ -236,6 +236,9 @@ func (w loopWiring) checkedOut(ctx context.Context, dir string, flags loop.Flags
 	if _, err := promptIn(repo); err != nil {
 		return loop.Settings{}, preset.Choice{}, err
 	}
+	if _, _, err := reviewPromptIn(repo); err != nil {
+		return loop.Settings{}, preset.Choice{}, err
+	}
 	return settings, presets, nil
 }
 
@@ -251,11 +254,15 @@ func (w loopWiring) committed(cmd *cobra.Command, clone, ref string, flags loop.
 	if err != nil {
 		return loop.Settings{}, preset.Choice{}, fmt.Errorf("resolve loop settings: %w", err)
 	}
-	if !commit.Ejected {
-		return settings, presets, nil
+	if commit.Ejected {
+		if _, err := loop.ParsePrompt(ref+":.smith/prompt.md", commit.Prompt); err != nil {
+			return loop.Settings{}, preset.Choice{}, fmt.Errorf("load loop prompt: %w", err)
+		}
 	}
-	if _, err := loop.ParsePrompt(ref+":.smith/prompt.md", commit.Prompt); err != nil {
-		return loop.Settings{}, preset.Choice{}, fmt.Errorf("load loop prompt: %w", err)
+	if commit.ReviewEjected {
+		if _, err := loop.ParseReviewPrompt(ref+":.smith/review.md", commit.ReviewPrompt); err != nil {
+			return loop.Settings{}, preset.Choice{}, fmt.Errorf("load review prompt: %w", err)
+		}
 	}
 	return settings, presets, nil
 }
