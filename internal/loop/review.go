@@ -188,14 +188,25 @@ func (l Loop) postReview(ctx context.Context, number int, findings review.File, 
 // fileFindings files the findings of ledger at the positions in todo, blockers
 // first, as tasks under issue number, whose review is the comment id. tasks
 // maps the position of each finding already filed to its task, and gains each
-// one filed here. It then edits the comment to name every task and marks the
+// one filed here. It returns every task tasks maps, in filing order. It then edits the comment to name every task and marks the
 // issue reviewed. A tracker failure stops it at once, without retrying, and is
 // returned as incomplete.
-func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger review.Ledger, tasks map[int]int, todo []int) (filed []Filed, incomplete *Incomplete, err error) {
+func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger review.Ledger, tasks map[int]int, todo []int) ([]Filed, *Incomplete, error) {
 	findings := ledger.File.Findings
 	ids := review.IDs(findings)
+	// reported lists every task the ledger maps, in filing order, including
+	// those earlier runs filed.
+	reported := func() []Filed {
+		var all []Filed
+		for _, i := range review.Order(findings) {
+			if n, ok := tasks[i]; ok {
+				all = append(all, Filed{Number: n, ID: ids[i]})
+			}
+		}
+		return all
+	}
 	stopped := func(err error) ([]Filed, *Incomplete, error) {
-		return filed, &Incomplete{Filed: len(tasks), Total: len(findings), Err: err}, nil
+		return reported(), &Incomplete{Filed: len(tasks), Total: len(findings), Err: err}, nil
 	}
 	for _, i := range todo {
 		f := findings[i]
@@ -211,7 +222,6 @@ func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger rev
 			return stopped(fmt.Errorf("file finding %s of the review of #%d: %w", ids[i], number, err))
 		}
 		tasks[i] = n
-		filed = append(filed, Filed{Number: n, ID: ids[i]})
 	}
 	if len(tasks) > 0 {
 		if err := l.Tracker.EditComment(ctx, id, review.Comment(ledger.File, number, ledger.Sha, tasks)); err != nil {
@@ -224,9 +234,9 @@ func (l Loop) fileFindings(ctx context.Context, number int, id int64, ledger rev
 	// Only now is the review finished: a ledger marked done is history, and
 	// removing the reviewed mark afterwards asks for a fresh review.
 	if err := l.warnIf(l.Tracker.EditComment(ctx, id, review.CommentDone(ledger.File, number, ledger.Sha, tasks)), "could not mark the review of #%d as done", number); err != nil {
-		return filed, nil, err
+		return reported(), nil, err
 	}
-	return filed, nil, nil
+	return reported(), nil, nil
 }
 
 // ledgerOf finds the ledger a review left among the comments of execution,

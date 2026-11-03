@@ -562,6 +562,35 @@ func TestRunFilesOnlyTheMissingFindingsOfALedgerWithoutReviewingAgain(t *testing
 	}
 }
 
+func TestResumeReportsEveryFiledTaskIncludingEarlierOnes(t *testing.T) {
+	b := ledgerBoard(t, tip, true)
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	report := outcome.Report("spec #42", l.Limits)
+	if err != nil || !strings.Contains(report, "review filed: #101 (S1), #102 (S2), #103 (Q1)") {
+		t.Errorf("Run() = %v, report %q; want all three tasks named in filing order", err, report)
+	}
+}
+
+func TestEditOnlyRetryReportsEveryPreviouslyFiledTask(t *testing.T) {
+	b := ledgerBoard(t, tip, true)
+	b.refuseEdit = errors.New("HTTP 502")
+	l, _ := reviewingLoop(t, b, noFindings)
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatal(err)
+	}
+	b.refuseEdit = nil
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	report := outcome.Report("spec #42", l.Limits)
+	if err != nil || !strings.Contains(report, "review filed: #101 (S1), #102 (S2), #103 (Q1)") {
+		t.Errorf("Run() = %v, report %q; want all three tasks named", err, report)
+	}
+}
+
 func TestResumeNotesThatTheWorkBranchMoved(t *testing.T) {
 	b := ledgerBoard(t, "9999999999999999999999999999999999999999", true)
 	l, _ := reviewingLoop(t, b, noFindings)
