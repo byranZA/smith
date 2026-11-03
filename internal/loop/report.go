@@ -29,6 +29,9 @@ const (
 	// ReviewFailed is a run whose review ran out of attempts without a valid
 	// findings file, or changed the work branch it was to leave alone.
 	ReviewFailed Ending = "review failed"
+	// ReviewIncomplete is a run whose review posted its ledger but could not
+	// finish filing it, for a tracker failure.
+	ReviewIncomplete Ending = "review incomplete"
 	// Stopped is a run interrupted by a signal.
 	Stopped Ending = "stopped"
 	// Failed is a run stopped on an error.
@@ -50,6 +53,8 @@ func (o Outcome) Ending() Ending {
 		return AgentBroken
 	case o.ReviewFailure != nil:
 		return ReviewFailed
+	case o.ReviewIncomplete != nil:
+		return ReviewIncomplete
 	case o.Capped:
 		return CapReached
 	case len(o.Remaining.Skipped) > 0:
@@ -66,7 +71,7 @@ func (o Outcome) Ending() Ending {
 // broken names the task, the agent's last failure and the machine to check.
 func (o Outcome) Report(name string, limits Limits) string {
 	if o.Complete() {
-		return name + " complete\n" + o.filedLine()
+		return name + " complete\n" + o.noteLine() + o.filedLine()
 	}
 	var b strings.Builder
 	switch {
@@ -74,6 +79,8 @@ func (o Outcome) Report(name string, limits Limits) string {
 		fmt.Fprintf(&b, "%s stopped: %s; check that the agent runs on %s\n", name, o.Broken.cause(), o.Broken.Machine)
 	case o.ReviewFailure != nil:
 		fmt.Fprintf(&b, "%s stopped: the review failed (%v); its worktree is %s\n", name, o.ReviewFailure, o.ReviewDir)
+	case o.ReviewIncomplete != nil:
+		fmt.Fprintf(&b, "%s stopped: the review is incomplete (%v); its ledger is posted and %d of %d findings are filed; a later run files the rest\n", name, o.ReviewIncomplete.Err, o.ReviewIncomplete.Filed, o.ReviewIncomplete.Total)
 	case o.Capped:
 		fmt.Fprintf(&b, "%s stopped: reached the cap of %d agent runs\n", name, limits.MaxIterations)
 	case len(o.Remaining.Skipped) > 0:
@@ -89,8 +96,17 @@ func (o Outcome) Report(name string, limits Limits) string {
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString(o.noteLine())
 	b.WriteString(o.filedLine())
 	return b.String()
+}
+
+// noteLine says what the run noted about its review, or nothing.
+func (o Outcome) noteLine() string {
+	if o.Note == "" {
+		return ""
+	}
+	return "  note: " + o.Note + "\n"
 }
 
 // filedLine names the tasks the run's review filed, or nothing when it filed

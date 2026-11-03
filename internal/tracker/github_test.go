@@ -163,7 +163,7 @@ func manyChildren() *fakeGH {
 }
 
 const (
-	specFields = "number,title,state,labels,body,subIssues,url,parent"
+	specFields = "number,title,state,labels,body,subIssues,url,parent,comments"
 	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
@@ -193,8 +193,8 @@ func TestExecutionReadsTheSpecAndItsTasksInListedOrder(t *testing.T) {
 
 	want := tracker.Execution{Number: 42, Title: "Spec: the loop", Tasks: []tracker.Task{
 		{Number: 45, Title: "The repo file", Open: true, For: tracker.Human},
-		{Number: 43, Title: "The tracker", Open: false, For: tracker.Agent},
-		{Number: 44, Title: "The prompt", Open: true, For: tracker.Human, Blockers: []tracker.Blocker{{Number: 45, Open: true}, {Number: 43, Open: false}, {Number: 7, Open: false}}},
+		{Number: 43, Title: "The tracker", Open: false, For: tracker.Agent, Body: "## What to build\n\nThe tracker.\n\n## Blocked by\n\nNone - can start immediately\n"},
+		{Number: 44, Title: "The prompt", Open: true, For: tracker.Human, Blockers: []tracker.Blocker{{Number: 45, Open: true}, {Number: 43, Open: false}, {Number: 7, Open: false}}, Body: "## Blocked by\n\n- #43\n- #7\n"},
 		{Number: 50, Title: "Fix the summary", Open: true, For: tracker.Nobody},
 	}}
 	if !reflect.DeepEqual(got, want) {
@@ -1071,5 +1071,21 @@ func TestTheReviewMarksAreNotTriageLabels(t *testing.T) {
 		if !tracker.IsMark(name) {
 			t.Errorf("IsMark(%q) = false, want true", name)
 		}
+	}
+}
+
+func TestExecutionReadsTheCommentsOfASpecWithTheNumericIDsEditsNeed(t *testing.T) {
+	t.Parallel()
+	replies := recorded()
+	replies[specView(42)] = strings.Replace(replies[specView(42)], `"labels":[`, `"comments":[{"id":"IC_a","url":"https://github.com/o/r/issues/42#issuecomment-1001","body":"first"},{"id":"IC_b","url":"https://github.com/o/r/issues/42#issuecomment-1002","body":"second"}],"labels":[`, 1)
+
+	got, err := tracker.NewGitHub(&fakeGH{replies: replies}, tracker.DefaultLabels()).Execution(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("Execution(42) error = %v", err)
+	}
+
+	want := []tracker.Comment{{ID: 1001, Body: "first"}, {ID: 1002, Body: "second"}}
+	if !reflect.DeepEqual(got.Comments, want) {
+		t.Errorf("Execution(42).Comments = %+v, want %+v", got.Comments, want)
 	}
 }

@@ -1,6 +1,7 @@
 package review_test
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -150,5 +151,71 @@ func TestCommentListsFindingsByAxisTalliesThemAndNamesFiledTasks(t *testing.T) {
 		if !strings.Contains(filed, want) {
 			t.Errorf("Comment() with tasks = %q, want it to hold %q", filed, want)
 		}
+	}
+}
+
+func ledgerFile(t *testing.T) review.File {
+	t.Helper()
+	file, err := review.Parse([]byte(`{"findings": [
+		{"axis": "quality", "severity": "minor", "title": "Q one", "who": "agent", "body": "b"},
+		{"axis": "spec", "severity": "major", "title": "S one", "who": "agent", "body": "b"},
+		{"axis": "spec", "severity": "minor", "title": "S two", "who": "human", "body": "b"}
+	], "not_filed": [{"title": "Split", "summary": "Too big."}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+func TestParseLedgerRoundTripsAComment(t *testing.T) {
+	t.Parallel()
+	file := ledgerFile(t)
+
+	got, found, err := review.ParseLedger(review.Comment(file, 42, "abc123", map[int]int{0: 7}))
+
+	if err != nil || !found || got.Sha != "abc123" || !reflect.DeepEqual(got.File, file) {
+		t.Errorf("ParseLedger() = %+v, %v, %v; want the ledger of %+v at abc123", got, found, err, file)
+	}
+}
+
+func TestParseLedgerTellsALedgerFromAnyOtherComment(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{"", "smith stopped its run: **complete**", "<!-- other -->"} {
+		if _, found, err := review.ParseLedger(body); found || err != nil {
+			t.Errorf("ParseLedger(%q) = found %v, %v; want no ledger and no error", body, found, err)
+		}
+	}
+}
+
+func TestParseLedgerRefusesABlockItCannotRead(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"not JSON":    "review\n<!-- smith:review {nope -->\n",
+		"not closed":  "review\n<!-- smith:review {\"sha\":\"a\",\"findings\":[]}\n",
+		"no sha":      "<!-- smith:review {\"findings\":[]} -->",
+		"bad finding": `<!-- smith:review {"sha":"a","findings":[{"axis":"x"}]} -->`,
+	} {
+		if _, found, err := review.ParseLedger(body); !found || err == nil {
+			t.Errorf("ParseLedger(%s) = found %v, %v; want a ledger found with an error", name, found, err)
+		}
+	}
+}
+
+func TestPendingNamesTheTaskOfEachFiledFindingAndListsTheRestInFilingOrder(t *testing.T) {
+	t.Parallel()
+	l := review.Ledger{Sha: "abc", File: ledgerFile(t)}
+	subs := []review.Sub{
+		{Number: 50, Body: "unrelated"},
+		{Number: 51, Body: review.TaskBody(l.File.Findings[1], "S1", 42)},
+		{Number: 52, Body: review.TaskBody(l.File.Findings[0], "Q1", 99)},
+	}
+
+	tasks, unfiled := review.Pending(l, 42, subs)
+
+	if want := map[int]int{1: 51}; !reflect.DeepEqual(tasks, want) {
+		t.Errorf("Pending() tasks = %v, want %v", tasks, want)
+	}
+	if want := []int{2, 0}; !slices.Equal(unfiled, want) {
+		t.Errorf("Pending() unfiled = %v, want %v (S2 then Q1)", unfiled, want)
 	}
 }

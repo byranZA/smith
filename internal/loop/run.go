@@ -204,6 +204,11 @@ type Outcome struct {
 	ReviewDir string
 	// Filed is the tasks the run's review filed, in the order it filed them.
 	Filed []Filed
+	// ReviewIncomplete is set when a tracker failure stopped the filing of
+	// the review's findings.
+	ReviewIncomplete *Incomplete
+	// Note is something the report says about the review beyond how it ended.
+	Note string
 }
 
 // Filed is a task a review filed for one of its findings.
@@ -228,7 +233,7 @@ type Broken struct {
 // Complete reports whether the run ended with every task of the spec closed
 // and, when it reviews, the review done.
 func (o Outcome) Complete() bool {
-	return o.Remaining.Complete() && !o.ReviewOwed && o.ReviewFailure == nil && o.Broken == nil
+	return o.Remaining.Complete() && !o.ReviewOwed && o.ReviewFailure == nil && o.ReviewIncomplete == nil && o.Broken == nil
 }
 
 // Run first refuses spec when one of its open tasks has a preset the run
@@ -266,28 +271,49 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 	runs := 0
 	reviewedAlready := false
 	var filed []Filed
+	var note string
 	stopped := func(remaining Remaining) Outcome {
-		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed), Filed: filed}
+		return Outcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), Left: left(remaining, worktrees), Killed: killedOf(remaining, killed), Filed: filed, Note: note}
 	}
 	if err := l.Presets.Check(current); err != nil {
 		return Outcome{}, fmt.Errorf("choose the presets of %s: %w", Name(current), err)
+	}
+	pending, pendingID, resuming, err := l.ledgerOf(current)
+	if err != nil {
+		return Outcome{}, err
 	}
 	if err := l.sweep(ctx, current); err != nil {
 		return Outcome{}, err
 	}
 	for {
 		remaining := survey(current, skipped)
+		if resuming {
+			resuming = false
+			result, err := l.resume(ctx, current, pending, pendingID)
+			if err != nil {
+				return Outcome{}, err
+			}
+			reviewedAlready = true
+			filed, note = result.filed, result.note
+			if result.incomplete != nil {
+				return l.reviewStopped(ctx, stopped(remaining), current, result)
+			}
+			if current, err = l.refresh(ctx, spec, current); err != nil {
+				return Outcome{}, err
+			}
+			continue
+		}
 		next, ok := remaining.Next()
 		if !ok && l.reviewDue(current, remaining, reviewedAlready) {
 			result, err := l.review(ctx, current, &runs)
 			if err != nil {
 				return Outcome{}, err
 			}
-			if result.failure != nil || result.capped {
+			filed = result.filed
+			if result.failure != nil || result.capped || result.incomplete != nil {
 				return l.reviewStopped(ctx, stopped(remaining), current, result)
 			}
 			reviewedAlready = true
-			filed = result.filed
 			if current, err = l.refresh(ctx, spec, current); err != nil {
 				return Outcome{}, err
 			}
@@ -354,6 +380,11 @@ func (l Loop) reviewStopped(ctx context.Context, outcome Outcome, execution trac
 	if result.capped {
 		outcome.Capped, outcome.ReviewOwed = true, true
 		return outcome, l.finish(ctx, outcome.Remaining)
+	}
+	outcome.Filed = result.filed
+	if result.incomplete != nil {
+		outcome.ReviewIncomplete = result.incomplete
+		return outcome, nil
 	}
 	outcome.ReviewFailure, outcome.ReviewDir = result.failure, result.dir
 	return outcome, nil

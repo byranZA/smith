@@ -38,7 +38,7 @@ func IsMark(name string) bool {
 
 // The issue fields read for a spec and for a task.
 const (
-	specFields = "number,title,state,labels,body,subIssues,url,parent"
+	specFields = "number,title,state,labels,body,subIssues,url,parent,comments"
 	taskFields = "number,title,state,labels,body,blockedBy,subIssues,url"
 )
 
@@ -106,6 +106,28 @@ type issue struct {
 	SubIssues connection `json:"subIssues"`
 	BlockedBy connection `json:"blockedBy"`
 	Parent    *parent    `json:"parent"`
+	Comments  []comment  `json:"comments"`
+}
+
+// comment is a comment as gh lists it on an issue. gh's id is a node id, so
+// the numeric one is read from the comment's URL.
+type comment struct {
+	URL  string `json:"url"`
+	Body string `json:"body"`
+}
+
+// commentsOf returns the comments of the issue with the numeric ids edits
+// name, leaving out any whose URL carries none.
+func (i issue) commentsOf() []Comment {
+	var comments []Comment
+	for _, c := range i.Comments {
+		_, id, found := strings.Cut(c.URL, "#issuecomment-")
+		n, err := strconv.ParseInt(id, 10, 64)
+		if found && err == nil {
+			comments = append(comments, Comment{ID: n, Body: c.Body})
+		}
+	}
+	return comments
 }
 
 // parent is the spec an issue is a sub-issue of, as gh gives it.
@@ -215,9 +237,9 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		if err != nil {
 			return Execution{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets()})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets(), Body: issues[n].Body})
 	}
-	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks, Reviewed: spec.labelled(reviewedLabel), Reviewing: spec.labelled(reviewingLabel)}, nil
+	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks, Reviewed: spec.labelled(reviewedLabel), Reviewing: spec.labelled(reviewingLabel), Comments: spec.commentsOf()}, nil
 }
 
 // single reads the task viewed as an execution of that task alone, whose
@@ -229,7 +251,7 @@ func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
 		return Execution{}, err
 	}
 	if viewed.Parent == nil {
-		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}, Reviewed: viewed.labelled(reviewedLabel), Reviewing: viewed.labelled(reviewingLabel)}, nil
+		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}, Reviewed: viewed.labelled(reviewedLabel), Reviewing: viewed.labelled(reviewingLabel), Comments: viewed.commentsOf()}, nil
 	}
 	repo := viewed.repo()
 	if ref := (issueNode{Number: viewed.Parent.Number, URL: viewed.Parent.URL}).ref().in(repo); ref.Repo != "" {

@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -60,20 +62,26 @@ func Parse(data []byte) (File, error) {
 	if raw.Findings == nil {
 		return File{}, errors.New(`the findings file has no "findings" list`)
 	}
-	for i, n := range raw.NotFiled {
-		if strings.TrimSpace(n.Title) == "" || strings.TrimSpace(n.Summary) == "" {
-			return File{}, fmt.Errorf("not_filed[%d] needs a title and a summary", i)
-		}
-	}
-	for i, f := range *raw.Findings {
-		if err := f.validate(len(*raw.Findings)); err != nil {
-			return File{}, fmt.Errorf("findings[%d] %w", i, err)
-		}
-	}
-	if err := noCycle(*raw.Findings); err != nil {
+	file := File{Findings: *raw.Findings, NotFiled: raw.NotFiled}
+	if err := file.check(); err != nil {
 		return File{}, err
 	}
-	return File{Findings: *raw.Findings, NotFiled: raw.NotFiled}, nil
+	return file, nil
+}
+
+// check reports what is wrong with f, or nil.
+func (f File) check() error {
+	for i, n := range f.NotFiled {
+		if strings.TrimSpace(n.Title) == "" || strings.TrimSpace(n.Summary) == "" {
+			return fmt.Errorf("not_filed[%d] needs a title and a summary", i)
+		}
+	}
+	for i, finding := range f.Findings {
+		if err := finding.validate(len(f.Findings)); err != nil {
+			return fmt.Errorf("findings[%d] %w", i, err)
+		}
+	}
+	return noCycle(f.Findings)
 }
 
 // validate reports what is wrong with f, one of count findings, or nil.
@@ -188,8 +196,93 @@ func TaskBody(f Finding, id string, number int) string {
 
 // ledger is what the hidden block of a review comment holds.
 type ledger struct {
-	Sha      string    `json:"sha"`
-	Findings []Finding `json:"findings"`
+	Sha      string     `json:"sha"`
+	Findings []Finding  `json:"findings"`
+	NotFiled []NotFiled `json:"not_filed,omitempty"`
+}
+
+// marker opens the hidden block of a review comment, which is what tells a
+// ledger from any other comment.
+const marker = "<!-- smith:review "
+
+// Ledger is a review as its comment holds it: the findings and the work
+// branch sha they were made on.
+type Ledger struct {
+	Sha  string
+	File File
+}
+
+// ParseLedger reads the ledger out of a comment body. found is false for a
+// comment that is no ledger; a comment with the marker whose block cannot be
+// read is an error.
+func ParseLedger(body string) (l Ledger, found bool, err error) {
+	var block string
+	for _, line := range strings.Split(body, "\n") {
+		if rest, ok := strings.CutPrefix(line, marker); ok {
+			block, found = strings.TrimSpace(rest), true
+			break
+		}
+	}
+	if !found {
+		return Ledger{}, false, nil
+	}
+	data, ok := strings.CutSuffix(block, "-->")
+	if !ok {
+		return Ledger{}, true, errors.New("the smith:review block is not closed")
+	}
+	var raw ledger
+	dec := json.NewDecoder(strings.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
+		return Ledger{}, true, fmt.Errorf("the smith:review block is not valid: %w", err)
+	}
+	file := File{Findings: raw.Findings, NotFiled: raw.NotFiled}
+	if raw.Sha == "" || raw.Findings == nil {
+		return Ledger{}, true, errors.New("the smith:review block has no sha or no findings list")
+	}
+	if err := file.check(); err != nil {
+		return Ledger{}, true, fmt.Errorf("the smith:review block is not valid: %w", err)
+	}
+	return Ledger{Sha: raw.Sha, File: file}, true, nil
+}
+
+// Sub is a sub-issue of the issue under review: its number and body.
+type Sub struct {
+	Number int
+	Body   string
+}
+
+// source matches the Source line TaskBody ends a task with, capturing the
+// finding's id and the number of the issue reviewed.
+var source = regexp.MustCompile(`(?m)^Source: .*, finding ([A-Za-z]+\d+), review of #(\d+)\s*$`)
+
+// Pending reads which findings of l, the review of issue number, subs already
+// file: tasks maps the position of each filed finding to the number of its
+// task, and unfiled lists the positions of the rest in filing order.
+func Pending(l Ledger, number int, subs []Sub) (tasks map[int]int, unfiled []int) {
+	ids := IDs(l.File.Findings)
+	named := map[string]int{}
+	for _, sub := range subs {
+		for _, m := range source.FindAllStringSubmatch(sub.Body, -1) {
+			if n, _ := strconv.Atoi(m[2]); n == number {
+				if _, dup := named[m[1]]; !dup {
+					named[m[1]] = sub.Number
+				}
+			}
+		}
+	}
+	tasks = map[int]int{}
+	for i, id := range ids {
+		if task, ok := named[id]; ok {
+			tasks[i] = task
+		}
+	}
+	for _, i := range Order(l.File.Findings) {
+		if _, ok := tasks[i]; !ok {
+			unfiled = append(unfiled, i)
+		}
+	}
+	return tasks, unfiled
 }
 
 // Comment renders the review of issue number as the comment the loop posts:
@@ -236,11 +329,11 @@ func Comment(file File, number int, sha string, tasks map[int]int) string {
 	}
 	b.WriteString(".\n\n")
 	// json.Marshal escapes ">", so the block cannot end the comment early.
-	block, err := json.Marshal(ledger{Sha: sha, Findings: file.Findings})
+	block, err := json.Marshal(ledger{Sha: sha, Findings: file.Findings, NotFiled: file.NotFiled})
 	if err != nil {
 		panic(fmt.Sprintf("marshal the review ledger: %v", err))
 	}
-	fmt.Fprintf(&b, "<!-- smith:review %s -->\n", block)
+	fmt.Fprintf(&b, "%s%s -->\n", marker, block)
 	return b.String()
 }
 

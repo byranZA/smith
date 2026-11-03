@@ -46,6 +46,11 @@ type board struct {
 	// makes the filing of the task with that many already filed fail.
 	filed      []tracker.NewTask
 	refuseFile *int
+	// existing holds the comments the issue already carries, which an
+	// execution reads, and refuseEdit and refuseMark make the edit of a
+	// comment and the mark of the issue as reviewed fail.
+	existing               []tracker.Comment
+	refuseEdit, refuseMark error
 }
 
 // posted is a comment posted on issue number.
@@ -75,6 +80,9 @@ func (b *board) Post(ctx context.Context, number int, body string) (int64, error
 
 func (b *board) EditComment(_ context.Context, id int64, body string) error {
 	b.events = append(b.events, "edit review")
+	if b.refuseEdit != nil {
+		return b.refuseEdit
+	}
 	b.comments[id].body = body
 	return nil
 }
@@ -88,7 +96,7 @@ func (b *board) File(_ context.Context, _ int, task tracker.NewTask) (int, error
 	b.events = append(b.events, "file "+task.Title)
 	b.filed = append(b.filed, task)
 	number := 100 + len(b.filed)
-	b.tasks = append(b.tasks, tracker.Task{Number: number, Title: task.Title, Open: true, For: task.For})
+	b.tasks = append(b.tasks, tracker.Task{Number: number, Title: task.Title, Open: true, For: task.For, Body: task.Body})
 	return number, nil
 }
 
@@ -108,6 +116,9 @@ func (b *board) StopReview(ctx context.Context, number int) error {
 }
 
 func (b *board) MarkReviewed(ctx context.Context, number int) error {
+	if b.refuseMark != nil {
+		return b.refuseMark
+	}
 	return b.write(ctx, "mark reviewed", number)
 }
 
@@ -148,7 +159,7 @@ func deadlineOf(ctx context.Context) time.Duration {
 
 func (b *board) Execution(_ context.Context, number int) (tracker.Execution, error) {
 	b.reads++
-	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks), Reviewed: b.reviewed, Reviewing: b.reviewing}, nil
+	return tracker.Execution{Number: number, Title: "spec", Single: b.single, Tasks: slices.Clone(b.tasks), Reviewed: b.reviewed, Reviewing: b.reviewing, Comments: slices.Clone(b.existing)}, nil
 }
 
 func (b *board) Task(_ context.Context, number int) (tracker.Task, error) {

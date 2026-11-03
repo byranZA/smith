@@ -14,6 +14,7 @@ import (
 	"github.com/byranZA/smith/internal/loop"
 	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/repofile"
+	"github.com/byranZA/smith/internal/review"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -502,14 +503,122 @@ func TestReviewNeverFilesARestructuringTooLargeForATask(t *testing.T) {
 	}
 }
 
-func TestReviewStopsAtOnceWhenFilingFailsLeavingTheSpecUnmarked(t *testing.T) {
+func TestReviewStopsAtOnceWhenFilingFailsEndingIncompleteWithTheLedgerPosted(t *testing.T) {
 	second := 1
 	b := &board{tasks: []tracker.Task{closed(agentTask(43))}, refuseFile: &second}
-	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "agent", "S one"), finding("spec", "minor", "agent", "S two")))
+	l, _ := reviewingLoop(t, b, findingsFile("", finding("spec", "major", "agent", "S one"), finding("spec", "minor", "agent", "S two"), finding("quality", "minor", "agent", "Q one")))
 
 	outcome, err := l.Run(t.Context(), 42)
 
-	if err == nil || !strings.Contains(err.Error(), "1 of 2 filed") || slices.Contains(b.events, "mark reviewed 42") || !slices.Contains(b.events, "stop review 42") {
-		t.Errorf("Run() = %+v, %v with events %q; want a failure naming 1 of 2 filed, no reviewed mark and the review mark removed", outcome, err, b.events)
+	want := []string{"start review 42", "open review 42", "launch review", "post review", "file S one", "stop review 42"}
+	if err != nil || outcome.Ending() != loop.ReviewIncomplete || !slices.Equal(b.events, want) {
+		t.Fatalf("Run() = %+v, %v with events %q; want review incomplete with events %q", outcome, err, b.events, want)
+	}
+	report := outcome.Report("spec #42", l.Limits)
+	if !strings.Contains(report, "ledger is posted and 1 of 3 findings are filed") {
+		t.Errorf("Report() = %q, want the ledger posted and 1 of 3 filed", report)
+	}
+}
+
+// ledgerBoard is a board whose spec carries the ledger of a review of three findings made at sha, with the first of them (S1) filed as #101.
+func ledgerBoard(t *testing.T, sha string, filedFirst bool) *board {
+	t.Helper()
+	file, err := review.Parse([]byte(findingsFile("",
+		finding("spec", "major", "agent", "S one"),
+		finding("spec", "minor", "agent", "S two"),
+		finding("quality", "minor", "human", "Q one"),
+	)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	b.existing = []tracker.Comment{{ID: 7, Body: "chatter"}, {ID: 8, Body: review.Comment(file, 42, sha, nil)}}
+	b.comments = make([]posted, 9)
+	if filedFirst {
+		b.filed = []tracker.NewTask{{}}
+		b.tasks = append(b.tasks, tracker.Task{Number: 101, Title: "S one", Open: false, For: tracker.Agent, Body: review.TaskBody(file.Findings[0], "S1", 42)})
+	}
+	return b
+}
+
+func TestRunFilesOnlyTheMissingFindingsOfALedgerWithoutReviewingAgain(t *testing.T) {
+	b := ledgerBoard(t, tip, true)
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	want := []string{"start review 42", "file S two", "file Q one", "edit review", "mark reviewed 42", "stop review 42"}
+	if err != nil || !slices.Equal(b.events[:len(want)], want) {
+		t.Fatalf("Run() = %+v, %v with events %q; want it to start with %q", outcome, err, b.events, want)
+	}
+	if slices.Contains(b.events, "launch review") || len(b.filed) != 3 {
+		t.Errorf("events %q, filed %d; want no review agent and two more tasks filed", b.events, len(b.filed))
+	}
+	if got := b.comments[8].body; !strings.Contains(got, "S one (#101)") || !strings.Contains(got, "S two (#102)") || !strings.Contains(got, "Q one (#103)") {
+		t.Errorf("ledger comment = %q, want all three tasks named", got)
+	}
+	if outcome.Ending() == loop.ReviewIncomplete || outcome.Note != "" {
+		t.Errorf("Run() = %+v, want a resumed review with no note", outcome)
+	}
+}
+
+func TestResumeNotesThatTheWorkBranchMoved(t *testing.T) {
+	b := ledgerBoard(t, "9999999999999999999999999999999999999999", true)
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || len(b.filed) != 3 || !slices.Contains(b.events, "mark reviewed 42") {
+		t.Fatalf("Run() = %+v, %v with events %q; want the missing findings filed anyway", outcome, err, b.events)
+	}
+	if report := outcome.Report("spec #42", l.Limits); !strings.Contains(report, "work branch moved") || !strings.Contains(report, tip) {
+		t.Errorf("Report() = %q, want it to note the branch moved to %s", report, tip)
+	}
+}
+
+func TestRunStopsBeforeAnyAgentWhenTheLedgerCannotBeParsed(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}, existing: []tracker.Comment{{ID: 8, Body: "review\n<!-- smith:review {nope -->\n"}}}
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err == nil || !strings.Contains(err.Error(), "comment 8") || len(b.launched) != 0 {
+		t.Errorf("Run() = %+v, %v with launches %d; want an error naming comment 8 and no agent run", outcome, err, len(b.launched))
+	}
+}
+
+func TestFailedEditAfterEveryTaskIsFiledEndsIncompleteAndTheNextRunOnlyEditsAndMarks(t *testing.T) {
+	b := ledgerBoard(t, tip, true)
+	b.refuseEdit = errors.New("HTTP 502")
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.ReviewIncomplete || slices.Contains(b.events, "mark reviewed 42") || !slices.Contains(b.events, "stop review 42") {
+		t.Fatalf("Run() = %+v, %v with events %q; want review incomplete, no reviewed mark and the review mark removed", outcome, err, b.events)
+	}
+	if report := outcome.Report("spec #42", l.Limits); !strings.Contains(report, "3 of 3 findings are filed") {
+		t.Errorf("Report() = %q, want 3 of 3 filed", report)
+	}
+
+	b.refuseEdit, b.events = nil, nil
+	filedBefore := len(b.filed)
+	outcome, err = l.Run(t.Context(), 42)
+
+	want := []string{"start review 42", "edit review", "mark reviewed 42", "stop review 42"}
+	if err != nil || len(b.filed) != filedBefore || !slices.Equal(b.events[:len(want)], want) {
+		t.Errorf("second Run() = %+v, %v with events %q, filed %d; want only an edit and a mark", outcome, err, b.events, len(b.filed))
+	}
+}
+
+func TestFailedMarkEndsReviewIncomplete(t *testing.T) {
+	b := ledgerBoard(t, tip, true)
+	b.refuseMark = errors.New("HTTP 502")
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.ReviewIncomplete {
+		t.Errorf("Run() = %+v, %v; want review incomplete", outcome, err)
 	}
 }

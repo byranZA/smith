@@ -24,6 +24,16 @@ type Execution struct {
 	// are false for a child task run on its own, which never reviews.
 	Reviewed  bool
 	Reviewing bool
+	// Comments holds the comments on the issue the work is reviewed under,
+	// oldest first, read where Reviewed is: the loop finds a review's ledger
+	// among them.
+	Comments []Comment
+}
+
+// Comment is a comment on an issue: its id, as an edit names it, and its body.
+type Comment struct {
+	ID   int64
+	Body string
 }
 
 // Standalone reports whether the execution is a task with no parent, named on
@@ -57,6 +67,8 @@ type Task struct {
 	// order. Which one it runs on, and whether two is too many, is for the
 	// preset choice to decide.
 	Presets []string
+	// Body is the task's body, which names the finding of a review it files.
+	Body string
 }
 
 // NewTask is a task to file: what it says, who it is meant for and the issues
