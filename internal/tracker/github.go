@@ -207,7 +207,11 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 	if err != nil {
 		return Execution{}, err
 	}
-	if !spec.isSpec(g.labels) {
+	filedUnder, err := g.partOf(ctx, number)
+	if err != nil {
+		return Execution{}, err
+	}
+	if !spec.isSpec(g.labels) && len(filedUnder) == 0 {
 		return g.single(ctx, spec)
 	}
 	subIssues, err := g.linked(ctx, number, "subIssues", spec.SubIssues)
@@ -222,6 +226,11 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 			return Execution{}, &ForeignError{Ref: child, Repo: repo}
 		}
 		children = append(children, child.Number)
+	}
+	for _, n := range filedUnder {
+		if !slices.Contains(children, n) {
+			children = append(children, n)
+		}
 	}
 	issues := map[int]issue{}
 	for _, n := range children {
@@ -251,6 +260,13 @@ func (g GitHub) single(ctx context.Context, viewed issue) (Execution, error) {
 		return Execution{}, err
 	}
 	if viewed.Parent == nil {
+		if n, _ := fallbackLinks(viewed.Body); n != 0 {
+			head, err := g.view(ctx, Ref{Number: n}, "number,title")
+			if err != nil {
+				return Execution{}, fmt.Errorf("read the parent #%d of task #%d: %w", n, viewed.Number, err)
+			}
+			return Execution{Number: head.Number, Title: head.Title, Single: true, Tasks: []Task{only}}, nil
+		}
 		return Execution{Number: only.Number, Title: only.Title, Single: true, Tasks: []Task{only}, Reviewed: viewed.labelled(reviewedLabel), Reviewing: viewed.labelled(reviewingLabel), Comments: viewed.commentsOf()}, nil
 	}
 	repo := viewed.repo()
@@ -273,6 +289,30 @@ func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
 		return Task{}, err
 	}
 	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Working: task.labelled(workingLabel), Presets: task.presets()}, nil
+}
+
+// partOf returns the numbers of the issues whose body says, in the "Part of"
+// line a gh without --parent left in its place, that they are part of issue
+// number.
+func (g GitHub) partOf(ctx context.Context, number int) ([]int, error) {
+	line := fmt.Sprintf("Part of #%d", number)
+	args := []string{"issue", "list", "--state", "all", "--limit", "1000", "--search", strconv.Quote(line) + " in:body", "--json", "number,body"}
+	var stdout, stderr bytes.Buffer
+	if err := g.gh.Run(ctx, "gh", args, nil, &stdout, &stderr); err != nil {
+		return nil, failure(stderr.String(), err)
+	}
+	var found []issue
+	if err := json.Unmarshal(stdout.Bytes(), &found); err != nil {
+		return nil, fmt.Errorf("read gh's answer for the issues part of #%d: %w", number, err)
+	}
+	var numbers []int
+	for _, i := range found {
+		if parent, _ := fallbackLinks(i.Body); parent == number && i.Number != number {
+			numbers = append(numbers, i.Number)
+		}
+	}
+	slices.Sort(numbers)
+	return numbers, nil
 }
 
 // task reads task number with every issue linked as blocking it.

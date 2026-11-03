@@ -50,6 +50,14 @@ func (f *fakeGH) Run(_ context.Context, name string, args []string, _ io.Reader,
 	if args[0] == "api" {
 		return f.page(args, stdout, stderr)
 	}
+	if args[0] == "issue" && args[1] == "list" {
+		reply, ok := f.replies[strings.Join(args, " ")]
+		if !ok {
+			reply = "[]"
+		}
+		_, err := io.WriteString(stdout, reply)
+		return err
+	}
 	if args[0] == "repo" {
 		_, err := io.WriteString(stdout, `{"nameWithOwner":"o/r"}`)
 		return err
@@ -211,7 +219,7 @@ func TestExecutionOnlyReadsTheTracker(t *testing.T) {
 	}
 
 	for _, ran := range gh.ran {
-		if !strings.HasPrefix(ran, "issue view ") && !strings.HasPrefix(ran, "api graphql ") {
+		if !strings.HasPrefix(ran, "issue view ") && !strings.HasPrefix(ran, "issue list ") && !strings.HasPrefix(ran, "api graphql ") {
 			t.Errorf("ran gh %s, want only issue views and queries", ran)
 		}
 	}

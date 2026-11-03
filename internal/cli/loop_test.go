@@ -48,6 +48,10 @@ func (f *fakeTracker) Run(_ context.Context, name string, args []string, _ io.Re
 	if name == "gh" && len(args) > 1 && args[0] == "issue" && args[1] == "comment" {
 		return nil
 	}
+	if name == "gh" && len(args) > 1 && args[0] == "issue" && args[1] == "list" {
+		_, err := io.WriteString(stdout, "[]")
+		return err
+	}
 	if name != "gh" || len(args) < 3 || args[0] != "issue" || args[1] != "view" {
 		return fmt.Errorf("unexpected command %s %v", name, args)
 	}
@@ -299,8 +303,8 @@ func TestLoopListOnlyReadsTheTracker(t *testing.T) {
 	runLoopList(t, gh, "42")
 
 	for _, ran := range gh.ran {
-		if !strings.HasPrefix(ran, "gh issue view ") {
-			t.Errorf("ran %s, want only gh issue views", ran)
+		if !strings.HasPrefix(ran, "gh issue view ") && !strings.HasPrefix(ran, "gh issue list ") {
+			t.Errorf("ran %s, want only gh issue views and lists", ran)
 		}
 	}
 }
