@@ -28,7 +28,7 @@ A repo whose checks need services, such as a database in Docker, had no way to t
 
 ## Consequences
 
-- A repo with a stack works one task at a time; a second run waits for the first.
+- A repo with a stack works one task at a time; a second run is refused while the first holds the lease.
 - A converge that restarts the Docker daemon (ADR-0026) still does not detect a running stack.
 - Images and volumes build up on a box and smith does not prune them.
 - Human sessions do not touch the stack, because the lease cannot see what a human started.
