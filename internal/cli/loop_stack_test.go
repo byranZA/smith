@@ -2,12 +2,18 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/hint"
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/repofile"
+	"github.com/byranZA/smith/internal/stack"
 	"github.com/byranZA/smith/internal/staging"
 )
 
@@ -86,7 +92,7 @@ func TestLoopRunOnABoxBringsTheDeclaredStackUpAndDown(t *testing.T) {
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = onABox(t)
 	stack := &recordingStack{}
-	w.newStack = func() loop.Stacker { return stack }
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
 
 	stdout, stderr, code := runLoopRun(t, w, "80")
 
@@ -101,7 +107,7 @@ func TestLoopRunOffABoxRunsNoStack(t *testing.T) {
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = offABox
 	stack := &recordingStack{}
-	w.newStack = func() loop.Stacker { return stack }
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
 
 	stdout, stderr, code := runLoopRun(t, w, "80")
 
@@ -116,11 +122,109 @@ func TestLoopRunOnABoxWhoseRepoDeclaresNoStackRunsNoStack(t *testing.T) {
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
 	w.box = onABox(t)
 	stack := &recordingStack{}
-	w.newStack = func() loop.Stacker { return stack }
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
 
 	_, stderr, code := runLoopRun(t, w, "80")
 
 	if code != 0 || len(stack.ups) != 0 {
 		t.Errorf("exit %d, ups %v, stderr %q; want 0 and no stack", code, stack.ups, stderr)
+	}
+}
+
+// leaseHeldBy takes the stack lease key names in state for a run of branch in
+// dir and returns until the test ends.
+func leaseHeldBy(t *testing.T, state, key, branch, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".smith"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte(stackFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	holder := &stack.Stack{Command: noopCommander{}, State: state, Key: key, Branch: branch}
+	if err := holder.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = holder.Release(context.Background(), io.Discard) })
+}
+
+// noopCommander runs every stack command successfully.
+type noopCommander struct{}
+
+func (noopCommander) Exec(context.Context, string, string, string, io.Writer) error { return nil }
+
+// keyedGit answers the origin probe of the lease key with origin and defers
+// every other command to next.
+type keyedGit struct {
+	origin string
+	next   repofile.Runner
+}
+
+func (g keyedGit) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if len(args) == 5 && args[2] == "remote" {
+		_, err := fmt.Fprintln(stdout, g.origin)
+		return err
+	}
+	return g.next.Run(ctx, name, args, stdin, stdout, stderr)
+}
+
+func TestLoopRunRefusesAStackAnotherRunHoldsBeforeMarkingAnyTask(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
+	w.box = onABox(t)
+	state := t.TempDir()
+	w.state = func() (string, error) { return state, nil }
+	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
+	w.newStack = func(string, string, string) loop.Stacker { return &recordingStack{} }
+	leaseHeldBy(t, state, stack.Key("https://github.com/Acme/api", ""), "smith/9-other", t.TempDir())
+
+	_, stderr, code := runLoopRun(t, w, "80")
+
+	if code == 0 || !strings.Contains(stderr, "smith/9-other") {
+		t.Errorf("exit %d, stderr %q; want non-zero naming the holder's branch", code, stderr)
+	}
+	for _, call := range gh.ran {
+		if strings.HasPrefix(call, "gh issue edit") {
+			t.Errorf("gh ran %q, want no task marked", call)
+		}
+	}
+}
+
+func TestLoopRunWithNoStackGoesOnBesideAHolder(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
+	w.box = onABox(t)
+	state := t.TempDir()
+	w.state = func() (string, error) { return state, nil }
+	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
+	leaseHeldBy(t, state, stack.Key("git@github.com:acme/api.git", ""), "smith/9-other", t.TempDir())
+
+	_, stderr, code := runLoopRun(t, w, "80")
+
+	if code != 0 {
+		t.Errorf("exit %d, stderr %q; want a run with no stack to go on", code, stderr)
+	}
+}
+
+func TestLoopRunOnABoxWithARepoRefusesAHeldStackCreatingNothing(t *testing.T) {
+	tmux := &tmuxBox{}
+	w, workspace := sessionLoop(t, readySpec(), tmux)
+	writeBareRepoWithRepoFiles(t, workspace, "api", stackFile, "unused", stackFile+"push: false\n")
+	w.box = resolvedBox(workspace, "api")
+	state := t.TempDir()
+	w.state = func() (string, error) { return state, nil }
+	key, err := w.stackLeaseKey(t.Context(), filepath.Join(workspace, "api", "repo.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseHeldBy(t, state, key, "smith/9-other", t.TempDir())
+
+	_, stderr, code := runLoopRun(t, w, "42", "--repo", "api")
+
+	_, statErr := os.Stat(filepath.Join(workspace, "api", "worktrees"))
+	if code == 0 || !strings.Contains(stderr, "smith/9-other") || len(tmux.calls) != 0 || !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("exit %d, stderr %q, tmux %q, worktrees %v; want non-zero naming the holder, no session and no worktree", code, stderr, tmux.calls, statErr)
 	}
 }

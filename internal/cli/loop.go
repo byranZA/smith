@@ -43,9 +43,12 @@ type loopWiring struct {
 	plan     func(ctx context.Context, dir string, req workbench.Request) (branch, base string, err error)
 	pusher   func(dir string) loop.Pusher
 	preparer loop.Preparer
-	// newStack makes the stack a run on a box brings up and down; nil means a
-	// run has none to make.
-	newStack func() loop.Stacker
+	// newStack makes the stack a run on a box brings up and down, holding the
+	// lease key names in state for branch; nil means a run has none to make.
+	newStack func(state, key, branch string) loop.Stacker
+	// state locates the state home the stack lease lives in; nil takes no
+	// lease.
+	state    func() (string, error)
 	lookPath func(name string) (string, error)
 	mise     session.Runner
 	hostname func() (string, error)
@@ -77,9 +80,10 @@ func systemLoop() loopWiring {
 		},
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		preparer: prepare.Preparer{Command: connection.System(), Mise: mise},
-		newStack: func() loop.Stacker {
-			return &stack.Stack{Command: prepare.Preparer{Command: connection.System(), Mise: mise}}
+		newStack: func(state, key, branch string) loop.Stacker {
+			return &stack.Stack{Command: prepare.Preparer{Command: connection.System(), Mise: mise}, State: state, Key: key, Branch: branch}
 		},
+		state:    func() (string, error) { return workbench.StateHome(os.Getenv) },
 		lookPath: exec.LookPath,
 		mise:     connection.System(),
 		hostname: os.Hostname,
@@ -503,6 +507,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	if err != nil {
 		return tracker.Execution{}, err
 	}
+	if err := w.refuseHeldStack(cmd, settings); err != nil {
+		return tracker.Execution{}, err
+	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh, interactive)
 	if err != nil {
 		return tracker.Execution{}, err
@@ -523,9 +530,6 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
-	if settings.Stacks() && w.newStack != nil {
-		l.Stack = w.newStack()
-	}
 	if resolved, ok := presets.Review(); ok {
 		l.Review = &loop.Review{Preset: resolved, Prompt: reviewPrompt}
 	}
@@ -537,6 +541,11 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Bench = bench
+	if settings.Stacks() && w.newStack != nil {
+		if l.Stack, err = w.stacker(cmd.Context(), bench.WorkBranch()); err != nil {
+			return admitted.execution, err
+		}
+	}
 	if l.Placements, err = w.placements(cmd, ref); err != nil {
 		return admitted.execution, err
 	}

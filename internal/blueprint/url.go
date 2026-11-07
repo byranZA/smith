@@ -35,3 +35,7 @@ func withoutPort(path string) string {
 	}
 	return path
 }
+
+// Normalize reduces a clone URL to the lowercase "host/path" SameRepo
+// compares, which is empty for an empty URL.
+func Normalize(url string) string { return normalizeURL(url) }

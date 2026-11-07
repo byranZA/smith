@@ -39,8 +39,13 @@ type Commander interface {
 type Stack struct {
 	// Command runs the up and down commands.
 	Command Commander
+	// State is the state home the stack lease lives in, Key names the repo's
+	// lease in it and Branch is the run's work branch, which the lease
+	// records. An empty State takes no lease.
+	State, Key, Branch string
 
 	running *running
+	lease   *lease
 }
 
 // running is a stack that was brought up: where, and the commands that go
@@ -68,6 +73,9 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	if !file.Stack.Declared() {
 		return nil
 	}
+	if err := s.hold(declared); err != nil {
+		return err
+	}
 	s.running = &declared
 	if err := s.Command.Exec(ctx, dir, Up, file.Stack.Up, out); err != nil {
 		return fmt.Errorf("bring up the stack in %s: %w", dir, err)
@@ -75,11 +83,28 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	return nil
 }
 
+// hold takes the stack lease, when there is none held and the stack has a
+// state home, and records declared in it before the up that runs it.
+func (s *Stack) hold(declared running) error {
+	if s.State == "" {
+		return nil
+	}
+	if s.lease == nil {
+		l, err := acquire(s.State, s.Key)
+		if err != nil {
+			return err
+		}
+		s.lease = l
+	}
+	return s.lease.write(Record{Dir: declared.dir, Branch: s.Branch, Up: declared.up, Down: declared.down, Started: time.Now().UTC()})
+}
+
 // Release takes down the stack Ensure brought up, once, in the worktree it
 // came up in with the down recorded for it, streaming its output to out. It
 // runs to the end though ctx is cancelled, and is stopped at DownTimeout.
-// With no stack running it does nothing. The stack counts as taken down
-// whether or not down succeeded.
+// The lease's record is deleted only when down succeeded, and its lock is
+// freed either way. With no stack running it does nothing. The stack counts
+// as taken down whether or not down succeeded.
 func (s *Stack) Release(ctx context.Context, out io.Writer) error {
 	if s.running == nil {
 		return nil
@@ -88,7 +113,18 @@ func (s *Stack) Release(ctx context.Context, out io.Writer) error {
 	s.running = nil
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DownTimeout)
 	defer cancel()
-	if err := s.Command.Exec(ctx, r.dir, Down, r.down, out); err != nil {
+	err := s.Command.Exec(ctx, r.dir, Down, r.down, out)
+	if err == nil && s.lease != nil {
+		err = s.lease.drop()
+	}
+	if s.lease != nil {
+		cerr := s.lease.close()
+		s.lease = nil
+		if err == nil {
+			return cerr
+		}
+	}
+	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("take down the stack in %s: timed out after %s: %w", r.dir, DownTimeout, err)
 		}

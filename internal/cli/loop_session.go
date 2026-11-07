@@ -68,6 +68,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 		return reportInvalid(cmd, err)
 	}
 	req := session.StartRequest{Repo: run.repo, Branch: run.branch, Base: run.base}
+	run.flags.Stack = true // a session is on a box, where the stack is always on
 	settings, presets, source, err := w.effective(cmd, env, clone, req, run.flags)
 	if err != nil {
 		return reportInvalid(cmd, err)
@@ -103,6 +104,9 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 	}
 	if err := refuseLive(cmd, env, run.repo, branch); err != nil {
 		return reportInvalid(cmd, err)
+	}
+	if err := w.refuseHeldStackOf(cmd, settings, clone); err != nil {
+		return err
 	}
 	if source.Dir != "" {
 		if err := placementsOf(box, run.repo, w, inv).Check(cmd.Context(), source.Dir); err != nil {
