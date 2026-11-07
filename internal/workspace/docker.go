@@ -35,6 +35,9 @@ func convergeDocker(ctx context.Context, env Env, progress io.Writer) (string, e
 	if err != nil {
 		return "", err
 	}
+	if existing == nil {
+		existing = []byte("{}")
+	}
 	merged, notes, changed, err := mergeLoopbackDefaults(existing)
 	if err != nil {
 		return "", fmt.Errorf("merge %s: %w", path, err)
@@ -60,7 +63,8 @@ func noteSuffix(notes []string) string {
 	return "; note: " + strings.Join(notes, "; ")
 }
 
-// readDockerConfig returns the daemon's config at path, nil when the file does not exist.
+// readDockerConfig returns the daemon's config at path: nil when the file does
+// not exist, non-nil (possibly empty) when it does.
 func readDockerConfig(ctx context.Context, run Runner, path string) ([]byte, error) {
 	if err := run.Run(ctx, "sudo", []string{"test", "-e", path}, nil, io.Discard, io.Discard); err != nil {
 		return nil, nil
@@ -69,7 +73,7 @@ func readDockerConfig(ctx context.Context, run Runner, path string) ([]byte, err
 	if err := run.Run(ctx, "sudo", []string{"cat", path}, nil, &out, io.Discard); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	return out.Bytes(), nil
+	return append([]byte{}, out.Bytes()...), nil
 }
 
 // replaceDockerConfig validates data as a daemon config and only then replaces
@@ -98,13 +102,11 @@ func replaceDockerConfig(ctx context.Context, run Runner, path string, data []by
 // mergeLoopbackDefaults adds the two loopback settings to a daemon config,
 // keeping every other key and any value the operator already set for either
 // setting, which it notes. It reports whether the result differs from the
-// input; empty input is an empty config.
+// input. Empty input is not a valid config and fails like any unparseable one.
 func mergeLoopbackDefaults(existing []byte) (merged []byte, notes []string, changed bool, err error) {
-	top := map[string]json.RawMessage{}
-	if len(bytes.TrimSpace(existing)) > 0 {
-		if top, err = objectAt(existing, "the daemon config"); err != nil {
-			return nil, nil, false, err
-		}
+	top, err := objectAt(existing, "the daemon config")
+	if err != nil {
+		return nil, nil, false, err
 	}
 	var ipChanged, bindingChanged bool
 	top[ipKey], notes, ipChanged = defaultTo(top[ipKey], ipKey, notes)

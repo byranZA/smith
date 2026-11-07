@@ -218,6 +218,26 @@ func TestDockerStepFailsOnUnparseableConfigAndLeavesItUntouched(t *testing.T) {
 	}
 }
 
+func TestDockerStepFailsOnEmptyOrBlankExistingConfigAndLeavesItUntouched(t *testing.T) {
+	t.Parallel()
+	for name, content := range map[string]string{"empty": "", "whitespace only": " \n\t\n"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			box := newDockerBox(t, "{}")
+			if err := os.WriteFile(box.path, []byte(content), 0o644); err != nil {
+				t.Fatalf("write the daemon.json: %v", err)
+			}
+			if _, err := box.converge(t); err == nil {
+				t.Fatal("convergeDocker() error = nil, want a failure on an existing daemon.json with no JSON")
+			}
+			got, err := os.ReadFile(box.path)
+			if err != nil || string(got) != content || box.restarts != 0 {
+				t.Errorf("daemon.json = %q (%v) after %d restarts, want it untouched and no restart", got, err, box.restarts)
+			}
+		})
+	}
+}
+
 func TestDockerStepKeepsTheLiveConfigWhenValidationFails(t *testing.T) {
 	t.Parallel()
 	const live = `{"log-driver":"json-file"}`
