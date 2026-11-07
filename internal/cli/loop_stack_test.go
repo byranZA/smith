@@ -66,7 +66,7 @@ func realStackOn(t *testing.T, w *loopWiring, repoFile string, run stack.Command
 	w.bench = func(_ context.Context, _ string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
 		return realWorktrees{benchAt: benchAt{branch: workbench.Branch(req.Number, req.Title)}, root: root, repoFile: repoFile}, workbench.Lag{}, nil
 	}
-	w.newStack = func(state, key, branch string) loop.Stacker {
+	w.newStack = func(state, key, branch string) runStack {
 		return &stack.Stack{Command: run, State: state, Key: key, Branch: branch}
 	}
 }

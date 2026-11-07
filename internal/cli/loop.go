@@ -45,7 +45,7 @@ type loopWiring struct {
 	preparer loop.Preparer
 	// newStack makes the stack a run on a box brings up and down, holding the
 	// lease key names in state for branch; nil means a run has none to make.
-	newStack func(state, key, branch string) loop.Stacker
+	newStack func(state, key, branch string) runStack
 	// state locates the state home the stack lease lives in; nil takes no
 	// lease.
 	state    func() (string, error)
@@ -59,6 +59,13 @@ type loopWiring struct {
 	version  string
 	skew     skew
 	term     terminal
+}
+
+// runStack is the stack a run owns: it brings the stack up and down, and takes
+// down one a dead run left behind.
+type runStack interface {
+	loop.Stacker
+	loop.Recoverer
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
@@ -80,7 +87,7 @@ func systemLoop() loopWiring {
 		},
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		preparer: prepare.Preparer{Command: connection.System(), Mise: mise},
-		newStack: func(state, key, branch string) loop.Stacker {
+		newStack: func(state, key, branch string) runStack {
 			return &stack.Stack{Command: prepare.Preparer{Command: connection.System(), Mise: mise}, State: state, Key: key, Branch: branch}
 		},
 		state:    func() (string, error) { return workbench.StateHome(os.Getenv) },
@@ -556,10 +563,7 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 			return admitted.execution, err
 		}
 		if settings.StackRuns {
-			l.Stack = stacker
-			if recoverer, ok := stacker.(loop.Recoverer); ok {
-				l.Recoverer = recoverer
-			}
+			l.Stack, l.Recoverer = stacker, stacker
 		}
 	}
 	if l.Placements, err = w.placements(cmd, ref); err != nil {

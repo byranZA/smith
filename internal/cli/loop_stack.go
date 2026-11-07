@@ -84,7 +84,7 @@ func (w loopWiring) refuseHeldStackOf(cmd *cobra.Command, settings loop.Settings
 // stacker returns the stack a run of the work branch brings up and down, with
 // the lease of the repo smith is run from. A wiring with no state home takes
 // no lease.
-func (w loopWiring) stacker(ctx context.Context, branch string) (loop.Stacker, error) {
+func (w loopWiring) stacker(ctx context.Context, branch string) (runStack, error) {
 	if w.state == nil {
 		return w.newStack("", "", branch), nil
 	}
