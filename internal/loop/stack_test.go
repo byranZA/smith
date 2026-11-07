@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/stack"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -263,5 +264,77 @@ func TestASuccessfulDownLeavesTheStopReportAlone(t *testing.T) {
 
 	if err != nil || len(r.reports) != 1 || strings.Contains(r.reports[0], "did not stop") {
 		t.Errorf("Run() = %v, reports %q; want no mention of the stack", err, r.reports)
+	}
+}
+
+// recovering fakes the recovery of a stack a dead run left, logging
+// "recover" into events.
+type recovering struct {
+	events *[]string
+	rec    *stack.Record
+	err    error
+}
+
+func (r *recovering) Recover(_ context.Context, out io.Writer) (*stack.Record, error) {
+	*r.events = append(*r.events, "recover")
+	_, _ = io.WriteString(out, "no such container\n")
+	return r.rec, r.err
+}
+
+func TestRunRecoversAStackLeftBehindBeforeAnythingElseAndSaysSo(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	var progress strings.Builder
+	l := journalLoop(t, j)
+	l.Progress = &progress
+	l.Recoverer = &recovering{events: &j.events, rec: &stack.Record{Dir: "/bench/9", Branch: "smith/9-z"}}
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if j.events[0] != "recover" {
+		t.Errorf("events = %q, want recover first", j.events)
+	}
+	want := "smith: recovering the stack of work branch smith/9-z left in /bench/9\n"
+	if !strings.Contains(progress.String(), want) || strings.Contains(progress.String(), "no such container") {
+		t.Errorf("progress = %q, want %q and no output of a good recovery", progress.String(), want)
+	}
+}
+
+func TestRunWhoseRecoveryFailsWarnsAndGoesOn(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	var progress strings.Builder
+	l := journalLoop(t, j)
+	l.Progress = &progress
+	l.Stack = &stacking{events: &j.events}
+	l.Recoverer = &recovering{events: &j.events, rec: &stack.Record{Dir: "/bench/9", Branch: "b"}, err: errors.New("exit status 3")}
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || !outcome.Complete() {
+		t.Fatalf("Run() = %+v, %v, want the run complete", outcome, err)
+	}
+	if want := "smith: warning: the stack left behind was not taken down: exit status 3\nno such container\n"; !strings.Contains(progress.String(), want) {
+		t.Errorf("progress = %q, want %q", progress.String(), want)
+	}
+	if !slices.Contains(j.events, "up /bench/43") {
+		t.Errorf("events = %q, want the run's own up", j.events)
+	}
+}
+
+func TestRunInteractiveRecoversAStackLeftBehindFirst(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l := journalLoop(t, j)
+	l.Recoverer = &recovering{events: &j.events, rec: &stack.Record{Dir: "/bench/9", Branch: "b"}}
+
+	if _, err := l.RunInteractive(t.Context(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	if j.events[0] != "recover" {
+		t.Errorf("events = %q, want recover first", j.events)
 	}
 }

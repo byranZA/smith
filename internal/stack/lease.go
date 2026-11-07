@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -165,4 +166,46 @@ func Holder(state, key string) (*Record, error) {
 		return nil, unlock(f)
 	}
 	return read(f)
+}
+
+// Recover takes down a stack a dead run left behind: an unlocked lease with
+// a record. It runs the recorded down in the recorded worktree, streaming its
+// output to out, under the same timeout as Release, and deletes the record
+// when it succeeds. It returns the record it recovered, or nil when nothing
+// was left or a live run holds the lease. A failed down keeps the record for
+// the next run, and a worktree that is gone clears it; both return the record
+// with an error naming the worktree, the down and why. With no state home it
+// does nothing.
+func (s *Stack) Recover(ctx context.Context, out io.Writer) (*Record, error) {
+	if s.State == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(path(s.State, s.Key)); errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	l, err := acquire(s.State, s.Key)
+	var busy *HeldError
+	if errors.As(err, &busy) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rec, err := read(l.file)
+	if err != nil {
+		return nil, errors.Join(err, l.close())
+	}
+	if rec.Down == "" {
+		return nil, errors.Join(l.drop(), l.close())
+	}
+	if _, serr := os.Stat(rec.Dir); serr != nil {
+		gone := fmt.Errorf("the stack left in %s cannot be taken down because the worktree is gone: run %q yourself to stop it: %w", rec.Dir, rec.Down, serr)
+		return rec, errors.Join(gone, l.drop(), l.close())
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DownTimeout)
+	defer cancel()
+	if err := s.Command.Exec(ctx, rec.Dir, Down, rec.Down, out); err != nil {
+		return rec, errors.Join(fmt.Errorf("take down the stack left in %s: %w", rec.Dir, err), l.close())
+	}
+	return rec, errors.Join(l.drop(), l.close())
 }

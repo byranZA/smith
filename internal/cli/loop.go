@@ -550,9 +550,16 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Bench = bench
-	if settings.Stacks() && w.newStack != nil {
-		if l.Stack, err = w.stacker(cmd.Context(), bench.WorkBranch()); err != nil {
+	if w.newStack != nil {
+		stacker, err := w.stacker(cmd.Context(), bench.WorkBranch())
+		if err != nil {
 			return admitted.execution, err
+		}
+		if settings.Stacks() {
+			l.Stack = stacker
+		}
+		if recoverer, ok := stacker.(loop.Recoverer); ok {
+			l.Recoverer = recoverer
 		}
 	}
 	if l.Placements, err = w.placements(cmd, ref); err != nil {

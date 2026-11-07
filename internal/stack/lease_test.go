@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -191,5 +192,116 @@ func TestALeaseHolderKilledBySIGKILLLeavesTheLockFreeAndTheRecordInPlace(t *test
 	}
 	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 1 {
 		t.Errorf("state holds %v, want the record in place", files)
+	}
+}
+
+// stale leaves a record in state for repo as a run killed after up would:
+// an unlocked lease file holding the worktree and its commands.
+func stale(t *testing.T, state string) string {
+	t.Helper()
+	dir := worktree(t, declared)
+	run := &fakeCommander{fail: map[string]error{"stack down": errors.New("boom")}}
+	s := held(run, state, "repo", "smith/9-z")
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Release(t.Context(), io.Discard); err == nil {
+		t.Fatal("Release() err = nil, want the failed down")
+	}
+	return dir
+}
+
+func TestRecoverRunsTheRecordedDownInTheRecordedWorktreeAndClearsTheRecord(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	dir := stale(t, state)
+	run := &fakeCommander{}
+
+	rec, err := held(run, state, "repo", "smith/10-y").Recover(t.Context(), io.Discard)
+
+	if err != nil || rec == nil || rec.Dir != dir || rec.Branch != "smith/9-z" {
+		t.Fatalf("Recover() = %+v, %v, want the record of smith/9-z in %s", rec, err, dir)
+	}
+	if want := []call{{"stack down", dir, "make down"}}; !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Recover() ran %v, want %v", run.calls, want)
+	}
+	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+		t.Errorf("state holds %v, want the record cleared", files)
+	}
+}
+
+func TestRecoverWithNothingLeftRunsNothing(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	run := &fakeCommander{}
+
+	rec, err := held(run, state, "repo", "x").Recover(t.Context(), io.Discard)
+
+	if err != nil || rec != nil || len(run.calls) != 0 {
+		t.Errorf("Recover() = %v, %v after %v, want nothing", rec, err, run.calls)
+	}
+	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+		t.Errorf("state holds %v, want no lease file", files)
+	}
+}
+
+func TestRecoverNeverTouchesALiveHoldersLease(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	holder := held(&fakeCommander{}, state, "repo", "smith/1-a")
+	if err := holder.Ensure(t.Context(), worktree(t, declared), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	run := &fakeCommander{}
+
+	rec, err := held(run, state, "repo", "smith/2-b").Recover(t.Context(), io.Discard)
+	runtime.KeepAlive(holder)
+
+	if err != nil || rec != nil || len(run.calls) != 0 {
+		t.Errorf("Recover() = %v, %v after %v, want a live lease left alone", rec, err, run.calls)
+	}
+	if got, _ := stack.Holder(state, "repo"); got == nil || got.Branch != "smith/1-a" {
+		t.Errorf("Holder() = %v, want the live holder's record kept", got)
+	}
+}
+
+func TestRecoverWhoseDownFailsKeepsTheRecordForTheNextRun(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	dir := stale(t, state)
+	run := &fakeCommander{fail: map[string]error{"stack down": errors.New("exit status 3")}}
+
+	rec, err := held(run, state, "repo", "x").Recover(t.Context(), io.Discard)
+
+	if rec == nil || err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("Recover() = %v, %v, want the record and an error naming %s and the status", rec, err, dir)
+	}
+	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 1 {
+		t.Errorf("state holds %v, want the record kept", files)
+	}
+	if got, _ := stack.Holder(state, "repo"); got != nil {
+		t.Errorf("Holder() = %v, want the lock free", got)
+	}
+}
+
+func TestRecoverOfAGoneWorktreeNamesItAndTheCommandAndClearsTheRecord(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	dir := stale(t, state)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	run := &fakeCommander{}
+
+	rec, err := held(run, state, "repo", "x").Recover(t.Context(), io.Discard)
+
+	if rec == nil || err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "make down") {
+		t.Fatalf("Recover() = %v, %v, want the record and an error naming %s and make down", rec, err, dir)
+	}
+	if len(run.calls) != 0 {
+		t.Errorf("Recover() ran %v, want no command", run.calls)
+	}
+	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+		t.Errorf("state holds %v, want the record cleared", files)
 	}
 }

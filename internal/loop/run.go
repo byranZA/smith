@@ -11,6 +11,7 @@ import (
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/preset"
+	"github.com/byranZA/smith/internal/stack"
 	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
 )
@@ -136,6 +137,15 @@ type Stacker interface {
 	Release(ctx context.Context, out io.Writer) error
 }
 
+// Recoverer is the seam through which the loop takes down a stack a dead run
+// left behind.
+type Recoverer interface {
+	// Recover takes down the stack a dead run left, streaming its output to
+	// out, and returns the record it recovered, nil when nothing was left. A
+	// failure comes with the record when a stack was found.
+	Recover(ctx context.Context, out io.Writer) (*stack.Record, error)
+}
+
 // Pusher is the seam through which the loop pushes the work branch.
 type Pusher interface {
 	// Push pushes branch to origin under its own name, never forcing.
@@ -161,6 +171,9 @@ type Loop struct {
 	// Stack brings the repo's stack up after each worktree is prepared and
 	// takes it down when the run ends; nil, as off a box, runs no stack.
 	Stack Stacker
+	// Recoverer takes down a stack left behind by a dead run at the start of
+	// a run, whether or not this run has a stack; nil recovers nothing.
+	Recoverer Recoverer
 
 	// stackFailed collects why a stack down failed during Run, for its stop
 	// report.
@@ -278,6 +291,9 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	if err != nil {
 		failed := fmt.Errorf("read #%d: %w", spec, err)
 		return Outcome{}, errors.Join(failed, l.Abort(ctx, spec, failed))
+	}
+	if err := l.recoverStack(ctx); err != nil {
+		return Outcome{}, err
 	}
 	var stackFailed error
 	l.stackFailed = &stackFailed
@@ -479,6 +495,9 @@ func (o InteractiveOutcome) Succeeded() bool {
 // cannot resolve. When the spec is complete once it ends, the recycled task
 // worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
+	if err := l.recoverStack(ctx); err != nil {
+		return InteractiveOutcome{}, err
+	}
 	outcome, err := l.interactive(ctx, spec)
 	return outcome, errors.Join(err, l.stackDown(ctx))
 }
@@ -693,6 +712,30 @@ func (l Loop) stackUp(ctx context.Context, task tracker.Task, dir string) error 
 		return fmt.Errorf("bring up the stack of #%d in %s: %w (system packages and groups come from the blueprint, not the repo file)", task.Number, dir, err)
 	}
 	return nil
+}
+
+// recoverStack takes down a stack a dead run left behind, saying so. A failed
+// recovery only warns, since the run's own up fails loudly if something still
+// holds what it needs; only a failed progress write is an error.
+func (l Loop) recoverStack(ctx context.Context) error {
+	if l.Recoverer == nil {
+		return nil
+	}
+	captured := tailbuf.Buffer{Limit: PrepareTailLimit}
+	rec, err := l.Recoverer.Recover(ctx, &captured)
+	if rec == nil {
+		return l.warnIf(err, "recover the stack a dead run left")
+	}
+	if werr := l.report("smith: recovering the stack of work branch %s left in %s\n", rec.Branch, rec.Dir); werr != nil {
+		return werr
+	}
+	if err == nil {
+		return nil
+	}
+	if werr := l.warnIf(err, "the stack left behind was not taken down"); werr != nil {
+		return werr
+	}
+	return l.reportTail(&captured)
 }
 
 // stackDown takes down the stack the run brought up, when there is one,
