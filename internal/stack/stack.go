@@ -73,7 +73,7 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	if !file.Stack.Declared() {
 		return nil
 	}
-	if err := s.hold(declared); err != nil {
+	if err := s.hold(ctx, declared, out); err != nil {
 		return err
 	}
 	s.running = &declared
@@ -84,8 +84,9 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 }
 
 // hold takes the stack lease, when there is none held and the stack has a
-// state home, and records declared in it before the up that runs it.
-func (s *Stack) hold(declared running) error {
+// state home, and first takes down any stack its record shows a dead run left, then records
+// declared in it before the up that runs it.
+func (s *Stack) hold(ctx context.Context, declared running, out io.Writer) error {
 	if s.State == "" {
 		return nil
 	}
@@ -93,6 +94,9 @@ func (s *Stack) hold(declared running) error {
 		l, err := acquire(s.State, s.Key)
 		if err != nil {
 			return err
+		}
+		if _, err := s.recoverHeld(ctx, l, out); err != nil {
+			return errors.Join(err, l.close())
 		}
 		s.lease = l
 	}

@@ -305,3 +305,20 @@ func TestRecoverOfAGoneWorktreeNamesItAndTheCommandAndClearsTheRecord(t *testing
 		t.Errorf("state holds %v, want the record cleared", files)
 	}
 }
+
+func TestEnsureRecoversAStaleRecordItFindsWhenTakingTheLeaseBeforeItsUp(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	old := stale(t, state)
+	dir := worktree(t, declared)
+	run := &fakeCommander{}
+
+	if err := held(run, state, "repo", "smith/10-y").Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []call{{"stack down", old, "make down"}, {"stack up", dir, "make up"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Ensure() ran %v, want %v", run.calls, want)
+	}
+}

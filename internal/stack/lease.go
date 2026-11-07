@@ -191,21 +191,32 @@ func (s *Stack) Recover(ctx context.Context, out io.Writer) (*Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	rec, err := s.recoverHeld(ctx, l, out)
+	if rec == nil && err == nil {
+		err = l.drop()
+	}
+	return rec, errors.Join(err, l.close())
+}
+
+// recoverHeld takes down the stack recorded in the lease l, which the caller
+// holds, and deletes the record when that succeeds or the worktree is gone.
+// It returns the record it recovered, or nil when it held none to take down, leaving the lease as it is.
+func (s *Stack) recoverHeld(ctx context.Context, l *lease, out io.Writer) (*Record, error) {
 	rec, err := read(l.file)
 	if err != nil {
-		return nil, errors.Join(err, l.close())
+		return nil, err
 	}
 	if rec.Down == "" {
-		return nil, errors.Join(l.drop(), l.close())
+		return nil, nil
 	}
 	if _, serr := os.Stat(rec.Dir); serr != nil {
 		gone := fmt.Errorf("the stack left in %s cannot be taken down because the worktree is gone: run %q yourself to stop it: %w", rec.Dir, rec.Down, serr)
-		return rec, errors.Join(gone, l.drop(), l.close())
+		return rec, errors.Join(gone, l.drop())
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DownTimeout)
 	defer cancel()
 	if err := s.Command.Exec(ctx, rec.Dir, Down, rec.Down, out); err != nil {
-		return rec, errors.Join(fmt.Errorf("take down the stack left in %s: %w", rec.Dir, err), l.close())
+		return rec, fmt.Errorf("take down the stack left in %s: %w", rec.Dir, err)
 	}
-	return rec, errors.Join(l.drop(), l.close())
+	return rec, l.drop()
 }
