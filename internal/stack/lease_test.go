@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -31,6 +32,7 @@ func TestEnsureRefusesAStackAnotherRunHoldsNamingItsBranchAndWorktree(t *testing
 	run := &fakeCommander{}
 
 	err := held(run, state, "repo", "smith/2-b").Ensure(t.Context(), second, io.Discard)
+	runtime.KeepAlive(holder)
 
 	var busy *stack.HeldError
 	if !errors.As(err, &busy) || busy.Branch != "smith/1-a" || busy.Dir != first {

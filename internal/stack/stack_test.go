@@ -194,6 +194,54 @@ func TestEnsureTakesTheStackDownInTheOldWorktreeBeforeUpInANewOne(t *testing.T) 
 	}
 }
 
+func TestEnsureRunsTheRecordedDownBeforeTheNewUpWhenTheCommandsChange(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, declared)
+	run := &fakeCommander{}
+	s := &stack.Stack{Command: run}
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte("stack:\n  up: other up\n  down: other down\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []call{{"stack up", dir, "make up"}, {"stack down", dir, "make down"}, {"stack up", dir, "other up"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestEnsureOfARepoFileThatRemovedTheStackTakesItDownAndReleasesTheLease(t *testing.T) {
+	t.Parallel()
+	state := t.TempDir()
+	dir := worktree(t, declared)
+	run := &fakeCommander{}
+	s := held(run, state, "repo", "x")
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte("push: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []call{{"stack up", dir, "make up"}, {"stack down", dir, "make down"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("ran %v, want %v", run.calls, want)
+	}
+	if holder, err := stack.Holder(state, "repo"); err != nil || holder != nil {
+		t.Errorf("Holder() = %v, %v, want the lease released", holder, err)
+	}
+}
+
 func TestReleaseReportsAFailedDownAndForgetsTheStack(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("exit status 2")
