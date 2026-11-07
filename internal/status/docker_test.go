@@ -1,7 +1,6 @@
 package status
 
 import (
-	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -34,7 +33,7 @@ func TestGatherReadsPublishedDockerBindings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			g, err := NewProber(&scriptedConn{}, probing(publicProbe+tt.lines), &fakeAdmin{}).Gather(context.Background())
+			g, err := NewProber(&scriptedConn{}, probing(publicProbe+tt.lines), &fakeAdmin{}).Gather(t.Context())
 			if err != nil {
 				t.Fatalf("Gather() error = %v", err)
 			}
