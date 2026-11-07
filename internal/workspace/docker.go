@@ -35,6 +35,7 @@ func convergeDocker(ctx context.Context, env Env, progress io.Writer) (string, e
 	if err != nil {
 		return "", err
 	}
+	original := existing
 	if existing == nil {
 		existing = []byte("{}")
 	}
@@ -50,7 +51,7 @@ func convergeDocker(ctx context.Context, env Env, progress io.Writer) (string, e
 		return "", err
 	}
 	if err := env.Command.Run(ctx, "sudo", []string{"systemctl", "restart", "docker"}, nil, progress, progress); err != nil {
-		return "", fmt.Errorf("restart docker to apply %s: %w", path, err)
+		return "", errors.Join(fmt.Errorf("restart docker to apply %s: %w", path, err), rollbackDockerConfig(ctx, env.Command, path, original, progress))
 	}
 	return "published ports now default to loopback in " + path + "; restarted docker" + suffix, nil
 }
@@ -95,6 +96,45 @@ func replaceDockerConfig(ctx context.Context, run Runner, path string, data []by
 	}
 	if err := run.Run(ctx, "sudo", []string{"install", "-D", "-m", "0644", tmp.Name(), path}, nil, progress, progress); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
+}
+
+// rollbackDockerConfig puts the config docker refused back as it was (removing
+// it when there was none) and restarts the daemon on it, so a failed apply
+// leaves neither the new file as a false convergence marker nor the daemon
+// stopped.
+func rollbackDockerConfig(ctx context.Context, run Runner, path string, original []byte, progress io.Writer) error {
+	var err error
+	if original == nil {
+		err = run.Run(ctx, "sudo", []string{"rm", "-f", path}, nil, progress, progress)
+	} else {
+		err = installDockerConfig(ctx, run, path, original, progress)
+	}
+	if err != nil {
+		return fmt.Errorf("restore the original %s: %w", path, err)
+	}
+	if err := run.Run(ctx, "sudo", []string{"systemctl", "restart", "docker"}, nil, progress, progress); err != nil {
+		return fmt.Errorf("restart docker on the restored %s: %w", path, err)
+	}
+	return nil
+}
+
+// installDockerConfig stages data and installs it as the file at path.
+func installDockerConfig(ctx context.Context, run Runner, path string, data []byte, progress io.Writer) error {
+	tmp, err := os.CreateTemp("", "daemon-*.json")
+	if err != nil {
+		return fmt.Errorf("stage %s: %w", path, err)
+	}
+	defer os.Remove(tmp.Name()) //nolint:errcheck // removal is best effort
+	if _, err := tmp.Write(data); err != nil {
+		return errors.Join(fmt.Errorf("stage %s: %w", path, err), tmp.Close())
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("stage %s: %w", path, err)
+	}
+	if err := run.Run(ctx, "sudo", []string{"install", "-D", "-m", "0644", tmp.Name(), path}, nil, progress, progress); err != nil {
+		return fmt.Errorf("install %s: %w", path, err)
 	}
 	return nil
 }

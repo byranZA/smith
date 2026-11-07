@@ -21,6 +21,8 @@ type dockerBox struct {
 	invalid bool
 	// restartErr is what restarting the daemon fails with.
 	restartErr error
+	// restartFailures is how many restarts fail with restartErr before they succeed; negative means all.
+	restartFailures int
 	// path is the live config file.
 	path string
 	// validated are the contents handed to validation, in order.
@@ -67,8 +69,14 @@ func (d *dockerBox) Run(_ context.Context, name string, args []string, _ io.Read
 			return fmt.Errorf("make the config directory: %w", err)
 		}
 		return os.WriteFile(d.path, data, 0o644)
+	case line == "sudo rm -f "+d.path:
+		return os.Remove(d.path)
 	case line == "sudo systemctl restart docker":
 		d.restarts++
+		if d.restartFailures == 0 {
+			return nil
+		}
+		d.restartFailures--
 		return d.restartErr
 	}
 	return fmt.Errorf("unexpected command %q", line)
@@ -264,8 +272,42 @@ func TestDockerStepReportsAFailedRestart(t *testing.T) {
 	t.Parallel()
 	box := newDockerBox(t, "")
 	box.restartErr = errors.New("unit not found")
+	box.restartFailures = -1
 	if _, err := box.converge(t); !errors.Is(err, box.restartErr) {
 		t.Errorf("Converge() error = %v, want it to wrap %v", err, box.restartErr)
+	}
+}
+
+func TestDockerStepRestoresTheOriginalConfigWhenRestartFailsAndRetries(t *testing.T) {
+	t.Parallel()
+	for name, original := range map[string]string{"existing": `{"log-driver":"json-file"}`, "absent": ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			box := newDockerBox(t, original)
+			box.restartErr = errors.New("unit not found")
+			box.restartFailures = 1
+			if _, err := box.converge(t); !errors.Is(err, box.restartErr) {
+				t.Fatalf("Converge() error = %v, want it to wrap %v", err, box.restartErr)
+			}
+			got, readErr := os.ReadFile(box.path)
+			switch {
+			case original == "" && !os.IsNotExist(readErr):
+				t.Errorf("daemon.json after failed apply = %q (%v), want it removed", got, readErr)
+			case original != "" && (readErr != nil || string(got) != original):
+				t.Errorf("daemon.json after failed apply = %q (%v), want %q restored", got, readErr, original)
+			}
+			summary, err := box.converge(t)
+			if err != nil {
+				t.Fatalf("retry Converge() error = %v, want nil", err)
+			}
+			if !strings.Contains(summary, "restarted docker") {
+				t.Errorf("retry summary = %q, want it to apply and restart", summary)
+			}
+			live, ok := box.live(t).(map[string]any)
+			if !ok || live["ip"] != "127.0.0.1" {
+				t.Errorf("live config = %v, want loopback defaults", live)
+			}
+		})
 	}
 }
 
