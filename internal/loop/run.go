@@ -161,6 +161,10 @@ type Loop struct {
 	// Stack brings the repo's stack up after each worktree is prepared and
 	// takes it down when the run ends; nil, as off a box, runs no stack.
 	Stack Stacker
+
+	// stackFailed collects why a stack down failed during Run, for its stop
+	// report.
+	stackFailed *error
 	// Placements are put into each task worktree before it is prepared; nil,
 	// as off a box, places nothing.
 	Placements *Placements
@@ -212,6 +216,9 @@ type Outcome struct {
 	// Broken is the task the run stopped on as agent broken; nil when it
 	// did not stop that way.
 	Broken *Broken
+	// StackFailure is why the stack did not stop, nil when it stopped or
+	// there was none.
+	StackFailure error
 	// ReviewOwed reports that every task is closed but the run reached its
 	// cap before it could review, so a later run only reviews.
 	ReviewOwed bool
@@ -272,8 +279,11 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		failed := fmt.Errorf("read #%d: %w", spec, err)
 		return Outcome{}, errors.Join(failed, l.Abort(ctx, spec, failed))
 	}
+	var stackFailed error
+	l.stackFailed = &stackFailed
 	outcome, err := l.work(ctx, spec, current)
 	err = errors.Join(err, l.stackDown(ctx))
+	outcome.StackFailure = stackFailed
 	if reported := l.conclude(ctx, current, outcome, err); reported != nil {
 		return outcome, errors.Join(err, reported)
 	}
@@ -696,6 +706,9 @@ func (l Loop) stackDown(ctx context.Context) error {
 	err := l.Stack.Release(ctx, &captured)
 	if err == nil {
 		return nil
+	}
+	if l.stackFailed != nil {
+		*l.stackFailed = err
 	}
 	if werr := l.warnIf(err, "the stack did not stop"); werr != nil {
 		return werr

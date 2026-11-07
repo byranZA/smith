@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/byranZA/smith/internal/stack"
@@ -207,4 +209,34 @@ func TestReleaseReportsAFailedDownAndForgetsTheStack(t *testing.T) {
 	if !errors.Is(err, boom) || again != nil || len(run.calls) != 2 {
 		t.Errorf("Release() = %v then %v after %d commands, want the failure once then nil", err, again, len(run.calls))
 	}
+}
+
+// hangingDown is a Commander whose down never exits until its context ends.
+type hangingDown struct{}
+
+func (hangingDown) Exec(ctx context.Context, _, step, _ string, _ io.Writer) error {
+	if step != "stack down" {
+		return nil
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestReleaseStopsAHungDownAtItsTimeoutAndSaysSo(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, declared)
+	synctest.Test(t, func(t *testing.T) {
+		s := &stack.Stack{Command: hangingDown{}}
+		if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+
+		err := s.Release(t.Context(), io.Discard)
+
+		want := "take down the stack in " + dir + ": timed out after 5m0s"
+		if err == nil || !strings.HasPrefix(err.Error(), want) || time.Since(start) != 5*time.Minute {
+			t.Errorf("Release() = %v after %v, want %q after 5m", err, time.Since(start), want)
+		}
+	})
 }

@@ -234,3 +234,34 @@ func countPrefix(events []string, prefix string) int {
 	}
 	return n
 }
+
+func TestAFailedDownIsSaidInTheStopReportOfACompleteRun(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l := journalLoop(t, j)
+	l.Stack = &stacking{events: &j.events, downErr: errors.New("take down the stack in /bench/43: the stack down step exited with status 2: make down")}
+	r := &recorder{}
+	l.Recorder = r
+
+	_, err := l.Run(t.Context(), 42)
+
+	want := "  the stack did not stop: take down the stack in /bench/43: the stack down step exited with status 2: make down\n"
+	if err != nil || len(r.reports) != 1 || !strings.Contains(r.reports[0], want) || r.endings[0] != loop.Complete {
+		t.Errorf("Run() = %v, endings %v, reports %q; want a complete run whose report holds %q", err, r.endings, r.reports, want)
+	}
+}
+
+func TestASuccessfulDownLeavesTheStopReportAlone(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l := journalLoop(t, j)
+	l.Stack = &stacking{events: &j.events}
+	r := &recorder{}
+	l.Recorder = r
+
+	_, err := l.Run(t.Context(), 42)
+
+	if err != nil || len(r.reports) != 1 || strings.Contains(r.reports[0], "did not stop") {
+		t.Errorf("Run() = %v, reports %q; want no mention of the stack", err, r.reports)
+	}
+}

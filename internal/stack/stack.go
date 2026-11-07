@@ -6,6 +6,7 @@ package stack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -88,6 +89,9 @@ func (s *Stack) Release(ctx context.Context, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DownTimeout)
 	defer cancel()
 	if err := s.Command.Exec(ctx, r.dir, Down, r.down, out); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("take down the stack in %s: timed out after %s: %w", r.dir, DownTimeout, err)
+		}
 		return fmt.Errorf("take down the stack in %s: %w", r.dir, err)
 	}
 	return nil
