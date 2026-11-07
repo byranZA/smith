@@ -13,7 +13,7 @@ import (
 var resolved = staging.Resolution{Access: "public", Terminal: "tmux", Workspace: "~/workspace"}
 
 func TestOrderIsTheStageOrder(t *testing.T) {
-	want := "placements,identity,packages,groups,toolchain,repos,orphans"
+	want := "placements,identity,packages,groups,docker,toolchain,repos,orphans"
 	got := make([]string, 0, len(Order()))
 	for _, s := range Order() {
 		got = append(got, string(s))
@@ -26,6 +26,7 @@ func TestOrderIsTheStageOrder(t *testing.T) {
 // TestPlan drives the pure derivation from a staged blueprint to the ordered
 // units of work the stage converges.
 func TestPlan(t *testing.T) {
+	dockerUnit := Unit{Step: Docker, Label: "docker"}
 	orphans := Unit{Step: Orphans, Label: "orphans", Workspace: Workspace{Root: "/home/smith/workspace", Declared: []string{}}}
 	tests := []struct {
 		name string
@@ -33,29 +34,29 @@ func TestPlan(t *testing.T) {
 		want []Unit
 	}{
 		{
-			name: "a blueprint declaring nothing plans only the orphans scan",
+			name: "a blueprint declaring nothing plans only the docker step and the orphans scan",
 			b:    blueprint.Blueprint{},
-			want: []Unit{orphans},
+			want: []Unit{dockerUnit, orphans},
 		},
 		{
 			name: "declared packages plan one packages unit",
 			b:    blueprint.Blueprint{Packages: []string{"ripgrep", "jq"}},
-			want: []Unit{{Step: Packages, Label: "packages", Packages: []string{"ripgrep", "jq"}}, orphans},
+			want: []Unit{{Step: Packages, Label: "packages", Packages: []string{"ripgrep", "jq"}}, {Step: Docker, Label: "docker", Needs: []string{"packages"}}, orphans},
 		},
 		{
 			name: "declared groups plan one groups unit after the packages",
 			b:    blueprint.Blueprint{Packages: []string{"docker.io"}, Groups: []string{"docker", "kvm"}},
-			want: []Unit{{Step: Packages, Label: "packages", Packages: []string{"docker.io"}}, {Step: Groups, Label: "groups", Needs: []string{"packages"}, Groups: []string{"docker", "kvm"}}, orphans},
+			want: []Unit{{Step: Packages, Label: "packages", Packages: []string{"docker.io"}}, {Step: Groups, Label: "groups", Needs: []string{"packages"}, Groups: []string{"docker", "kvm"}}, {Step: Docker, Label: "docker", Needs: []string{"packages"}}, orphans},
 		},
 		{
 			name: "an empty groups list plans no groups unit",
 			b:    blueprint.Blueprint{Groups: []string{}},
-			want: []Unit{orphans},
+			want: []Unit{dockerUnit, orphans},
 		},
 		{
 			name: "an empty packages list plans no packages unit",
 			b:    blueprint.Blueprint{Packages: []string{}},
-			want: []Unit{orphans},
+			want: []Unit{dockerUnit, orphans},
 		},
 	}
 	for _, tt := range tests {

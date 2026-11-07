@@ -33,6 +33,7 @@ func TestPlanGivesEveryUnitItsPrerequisites(t *testing.T) {
 		"placements ~/.netrc": nil,
 		"packages":            nil,
 		"groups":              {"packages"},
+		"docker":              {"packages"},
 		"toolchain (box)":     nil,
 		"toolchain acme":      {"toolchain (box)"},
 		"repos acme":          {"placements ~/.netrc", "toolchain (box)", "toolchain acme"},
@@ -178,7 +179,7 @@ func TestConvergeSkipsGroupsOnFailedPackagesButRunsTheRest(t *testing.T) {
 	box := readyBox()
 	box.aptErr = errors.New("out of disk")
 	result, _ := convergeDeclared(t, box, declaresEverything(), t.TempDir(), false)
-	want := map[string][]string{"groups": {"packages"}}
+	want := map[string][]string{"groups": {"packages"}, "docker": {"packages"}}
 	if got := skippedLabels(result); !reflect.DeepEqual(got, want) {
 		t.Errorf("Converge() skipped = %v, want %v", got, want)
 	}
