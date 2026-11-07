@@ -35,14 +35,9 @@ needs:
 3. **Packages** — the blueprint's `packages` are installed with `apt`.
 4. **Groups** — the smith user joins the blueprint's `groups`. After the packages, because a package is what creates a group such as `docker`. See [Groups](#groups).
 5. **Docker** — published container ports default to loopback in `/etc/docker/daemon.json`. After the packages, because a package may be what installs Docker. See [Docker](#docker).
-6. **Toolchain** — `mise` is installed, and smith writes the generated config
-   pinning the blueprint's `tools` and exporting its `env`.
-7. **Repos** — each declared repo is cloned bare into
-   `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is
-   in scope for a token-authenticated clone.
-8. **Orphans** — the workspace root is scanned for repos the blueprint no
-   longer declares. This runs on every converge, even when the blueprint
-   declares no repos at all.
+6. **Toolchain** — `mise` is installed, and smith writes the generated config pinning the blueprint's `tools` and exporting its `env`.
+7. **Repos** — each declared repo is cloned bare into `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is in scope for a token-authenticated clone.
+8. **Orphans** — the workspace root is scanned for repos the blueprint no longer declares. This runs on every converge, even when the blueprint declares no repos at all.
 
 ## Prerequisites and skips
 
