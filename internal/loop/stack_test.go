@@ -141,7 +141,7 @@ func TestRunWhoseUpFailsStartsNoAgentTakesTheStackDownAndNamesTheTaskAndWorktree
 	outcome, err := l.Run(t.Context(), 42)
 
 	want := []string{"open 43", "up /bench/43", "down /bench/43"}
-	report := "spec #42 failed: bring up the stack of #43 in /bench/43: the stack up step exited with status 1: make up\nwork branch: smith/42-spec\n"
+	report := "spec #42 failed: bring up the stack of #43 in /bench/43: the stack up step exited with status 1: make up (system packages and groups come from the blueprint, not the repo file)\nwork branch: smith/42-spec\n"
 	if !errors.Is(err, errUp) || !slices.Equal(j.events, want) || len(j.board.launched) != 0 ||
 		len(r.reports) != 1 || r.reports[0] != report || !strings.Contains(progress.String(), "pulling images\n") {
 		t.Errorf("Run() = %+v, %v; events %q, reports %q, progress %q; want a failed run with up's output and events %q", outcome, err, j.events, r.reports, progress.String(), want)

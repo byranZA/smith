@@ -680,7 +680,7 @@ func (l Loop) stackUp(ctx context.Context, task tracker.Task, dir string) error 
 		if rerr := l.reportTail(&captured); rerr != nil {
 			return rerr
 		}
-		return fmt.Errorf("bring up the stack of #%d in %s: %w", task.Number, dir, err)
+		return fmt.Errorf("bring up the stack of #%d in %s: %w (system packages and groups come from the blueprint, not the repo file)", task.Number, dir, err)
 	}
 	return nil
 }
