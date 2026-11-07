@@ -34,7 +34,7 @@ var ErrKilled = errors.New("agent killed by SIGKILL")
 // be started at all, such as when its binary is not on PATH.
 var ErrNotStarted = errors.New("agent not started")
 
-// stopDelay bounds how long Launch waits, once an interrupted agent is
+// stopDelay bounds how long Launch waits, once an agent has exited or been
 // killed, for its output to close.
 const stopDelay = 3 * time.Second
 
@@ -66,6 +66,9 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 		return fmt.Errorf("run %s: %w: %w", cmd.Name, ErrNotStarted, err)
 	}
 	err := proc.Wait()
+	if exitedLeavingOutputOpen(err) {
+		return nil
+	}
 	if killed(err) {
 		err = fmt.Errorf("run %s: %w: %w", cmd.Name, ErrKilled, err)
 	} else if err != nil {
@@ -77,6 +80,13 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 		}
 	}
 	return err
+}
+
+// exitedLeavingOutputOpen reports whether err is from an agent that exited
+// successfully while a background process it started kept its output open past
+// stopDelay, which is still a successful run.
+func exitedLeavingOutputOpen(err error) bool {
+	return errors.Is(err, exec.ErrWaitDelay)
 }
 
 // HeldTailLimit bounds how much of a held-back agent's output is kept to show

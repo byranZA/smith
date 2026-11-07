@@ -235,6 +235,36 @@ func TestProcessKeepsAnAttachedCommandOnTheTerminalDespiteHoldOutput(t *testing.
 	}
 }
 
+func TestProcessSucceedsSilentlyWhenAHeldCommandExitsCleanlyLeavingABackgroundProcess(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; sleep 5 & exit 0"}, HoldOutput: true}
+
+	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+
+	if err != nil {
+		t.Errorf("Launch(%q %q) error = %v, want nil", cmd.Name, cmd.Args, err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want none", cmd.Name, cmd.Args, out.String())
+	}
+}
+
+func TestProcessFailsWhenAHeldCommandExitsNonZeroLeavingABackgroundProcess(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; sleep 5 & exit 3"}, HoldOutput: true}
+
+	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+
+	if err == nil {
+		t.Errorf("Launch(%q %q) error = nil, want a failure", cmd.Name, cmd.Args)
+	}
+	if got, want := out.String(), "activity\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+}
+
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
