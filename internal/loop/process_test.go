@@ -230,3 +230,17 @@ func TestProcessKeepsAnAttachedCommandOnTheTerminalDespiteHoldOutput(t *testing.
 		t.Errorf("output = %q, want %q", got, "shown\n")
 	}
 }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+func TestProcessKeepsAKilledHeldCommandKilledWhenShowingItsOutputFails(t *testing.T) {
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; kill -9 $$"}, HoldOutput: true}
+
+	err := (loop.Process{Stdout: failingWriter{}, Stderr: failingWriter{}}).Launch(t.Context(), cmd)
+
+	if !errors.Is(err, loop.ErrKilled) {
+		t.Errorf("Launch() error = %v, want it to be ErrKilled", err)
+	}
+}

@@ -66,18 +66,17 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 		return fmt.Errorf("run %s: %w: %w", cmd.Name, ErrNotStarted, err)
 	}
 	err := proc.Wait()
+	if killed(err) {
+		err = fmt.Errorf("run %s: %w: %w", cmd.Name, ErrKilled, err)
+	} else if err != nil {
+		err = fmt.Errorf("run %s: %w", cmd.Name, err)
+	}
 	if held != nil && err != nil {
 		if rerr := p.showHeld(held); rerr != nil {
-			return rerr
+			return errors.Join(err, rerr)
 		}
 	}
-	if killed(err) {
-		return fmt.Errorf("run %s: %w: %w", cmd.Name, ErrKilled, err)
-	}
-	if err != nil {
-		return fmt.Errorf("run %s: %w", cmd.Name, err)
-	}
-	return nil
+	return err
 }
 
 // HeldTailLimit bounds how much of a held-back agent's output is kept to show
