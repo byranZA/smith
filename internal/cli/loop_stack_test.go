@@ -18,7 +18,15 @@ import (
 )
 
 // recordingStack fakes the stack a run on a box brings up and down.
-type recordingStack struct{ ups, downs []string }
+type recordingStack struct {
+	ups, downs []string
+	recovers   int
+}
+
+func (r *recordingStack) Recover(context.Context, io.Writer) (*stack.Record, error) {
+	r.recovers++
+	return nil, nil
+}
 
 func (r *recordingStack) Ensure(_ context.Context, dir string, _ io.Writer) error {
 	r.ups = append(r.ups, dir)
@@ -169,6 +177,36 @@ func TestLoopRunOffABoxRunsNoStack(t *testing.T) {
 
 	if code != 0 || len(stack.ups) != 0 || len(stack.downs) != 0 || !strings.Contains(stdout, "stack:  off (--stack turns it on)\n") {
 		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0, no stack and the stack off line", code, stack.ups, stack.downs, stdout, stderr)
+	}
+}
+
+func TestLoopRunOffABoxWithoutStackRecoversNothing(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
+	w.box = offABox
+	stack := &recordingStack{}
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
+
+	_, stderr, code := runLoopRun(t, w, "80")
+
+	if code != 0 || stack.recovers != 0 {
+		t.Errorf("exit %d, recoveries %d, stderr %q; want 0 and no recovery", code, stack.recovers, stderr)
+	}
+}
+
+func TestLoopRunOffABoxWithStackRecoversOnce(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
+	w.box = offABox
+	stack := &recordingStack{}
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
+
+	_, stderr, code := runLoopRun(t, w, "80", "--stack")
+
+	if code != 0 || stack.recovers != 1 {
+		t.Errorf("exit %d, recoveries %d, stderr %q; want 0 and one recovery though the repo declares no stack", code, stack.recovers, stderr)
 	}
 }
 

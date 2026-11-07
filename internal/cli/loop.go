@@ -557,9 +557,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		}
 		if settings.StackRuns {
 			l.Stack = stacker
-		}
-		if recoverer, ok := stacker.(loop.Recoverer); ok {
-			l.Recoverer = recoverer
+			if recoverer, ok := stacker.(loop.Recoverer); ok {
+				l.Recoverer = recoverer
+			}
 		}
 	}
 	if l.Placements, err = w.placements(cmd, ref); err != nil {
