@@ -73,7 +73,7 @@ func TestLoopListOnABoxWithNoStackShowsNoStackLine(t *testing.T) {
 	}
 }
 
-func TestLoopListOffABoxShowsNoStackLine(t *testing.T) {
+func TestLoopListOffABoxShowsTheStackOffAndNamesStack(t *testing.T) {
 	t.Parallel()
 	gh := labelledSpec()
 	w, _ := repoWith(t, gh, &idleAgent{}, stackFile)
@@ -81,8 +81,64 @@ func TestLoopListOffABoxShowsNoStackLine(t *testing.T) {
 
 	stdout, _, code := runLoopListIn(t, w, "42")
 
+	if want := "stack:  off (--stack turns it on)\n"; code != 0 || !strings.Contains(stdout, want) {
+		t.Errorf("exit %d, stdout =\n%s\nwant 0 holding %q", code, stdout, want)
+	}
+}
+
+func TestLoopListOffABoxWithNoStackShowsNoStackLine(t *testing.T) {
+	t.Parallel()
+	gh := labelledSpec()
+	w, _ := repoWith(t, gh, &idleAgent{}, "push: true\n")
+	w.box = offABox
+
+	stdout, _, code := runLoopListIn(t, w, "42", "--stack")
+
 	if code != 0 || strings.Contains(stdout, "stack:") {
 		t.Errorf("exit %d, stdout =\n%s\nwant 0 and no stack line", code, stdout)
+	}
+}
+
+func TestLoopListOffABoxWithStackShowsTheStackOn(t *testing.T) {
+	t.Parallel()
+	gh := labelledSpec()
+	w, _ := repoWith(t, gh, &idleAgent{}, stackFile)
+	w.box = offABox
+
+	stdout, _, code := runLoopListIn(t, w, "42", "--stack")
+
+	if want := "stack:  on (repo file)\n"; code != 0 || !strings.Contains(stdout, want) {
+		t.Errorf("exit %d, stdout =\n%s\nwant 0 holding %q", code, stdout, want)
+	}
+}
+
+func TestLoopRunOffABoxWithStackBringsTheStackUpAndDown(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
+	w.box = offABox
+	stack := &recordingStack{}
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
+
+	stdout, stderr, code := runLoopRun(t, w, "80", "--stack")
+
+	if code != 0 || len(stack.ups) != 1 || len(stack.downs) != 1 || !strings.Contains(stdout, "stack:  on (repo file)\n") {
+		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0, one up, one down and the stack line", code, stack.ups, stack.downs, stdout, stderr)
+	}
+}
+
+func TestLoopRunOnABoxWithStackChangesNothing(t *testing.T) {
+	t.Parallel()
+	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
+	w.box = onABox(t)
+	stack := &recordingStack{}
+	w.newStack = func(string, string, string) loop.Stacker { return stack }
+
+	stdout, stderr, code := runLoopRun(t, w, "80", "--stack")
+
+	if code != 0 || len(stack.ups) != 1 || len(stack.downs) != 1 || !strings.Contains(stdout, "stack:  on (repo file)\n") {
+		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want the same as without --stack", code, stack.ups, stack.downs, stdout, stderr)
 	}
 }
 
@@ -111,8 +167,8 @@ func TestLoopRunOffABoxRunsNoStack(t *testing.T) {
 
 	stdout, stderr, code := runLoopRun(t, w, "80")
 
-	if code != 0 || len(stack.ups) != 0 || len(stack.downs) != 0 || strings.Contains(stdout, "stack:") {
-		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0 and no stack", code, stack.ups, stack.downs, stdout, stderr)
+	if code != 0 || len(stack.ups) != 0 || len(stack.downs) != 0 || !strings.Contains(stdout, "stack:  off (--stack turns it on)\n") {
+		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0, no stack and the stack off line", code, stack.ups, stack.downs, stdout, stderr)
 	}
 }
 

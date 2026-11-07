@@ -317,6 +317,9 @@ func settingsReport(s loop.Settings) string {
 		{"stack", s.Stack},
 	} {
 		if setting.name == "stack" && setting.value.Value == "" {
+			if s.StackDeclared {
+				fmt.Fprintf(&b, "%-7s off (--stack turns it on)\n", "stack:")
+			}
 			continue
 		}
 		if setting.value.Value == "" {
@@ -436,14 +439,19 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 				flags.Push = &off
 			}
 			if box != "" {
+				if flags.Stack {
+					return reportInvalid(cmd, fmt.Errorf("--stack cannot be used with box %s: a box always runs its stack", box))
+				}
 				return w.relayRun(cmd, box, sessionRun{issue: args[0], repo: repo, interactive: interactive})
 			}
 			if repo != "" {
 				return w.startSession(cmd, ref, sessionRun{issue: args[0], repo: repo, branch: branch, base: base, interactive: interactive, flags: flags})
 			}
-			if flags.Stack, err = w.onBox(cmd, "loop run", typed(cmd, []string{fmt.Sprint(ref.Number)})); err != nil {
+			onBox, err := w.onBox(cmd, "loop run", typed(cmd, []string{fmt.Sprint(ref.Number)}))
+			if err != nil {
 				return reportInvalid(cmd, err)
 			}
+			flags.Stack = flags.Stack || onBox
 			recorder, err := w.recorder(cmd.Context(), inSession)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -476,6 +484,7 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a new work branch is cut from (default: origin's default branch)")
+	cmd.Flags().BoolVar(&flags.Stack, "stack", false, "off a box, bring the repo file's stack up before the agent and down at the end, as a box always does")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
 	cmd.Flags().StringVar(&repo, "repo", "", "on a box, the repo to start a loop-driven session in, rather than running here")
 	cmd.Flags().BoolVar(&inSession, inSessionFlag, false, "the run is a loop-driven session's root process, recording how it ends in the session record")
@@ -690,6 +699,7 @@ func checkLimits(limits loop.Limits) error {
 // issue that cannot be read is reported naming why.
 func newLoopListCmd(w loopWiring) *cobra.Command {
 	var branch, base string
+	var stackFlag bool
 	cmd := &cobra.Command{
 		Use:         "list <issue>",
 		Annotations: verbTraits(false, false, false),
@@ -712,7 +722,7 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			settings, _, err := w.settings(cmd.Context(), loop.Flags{Stack: onBox})
+			settings, _, err := w.settings(cmd.Context(), loop.Flags{Stack: onBox || stackFlag})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -742,6 +752,7 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 	}
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch a run would use, named exactly (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a run would cut a new work branch from (default: origin's default branch)")
+	cmd.Flags().BoolVar(&stackFlag, "stack", false, "off a box, show the settings of a run that brings the repo file's stack up, as a box always does")
 	return cmd
 }
 

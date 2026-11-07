@@ -39,6 +39,8 @@ type Settings struct {
 	// stack up and down, and zero when it runs none: the repo file declares
 	// none, or the run is not set to run it.
 	Stack config.Value
+	// StackDeclared is whether the repo file declares a stack, on or not.
+	StackDeclared bool
 }
 
 // ResolveSettings resolves the settings from flags over the repo file over the
@@ -61,7 +63,8 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, preset.Choice{}, err
 	}
-	if flags.Stack && file.Stack.Declared() {
+	s.StackDeclared = file.Stack.Declared()
+	if flags.Stack && s.StackDeclared {
 		s.Stack = config.Value{Value: switchValue(true), Origin: config.FromRepoFile}
 	}
 	return s, choice, nil
