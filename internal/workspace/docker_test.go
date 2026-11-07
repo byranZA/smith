@@ -89,10 +89,18 @@ func newDockerBox(t *testing.T, config string) *dockerBox {
 	return box
 }
 
-// convergeDocker runs the docker step against the box.
+// converge runs the docker step against the box through the public Converge
+// and returns the summary and error of the docker outcome.
 func (d *dockerBox) converge(t *testing.T) (string, error) {
 	t.Helper()
-	return convergeDocker(t.Context(), Env{Command: d, DockerConfig: d.path}, io.Discard)
+	result, err := Converge(t.Context(), Env{Command: d, DockerConfig: d.path}, []Unit{{Step: Docker, Label: "docker"}}, io.Discard)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Step != Docker {
+		t.Fatalf("Converge() outcomes = %+v, want one docker outcome", result.Outcomes)
+	}
+	return result.Outcomes[0].Summary, result.Outcomes[0].Err
 }
 
 // live is the daemon.json on the box, parsed to a generic value.
@@ -126,13 +134,13 @@ func TestDockerStepWritesLoopbackDefaultsAndRestarts(t *testing.T) {
 	box := newDockerBox(t, "")
 	summary, err := box.converge(t)
 	if err != nil {
-		t.Fatalf("convergeDocker() error = %v, want nil", err)
+		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 	if got := box.live(t); !reflect.DeepEqual(got, loopbackDefaults()) {
 		t.Errorf("daemon.json = %v, want %v", got, loopbackDefaults())
 	}
 	if box.restarts != 1 || !strings.Contains(summary, "restarted docker") {
-		t.Errorf("convergeDocker() = %q after %d restarts, want one restart said in the summary", summary, box.restarts)
+		t.Errorf("Converge() = %q after %d restarts, want one restart said in the summary", summary, box.restarts)
 	}
 }
 
@@ -140,7 +148,7 @@ func TestDockerStepSecondRunChangesNothingAndDoesNotRestart(t *testing.T) {
 	t.Parallel()
 	box := newDockerBox(t, "")
 	if _, err := box.converge(t); err != nil {
-		t.Fatalf("first convergeDocker() error = %v", err)
+		t.Fatalf("first Converge() error = %v", err)
 	}
 	before, err := os.ReadFile(box.path)
 	if err != nil {
@@ -148,7 +156,7 @@ func TestDockerStepSecondRunChangesNothingAndDoesNotRestart(t *testing.T) {
 	}
 	summary, err := box.converge(t)
 	if err != nil {
-		t.Fatalf("second convergeDocker() error = %v", err)
+		t.Fatalf("second Converge() error = %v", err)
 	}
 	after, err := os.ReadFile(box.path)
 	if err != nil {
@@ -163,7 +171,7 @@ func TestDockerStepKeepsOtherKeysIncludingOtherBridgeOptions(t *testing.T) {
 	t.Parallel()
 	box := newDockerBox(t, `{"log-driver":"json-file","default-network-opts":{"bridge":{"com.docker.network.driver.mtu":"1400"},"overlay":{"x":"y"}}}`)
 	if _, err := box.converge(t); err != nil {
-		t.Fatalf("convergeDocker() error = %v, want nil", err)
+		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 	want := map[string]any{
 		"log-driver": "json-file",
@@ -186,7 +194,7 @@ func TestDockerStepKeepsAnOperatorsValueWithANote(t *testing.T) {
 	box := newDockerBox(t, `{"ip":"10.0.0.5","default-network-opts":{"bridge":{"com.docker.network.bridge.host_binding_ipv4":"0.0.0.0"}}}`)
 	summary, err := box.converge(t)
 	if err != nil {
-		t.Fatalf("convergeDocker() error = %v, want nil", err)
+		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 	want := map[string]any{
 		"ip":                   "10.0.0.5",
@@ -197,7 +205,7 @@ func TestDockerStepKeepsAnOperatorsValueWithANote(t *testing.T) {
 	}
 	for _, note := range []string{"ip", "10.0.0.5", "host_binding_ipv4", "0.0.0.0"} {
 		if !strings.Contains(summary, note) {
-			t.Errorf("convergeDocker() = %q, want a note naming %q", summary, note)
+			t.Errorf("Converge() = %q, want a note naming %q", summary, note)
 		}
 	}
 	if box.restarts != 0 {
@@ -210,7 +218,7 @@ func TestDockerStepFailsOnUnparseableConfigAndLeavesItUntouched(t *testing.T) {
 	const broken = `{"log-driver": `
 	box := newDockerBox(t, broken)
 	if _, err := box.converge(t); err == nil {
-		t.Fatal("convergeDocker() error = nil, want a failure on an unparseable daemon.json")
+		t.Fatal("Converge() error = nil, want a failure on an unparseable daemon.json")
 	}
 	got, err := os.ReadFile(box.path)
 	if err != nil || string(got) != broken || box.restarts != 0 {
@@ -228,7 +236,7 @@ func TestDockerStepFailsOnEmptyOrBlankExistingConfigAndLeavesItUntouched(t *test
 				t.Fatalf("write the daemon.json: %v", err)
 			}
 			if _, err := box.converge(t); err == nil {
-				t.Fatal("convergeDocker() error = nil, want a failure on an existing daemon.json with no JSON")
+				t.Fatal("Converge() error = nil, want a failure on an existing daemon.json with no JSON")
 			}
 			got, err := os.ReadFile(box.path)
 			if err != nil || string(got) != content || box.restarts != 0 {
@@ -244,7 +252,7 @@ func TestDockerStepKeepsTheLiveConfigWhenValidationFails(t *testing.T) {
 	box := newDockerBox(t, live)
 	box.invalid = true
 	if _, err := box.converge(t); err == nil {
-		t.Fatal("convergeDocker() error = nil, want a failure when validation rejects the merge")
+		t.Fatal("Converge() error = nil, want a failure when validation rejects the merge")
 	}
 	got, err := os.ReadFile(box.path)
 	if err != nil || string(got) != live || box.restarts != 0 {
@@ -257,7 +265,7 @@ func TestDockerStepReportsAFailedRestart(t *testing.T) {
 	box := newDockerBox(t, "")
 	box.restartErr = errors.New("unit not found")
 	if _, err := box.converge(t); !errors.Is(err, box.restartErr) {
-		t.Errorf("convergeDocker() error = %v, want it to wrap %v", err, box.restartErr)
+		t.Errorf("Converge() error = %v, want it to wrap %v", err, box.restartErr)
 	}
 }
 
@@ -267,12 +275,12 @@ func TestDockerStepOnABoxWithoutDockerChangesNothing(t *testing.T) {
 	box.present = false
 	summary, err := box.converge(t)
 	if err != nil {
-		t.Fatalf("convergeDocker() error = %v, want nil", err)
+		t.Fatalf("Converge() error = %v, want nil", err)
 	}
 	if _, statErr := os.Stat(box.path); !os.IsNotExist(statErr) || box.restarts != 0 {
 		t.Errorf("a box without docker got a daemon.json (stat %v) or %d restarts, want neither", statErr, box.restarts)
 	}
 	if want := "docker is not installed; nothing to change"; summary != want {
-		t.Errorf("convergeDocker() = %q, want %q", summary, want)
+		t.Errorf("Converge() = %q, want %q", summary, want)
 	}
 }
