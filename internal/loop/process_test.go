@@ -182,11 +182,11 @@ func TestProcessHoldsBackAHeldCommandsOutputOnSuccess(t *testing.T) {
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2"}, HoldOutput: true}
 
 	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd); err != nil {
-		t.Fatalf("Launch() error = %v", err)
+		t.Fatalf("Launch(%q %q) error = %v", cmd.Name, cmd.Args, err)
 	}
 
 	if out.Len() != 0 {
-		t.Errorf("output = %q, want none", out.String())
+		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want none", cmd.Name, cmd.Args, out.String())
 	}
 }
 
@@ -198,10 +198,10 @@ func TestProcessShowsAHeldCommandsOutputOnFailure(t *testing.T) {
 	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
 
 	if err == nil {
-		t.Fatal("Launch() error = nil, want a failure")
+		t.Fatalf("Launch(%q %q) error = nil, want a failure", cmd.Name, cmd.Args)
 	}
 	if got := out.String(); got != "activity\nmore\n" && got != "more\nactivity\n" {
-		t.Errorf("output = %q, want both lines", got)
+		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want both lines \"activity\" and \"more\"", cmd.Name, cmd.Args, got)
 	}
 }
 
@@ -214,10 +214,10 @@ func TestProcessCutsAHeldCommandsOutputOverTheBound(t *testing.T) {
 
 	got := out.String()
 	if !strings.HasPrefix(got, "smith: earlier agent output was cut; showing the last 64 KiB\n") {
-		t.Errorf("output starts %q, want the cut note", got[:min(len(got), 80)])
+		t.Errorf("Launch(5000-line command) with HoldOutput wrote a start of %q, want the cut note %q", got[:min(len(got), 80)], "smith: earlier agent output was cut; showing the last 64 KiB\n")
 	}
 	if !strings.HasSuffix(got, "line-4999-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n") || strings.Contains(got, "line-0-") {
-		t.Error("output does not keep the tail and drop the head")
+		t.Errorf("Launch(5000-line command) with HoldOutput wrote a tail of %q, want it to end with line-4999 and not contain line-0", got[max(0, len(got)-80):])
 	}
 }
 
@@ -227,11 +227,11 @@ func TestProcessKeepsAnAttachedCommandOnTheTerminalDespiteHoldOutput(t *testing.
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo shown"}, Attached: true, HoldOutput: true}
 
 	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd); err != nil {
-		t.Fatalf("Launch() error = %v", err)
+		t.Fatalf("Launch(%q %q) error = %v", cmd.Name, cmd.Args, err)
 	}
 
 	if got := out.String(); got != "shown\n" {
-		t.Errorf("output = %q, want %q", got, "shown\n")
+		t.Errorf("Launch(%q %q) with Attached and HoldOutput wrote %q, want %q", cmd.Name, cmd.Args, got, "shown\n")
 	}
 }
 

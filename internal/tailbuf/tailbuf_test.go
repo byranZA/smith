@@ -38,10 +38,10 @@ func TestBufferLinesSkipsTheCutLineAfterADrop(t *testing.T) {
 	t.Parallel()
 	b := tailbuf.Buffer{Limit: 8}
 	if _, err := b.Write([]byte("abc\ndef\nghi\n")); err != nil {
-		t.Fatalf("Write() error = %v", err)
+		t.Fatalf("Buffer{Limit: 8}.Write(%q) error = %v", "abc\ndef\nghi\n", err)
 	}
 
 	if got, want := string(b.Lines()), "ghi\n"; got != want {
-		t.Errorf("Lines() = %q, want %q", got, want)
+		t.Errorf("Buffer{Limit: 8} after Write(%q): Lines() = %q, want %q", "abc\ndef\nghi\n", got, want)
 	}
 }
