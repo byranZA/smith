@@ -175,9 +175,6 @@ type Loop struct {
 	// a run, whether or not this run has a stack; nil recovers nothing.
 	Recoverer Recoverer
 
-	// stackFailed collects why a stack down failed during Run, for its stop
-	// report.
-	stackFailed *error
 	// Placements are put into each task worktree before it is prepared; nil,
 	// as off a box, places nothing.
 	Placements *Placements
@@ -246,6 +243,9 @@ type Outcome struct {
 	ReviewIncomplete *Incomplete
 	// Note is something the report says about the review beyond how it ended.
 	Note string
+	// cleanup asks Run to remove the recycled task worktree once the stack is
+	// down.
+	cleanup bool
 	// Hint is a line ending the report that says what to run next.
 	Hint string
 }
@@ -295,11 +295,10 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	if err := l.recoverStack(ctx); err != nil {
 		return Outcome{}, err
 	}
-	var stackFailed error
-	l.stackFailed = &stackFailed
 	outcome, err := l.work(ctx, spec, current)
-	err = errors.Join(err, l.stackDown(ctx))
-	outcome.StackFailure = stackFailed
+	stackFailure, ferr := l.finalize(ctx, outcome.cleanup)
+	outcome.StackFailure = stackFailure
+	err = errors.Join(err, ferr)
 	if reported := l.conclude(ctx, current, outcome, err); reported != nil {
 		return outcome, errors.Join(err, reported)
 	}
@@ -307,7 +306,8 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 }
 
 // work works spec, read as current, as Run says, and returns how it ended,
-// removing the recycled task worktree when every task has landed.
+// asking for the recycled task worktree to be removed when every task has
+// landed.
 func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Outcome, error) {
 	attempts := map[int]int{}
 	ran := map[int]bool{}
@@ -370,7 +370,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 				note = "not reviewed: `--no-review`"
 			}
 			hint = l.reviewHint(ctx, current, remaining)
-			return stopped(remaining), l.finish(ctx, remaining)
+			done := stopped(remaining)
+			done.cleanup = remaining.Complete()
+			return done, nil
 		}
 		if runs >= l.Limits.MaxIterations {
 			capped := stopped(remaining)
@@ -429,7 +431,8 @@ func (l Loop) reviewStopped(ctx context.Context, outcome Outcome, execution trac
 	}
 	if result.capped {
 		outcome.Capped, outcome.ReviewOwed = true, true
-		return outcome, l.finish(ctx, outcome.Remaining)
+		outcome.cleanup = outcome.Remaining.Complete()
+		return outcome, nil
 	}
 	outcome.Filed = result.filed
 	if result.incomplete != nil {
@@ -473,6 +476,9 @@ type InteractiveOutcome struct {
 	Remaining Remaining
 	// WorkBranch is the branch a closed task landed on.
 	WorkBranch string
+	// cleanup asks RunInteractive to remove the recycled task worktree once the
+	// stack is down.
+	cleanup bool
 }
 
 // Closed reports whether the run handed a task and the agent closed it.
@@ -499,11 +505,12 @@ func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome,
 		return InteractiveOutcome{}, err
 	}
 	outcome, err := l.interactive(ctx, spec)
-	return outcome, errors.Join(err, l.stackDown(ctx))
+	_, ferr := l.finalize(ctx, outcome.cleanup)
+	return outcome, errors.Join(err, ferr)
 }
 
-// interactive runs RunInteractive's task, leaving the stack it brought up to
-// the caller to take down.
+// interactive runs RunInteractive's task, leaving the stack it brought up and
+// the worktree to finalize.
 func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, error) {
 	current, err := l.Tracker.Execution(ctx, spec)
 	if err != nil {
@@ -515,7 +522,7 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 	remaining := Survey(current)
 	next, ok := Pairing(current)
 	if !ok {
-		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
+		return InteractiveOutcome{Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), cleanup: remaining.Complete()}, nil
 	}
 	adapter, resolved, err := l.agent(next)
 	if err != nil {
@@ -537,7 +544,7 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 		}
 	}
 	remaining = Survey(after)
-	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch()}, l.finish(ctx, remaining)
+	return InteractiveOutcome{Task: next, Handed: true, Remaining: remaining, WorkBranch: l.Bench.WorkBranch(), cleanup: remaining.Complete()}, nil
 }
 
 // agent returns the preset task is handed to and the adapter of its agent,
@@ -740,23 +747,21 @@ func (l Loop) recoverStack(ctx context.Context) error {
 
 // stackDown takes down the stack the run brought up, when there is one,
 // warning with the last of down's output when it fails, since the run's
-// outcome stands whether or not the stack stopped.
-func (l Loop) stackDown(ctx context.Context) error {
+// outcome stands whether or not the stack stopped. It returns why the stack
+// did not stop, and separately any failed progress write.
+func (l Loop) stackDown(ctx context.Context) (failure, err error) {
 	if l.Stack == nil {
-		return nil
+		return nil, nil
 	}
 	captured := tailbuf.Buffer{Limit: PrepareTailLimit}
-	err := l.Stack.Release(ctx, &captured)
-	if err == nil {
-		return nil
+	failure = l.Stack.Release(ctx, &captured)
+	if failure == nil {
+		return nil, nil
 	}
-	if l.stackFailed != nil {
-		*l.stackFailed = err
+	if werr := l.warnIf(failure, "the stack did not stop"); werr != nil {
+		return failure, werr //nolint:wrapcheck // the stack's own failure is reported as it came, beside the write error.
 	}
-	if werr := l.warnIf(err, "the stack did not stop"); werr != nil {
-		return werr
-	}
-	return l.reportTail(&captured)
+	return failure, l.reportTail(&captured) //nolint:wrapcheck // the stack's own failure is reported as it came, beside the write error.
 }
 
 // reportTail writes the output captured in b to Progress. When b dropped
@@ -874,17 +879,16 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 	return l.report("smith: pushed #%d on %s to origin\n", task.Number, branch)
 }
 
-// finish removes the recycled task worktree when remaining is complete, and
-// keeps it otherwise for a later run of the execution. A failed removal loses
-// no work, so it is a warning, and only a failed progress write is an error.
-func (l Loop) finish(ctx context.Context, remaining Remaining) error {
-	if !remaining.Complete() {
-		return nil
+// finalize ends a run: it takes down the stack, then removes the recycled task
+// worktree when cleanup is set, and keeps it otherwise for a later run of the
+// execution. It returns why the stack did not stop. A failed removal loses no
+// work, so it is a warning, and only a failed progress write is an error.
+func (l Loop) finalize(ctx context.Context, cleanup bool) (stackFailure, err error) {
+	stackFailure, err = l.stackDown(ctx)
+	if err != nil || !cleanup {
+		return stackFailure, err
 	}
-	if err := l.stackDown(ctx); err != nil {
-		return err
-	}
-	return l.warnIf(l.Bench.Finish(ctx), "could not remove the recycled task worktree of %s", l.Bench.WorkBranch())
+	return stackFailure, l.warnIf(l.Bench.Finish(ctx), "could not remove the recycled task worktree of %s", l.Bench.WorkBranch())
 }
 
 // closedIn reports whether spec holds task as closed.
