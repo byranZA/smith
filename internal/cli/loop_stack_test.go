@@ -172,7 +172,7 @@ func TestLoopRunOffABoxRunsNoStack(t *testing.T) {
 	}
 }
 
-func TestLoopRunOnABoxWhoseRepoDeclaresNoStackRunsNoStack(t *testing.T) {
+func TestLoopRunOnABoxWhoseCheckoutDeclaresNoStackStillLetsEnsureInspectEachWorktree(t *testing.T) {
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
@@ -182,8 +182,8 @@ func TestLoopRunOnABoxWhoseRepoDeclaresNoStackRunsNoStack(t *testing.T) {
 
 	_, stderr, code := runLoopRun(t, w, "80")
 
-	if code != 0 || len(stack.ups) != 0 {
-		t.Errorf("exit %d, ups %v, stderr %q; want 0 and no stack", code, stack.ups, stderr)
+	if code != 0 || len(stack.ups) != 1 {
+		t.Errorf("exit %d, ups %v, stderr %q; want 0 and the worktree handed to the stack", code, stack.ups, stderr)
 	}
 }
 

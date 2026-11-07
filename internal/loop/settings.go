@@ -41,6 +41,10 @@ type Settings struct {
 	Stack config.Value
 	// StackDeclared is whether the repo file declares a stack, on or not.
 	StackDeclared bool
+	// StackRuns is whether the run executes stacks at all, on a box or with
+	// --stack, whether or not the invocation checkout declares one: a work
+	// branch or a task can add a stack the run must then bring up.
+	StackRuns bool
 }
 
 // ResolveSettings resolves the settings from flags over the repo file over the
@@ -64,6 +68,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 		return Settings{}, preset.Choice{}, err
 	}
 	s.StackDeclared = file.Stack.Declared()
+	s.StackRuns = flags.Stack
 	if flags.Stack && s.StackDeclared {
 		s.Stack = config.Value{Value: switchValue(true), Origin: config.FromRepoFile}
 	}
