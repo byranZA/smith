@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,7 +16,17 @@ import (
 // stackLeaseKey names the stack lease of the repo dir is in: by its origin, or
 // by its git directory when it has none.
 func (w loopWiring) stackLeaseKey(ctx context.Context, dir string) (string, error) {
-	origin, _ := w.gitLine(ctx, dir, "remote", "get-url", "origin")
+	origin, err := w.gitLine(ctx, dir, "remote", "get-url", "origin")
+	if err != nil {
+		remotes, lerr := w.gitLine(ctx, dir, "remote")
+		if lerr != nil {
+			return "", fmt.Errorf("list the repo's remotes: %w", lerr)
+		}
+		if slices.Contains(strings.Fields(remotes), "origin") {
+			return "", fmt.Errorf("read the repo's origin: %w", err)
+		}
+		origin = ""
+	}
 	common := ""
 	if origin == "" {
 		var err error

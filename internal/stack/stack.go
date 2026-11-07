@@ -118,21 +118,19 @@ func (s *Stack) Release(ctx context.Context, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DownTimeout)
 	defer cancel()
 	err := s.Command.Exec(ctx, r.dir, Down, r.down, out)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("take down the stack in %s: timed out after %s: %w", r.dir, DownTimeout, err)
+		} else {
+			err = fmt.Errorf("take down the stack in %s: %w", r.dir, err)
+		}
+	}
 	if err == nil && s.lease != nil {
 		err = s.lease.drop()
 	}
 	if s.lease != nil {
-		cerr := s.lease.close()
+		err = errors.Join(err, s.lease.close())
 		s.lease = nil
-		if err == nil {
-			return cerr
-		}
 	}
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("take down the stack in %s: timed out after %s: %w", r.dir, DownTimeout, err)
-		}
-		return fmt.Errorf("take down the stack in %s: %w", r.dir, err)
-	}
-	return nil
+	return err
 }

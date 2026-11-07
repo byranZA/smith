@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -89,7 +90,7 @@ func TestReleaseFreesTheLeaseAndDeletesItsRecord(t *testing.T) {
 	if err != nil || holder != nil {
 		t.Errorf("Holder() = %v, %v, want none after Release", holder, err)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+	if files := recordFiles(t, state); len(files) != 0 {
 		t.Errorf("state holds %v after Release, want no record", files)
 	}
 }
@@ -109,7 +110,7 @@ func TestReleaseWhoseDownFailsFreesTheLockAndKeepsTheRecord(t *testing.T) {
 	if holder, err := stack.Holder(state, "repo"); err != nil || holder != nil {
 		t.Errorf("Holder() = %v, %v, want the lock free", holder, err)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 1 {
+	if files := recordFiles(t, state); len(files) != 1 {
 		t.Errorf("state holds %v, want the record kept", files)
 	}
 }
@@ -152,10 +153,12 @@ func TestMain(m *testing.M) {
 	if state := os.Getenv(helperEnv); state != "" {
 		s := &stack.Stack{Command: &fakeCommander{}, State: state, Key: "repo", Branch: "child"}
 		if err := s.Ensure(context.Background(), os.Args[len(os.Args)-1], io.Discard); err != nil {
-			_, _ = os.Stderr.WriteString(err.Error())
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		_, _ = os.Stdout.WriteString("held\n")
+		if _, err := fmt.Fprintln(os.Stdout, "held"); err != nil {
+			os.Exit(3)
+		}
 		select {}
 	}
 	os.Exit(m.Run())
@@ -174,8 +177,8 @@ func TestALeaseHolderKilledBySIGKILLLeavesTheLockFreeAndTheRecordInPlace(t *test
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if line, _ := bufio.NewReader(out).ReadString('\n'); line != "held\n" {
-		t.Fatalf("child said %q, want it to hold the lease", line)
+	if line, err := bufio.NewReader(out).ReadString('\n'); err != nil || line != "held\n" {
+		t.Fatalf("child said %q, %v, want it to hold the lease", line, err)
 	}
 	if got, err := stack.Holder(state, "repo"); err != nil || got == nil {
 		t.Fatalf("Holder() = %v, %v, want the child holding", got, err)
@@ -183,14 +186,17 @@ func TestALeaseHolderKilledBySIGKILLLeavesTheLockFreeAndTheRecordInPlace(t *test
 	if err := child.Process.Signal(syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	_ = child.Wait()
+	var exit *exec.ExitError
+	if err := child.Wait(); !errors.As(err, &exit) {
+		t.Fatalf("child.Wait() error = %v, want it killed", err)
+	}
 
 	got, err := stack.Holder(state, "repo")
 
 	if err != nil || got != nil {
 		t.Errorf("Holder() = %v, %v, want the lock free after SIGKILL", got, err)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 1 {
+	if files := recordFiles(t, state); len(files) != 1 {
 		t.Errorf("state holds %v, want the record in place", files)
 	}
 }
@@ -225,7 +231,7 @@ func TestRecoverRunsTheRecordedDownInTheRecordedWorktreeAndClearsTheRecord(t *te
 	if want := []call{{"stack down", dir, "make down"}}; !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Recover() ran %v, want %v", run.calls, want)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+	if files := recordFiles(t, state); len(files) != 0 {
 		t.Errorf("state holds %v, want the record cleared", files)
 	}
 }
@@ -240,7 +246,7 @@ func TestRecoverWithNothingLeftRunsNothing(t *testing.T) {
 	if err != nil || rec != nil || len(run.calls) != 0 {
 		t.Errorf("Recover() = %v, %v after %v, want nothing", rec, err, run.calls)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+	if files := recordFiles(t, state); len(files) != 0 {
 		t.Errorf("state holds %v, want no lease file", files)
 	}
 }
@@ -260,7 +266,7 @@ func TestRecoverNeverTouchesALiveHoldersLease(t *testing.T) {
 	if err != nil || rec != nil || len(run.calls) != 0 {
 		t.Errorf("Recover() = %v, %v after %v, want a live lease left alone", rec, err, run.calls)
 	}
-	if got, _ := stack.Holder(state, "repo"); got == nil || got.Branch != "smith/1-a" {
+	if got, err := stack.Holder(state, "repo"); err != nil || got == nil || got.Branch != "smith/1-a" {
 		t.Errorf("Holder() = %v, want the live holder's record kept", got)
 	}
 }
@@ -276,10 +282,10 @@ func TestRecoverWhoseDownFailsKeepsTheRecordForTheNextRun(t *testing.T) {
 	if rec == nil || err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "exit status 3") {
 		t.Fatalf("Recover() = %v, %v, want the record and an error naming %s and the status", rec, err, dir)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 1 {
+	if files := recordFiles(t, state); len(files) != 1 {
 		t.Errorf("state holds %v, want the record kept", files)
 	}
-	if got, _ := stack.Holder(state, "repo"); got != nil {
+	if got, err := stack.Holder(state, "repo"); err != nil || got != nil {
 		t.Errorf("Holder() = %v, want the lock free", got)
 	}
 }
@@ -301,7 +307,7 @@ func TestRecoverOfAGoneWorktreeNamesItAndTheCommandAndClearsTheRecord(t *testing
 	if len(run.calls) != 0 {
 		t.Errorf("Recover() ran %v, want no command", run.calls)
 	}
-	if files, _ := filepath.Glob(filepath.Join(state, "*", "*")); len(files) != 0 {
+	if files := recordFiles(t, state); len(files) != 0 {
 		t.Errorf("state holds %v, want the record cleared", files)
 	}
 }
@@ -321,4 +327,14 @@ func TestEnsureRecoversAStaleRecordItFindsWhenTakingTheLeaseBeforeItsUp(t *testi
 	if !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Ensure() ran %v, want %v", run.calls, want)
 	}
+}
+
+// recordFiles lists the lease files under state.
+func recordFiles(t *testing.T, state string) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(state, "*", "*"))
+	if err != nil {
+		t.Fatalf("Glob(%q) error = %v", state, err)
+	}
+	return files
 }

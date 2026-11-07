@@ -239,7 +239,11 @@ func leaseHeldBy(t *testing.T, state, key, branch, dir string) {
 	if err := holder.Ensure(t.Context(), dir, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = holder.Release(context.Background(), io.Discard) })
+	t.Cleanup(func() {
+		if err := holder.Release(context.Background(), io.Discard); err != nil {
+			t.Errorf("Release() error = %v", err)
+		}
+	})
 }
 
 // noopCommander runs every stack command successfully.
@@ -320,5 +324,42 @@ func TestLoopRunOnABoxWithARepoRefusesAHeldStackCreatingNothing(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(workspace, "api", "worktrees"))
 	if code == 0 || !strings.Contains(stderr, "smith/9-other") || len(tmux.calls) != 0 || !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("exit %d, stderr %q, tmux %q, worktrees %v; want non-zero naming the holder, no session and no worktree", code, stderr, tmux.calls, statErr)
+	}
+}
+
+// originGit fakes git in a repo whose origin probe fails with probeErr and whose remotes are remotes.
+type originGit struct {
+	probeErr error
+	remotes  string
+}
+
+func (g originGit) Run(_ context.Context, _ string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	switch args[2] {
+	case "remote":
+		if len(args) == 5 {
+			return g.probeErr
+		}
+		_, err := fmt.Fprintln(stdout, g.remotes)
+		return err
+	default:
+		_, err := fmt.Fprintln(stdout, "/repo/.git")
+		return err
+	}
+}
+
+func TestStackLeaseKeyFailsWhenAnExistingOriginCannotBeRead(t *testing.T) {
+	t.Parallel()
+	w := loopWiring{git: originGit{probeErr: errors.New("boom"), remotes: "origin"}}
+	if key, err := w.stackLeaseKey(t.Context(), "/repo"); err == nil {
+		t.Errorf("stackLeaseKey() = %q, nil, want an error", key)
+	}
+}
+
+func TestStackLeaseKeyFallsBackToTheGitDirectoryWhenThereIsNoOrigin(t *testing.T) {
+	t.Parallel()
+	w := loopWiring{git: originGit{probeErr: errors.New("no such remote"), remotes: "upstream"}}
+	got, err := w.stackLeaseKey(t.Context(), "/repo")
+	if want := stack.Key("", "/repo/.git"); err != nil || got != want {
+		t.Errorf("stackLeaseKey() = %q, %v, want %q", got, err, want)
 	}
 }

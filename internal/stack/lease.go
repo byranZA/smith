@@ -76,14 +76,12 @@ func acquire(state, key string) (*lease, error) {
 		}
 		locked, err := tryLock(f)
 		if err != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("lock the stack lease %s: %w", p, err)
+			return nil, errors.Join(fmt.Errorf("lock the stack lease %s: %w", p, err), closeLease(f))
 		}
 		if !locked {
 			rec, rerr := read(f)
-			_ = f.Close()
-			if rerr != nil {
-				return nil, rerr
+			if cerr := closeLease(f); rerr != nil || cerr != nil {
+				return nil, errors.Join(rerr, cerr)
 			}
 			return nil, &HeldError{*rec}
 		}
@@ -94,8 +92,18 @@ func acquire(state, key string) (*lease, error) {
 		if serr == nil && ferr == nil && os.SameFile(onDisk, mine) {
 			return &lease{file: f, path: p}, nil
 		}
-		_ = f.Close()
+		if err := closeLease(f); err != nil {
+			return nil, err
+		}
 	}
+}
+
+// closeLease closes a lease file, naming the lease in its error.
+func closeLease(f *os.File) error {
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close the stack lease %s: %w", f.Name(), err)
+	}
+	return nil
 }
 
 // write replaces the lease's record.
@@ -149,7 +157,7 @@ func read(f *os.File) (*Record, error) {
 // Holder returns the record of the live run that holds the lease for key
 // under state, or nil when none does, taking nothing. It is how a preflight
 // refuses a run before it starts.
-func Holder(state, key string) (*Record, error) {
+func Holder(state, key string) (rec *Record, err error) {
 	f, err := os.Open(path(state, key))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -157,7 +165,7 @@ func Holder(state, key string) (*Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open the stack lease: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { err = errors.Join(err, closeLease(f)) }()
 	locked, err := tryLock(f)
 	if err != nil {
 		return nil, fmt.Errorf("lock the stack lease: %w", err)

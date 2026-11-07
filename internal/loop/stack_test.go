@@ -26,7 +26,9 @@ type stacking struct {
 func (s *stacking) Ensure(_ context.Context, dir string, out io.Writer) error {
 	*s.events = append(*s.events, "up "+dir)
 	s.dir, s.up = dir, true
-	_, _ = io.WriteString(out, "pulling images\n")
+	if _, err := io.WriteString(out, "pulling images\n"); err != nil {
+		return err
+	}
 	return s.upErr
 }
 
@@ -36,7 +38,9 @@ func (s *stacking) Release(_ context.Context, out io.Writer) error {
 	}
 	s.up = false
 	*s.events = append(*s.events, "down "+s.dir)
-	_, _ = io.WriteString(out, "network busy\n")
+	if _, err := io.WriteString(out, "network busy\n"); err != nil {
+		return err
+	}
 	return s.downErr
 }
 
@@ -277,7 +281,9 @@ type recovering struct {
 
 func (r *recovering) Recover(_ context.Context, out io.Writer) (*stack.Record, error) {
 	*r.events = append(*r.events, "recover")
-	_, _ = io.WriteString(out, "no such container\n")
+	if _, err := io.WriteString(out, "no such container\n"); err != nil {
+		return nil, err
+	}
 	return r.rec, r.err
 }
 
