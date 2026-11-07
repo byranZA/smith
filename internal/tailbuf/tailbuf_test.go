@@ -35,6 +35,7 @@ func TestBufferWithinTheLimitDropsNothing(t *testing.T) {
 }
 
 func TestBufferLinesSkipsTheCutLineAfterADrop(t *testing.T) {
+	t.Parallel()
 	b := tailbuf.Buffer{Limit: 8}
 	if _, err := b.Write([]byte("abc\ndef\nghi\n")); err != nil {
 		t.Fatalf("Write() error = %v", err)

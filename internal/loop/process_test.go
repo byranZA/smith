@@ -177,6 +177,7 @@ func TestProcessUnderMiseKeepsTheAgentsEnvironment(t *testing.T) {
 }
 
 func TestProcessHoldsBackAHeldCommandsOutputOnSuccess(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2"}, HoldOutput: true}
 
@@ -190,6 +191,7 @@ func TestProcessHoldsBackAHeldCommandsOutputOnSuccess(t *testing.T) {
 }
 
 func TestProcessShowsAHeldCommandsOutputOnFailure(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2; exit 3"}, HoldOutput: true}
 
@@ -204,6 +206,7 @@ func TestProcessShowsAHeldCommandsOutputOnFailure(t *testing.T) {
 }
 
 func TestProcessCutsAHeldCommandsOutputOverTheBound(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "i=0; while [ $i -lt 5000 ]; do echo line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; exit 1"}, HoldOutput: true}
 
@@ -219,6 +222,7 @@ func TestProcessCutsAHeldCommandsOutputOverTheBound(t *testing.T) {
 }
 
 func TestProcessKeepsAnAttachedCommandOnTheTerminalDespiteHoldOutput(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo shown"}, Attached: true, HoldOutput: true}
 
@@ -236,6 +240,7 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
 
 func TestProcessKeepsAKilledHeldCommandKilledWhenShowingItsOutputFails(t *testing.T) {
+	t.Parallel()
 	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; kill -9 $$"}, HoldOutput: true}
 
 	err := (loop.Process{Stdout: failingWriter{}, Stderr: failingWriter{}}).Launch(t.Context(), cmd)
