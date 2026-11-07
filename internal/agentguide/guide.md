@@ -25,6 +25,7 @@ The **loop** works one spec to completion. You write a **spec** on GitHub and sp
 - **Outcome**: how a loop run ended, such as `complete`, `waiting on human`, `attempts exhausted`, `agent broken`, `review failed` or `review incomplete`.
 - **Triage label**: the label saying what an issue is for: `ready-for-agent`, `ready-for-human` or `spec` by default.
 - **Repo file**: `.smith/repo.yaml`, the repo's committed smith configuration.
+- **Stack**: the services a repo's checks need, declared as `stack:` with an `up` and a `down` command in the repo file. The loop brings it up before every attempt and the review, and takes it down however the run ends. A **stack lease** lets one run use a repo's stack at a time. Off a box it stays off unless `smith loop run` gets `--stack`.
 - **Preset**: a named agent, model and effort, chosen whole and by name in the repo file.
 
 ## The issue shape the loop expects

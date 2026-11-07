@@ -357,6 +357,14 @@ _Avoid_: checkout, clone.
 Making a worktree ready for whoever works in it, in two steps that know no programming language: install the toolchain the repo's own mise config pins, then run the repo's **prepare command** (its `prepare:` in the **repo file**, such as `uv sync`, `npm ci` or `make setup`) with that toolchain. Every worktree a driver works in is prepared: a human session's worktree each time the session launches, and a task worktree before every agent attempt. A loop-driven session's own worktree, where only smith runs, is not ([ADR-0019](./docs/adr/0019-worktree-preparation.md)). A repo that declares no prepare command still gets its toolchain. The repo declares how to prepare itself and smith never guesses from lockfiles; what lies outside the worktree stays with the blueprint, so system packages, secrets and services are not part of it.
 _Avoid_: setup (reserved for `machine setup`), bootstrap, install.
 
+**Stack**:
+The services a repo's checks need, such as a database in Docker, declared in the **repo file** as `stack:` with an `up` command that brings them up and a `down` command that takes them down. smith owns the lifecycle and knows no service by name: it runs `up` after preparing the worktree, before every agent attempt and the review, runs `down` however the run ends, and takes down a stack a killed run left behind. A box always runs its stack; off a box it stays off unless the run passes `--stack`. It needs a Docker daemon that is not nested, so a container provisioned as a box cannot run one ([ADR-0027](./docs/adr/0027-the-loop-runs-the-repos-stack.md)).
+_Avoid_: services, environment, cleanup.
+
+**Stack lease**:
+The right of one run to use a repo's **stack**, held from the record written before `up` until `down` succeeds. It is a record in the state home plus an advisory OS lock, keyed by the repo's normalised `origin`, so two clones of a repo share it. A live holder refuses a second run; an unlocked record is a stack left behind, which the next run of the repo takes down first.
+_Avoid_: lock, mutex.
+
 **Workspace**:
 Where managed repos live on the box: `~/workspace/<repo>/repo.git` — a **bare** repo — with
 `worktrees/<sanitized-branch>` beside it. Bare kills the "one branch is the checkout" special case,
