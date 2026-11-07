@@ -18,6 +18,9 @@ type Flags struct {
 	Push *bool
 	// NoReview skips the review for this run.
 	NoReview bool
+	// Stack says the run brings the stack its repo file declares up and
+	// down, as a run on a box does.
+	Stack bool
 }
 
 // Settings are the resolved loop settings, each carrying where it came from.
@@ -32,6 +35,16 @@ type Settings struct {
 	AgentLabel config.Value
 	HumanLabel config.Value
 	SpecLabel  config.Value
+	// Stack is "on" with where it came from when the run brings the repo's
+	// stack up and down, and zero when it runs none: the repo file declares
+	// none, or the run is not set to run it.
+	Stack config.Value
+	// StackDeclared is whether the repo file declares a stack, on or not.
+	StackDeclared bool
+	// StackRuns is whether the run executes stacks at all, on a box or with
+	// --stack, whether or not the invocation checkout declares one: a work
+	// branch or a task can add a stack the run must then bring up.
+	StackRuns bool
 }
 
 // ResolveSettings resolves the settings from flags over the repo file over the
@@ -53,6 +66,11 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 	}
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, preset.Choice{}, err
+	}
+	s.StackDeclared = file.Stack.Declared()
+	s.StackRuns = flags.Stack
+	if flags.Stack && s.StackDeclared {
+		s.Stack = config.Value{Value: switchValue(true), Origin: config.FromRepoFile}
 	}
 	return s, choice, nil
 }
@@ -107,6 +125,10 @@ func (s Settings) distinctLabels() error {
 	}
 	return nil
 }
+
+// Stacks reports whether the settings have the run bring the repo's stack up
+// and down.
+func (s Settings) Stacks() bool { return s.Stack.Value == switchValue(true) }
 
 // Pushes reports whether the settings have the loop push after each closed task.
 func (s Settings) Pushes() bool { return s.Push.Value == switchValue(true) }

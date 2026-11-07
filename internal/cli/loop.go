@@ -19,6 +19,7 @@ import (
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/session"
+	"github.com/byranZA/smith/internal/stack"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
 	"github.com/byranZA/smith/internal/workbench"
@@ -42,6 +43,12 @@ type loopWiring struct {
 	plan     func(ctx context.Context, dir string, req workbench.Request) (branch, base string, err error)
 	pusher   func(dir string) loop.Pusher
 	preparer loop.Preparer
+	// newStack makes the stack a run on a box brings up and down, holding the
+	// lease key names in state for branch; nil means a run has none to make.
+	newStack func(state, key, branch string) runStack
+	// state locates the state home the stack lease lives in; nil takes no
+	// lease.
+	state    func() (string, error)
 	lookPath func(name string) (string, error)
 	mise     session.Runner
 	hostname func() (string, error)
@@ -52,6 +59,13 @@ type loopWiring struct {
 	version  string
 	skew     skew
 	term     terminal
+}
+
+// runStack is the stack a run owns: it brings the stack up and down, and takes
+// down one a dead run left behind.
+type runStack interface {
+	loop.Stacker
+	loop.Recoverer
 }
 
 // systemLoop is the loop wiring of the operator's own machine: the real gh,
@@ -73,6 +87,10 @@ func systemLoop() loopWiring {
 		},
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		preparer: prepare.Preparer{Command: connection.System(), Mise: mise},
+		newStack: func(state, key, branch string) runStack {
+			return &stack.Stack{Command: prepare.Preparer{Command: connection.System(), Mise: mise}, State: state, Key: key, Branch: branch}
+		},
+		state:    func() (string, error) { return workbench.StateHome(os.Getenv) },
 		lookPath: exec.LookPath,
 		mise:     connection.System(),
 		hostname: os.Hostname,
@@ -148,6 +166,20 @@ func (w loopWiring) repo(ctx context.Context) (repofile.Repo, error) {
 		return repofile.Repo{}, fmt.Errorf("locate repo: %w", err)
 	}
 	return repo, nil
+}
+
+// onBox reports whether smith is run on a box, where a repo's stack is always
+// on: the box resolver finds a staged tree, as placements do.
+func (w loopWiring) onBox(cmd *cobra.Command, verb string, args []string) (bool, error) {
+	if w.box == nil {
+		return false, nil
+	}
+	_, err := w.box(invocation(cmd, verb, args))
+	var absent *staging.AbsentError
+	if errors.As(err, &absent) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // settings resolves the loop settings for the repo smith is run from, flags
@@ -289,7 +321,14 @@ func settingsReport(s loop.Settings) string {
 		{"model", s.Preset.Model},
 		{"effort", s.Preset.Effort},
 		{"push", s.Push},
+		{"stack", s.Stack},
 	} {
+		if setting.name == "stack" && setting.value.Value == "" {
+			if s.StackDeclared {
+				fmt.Fprintf(&b, "%-7s off (--stack turns it on)\n", "stack:")
+			}
+			continue
+		}
 		if setting.value.Value == "" {
 			setting.value.Value = "the agent's own default"
 		}
@@ -407,11 +446,19 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 				flags.Push = &off
 			}
 			if box != "" {
+				if flags.Stack {
+					return reportInvalid(cmd, fmt.Errorf("--stack cannot be used with box %s: a box always runs its stack", box))
+				}
 				return w.relayRun(cmd, box, sessionRun{issue: args[0], repo: repo, interactive: interactive})
 			}
 			if repo != "" {
 				return w.startSession(cmd, ref, sessionRun{issue: args[0], repo: repo, branch: branch, base: base, interactive: interactive, flags: flags})
 			}
+			onBox, err := w.onBox(cmd, "loop run", typed(cmd, []string{fmt.Sprint(ref.Number)}))
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			flags.Stack = flags.Stack || onBox
 			recorder, err := w.recorder(cmd.Context(), inSession)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -444,6 +491,7 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a new work branch is cut from (default: origin's default branch)")
+	cmd.Flags().BoolVar(&flags.Stack, "stack", false, "off a box, bring the repo file's stack up before the agent and down at the end, as a box always does")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "push nothing after each closed task, over the repo file")
 	cmd.Flags().StringVar(&repo, "repo", "", "on a box, the repo to start a loop-driven session in, rather than running here")
 	cmd.Flags().BoolVar(&inSession, inSessionFlag, false, "the run is a loop-driven session's root process, recording how it ends in the session record")
@@ -473,6 +521,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 	}
 	reviewPrompt, ejected, err := w.reviewPrompt(cmd.Context())
 	if err != nil {
+		return tracker.Execution{}, err
+	}
+	if err := w.refuseHeldStack(cmd, settings); err != nil {
 		return tracker.Execution{}, err
 	}
 	admitted, err := w.admit(cmd, ref, settings, w.gh, interactive)
@@ -506,6 +557,15 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Bench = bench
+	if w.newStack != nil {
+		stacker, err := w.stacker(cmd.Context(), bench.WorkBranch())
+		if err != nil {
+			return admitted.execution, err
+		}
+		if settings.StackRuns {
+			l.Stack, l.Recoverer = stacker, stacker
+		}
+	}
 	if l.Placements, err = w.placements(cmd, ref); err != nil {
 		return admitted.execution, err
 	}
@@ -650,6 +710,7 @@ func checkLimits(limits loop.Limits) error {
 // issue that cannot be read is reported naming why.
 func newLoopListCmd(w loopWiring) *cobra.Command {
 	var branch, base string
+	var stackFlag bool
 	cmd := &cobra.Command{
 		Use:         "list <issue>",
 		Annotations: verbTraits(false, false, false),
@@ -668,7 +729,11 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			settings, _, err := w.settings(cmd.Context(), loop.Flags{})
+			onBox, err := w.onBox(cmd, "loop list", typed(cmd, args))
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			settings, _, err := w.settings(cmd.Context(), loop.Flags{Stack: onBox || stackFlag})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
@@ -698,6 +763,7 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 	}
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch a run would use, named exactly (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a run would cut a new work branch from (default: origin's default branch)")
+	cmd.Flags().BoolVar(&stackFlag, "stack", false, "off a box, show the settings of a run that brings the repo file's stack up, as a box always does")
 	return cmd
 }
 

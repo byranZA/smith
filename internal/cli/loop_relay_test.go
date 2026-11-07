@@ -100,3 +100,14 @@ func TestLoopRunWithASkewedBoxUnattendedIsRefused(t *testing.T) {
 		t.Errorf("exit %d, stderr %q; want %d pointing at `smith machine upgrade dev`", code, stderr, relay.RefusalExitCode)
 	}
 }
+
+func TestLoopRunWithABoxRefusesStackBeforeRelaying(t *testing.T) {
+	ssh := &fakeSSHRelay{}
+	gh := readySpec()
+
+	_, stderr, code := runLoopRun(t, laptopLoop(t, ssh, gh), "dev", "42", "--repo", "smith", "--stack")
+
+	if want := "--stack cannot be used with box dev: a box always runs its stack"; code != 1 || !strings.Contains(stderr, want) || len(ssh.calls) != 0 || len(gh.ran) != 0 {
+		t.Errorf("exit %d, stderr %q, ssh %d, gh %v; want a refusal saying %q before anything is relayed", code, stderr, len(ssh.calls), gh.ran, want)
+	}
+}

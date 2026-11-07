@@ -95,11 +95,17 @@ func (p Preparer) Prepare(ctx context.Context, dir string, out io.Writer) error 
 	if file.Prepare == "" {
 		return nil
 	}
-	run := []string{"sh", "-c", inDir, "sh", dir, file.Prepare}
+	return p.Exec(ctx, dir, RepoCommand, file.Prepare, out)
+}
+
+// Exec runs command with sh -c in the worktree at dir under its pinned mise
+// toolchain if any, streaming output to out. A failure is a *StepError naming step.
+func (p Preparer) Exec(ctx context.Context, dir, step, command string, out io.Writer) error {
+	run := []string{"sh", "-c", inDir, "sh", dir, command}
 	if p.Mise != "" {
-		run = p.trusting(dir, []string{p.Mise, "--cd", dir, "exec", "--", "sh", "-c", file.Prepare})
+		run = p.trusting(dir, []string{p.Mise, "--cd", dir, "exec", "--", "sh", "-c", command})
 	}
-	return p.step(ctx, RepoCommand, file.Prepare, out, run)
+	return p.step(ctx, step, command, out, run)
 }
 
 // trusting is the mise argv run with mise trusting the configs in Trust, or

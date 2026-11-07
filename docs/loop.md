@@ -209,6 +209,9 @@ roles:
   work: opus
 push: true
 prepare: uv sync
+stack:
+  up: docker compose up -d --build --wait db redis
+  down: docker compose down
 labels:
   agent: ready-for-agent
   human: ready-for-human
@@ -225,7 +228,7 @@ Each setting resolves most specific first:
 
 The triage labels and the prepare command have no flags: they are set in the repo file or left to their defaults.
 
-The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, and a `prepare:` that is not one non-empty string. The presets and roles are checked as [Presets and roles](#presets-and-roles) says. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, a `prepare:` that is not one non-empty string, and a `stack:` that is not a mapping of a required `up` and a required `down`, each one non-empty string, with no other key. The presets and roles are checked as [Presets and roles](#presets-and-roles) says. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
 
 ### Presets and roles
 
@@ -266,6 +269,41 @@ An unknown `--agent`, an `--effort` off the scale, and a `--preset` the repo fil
 The command is read from the repo file in the worktree being prepared, not from the checkout you run smith in, so a branch that changes `prepare:` is prepared its own way.
 
 The command must be safe to re-run. smith runs it every time it prepares a worktree, including one it prepared before, so it should bring an existing checkout up to date rather than assume a fresh one.
+
+### The stack
+
+`stack:` declares the services the repo's checks need, such as a database in Docker. It holds two required commands, each one non-empty string, and no other key. smith owns the lifecycle and knows no service by name. [ADR-0027](./adr/0027-the-loop-runs-the-repos-stack.md) has the reasoning.
+
+```yaml
+stack:
+  up: npx supabase start && npx supabase db reset
+  down: npx supabase stop --no-backup
+```
+
+**Lifecycle.** After preparing a worktree and before every agent attempt and the review, the loop runs `up` with `sh -c` in the worktree, under `mise exec` where there is mise, as it runs `prepare:`. It writes one line saying the stack is coming up and holds `up`'s output back. `up` must be safe to re-run, because it runs again before each attempt, and must not return before the stack is ready. `docker compose up --wait` returns when a service with a `healthcheck:` is healthy, but a service with none counts as ready the moment it is running: on a real box `--wait db redis` returned while Postgres still answered `no response`, so give every service the checks need a `healthcheck:` (`pg_isready` for Postgres), or end `up` with a readiness loop. It has no timeout; Ctrl-C and SIGHUP end it. A failed `up` launches no agent and stops the run `failed`, its report naming the stack, the task, the worktree and the exit status, after the last of `up`'s output. It counts as no attempt: the task is not labelled `smith:failed`. When the next task is worked in the same worktree, `up` runs again and `down` does not.
+
+`down` runs however the run ends, Ctrl-C and SIGHUP included, once, in the worktree the stack came up in, before the stop report is posted and before a finished worktree is removed. It is stopped after 5 minutes, and there is no setting for that. A `down` that fails or hangs is a `smith: warning:` naming the worktree, and the run keeps its outcome; the stop report says the stack did not stop. The stack follows the work: when the next task is worked in a different worktree, or a task changed the stack commands, `down` runs first, in the old worktree. It is the `down` recorded when the stack came up that runs, not the current repo file's, so it pairs with the `up` that ran. A task that lands a repo file with no stack takes the running stack down. As with `prepare:`, the commands are read from the repo file in the worktree being prepared. An `--interactive` run brings the stack up before the agent and down after it.
+
+**The stack lease.** One run at a time uses a repo's stack, so fixed ports and container names do not clash. The lease is a record in the state home, written before `up` runs, plus an OS lock the run holds for as long as it holds the lease. It is keyed by the repo's `origin` as placements match repos, so two clones of one repo share it. A second run of the repo is refused before any task is marked, and no session, branch or worktree is created; the refusal names the holder's work branch and worktree. A work branch that adds a stack is refused at its first `up`, ending the run `failed` with no attempt counted. A run of another repo is not refused, and a run whose repo file declares no stack takes no lease. A stack that another repo holds a port of fails at `up` with its own output.
+
+**Recovery.** The OS releases the lock when a run dies, including a SIGKILL or a reboot, and the record stays. The next run of the repo that executes stacks, on a box or with `--stack`, whether or not its branch declares a stack, says it is recovering the stack and runs the recorded `down` in the recorded worktree before anything else. That includes a run killed during `up`, and a stack whose `down` failed. If the recorded worktree is gone, a warning names it and the recorded `down` for you to run, the record is cleared and the run goes on. An off-box run without `--stack` recovers nothing and leaves the record for such a run. A failed recovery warns and the run goes on, and its own `up` fails if something still holds a port. The record is deleted only after `down` succeeds.
+
+**Where a stack runs.** A stack needs one Docker daemon that is not nested. Two setups are supported:
+
+- **A real box**, a VPS or VM, where the stack is always on.
+- **`--stack` on your own machine.** Off a box the stack stays off, because smith cannot see a stack you started by hand: `smith loop run --stack` turns it on for that run, and `smith loop list` shows `stack:  off (--stack turns it on)` until then. On a box, `loop list` and `loop run` show `stack:` on, from the repo file. A repo with no stack shows no line. `--stack` has no effect on a box and is refused with `<box>`.
+
+> **Warning:** `--stack` on your own machine shares any stack you run yourself. `up` and `down` act on the same containers, ports and volumes as yours, and can wipe their data: skein's `db reset` empties the seeded dev database. Stop your own stack first, or leave `--stack` off.
+
+A container provisioned as a box cannot run a stack. It would need Docker-in-Docker or a mounted Docker socket, and smith supports neither. It does not detect a container box: `up` fails there with the usual stack failure when the container has no Docker.
+
+**What a box needs.** Docker comes from the blueprint, never the repo file: a `packages` entry for Docker (`docker.io`, and `docker-compose-v2` for Compose) and `docker` under `groups`, so the smith user runs `docker` without `sudo`. See [Blueprints](./blueprints.md#docker-needs-nothing-declared).
+
+**Sizing a box.** Measured on a 4 vCPU, 8 GB DigitalOcean droplet running Ubuntu 24.04, with skein's Supabase stack (14 containers, `npx supabase start && npx supabase db reset`) and an agent working at the same time: peak memory in use was about 2.7 GB and disk grew from 5 GB to 20 GB, of which Docker images were 12.8 GB (Supabase's alone 8.4 GB). Plan for 4 GB of RAM above what the agent and the repo's checks need, and at least 25 GB of free disk for the first run, which pulls the images; later runs reuse them. intraday-breakout's `db` and `redis` took about 70 MB between them, though a backend test run adds its own container.
+
+**The firewall.** The box's default-deny `ufw` blocks a container that calls a service on the host (a test that reaches a server listening on the host's own port, say), on the default bridge and on a Compose network alike. Allow the Docker address range to that port, for example `sudo ufw allow from 172.16.0.0/12 to any port 8099 proto tcp`, which a blueprint cannot declare. Traffic between containers is unaffected.
+
+**Recovery, checked.** A run killed with SIGKILL while its stack was up left every container running, and the next run of the repo said it was recovering the stack and ran the recorded `down`; `docker ps` was empty before that run's own `up`, and again after it ended. A failed `up` says system packages and groups come from the blueprint. Published ports default to loopback ([ADR-0026](./adr/0026-published-docker-ports-default-to-loopback.md)), so a service is reachable from your machine through an SSH tunnel only.
 
 ### Triage labels
 

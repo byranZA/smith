@@ -186,10 +186,10 @@ func runLoopList(t *testing.T, gh *fakeTracker, ref string) (stdout, stderr stri
 	return runLoopListIn(t, loopWiring{gh: gh, launcher: &fakeAgent{gh: gh}, lookPath: onPath}, ref)
 }
 
-func runLoopListIn(t *testing.T, w loopWiring, ref string) (stdout, stderr string, code int) {
+func runLoopListIn(t *testing.T, w loopWiring, ref string, flags ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	cmd := newLoopCmd(inRepo(t, w))
-	cmd.SetArgs([]string{"list", ref})
+	cmd.SetArgs(append([]string{"list", ref}, flags...))
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)

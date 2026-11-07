@@ -102,6 +102,14 @@ func (o Outcome) Report(name string, limits Limits) string {
 	return b.String()
 }
 
+// stackLine says the stack did not stop and why, or nothing when it did.
+func (o Outcome) stackLine() string {
+	if o.StackFailure == nil {
+		return ""
+	}
+	return "  the stack did not stop: " + o.StackFailure.Error() + "\n"
+}
+
 // noteLine says what the run noted about its review, or nothing.
 func (o Outcome) noteLine() string {
 	if o.Note == "" {
@@ -225,6 +233,7 @@ func taskList(tasks []tracker.Task) string {
 // still reports, warning when either fails.
 func (l Loop) conclude(ctx context.Context, execution tracker.Execution, outcome Outcome, failed error) error {
 	ending, report := l.stopReport(ctx, Name(execution), outcome, failed)
+	report += outcome.stackLine()
 	report += WorkBranchReport(l.Bench.WorkBranch())
 	if l.Recorder != nil {
 		if err := l.warnIf(l.Recorder.Record(ending, report), "could not record how the run ended"); err != nil {
