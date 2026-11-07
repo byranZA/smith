@@ -33,3 +33,15 @@ func TestBufferWithinTheLimitDropsNothing(t *testing.T) {
 		t.Errorf("Bytes() = %q, Dropped() = %v; want %q and false", b.Bytes(), b.Dropped(), "abcd")
 	}
 }
+
+func TestBufferLinesSkipsTheCutLineAfterADrop(t *testing.T) {
+	t.Parallel()
+	b := tailbuf.Buffer{Limit: 8}
+	if _, err := b.Write([]byte("abc\ndef\nghi\n")); err != nil {
+		t.Fatalf("Buffer{Limit: 8}.Write(%q) error = %v", "abc\ndef\nghi\n", err)
+	}
+
+	if got, want := string(b.Lines()), "ghi\n"; got != want {
+		t.Errorf("Buffer{Limit: 8} after Write(%q): Lines() = %q, want %q", "abc\ndef\nghi\n", got, want)
+	}
+}

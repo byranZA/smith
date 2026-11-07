@@ -175,3 +175,115 @@ func TestProcessUnderMiseKeepsTheAgentsEnvironment(t *testing.T) {
 		t.Errorf("the agent saw SMITH_ADDED=%q, want %q", got, "added")
 	}
 }
+
+func TestProcessShowsOnlyAHeldCommandsStdoutOnSuccess(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo final; echo activity >&2"}, HoldStderr: true}
+
+	if err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd); err != nil {
+		t.Fatalf("Launch(%q %q) error = %v", cmd.Name, cmd.Args, err)
+	}
+
+	if got, want := stdout.String(), "final\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stdout %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want none", cmd.Name, cmd.Args, stderr.String())
+	}
+}
+
+func TestProcessShowsAHeldCommandsStderrOnFailure(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo final; echo activity >&2; exit 3"}, HoldStderr: true}
+
+	err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd)
+
+	if err == nil {
+		t.Fatalf("Launch(%q %q) error = nil, want a failure", cmd.Name, cmd.Args)
+	}
+	if got, want := stdout.String(), "final\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stdout %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+	if got, want := stderr.String(), "activity\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+}
+
+func TestProcessCutsAHeldCommandsStderrOverTheBound(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "i=0; while [ $i -lt 5000 ]; do echo line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx >&2; i=$((i+1)); done; exit 1"}, HoldStderr: true}
+
+	if err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd); err == nil {
+		t.Fatalf("Launch(5000-line command) error = nil, want a failure")
+	}
+
+	got := stderr.String()
+	if !strings.HasPrefix(got, "smith: earlier agent output was cut; showing the last 64 KiB\n") {
+		t.Errorf("Launch(5000-line command) with HoldStderr wrote a stderr start of %q, want the cut note %q", got[:min(len(got), 80)], "smith: earlier agent output was cut; showing the last 64 KiB\n")
+	}
+	if !strings.HasSuffix(got, "line-4999-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n") || strings.Contains(got, "line-0-") {
+		t.Errorf("Launch(5000-line command) with HoldStderr wrote a stderr tail of %q, want it to end with line-4999 and not contain line-0", got[max(0, len(got)-80):])
+	}
+}
+
+func TestProcessKeepsAnAttachedCommandsStderrOnTheTerminalDespiteHoldStderr(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo shown >&2"}, Attached: true, HoldStderr: true}
+
+	if err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd); err != nil {
+		t.Fatalf("Launch(%q %q) error = %v", cmd.Name, cmd.Args, err)
+	}
+
+	if got, want := stderr.String(), "shown\n"; got != want {
+		t.Errorf("Launch(%q %q) with Attached and HoldStderr wrote stderr %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+}
+
+func TestProcessSucceedsWhenAHeldCommandExitsCleanlyLeavingABackgroundProcess(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity >&2; sleep 5 & exit 0"}, HoldStderr: true}
+
+	err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd)
+
+	if err != nil {
+		t.Errorf("Launch(%q %q) error = %v, want nil", cmd.Name, cmd.Args, err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want none", cmd.Name, cmd.Args, stderr.String())
+	}
+}
+
+func TestProcessFailsWhenAHeldCommandExitsNonZeroLeavingABackgroundProcess(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity >&2; sleep 5 & exit 3"}, HoldStderr: true}
+
+	err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd)
+
+	if err == nil {
+		t.Errorf("Launch(%q %q) error = nil, want a failure", cmd.Name, cmd.Args)
+	}
+	if got, want := stderr.String(), "activity\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+func TestProcessKeepsAKilledHeldCommandKilledWhenShowingItsOutputFails(t *testing.T) {
+	t.Parallel()
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity >&2; kill -9 $$"}, HoldStderr: true}
+
+	err := (loop.Process{Stdout: failingWriter{}, Stderr: failingWriter{}}).Launch(t.Context(), cmd)
+
+	if !errors.Is(err, loop.ErrKilled) {
+		t.Errorf("Launch() error = %v, want it to be ErrKilled", err)
+	}
+}

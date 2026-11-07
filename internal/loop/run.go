@@ -1,7 +1,6 @@
 package loop
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -647,13 +646,8 @@ func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error 
 // reportTail writes the output captured in b to Progress. When b dropped
 // earlier output, it starts at the next full line, after a note saying so.
 func (l Loop) reportTail(b *tailbuf.Buffer) error {
-	out := b.Bytes()
+	out := b.Lines()
 	if b.Dropped() {
-		if i := bytes.IndexByte(out, '\n'); i >= 0 {
-			out = out[i+1:]
-		} else {
-			out = nil
-		}
 		if err := l.report("smith: earlier preparation output was cut; showing the last %d KiB\n", PrepareTailLimit>>10); err != nil {
 			return err
 		}

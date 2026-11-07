@@ -21,6 +21,9 @@ type Command struct {
 	// Attached commands read the operator's terminal and own it until they
 	// exit; the rest read no input.
 	Attached bool
+	// HoldStderr keeps an unattended command's stderr from the operator unless
+	// the command fails, for agents whose activity stream on it is noise.
+	HoldStderr bool
 }
 
 // Options are what a run asks of the agent beyond its prompt. A field left
@@ -123,12 +126,14 @@ func (claude) options(opts Options) []string {
 type codex struct{}
 
 // Unattended runs codex exec with --yolo, which bypasses every approval and
-// the sandbox, so it asks the operator nothing.
+// the sandbox, so it asks the operator nothing. Its activity stream, on stderr,
+// is held back unless the run fails; its final message, on stdout, is shown.
 func (c codex) Unattended(prompt string, opts Options) Command {
 	args := append([]string{"exec", "--yolo"}, c.options(opts)...)
 	return Command{
-		Name: "codex",
-		Args: append(args, prompt),
+		Name:       "codex",
+		Args:       append(args, prompt),
+		HoldStderr: true,
 	}
 }
 
