@@ -349,3 +349,49 @@ func TestScriptProbePrintsTotalMemoryAndSwap(t *testing.T) {
 		})
 	}
 }
+
+// probeWithoutSudo runs the probe with passwordless sudo denied and, when
+// withDocker, a docker binary on the PATH.
+func probeWithoutSudo(t *testing.T, withDocker bool) string {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProbeFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "sudo", "#!/usr/bin/env bash\nexit 1\n")
+	if withDocker {
+		writeFakeBin(t, binDir, "docker", "#!/usr/bin/env bash\nexit 0\n")
+	}
+	cmd := exec.Command(bash, scriptPath, "probe")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "SMITH_MARKER="+filepath.Join(dir, "none"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe run failed: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+func TestScriptProbeSaysDockerUnreadableWhenSudoIsLost(t *testing.T) {
+	if got := probeWithoutSudo(t, true); !strings.Contains(got, "docker-ports=?\n") {
+		t.Errorf("probe output missing docker-ports=?:\n%s", got)
+	}
+}
+
+func TestScriptProbeStaysSilentOnDockerWhenSudoIsLostAndDockerAbsent(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err == nil {
+		t.Skip("a real docker is on the PATH")
+	}
+	if got := probeWithoutSudo(t, false); strings.Contains(got, "docker-ports") {
+		t.Errorf("probe must not mention docker when absent:\n%s", got)
+	}
+}

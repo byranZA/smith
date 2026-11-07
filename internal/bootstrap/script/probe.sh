@@ -121,7 +121,7 @@ probe_access() {
 # notes without reconciling, whether the smith user exists and still holds
 # passwordless sudo, and — only when sudo is available — the firewall, sshd,
 # fail2ban, and auto-updates facts. When passwordless sudo is lost, only
-# passwordless-sudo=no is emitted; the reconciler's lost-sudo branch owns the
+# passwordless-sudo=no is emitted, plus docker-ports=? when docker is installed; the reconciler's lost-sudo branch owns the
 # unverifiable verdict for the root-only facts, which are simply absent.
 # It is query-only: it mutates nothing.
 probe() {
@@ -146,6 +146,10 @@ probe() {
     probe_docker
   else
     echo "passwordless-sudo=no"
+    # Docker cannot be read without root: say so rather than stay silent.
+    if command -v docker >/dev/null 2>&1; then
+      echo "docker-ports=?"
+    fi
   fi
 
   probe_access
