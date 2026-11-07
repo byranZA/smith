@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -90,9 +89,7 @@ func TestReleaseFreesTheLeaseAndDeletesItsRecord(t *testing.T) {
 	if err != nil || holder != nil {
 		t.Errorf("Holder() = %v, %v, want none after Release", holder, err)
 	}
-	if files := recordFiles(t, state); len(files) != 0 {
-		t.Errorf("state holds %v after Release, want no record", files)
-	}
+	assertNothingToRecover(t, state)
 }
 
 func TestReleaseWhoseDownFailsFreesTheLockAndKeepsTheRecord(t *testing.T) {
@@ -100,7 +97,8 @@ func TestReleaseWhoseDownFailsFreesTheLockAndKeepsTheRecord(t *testing.T) {
 	state := t.TempDir()
 	run := &fakeCommander{fail: map[string]error{"stack down": errors.New("boom")}}
 	s := held(run, state, "repo", "x")
-	if err := s.Ensure(t.Context(), worktree(t, declared), io.Discard); err != nil {
+	dir := worktree(t, declared)
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Release(t.Context(), io.Discard); err == nil {
@@ -110,9 +108,7 @@ func TestReleaseWhoseDownFailsFreesTheLockAndKeepsTheRecord(t *testing.T) {
 	if holder, err := stack.Holder(state, "repo"); err != nil || holder != nil {
 		t.Errorf("Holder() = %v, %v, want the lock free", holder, err)
 	}
-	if files := recordFiles(t, state); len(files) != 1 {
-		t.Errorf("state holds %v, want the record kept", files)
-	}
+	assertRecoverable(t, state, dir)
 }
 
 func TestHolderReportsTheRunThatHoldsTheLease(t *testing.T) {
@@ -194,9 +190,7 @@ func TestALeaseHolderKilledBySIGKILLLeavesTheLockFreeAndTheRecordInPlace(t *test
 	if err != nil || got != nil {
 		t.Errorf("Holder() = %v, %v, want the lock free after SIGKILL", got, err)
 	}
-	if files := recordFiles(t, state); len(files) != 1 {
-		t.Errorf("state holds %v, want the record in place", files)
-	}
+	assertRecoverable(t, state, dir)
 }
 
 // stale leaves a record in state for repo as a run killed after up would:
@@ -229,9 +223,7 @@ func TestRecoverRunsTheRecordedDownInTheRecordedWorktreeAndClearsTheRecord(t *te
 	if want := []call{{"stack down", dir, "make down"}}; !reflect.DeepEqual(run.calls, want) {
 		t.Errorf("Recover() ran %v, want %v", run.calls, want)
 	}
-	if files := recordFiles(t, state); len(files) != 0 {
-		t.Errorf("state holds %v, want the record cleared", files)
-	}
+	assertNothingToRecover(t, state)
 }
 
 func TestRecoverWithNothingLeftRunsNothing(t *testing.T) {
@@ -243,9 +235,6 @@ func TestRecoverWithNothingLeftRunsNothing(t *testing.T) {
 
 	if err != nil || rec != nil || len(run.calls) != 0 {
 		t.Errorf("Recover() = %v, %v after %v, want nothing", rec, err, run.calls)
-	}
-	if files := recordFiles(t, state); len(files) != 0 {
-		t.Errorf("state holds %v, want no lease file", files)
 	}
 }
 
@@ -280,12 +269,10 @@ func TestRecoverWhoseDownFailsKeepsTheRecordForTheNextRun(t *testing.T) {
 	if rec == nil || err == nil || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "exit status 3") {
 		t.Fatalf("Recover() = %v, %v, want the record and an error naming %s and the status", rec, err, dir)
 	}
-	if files := recordFiles(t, state); len(files) != 1 {
-		t.Errorf("state holds %v, want the record kept", files)
-	}
 	if got, err := stack.Holder(state, "repo"); err != nil || got != nil {
 		t.Errorf("Holder() = %v, want the lock free", got)
 	}
+	assertRecoverable(t, state, dir)
 }
 
 func TestRecoverOfAGoneWorktreeNamesItAndTheCommandAndClearsTheRecord(t *testing.T) {
@@ -305,9 +292,7 @@ func TestRecoverOfAGoneWorktreeNamesItAndTheCommandAndClearsTheRecord(t *testing
 	if len(run.calls) != 0 {
 		t.Errorf("Recover() ran %v, want no command", run.calls)
 	}
-	if files := recordFiles(t, state); len(files) != 0 {
-		t.Errorf("state holds %v, want the record cleared", files)
-	}
+	assertNothingToRecover(t, state)
 }
 
 func TestEnsureRecoversAStaleRecordItFindsWhenTakingTheLeaseBeforeItsUp(t *testing.T) {
@@ -327,12 +312,25 @@ func TestEnsureRecoversAStaleRecordItFindsWhenTakingTheLeaseBeforeItsUp(t *testi
 	}
 }
 
-// recordFiles lists the lease files under state.
-func recordFiles(t *testing.T, state string) []string {
+// assertNothingToRecover fails unless a fresh run's Recover finds no record
+// and runs no command.
+func assertNothingToRecover(t *testing.T, state string) {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join(state, "*", "*"))
-	if err != nil {
-		t.Fatalf("Glob(%q) error = %v", state, err)
+	run := &fakeCommander{}
+	rec, err := held(run, state, "repo", "later").Recover(t.Context(), io.Discard)
+	if err != nil || rec != nil || len(run.calls) != 0 {
+		t.Errorf("later Recover() = %v, %v after %v, want no record left", rec, err, run.calls)
 	}
-	return files
+}
+
+// assertRecoverable fails unless a fresh run's Recover takes down the record
+// left in dir by running its down there.
+func assertRecoverable(t *testing.T, state, dir string) {
+	t.Helper()
+	run := &fakeCommander{}
+	rec, err := held(run, state, "repo", "later").Recover(t.Context(), io.Discard)
+	want := []call{{"stack down", dir, "make down"}}
+	if err != nil || rec == nil || !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("later Recover() = %v, %v after %v, want the record recovered by %v", rec, err, run.calls, want)
+	}
 }
