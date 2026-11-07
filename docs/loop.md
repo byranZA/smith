@@ -188,7 +188,7 @@ An **agent adapter** is smith's built-in knowledge of one coding-agent CLI. The 
 | `codex` | `codex exec --yolo <prompt>` | `--config model_reasoning_effort=…` |
 | `pi` | `pi --print <prompt>` | `--thinking` |
 
-An unattended `codex` run's activity is held back: you see none of it unless the run fails, when the last 64 KiB of it is printed (with a note if earlier output was cut) before the failure is reported. That holds for someone watching through `smith session attach` too. `--interactive` runs are unchanged. A held run that exits 0 still succeeds if it leaves a background process running, but smith stops reading that process's output 3 seconds after the exit, so its next write there can kill it.
+An unattended `codex` run's activity is held back: you see only its final message unless the run fails, when the last 64 KiB of the activity is printed (with a note if earlier output was cut) before the failure is reported. That holds for someone watching through `smith session attach` too. `--interactive` runs are unchanged. A held run that exits 0 still succeeds if it leaves a background process running, but smith stops reading that process's stderr 3 seconds after the exit, so its next write there can kill it.
 
 An unattended `claude` run also sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, so the run ends when the agent's work does.
 

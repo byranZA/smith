@@ -38,7 +38,8 @@ var ErrNotStarted = errors.New("agent not started")
 // killed, for its output to close.
 const stopDelay = 3 * time.Second
 
-// Launch runs cmd to completion, streaming its output (or, for a HoldOutput command, showing it only if the run fails), and stops it when ctx is
+// Launch runs cmd to completion, streaming its output (a HoldStderr command's
+// stderr only if the run fails), and stops it when ctx is
 // cancelled: an unattended agent reads no input and is stopped with the
 // processes it started, while an attached one reads Stdin and keeps smith's
 // process group, and with it the terminal. An agent killed by SIGKILL, or
@@ -52,9 +53,9 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 	proc.Stdout = p.Stdout
 	proc.Stderr = p.Stderr
 	var held *tailbuf.Buffer
-	if cmd.HoldOutput && !cmd.Attached {
+	if cmd.HoldStderr && !cmd.Attached {
 		held = &tailbuf.Buffer{Limit: HeldTailLimit}
-		proc.Stdout, proc.Stderr = held, held
+		proc.Stderr = held
 	}
 	proc.WaitDelay = stopDelay
 	if cmd.Attached {
@@ -89,19 +90,19 @@ func exitedLeavingOutputOpen(err error) bool {
 	return errors.Is(err, exec.ErrWaitDelay)
 }
 
-// HeldTailLimit bounds how much of a held-back agent's output is kept to show
+// HeldTailLimit bounds how much of a held-back agent's stderr is kept to show
 // if the run fails.
 const HeldTailLimit = 64 << 10
 
-// showHeld writes the output held back from a failed run to Stdout, after a
+// showHeld writes the stderr held back from a failed run to Stderr, after a
 // note when earlier output was cut.
 func (p Process) showHeld(held *tailbuf.Buffer) error {
 	if held.Dropped() {
-		if _, err := fmt.Fprintf(p.Stdout, "smith: earlier agent output was cut; showing the last %d KiB\n", HeldTailLimit>>10); err != nil {
+		if _, err := fmt.Fprintf(p.Stderr, "smith: earlier agent output was cut; showing the last %d KiB\n", HeldTailLimit>>10); err != nil {
 			return fmt.Errorf("write held agent output: %w", err)
 		}
 	}
-	if _, err := p.Stdout.Write(held.Lines()); err != nil {
+	if _, err := p.Stderr.Write(held.Lines()); err != nil {
 		return fmt.Errorf("write held agent output: %w", err)
 	}
 	return nil

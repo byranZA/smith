@@ -176,92 +176,100 @@ func TestProcessUnderMiseKeepsTheAgentsEnvironment(t *testing.T) {
 	}
 }
 
-func TestProcessHoldsBackAHeldCommandsOutputOnSuccess(t *testing.T) {
+func TestProcessShowsOnlyAHeldCommandsStdoutOnSuccess(t *testing.T) {
 	t.Parallel()
-	var out bytes.Buffer
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2"}, HoldOutput: true}
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo final; echo activity >&2"}, HoldStderr: true}
 
-	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd); err != nil {
+	if err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd); err != nil {
 		t.Fatalf("Launch(%q %q) error = %v", cmd.Name, cmd.Args, err)
 	}
 
-	if out.Len() != 0 {
-		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want none", cmd.Name, cmd.Args, out.String())
+	if got, want := stdout.String(), "final\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stdout %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want none", cmd.Name, cmd.Args, stderr.String())
 	}
 }
 
-func TestProcessShowsAHeldCommandsOutputOnFailure(t *testing.T) {
+func TestProcessShowsAHeldCommandsStderrOnFailure(t *testing.T) {
 	t.Parallel()
-	var out bytes.Buffer
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2; exit 3"}, HoldOutput: true}
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo final; echo activity >&2; exit 3"}, HoldStderr: true}
 
-	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+	err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd)
 
 	if err == nil {
 		t.Fatalf("Launch(%q %q) error = nil, want a failure", cmd.Name, cmd.Args)
 	}
-	if got := out.String(); got != "activity\nmore\n" && got != "more\nactivity\n" {
-		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want both lines \"activity\" and \"more\"", cmd.Name, cmd.Args, got)
+	if got, want := stdout.String(), "final\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stdout %q, want %q", cmd.Name, cmd.Args, got, want)
+	}
+	if got, want := stderr.String(), "activity\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want %q", cmd.Name, cmd.Args, got, want)
 	}
 }
 
-func TestProcessCutsAHeldCommandsOutputOverTheBound(t *testing.T) {
+func TestProcessCutsAHeldCommandsStderrOverTheBound(t *testing.T) {
 	t.Parallel()
-	var out bytes.Buffer
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "i=0; while [ $i -lt 5000 ]; do echo line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; exit 1"}, HoldOutput: true}
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "i=0; while [ $i -lt 5000 ]; do echo line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx >&2; i=$((i+1)); done; exit 1"}, HoldStderr: true}
 
-	_ = (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+	if err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd); err == nil {
+		t.Fatalf("Launch(5000-line command) error = nil, want a failure")
+	}
 
-	got := out.String()
+	got := stderr.String()
 	if !strings.HasPrefix(got, "smith: earlier agent output was cut; showing the last 64 KiB\n") {
-		t.Errorf("Launch(5000-line command) with HoldOutput wrote a start of %q, want the cut note %q", got[:min(len(got), 80)], "smith: earlier agent output was cut; showing the last 64 KiB\n")
+		t.Errorf("Launch(5000-line command) with HoldStderr wrote a stderr start of %q, want the cut note %q", got[:min(len(got), 80)], "smith: earlier agent output was cut; showing the last 64 KiB\n")
 	}
 	if !strings.HasSuffix(got, "line-4999-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n") || strings.Contains(got, "line-0-") {
-		t.Errorf("Launch(5000-line command) with HoldOutput wrote a tail of %q, want it to end with line-4999 and not contain line-0", got[max(0, len(got)-80):])
+		t.Errorf("Launch(5000-line command) with HoldStderr wrote a stderr tail of %q, want it to end with line-4999 and not contain line-0", got[max(0, len(got)-80):])
 	}
 }
 
-func TestProcessKeepsAnAttachedCommandOnTheTerminalDespiteHoldOutput(t *testing.T) {
+func TestProcessKeepsAnAttachedCommandsStderrOnTheTerminalDespiteHoldStderr(t *testing.T) {
 	t.Parallel()
-	var out bytes.Buffer
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo shown"}, Attached: true, HoldOutput: true}
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo shown >&2"}, Attached: true, HoldStderr: true}
 
-	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd); err != nil {
+	if err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd); err != nil {
 		t.Fatalf("Launch(%q %q) error = %v", cmd.Name, cmd.Args, err)
 	}
 
-	if got := out.String(); got != "shown\n" {
-		t.Errorf("Launch(%q %q) with Attached and HoldOutput wrote %q, want %q", cmd.Name, cmd.Args, got, "shown\n")
+	if got, want := stderr.String(), "shown\n"; got != want {
+		t.Errorf("Launch(%q %q) with Attached and HoldStderr wrote stderr %q, want %q", cmd.Name, cmd.Args, got, want)
 	}
 }
 
-func TestProcessSucceedsSilentlyWhenAHeldCommandExitsCleanlyLeavingABackgroundProcess(t *testing.T) {
+func TestProcessSucceedsWhenAHeldCommandExitsCleanlyLeavingABackgroundProcess(t *testing.T) {
 	t.Parallel()
-	var out bytes.Buffer
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; sleep 5 & exit 0"}, HoldOutput: true}
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity >&2; sleep 5 & exit 0"}, HoldStderr: true}
 
-	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+	err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd)
 
 	if err != nil {
 		t.Errorf("Launch(%q %q) error = %v, want nil", cmd.Name, cmd.Args, err)
 	}
-	if out.Len() != 0 {
-		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want none", cmd.Name, cmd.Args, out.String())
+	if stderr.Len() != 0 {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want none", cmd.Name, cmd.Args, stderr.String())
 	}
 }
 
 func TestProcessFailsWhenAHeldCommandExitsNonZeroLeavingABackgroundProcess(t *testing.T) {
 	t.Parallel()
-	var out bytes.Buffer
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; sleep 5 & exit 3"}, HoldOutput: true}
+	var stdout, stderr bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity >&2; sleep 5 & exit 3"}, HoldStderr: true}
 
-	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+	err := (loop.Process{Stdout: &stdout, Stderr: &stderr}).Launch(t.Context(), cmd)
 
 	if err == nil {
 		t.Errorf("Launch(%q %q) error = nil, want a failure", cmd.Name, cmd.Args)
 	}
-	if got, want := out.String(), "activity\n"; got != want {
-		t.Errorf("Launch(%q %q) with HoldOutput wrote %q, want %q", cmd.Name, cmd.Args, got, want)
+	if got, want := stderr.String(), "activity\n"; got != want {
+		t.Errorf("Launch(%q %q) with HoldStderr wrote stderr %q, want %q", cmd.Name, cmd.Args, got, want)
 	}
 }
 
@@ -271,7 +279,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk ful
 
 func TestProcessKeepsAKilledHeldCommandKilledWhenShowingItsOutputFails(t *testing.T) {
 	t.Parallel()
-	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; kill -9 $$"}, HoldOutput: true}
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity >&2; kill -9 $$"}, HoldStderr: true}
 
 	err := (loop.Process{Stdout: failingWriter{}, Stderr: failingWriter{}}).Launch(t.Context(), cmd)
 
