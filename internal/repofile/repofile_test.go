@@ -273,3 +273,61 @@ func TestParseRefusesAMalformedPrepareCommandOnTheLineOfItsMergedKey(t *testing.
 		t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
 	}
 }
+
+func TestParseReadsTheStackBlock(t *testing.T) {
+	t.Parallel()
+	data := "stack:\n  up: docker compose up -d --wait\n  down: docker compose down\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	want := repofile.File{Stack: repofile.Stack{Up: "docker compose up -d --wait", Down: "docker compose down"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse(%q) = %+v, want %+v", data, got, want)
+	}
+}
+
+func TestParseRefusesAnInvalidStackNamingItsLine(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		data string
+		want blueprint.Finding
+	}{
+		"no down":       {"push: true\nstack:\n  up: make up\n", blueprint.Finding{Line: 2, Path: "stack", Message: "down is required: a stack must say how to stop what it starts"}},
+		"no up":         {"push: true\nstack:\n  down: make down\n", blueprint.Finding{Line: 2, Path: "stack", Message: "up is required: a stack must say how to start"}},
+		"empty up":      {"push: true\nstack:\n  up: \"\"\n  down: make down\n", blueprint.Finding{Line: 3, Path: "stack.up", Message: "up must be a non-empty string"}},
+		"list down":     {"push: true\nstack:\n  up: make up\n  down:\n    - make down\n", blueprint.Finding{Line: 4, Path: "stack.down", Message: "down must be one string"}},
+		"unknown key":   {"push: true\nstack:\n  up: make up\n  down: make down\n  wait: 5\n", blueprint.Finding{Line: 5, Path: "stack", Message: `unknown field "wait"`}},
+		"not a mapping": {"push: true\nstack: make up\n", blueprint.Finding{Line: 2, Path: "stack", Message: "a stack is a mapping with an up and a down command"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := repofile.Parse([]byte(tc.data))
+
+			var verr *blueprint.ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", tc.data, err)
+			}
+			if want := []blueprint.Finding{tc.want}; !reflect.DeepEqual(verr.Findings, want) {
+				t.Errorf("Parse(%q) findings = %+v, want %+v", tc.data, verr.Findings, want)
+			}
+		})
+	}
+}
+
+func TestParseLeavesTheStackEmptyWhenNoneIsDeclared(t *testing.T) {
+	t.Parallel()
+
+	got, err := repofile.Parse([]byte("push: true\n"))
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+
+	if got.Stack != (repofile.Stack{}) {
+		t.Errorf("Stack = %+v, want none", got.Stack)
+	}
+}

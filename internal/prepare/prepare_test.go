@@ -240,3 +240,46 @@ func TestPrepareRefusesAMalformedRepoFileBeforeRunningTheCommand(t *testing.T) {
 		t.Errorf("Prepare() ran %v, want %v", run.calls, want)
 	}
 }
+
+func TestExecRunsACommandWithShInTheWorktreeUnderMise(t *testing.T) {
+	t.Parallel()
+	run := &fakeRunner{say: "ready\n"}
+	p := prepare.Preparer{Command: run, Mise: "mise", Trust: "/srv/workspace/smith"}
+	var out strings.Builder
+
+	if err := p.Exec(t.Context(), "/work/wt", "stack up", "docker compose up -d", &out); err != nil {
+		t.Fatalf("Exec() err = %v", err)
+	}
+
+	want := [][]string{{"sh", "-c", misetrust.Script, "/srv/workspace/smith", "mise", "--cd", "/work/wt", "exec", "--", "sh", "-c", "docker compose up -d"}}
+	if !reflect.DeepEqual(run.calls, want) || out.String() != "ready\n" {
+		t.Errorf("Exec() ran %v writing %q, want %v writing %q", run.calls, out.String(), want, "ready\n")
+	}
+}
+
+func TestExecRunsACommandDirectlyInTheWorktreeWithoutMise(t *testing.T) {
+	t.Parallel()
+	run := &fakeRunner{}
+	p := prepare.Preparer{Command: run}
+
+	if err := p.Exec(t.Context(), "/work/wt", "stack down", "docker compose down", io.Discard); err != nil {
+		t.Fatalf("Exec() err = %v", err)
+	}
+
+	want := [][]string{{"sh", "-c", `cd -- "$1" && exec sh -c "$2"`, "sh", "/work/wt", "docker compose down"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("Exec() ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestExecNamesTheStepAndStatusOfAFailedCommand(t *testing.T) {
+	t.Parallel()
+	p := prepare.Preparer{Command: &fakeRunner{err: exitError{code: 3}}}
+
+	err := p.Exec(t.Context(), "/work/wt", "stack up", "make up", io.Discard)
+
+	var step *prepare.StepError
+	if !errors.As(err, &step) || step.Step != "stack up" || step.Status != 3 || step.Command != "make up" {
+		t.Errorf("Exec() err = %v, want a *StepError for stack up, status 3, make up", err)
+	}
+}

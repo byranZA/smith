@@ -34,6 +34,16 @@ roles:
 # Unset, no command runs.
 # prepare: uv sync
 
+# The services this repo's checks need, such as a database in Docker. On a box,
+# the loop runs `up` after preparing the worktree and before every attempt and
+# the review, and `down` however the run ends. Both run with `sh -c` in the
+# worktree under its toolchain. `up` must be safe to re-run and must not return
+# before the stack is ready. Off a box the stack stays off unless the run
+# passes `--stack`. Unset, no stack runs.
+# stack:
+#   up: docker compose up -d --wait
+#   down: docker compose down
+
 # The tracker's triage labels: the one that marks a task for an agent, the one
 # that marks it for a human (where a task the loop skips goes), and the one
 # that marks a spec not yet split into tasks. Set only those this repo names

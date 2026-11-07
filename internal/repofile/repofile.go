@@ -33,6 +33,9 @@ type File struct {
 	// Prepare is the command that prepares a worktree of the repo, run by
 	// sh -c in the worktree under its toolchain. Empty runs none.
 	Prepare string `yaml:"-"`
+	// Stack is the services the loop brings up before an attempt and takes
+	// down after the run, on a box. The zero Stack declares none.
+	Stack Stack `yaml:"-"`
 }
 
 // Preset is a named agent setting, chosen whole: the agent adapter, the model
@@ -65,6 +68,8 @@ type document struct {
 	File `yaml:",inline"`
 	// Prepare is the node written under prepareKey.
 	Prepare yaml.Node `yaml:"prepare"`
+	// Stack is the node written under stackKey.
+	Stack yaml.Node `yaml:"stack"`
 	// Agent, Model and Effort are the retired flat keys, taken as whatever
 	// was written so that their own check reports them.
 	Agent  yaml.Node `yaml:"agent"`
@@ -75,7 +80,7 @@ type document struct {
 // Parse decodes a repo file strictly: any key it does not define, the retired
 // flat agent, model and effort keys, an invalid preset, a role smith does not
 // define or naming no preset, any label set to no name, and a prepare command
-// that is not one non-empty string, is refused with its line, in a
+// that is not one non-empty string, and a stack that is not an up and a down command, is refused with its line, in a
 // *blueprint.ValidationError. An empty document is
 // valid and leaves every field unset.
 func Parse(data []byte) (File, error) {
@@ -83,11 +88,14 @@ func Parse(data []byte) (File, error) {
 	if err := blueprint.DecodeStrict(data, subject, &doc); err != nil {
 		return File{}, fmt.Errorf("parse repo file: %w", err)
 	}
-	if err := validationError(slices.Concat(flatFindings(data), presetFindings(data), roleFindings(data, doc.Presets), labelFindings(data), prepareFindings(data))); err != nil {
+	if err := validationError(slices.Concat(flatFindings(data), presetFindings(data), roleFindings(data, doc.Presets), labelFindings(data), prepareFindings(data), stackFindings(data))); err != nil {
 		return File{}, err
 	}
 	f := doc.File
 	f.Prepare = resolved(&doc.Prepare).Value
+	if doc.Stack.Kind != 0 {
+		f.Stack = stackOf(resolved(&doc.Stack))
+	}
 	return f, nil
 }
 

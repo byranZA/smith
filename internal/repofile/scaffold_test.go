@@ -155,6 +155,7 @@ func TestTheStarterDocumentsEverySettingWithAnExample(t *testing.T) {
 		Roles:   map[string]string{"work": "claude", "review": "claude"},
 		Push:    &off, Prepare: "uv sync",
 		Labels: repofile.Labels{Agent: "ready-for-agent", Human: "ready-for-human", Spec: "spec"},
+		Stack:  repofile.Stack{Up: "docker compose up -d --wait", Down: "docker compose down"},
 	}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse(starter with its examples uncommented) = %+v, %v; want %+v", got, err, want)
@@ -242,5 +243,21 @@ func TestScaffoldWritesNoPrompt(t *testing.T) {
 	}
 	if want := []string{"README.md", "repo.yaml"}; !reflect.DeepEqual(names, want) {
 		t.Errorf(".smith holds %v, want %v", names, want)
+	}
+}
+
+func TestScaffoldStarterShowsACommentedStackBlockBesidePrepare(t *testing.T) {
+	t.Parallel()
+	repo := locate(t, t.TempDir())
+	scaffold(t, repo, repofile.Preset{})
+
+	data, err := os.ReadFile(repo.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# prepare: uv sync\n", "# stack:\n#   up: docker compose up -d --wait\n#   down: docker compose down\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("starter lacks %q:\n%s", want, data)
+		}
 	}
 }

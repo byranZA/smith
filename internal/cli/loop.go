@@ -19,6 +19,7 @@ import (
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/secret"
 	"github.com/byranZA/smith/internal/session"
+	"github.com/byranZA/smith/internal/stack"
 	"github.com/byranZA/smith/internal/staging"
 	"github.com/byranZA/smith/internal/tracker"
 	"github.com/byranZA/smith/internal/workbench"
@@ -42,6 +43,9 @@ type loopWiring struct {
 	plan     func(ctx context.Context, dir string, req workbench.Request) (branch, base string, err error)
 	pusher   func(dir string) loop.Pusher
 	preparer loop.Preparer
+	// newStack makes the stack a run on a box brings up and down; nil means a
+	// run has none to make.
+	newStack func() loop.Stacker
 	lookPath func(name string) (string, error)
 	mise     session.Runner
 	hostname func() (string, error)
@@ -73,6 +77,9 @@ func systemLoop() loopWiring {
 		},
 		pusher:   func(dir string) loop.Pusher { return loop.Origin{Git: connection.System(), Dir: dir} },
 		preparer: prepare.Preparer{Command: connection.System(), Mise: mise},
+		newStack: func() loop.Stacker {
+			return &stack.Stack{Command: prepare.Preparer{Command: connection.System(), Mise: mise}}
+		},
 		lookPath: exec.LookPath,
 		mise:     connection.System(),
 		hostname: os.Hostname,
@@ -148,6 +155,20 @@ func (w loopWiring) repo(ctx context.Context) (repofile.Repo, error) {
 		return repofile.Repo{}, fmt.Errorf("locate repo: %w", err)
 	}
 	return repo, nil
+}
+
+// onBox reports whether smith is run on a box, where a repo's stack is always
+// on: the box resolver finds a staged tree, as placements do.
+func (w loopWiring) onBox(cmd *cobra.Command, verb string, args []string) (bool, error) {
+	if w.box == nil {
+		return false, nil
+	}
+	_, err := w.box(invocation(cmd, verb, args))
+	var absent *staging.AbsentError
+	if errors.As(err, &absent) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // settings resolves the loop settings for the repo smith is run from, flags
@@ -289,7 +310,11 @@ func settingsReport(s loop.Settings) string {
 		{"model", s.Preset.Model},
 		{"effort", s.Preset.Effort},
 		{"push", s.Push},
+		{"stack", s.Stack},
 	} {
+		if setting.name == "stack" && setting.value.Value == "" {
+			continue
+		}
 		if setting.value.Value == "" {
 			setting.value.Value = "the agent's own default"
 		}
@@ -412,6 +437,9 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 			if repo != "" {
 				return w.startSession(cmd, ref, sessionRun{issue: args[0], repo: repo, branch: branch, base: base, interactive: interactive, flags: flags})
 			}
+			if flags.Stack, err = w.onBox(cmd, "loop run", typed(cmd, []string{fmt.Sprint(ref.Number)})); err != nil {
+				return reportInvalid(cmd, err)
+			}
 			recorder, err := w.recorder(cmd.Context(), inSession)
 			if err != nil {
 				return reportInvalid(cmd, err)
@@ -495,6 +523,9 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
+	if settings.Stacks() && w.newStack != nil {
+		l.Stack = w.newStack()
+	}
 	if resolved, ok := presets.Review(); ok {
 		l.Review = &loop.Review{Preset: resolved, Prompt: reviewPrompt}
 	}
@@ -668,7 +699,11 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			settings, _, err := w.settings(cmd.Context(), loop.Flags{})
+			onBox, err := w.onBox(cmd, "loop list", typed(cmd, args))
+			if err != nil {
+				return reportInvalid(cmd, err)
+			}
+			settings, _, err := w.settings(cmd.Context(), loop.Flags{Stack: onBox})
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
