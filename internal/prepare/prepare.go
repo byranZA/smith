@@ -98,11 +98,8 @@ func (p Preparer) Prepare(ctx context.Context, dir string, out io.Writer) error 
 	return p.Exec(ctx, dir, RepoCommand, file.Prepare, out)
 }
 
-// Exec runs command with sh -c in the worktree at dir under the toolchain its
-// mise config pins, or directly in dir when there is no mise, streaming its
-// output to out as it is printed, as the prepare command runs. A failure is a
-// *StepError naming step, such as RepoCommand, and the exit status. It is how
-// every repo-declared command runs in a worktree.
+// Exec runs command with sh -c in the worktree at dir under its pinned mise
+// toolchain if any, streaming output to out. A failure is a *StepError naming step.
 func (p Preparer) Exec(ctx context.Context, dir, step, command string, out io.Writer) error {
 	run := []string{"sh", "-c", inDir, "sh", dir, command}
 	if p.Mise != "" {

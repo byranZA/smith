@@ -1,7 +1,6 @@
 // Package stack runs a repo's stack: the services its repo file declares with
-// an up and a down command. It brings the stack up for a worktree before an
-// agent works there and takes it down when the run ends. It is handed the
-// Commander its commands run through and looks nothing up itself.
+// an up and a down command. It brings the stack up for a worktree and takes it
+// down when the run ends.
 package stack
 
 import (
@@ -33,9 +32,8 @@ type Commander interface {
 	Exec(ctx context.Context, dir, step, command string, out io.Writer) error
 }
 
-// Stack brings one repo's stack up for a worktree and takes it down. It
-// remembers the commands it ran up with, so it takes down what it started.
-// It is for one run at a time and is not safe for concurrent use.
+// Stack brings one repo's stack up for a worktree and takes it down with the
+// commands it ran up with. It is for one run at a time.
 type Stack struct {
 	// Command runs the up and down commands.
 	Command Commander
@@ -54,11 +52,9 @@ type running struct {
 	dir, up, down string
 }
 
-// Ensure brings the stack the repo file in dir declares up, with its output
-// streamed to out. A stack left running for another worktree, or by other
-// commands, is taken down first. A repo file with no stack takes down any
-// stack that is running and runs nothing more. A failed up is a
-// *prepare.StepError, and its stack stays recorded so Release takes it down.
+// Ensure brings up the stack the repo file in dir declares, first taking down
+// one running for another worktree or commands. A failed up is a
+// *prepare.StepError whose stack stays recorded for Release.
 func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	file, err := repofile.Load(repofile.At(dir))
 	if err != nil {
@@ -83,9 +79,8 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	return nil
 }
 
-// hold takes the stack lease, when there is none held and the stack has a
-// state home, and first takes down any stack its record shows a dead run left, then records
-// declared in it before the up that runs it.
+// hold takes the stack lease if the stack has a state home and holds none,
+// recovering a dead run's stack first, and records declared in it.
 func (s *Stack) hold(ctx context.Context, declared running, out io.Writer) error {
 	if s.State == "" {
 		return nil
@@ -103,12 +98,9 @@ func (s *Stack) hold(ctx context.Context, declared running, out io.Writer) error
 	return s.lease.write(Record{Dir: declared.dir, Branch: s.Branch, Up: declared.up, Down: declared.down, Started: time.Now().UTC()})
 }
 
-// Release takes down the stack Ensure brought up, once, in the worktree it
-// came up in with the down recorded for it, streaming its output to out. It
-// runs to the end though ctx is cancelled, and is stopped at DownTimeout.
-// The lease's record is deleted only when down succeeded, and its lock is
-// freed either way. With no stack running it does nothing. The stack counts
-// as taken down whether or not down succeeded.
+// Release takes down the stack Ensure brought up, once, even if ctx is
+// cancelled, bounded by DownTimeout. It deletes the lease record only when down
+// succeeded; with no stack running it does nothing.
 func (s *Stack) Release(ctx context.Context, out io.Writer) error {
 	if s.running == nil {
 		return nil

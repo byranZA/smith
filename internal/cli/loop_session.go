@@ -68,7 +68,7 @@ func (w loopWiring) startSession(cmd *cobra.Command, ref tracker.Ref, run sessio
 		return reportInvalid(cmd, err)
 	}
 	req := session.StartRequest{Repo: run.repo, Branch: run.branch, Base: run.base}
-	run.flags.Stack = true // a session is on a box, where the stack is always on
+	run.flags.Stack = true
 	settings, presets, source, err := w.effective(cmd, env, clone, req, run.flags)
 	if err != nil {
 		return reportInvalid(cmd, err)

@@ -165,8 +165,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestALeaseHolderKilledBySIGKILLLeavesTheLockFreeAndTheRecordInPlace(t *testing.T) {
-	// Not parallel: a process forked while another test holds a lease briefly
-	// shares its lock until it execs.
 	state, dir := t.TempDir(), worktree(t, declared)
 	child := exec.Command(os.Args[0], dir)
 	child.Env = append(os.Environ(), helperEnv+"="+state)

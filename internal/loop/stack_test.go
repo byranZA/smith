@@ -13,8 +13,7 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-// stacking fakes a stack, logging "up <dir>" and "down <dir>" into events as
-// the real one runs them: down only when a stack is up, and once.
+// stacking fakes a stack, logging "up <dir>" and "down <dir>" into events.
 type stacking struct {
 	events  *[]string
 	upErr   error
@@ -271,8 +270,7 @@ func TestASuccessfulDownLeavesTheStopReportAlone(t *testing.T) {
 	}
 }
 
-// recovering fakes the recovery of a stack a dead run left, logging
-// "recover" into events.
+// recovering fakes recovering a dead run's stack, logging "recover".
 type recovering struct {
 	events *[]string
 	rec    *stack.Record

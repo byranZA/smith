@@ -85,17 +85,24 @@ func acquire(state, key string) (*lease, error) {
 			}
 			return nil, &HeldError{*rec}
 		}
-		// A holder that released may have deleted the file between our open
-		// and our lock; a lock on a deleted file excludes nobody.
-		onDisk, serr := os.Stat(p)
-		mine, ferr := f.Stat()
-		if serr == nil && ferr == nil && os.SameFile(onDisk, mine) {
+		if stillAtPath(p, f) {
 			return &lease{file: f, path: p}, nil
 		}
 		if err := closeLease(f); err != nil {
 			return nil, err
 		}
 	}
+}
+
+// stillAtPath reports whether f is the file now at p, so a lock on it excludes
+// other holders. A holder that released may have deleted it meanwhile.
+func stillAtPath(p string, f *os.File) bool {
+	onDisk, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	mine, err := f.Stat()
+	return err == nil && os.SameFile(onDisk, mine)
 }
 
 // closeLease closes a lease file, naming the lease in its error.
@@ -176,14 +183,9 @@ func Holder(state, key string) (rec *Record, err error) {
 	return read(f)
 }
 
-// Recover takes down a stack a dead run left behind: an unlocked lease with
-// a record. It runs the recorded down in the recorded worktree, streaming its
-// output to out, under the same timeout as Release, and deletes the record
-// when it succeeds. It returns the record it recovered, or nil when nothing
-// was left or a live run holds the lease. A failed down keeps the record for
-// the next run, and a worktree that is gone clears it; both return the record
-// with an error naming the worktree, the down and why. With no state home it
-// does nothing.
+// Recover takes down a stack a dead run left behind, running its recorded
+// down and deleting the record on success. It returns the record it recovered,
+// or nil when nothing was left, a live run holds the lease or there is no state home.
 func (s *Stack) Recover(ctx context.Context, out io.Writer) (*Record, error) {
 	if s.State == "" {
 		return nil, nil
@@ -208,7 +210,7 @@ func (s *Stack) Recover(ctx context.Context, out io.Writer) (*Record, error) {
 
 // recoverHeld takes down the stack recorded in the lease l, which the caller
 // holds, and deletes the record when that succeeds or the worktree is gone.
-// It returns the record it recovered, or nil when it held none to take down, leaving the lease as it is.
+// It returns the record it recovered, or nil when it held none.
 func (s *Stack) recoverHeld(ctx context.Context, l *lease, out io.Writer) (*Record, error) {
 	rec, err := read(l.file)
 	if err != nil {

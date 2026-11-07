@@ -18,12 +18,10 @@ import (
 // call is one command the fake ran: its step, directory and command.
 type call struct{ step, dir, command string }
 
-// fakeCommander stands in for the process boundary the stack runs its
-// commands through. It records each call and the context it got.
+// fakeCommander records each call and the context it got.
 type fakeCommander struct {
 	calls []call
-	// live holds, per call, whether its context was uncancelled and its
-	// deadline, as the call saw them.
+	// live and until hold, per call, its context's liveness and deadline.
 	live  []bool
 	until []time.Duration
 	fail  map[string]error
