@@ -116,6 +116,22 @@ func TestTheRepoGuidePointsAtTheAgentGuideAndTheWorkBranch(t *testing.T) {
 	}
 }
 
+func TestTheRepoGuideQualifiesTheStackGuaranteeOffABox(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	scaffold(t, locate(t, root), repofile.Preset{})
+
+	data, err := os.ReadFile(filepath.Join(root, ".smith", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"`--stack`", "Off a box", "when smith is managing the stack"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("repo guide lacks %q:\n%s", want, data)
+		}
+	}
+}
+
 func writeSmithFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
