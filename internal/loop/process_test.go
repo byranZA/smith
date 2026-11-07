@@ -175,3 +175,58 @@ func TestProcessUnderMiseKeepsTheAgentsEnvironment(t *testing.T) {
 		t.Errorf("the agent saw SMITH_ADDED=%q, want %q", got, "added")
 	}
 }
+
+func TestProcessHoldsBackAHeldCommandsOutputOnSuccess(t *testing.T) {
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2"}, HoldOutput: true}
+
+	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+
+	if out.Len() != 0 {
+		t.Errorf("output = %q, want none", out.String())
+	}
+}
+
+func TestProcessShowsAHeldCommandsOutputOnFailure(t *testing.T) {
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo activity; echo more >&2; exit 3"}, HoldOutput: true}
+
+	err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+
+	if err == nil {
+		t.Fatal("Launch() error = nil, want a failure")
+	}
+	if got := out.String(); got != "activity\nmore\n" && got != "more\nactivity\n" {
+		t.Errorf("output = %q, want both lines", got)
+	}
+}
+
+func TestProcessCutsAHeldCommandsOutputOverTheBound(t *testing.T) {
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "i=0; while [ $i -lt 5000 ]; do echo line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=$((i+1)); done; exit 1"}, HoldOutput: true}
+
+	_ = (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd)
+
+	got := out.String()
+	if !strings.HasPrefix(got, "smith: earlier agent output was cut; showing the last 64 KiB\n") {
+		t.Errorf("output starts %q, want the cut note", got[:min(len(got), 80)])
+	}
+	if !strings.HasSuffix(got, "line-4999-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n") || strings.Contains(got, "line-0-") {
+		t.Error("output does not keep the tail and drop the head")
+	}
+}
+
+func TestProcessKeepsAnAttachedCommandOnTheTerminalDespiteHoldOutput(t *testing.T) {
+	var out bytes.Buffer
+	cmd := agent.Command{Name: "sh", Args: []string{"-c", "echo shown"}, Attached: true, HoldOutput: true}
+
+	if err := (loop.Process{Stdout: &out, Stderr: &out}).Launch(t.Context(), cmd); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+
+	if got := out.String(); got != "shown\n" {
+		t.Errorf("output = %q, want %q", got, "shown\n")
+	}
+}
