@@ -22,7 +22,7 @@ import (
 //
 // A step the blueprint declares nothing for plans nothing, so a blueprint with
 // no packages does not report a packages step that had nothing to do. The
-// orphans scan is the exception, and deliberately: it reads what the box holds
+// docker step and the orphans scan are the exceptions, and deliberately: it reads what the box holds
 // rather than what the blueprint declares, so a blueprint that dropped its last
 // repo is exactly the one whose scan must still run.
 func Plan(b blueprint.Blueprint, r staging.Resolution, home string) []Unit {
@@ -55,7 +55,7 @@ func labelOf(u Unit) string {
 		return "toolchain " + subject(u.Fragment.Repo)
 	case Repos:
 		return "repos " + u.Repo.Name
-	case Identity, Packages, Groups, Orphans:
+	case Identity, Packages, Groups, Docker, Orphans:
 		return string(u.Step)
 	default:
 		return string(u.Step)
@@ -99,7 +99,7 @@ func isPrerequisite(prereq, dependent Unit) bool {
 			(prereq.Step == Toolchain && prereq.Fragment.Repo == dependent.Repo.Name)
 	case Toolchain:
 		return dependent.Fragment.Repo != "" && isBoxToolchain(prereq)
-	case Groups:
+	case Groups, Docker:
 		return prereq.Step == Packages
 	case Placements, Identity, Packages, Orphans:
 		return false
@@ -124,6 +124,8 @@ func planStep(step Step, b blueprint.Blueprint, r staging.Resolution, root, home
 		return []Unit{{Step: Packages, Packages: append([]string(nil), b.Packages...)}}
 	case step == Groups && len(b.Groups) > 0:
 		return []Unit{{Step: Groups, Groups: append([]string(nil), b.Groups...)}}
+	case step == Docker:
+		return []Unit{{Step: Docker}}
 	case step == Repos:
 		return planRepos(b, root, home)
 	case step == Orphans:

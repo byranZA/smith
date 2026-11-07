@@ -221,7 +221,7 @@ func TestPlanSetsTheIdentityAfterThePlacements(t *testing.T) {
 	for _, unit := range Plan(b, r, "/home/smith") {
 		got = append(got, string(unit.Step))
 	}
-	if want := "placements,identity,packages,orphans"; strings.Join(got, ",") != want {
+	if want := "placements,identity,packages,docker,orphans"; strings.Join(got, ",") != want {
 		t.Errorf("Plan() steps = %q, want %q", strings.Join(got, ","), want)
 	}
 }

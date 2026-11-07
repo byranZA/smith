@@ -182,6 +182,8 @@ func (f *Facts) assign(key, value string, tailnetIP *string) {
 		f.Memory = memory.Parse(value)
 	case "swap-total-kb":
 		f.Swap = memory.ParseSwap(value)
+	default:
+		f.Docker.readDocker(key, value)
 	}
 }
 

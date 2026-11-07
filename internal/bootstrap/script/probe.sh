@@ -75,6 +75,27 @@ probe_services() {
   fi
 }
 
+# probe_docker emits what containers publish: docker-ports=absent without a
+# docker binary, '?' when the containers cannot be listed, else ok followed by
+# one docker-container line per container that publishes a port. It runs as
+# root because the smith user may not be in the docker group.
+probe_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker-ports=absent"
+    return 0
+  fi
+  local listing
+  if ! listing="$(as_root docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null)"; then
+    echo "docker-ports=?"
+    return 0
+  fi
+  echo "docker-ports=ok"
+  while IFS= read -r line; do
+    [ -n "$line" ] && echo "docker-container=${line}"
+  done <<<"$listing"
+  return 0
+}
+
 # probe_access emits the tailscale-mode access facts smith can read on the box:
 # the Tailscale backend state and the node's tailnet IP (used by the admin side
 # to run the live ssh-over-tailnet probe). Neither needs root. In public mode the
@@ -100,7 +121,7 @@ probe_access() {
 # notes without reconciling, whether the smith user exists and still holds
 # passwordless sudo, and — only when sudo is available — the firewall, sshd,
 # fail2ban, and auto-updates facts. When passwordless sudo is lost, only
-# passwordless-sudo=no is emitted; the reconciler's lost-sudo branch owns the
+# passwordless-sudo=no is emitted, plus docker-ports=? when docker is installed; the reconciler's lost-sudo branch owns the
 # unverifiable verdict for the root-only facts, which are simply absent.
 # It is query-only: it mutates nothing.
 probe() {
@@ -122,8 +143,13 @@ probe() {
     probe_firewall
     probe_sshd
     probe_services
+    probe_docker
   else
     echo "passwordless-sudo=no"
+    # Docker cannot be read without root: say so rather than stay silent.
+    if command -v docker >/dev/null 2>&1; then
+      echo "docker-ports=?"
+    fi
   fi
 
   probe_access

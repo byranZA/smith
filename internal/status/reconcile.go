@@ -80,6 +80,9 @@ type Facts struct {
 	// Swap is the box's total swap. It is a note, never reconciled: no swap is a
 	// valid result of the swap phase.
 	Swap memory.Swap
+	// Docker is what the box's containers publish, noted for every reachable
+	// verdict and never reconciled.
+	Docker DockerPorts
 }
 
 // Verdict is one of the five ordered status outcomes, from most to least severe
@@ -178,6 +181,9 @@ type Report struct {
 	Memory memory.Total
 	// Swap is the box's total swap, noted for every reachable verdict.
 	Swap memory.Swap
+	// Docker is what the box's containers publish, noted for every reachable
+	// verdict.
+	Docker DockerPorts
 }
 
 // ExitCode is the process exit code for the report's verdict.
@@ -201,7 +207,7 @@ func Unreachable(host string, connectErr error) Report {
 // or was unverifiable, else matches. Memory and swap are carried as a note, not
 // reconciled. It never mutates anything.
 func Reconcile(m marker.Marker, skew marker.Skew, present bool, facts Facts) Report {
-	r := Report{Skew: skew, Memory: facts.Memory, Swap: facts.Swap}
+	r := Report{Skew: skew, Memory: facts.Memory, Swap: facts.Swap, Docker: facts.Docker}
 	if !present {
 		r.Verdict = VerdictNeverBootstrapped
 		return r
@@ -339,12 +345,14 @@ func (r Report) String() string {
 		b.WriteString("✗ never provisioned: no smith marker on the box\n")
 		writeNote(&b, r.Skew)
 		r.writeMemory(&b)
+		r.writeDocker(&b)
 		b.WriteString("\n  Run `smith machine setup <login>@<host>` to provision it.\n")
 		return b.String()
 	case VerdictPartial:
 		b.WriteString("✗ partially provisioned: setup did not complete\n")
 		writeNote(&b, r.Skew)
 		r.writeMemory(&b)
+		r.writeDocker(&b)
 		fmt.Fprintf(&b, "\n  missing phases: %s\n", strings.Join(r.MissingPhases, ", "))
 		b.WriteString("\n  Re-run `smith machine setup <login>@<host>` to finish — the re-run resumes.\n")
 		return b.String()
@@ -355,6 +363,7 @@ func (r Report) String() string {
 	}
 	writeNote(&b, r.Skew)
 	r.writeMemory(&b)
+	r.writeDocker(&b)
 
 	for _, g := range r.Groups {
 		fmt.Fprintf(&b, "\n%s\n", g.Phase)

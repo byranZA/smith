@@ -131,6 +131,65 @@ exit 1
 	}
 }
 
+func TestScriptProbeListsContainersPublishingPorts(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProbeFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "docker", `#!/usr/bin/env bash
+echo "web 0.0.0.0:8083->80/tcp, [::]:8083->80/tcp"
+echo "idle "
+`)
+	cmd := exec.Command(bash, scriptPath, "probe")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "SMITH_MARKER="+filepath.Join(dir, "none"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe run failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"docker-ports=ok\n", "docker-container=web 0.0.0.0:8083->80/tcp, [::]:8083->80/tcp\n"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("probe output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestScriptProbeSaysDockerUnreadableWhenItCannotListContainers(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProbeFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "docker", "#!/usr/bin/env bash\nexit 1\n")
+	cmd := exec.Command(bash, scriptPath, "probe")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "SMITH_MARKER="+filepath.Join(dir, "none"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe run failed: %v\n%s", err, out)
+	}
+	if want := "docker-ports=?\n"; !strings.Contains(string(out), want) {
+		t.Errorf("probe output missing %q:\n%s", want, out)
+	}
+}
+
 // writeProbeFakeBins installs read-only fakes for a provisioned box: sudo execs
 // through, getent reports smith present, ufw is active with SSH allowed, sshd -T
 // reports the hardened effective config, and systemctl reports fail2ban running.
@@ -288,5 +347,51 @@ func TestScriptProbePrintsTotalMemoryAndSwap(t *testing.T) {
 				t.Errorf("probe output = %q, want it to carry %q", out, tt.want)
 			}
 		})
+	}
+}
+
+// probeWithoutSudo runs the probe with passwordless sudo denied and, when
+// withDocker, a docker binary on the PATH.
+func probeWithoutSudo(t *testing.T, withDocker bool) string {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "bootstrap.sh")
+	if err := os.WriteFile(scriptPath, []byte(Script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeProbeFakeBins(t, binDir)
+	writeFakeBin(t, binDir, "sudo", "#!/usr/bin/env bash\nexit 1\n")
+	if withDocker {
+		writeFakeBin(t, binDir, "docker", "#!/usr/bin/env bash\nexit 0\n")
+	}
+	cmd := exec.Command(bash, scriptPath, "probe")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "SMITH_MARKER="+filepath.Join(dir, "none"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe run failed: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+func TestScriptProbeSaysDockerUnreadableWhenSudoIsLost(t *testing.T) {
+	if got := probeWithoutSudo(t, true); !strings.Contains(got, "docker-ports=?\n") {
+		t.Errorf("probe output missing docker-ports=?:\n%s", got)
+	}
+}
+
+func TestScriptProbeStaysSilentOnDockerWhenSudoIsLostAndDockerAbsent(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err == nil {
+		t.Skip("a real docker is on the PATH")
+	}
+	if got := probeWithoutSudo(t, false); strings.Contains(got, "docker-ports") {
+		t.Errorf("probe must not mention docker when absent:\n%s", got)
 	}
 }

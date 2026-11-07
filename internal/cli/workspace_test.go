@@ -55,6 +55,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 		}
 		f.gitConfig[args[3]] = args[4]
 		return nil
+	case strings.Contains(line, "command -v dockerd"):
+		return absentProbe{}
 	case strings.Contains(line, "apt-get"):
 		return f.err
 	case name == "sudo" && strings.HasPrefix(line, "install"):
@@ -70,6 +72,12 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, _ io.Reader
 	}
 	return errors.New("no packages found matching")
 }
+
+// absentProbe is the failure of a privileged probe reporting that what it looked for is not there.
+type absentProbe struct{}
+
+func (absentProbe) Error() string { return "exit status 3" }
+func (absentProbe) ExitCode() int { return 3 }
 
 // line returns the argv of the one apt-get invocation, joined for readability.
 func (f *fakeBox) line(t *testing.T) string {

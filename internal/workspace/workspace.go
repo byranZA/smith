@@ -52,6 +52,10 @@ const (
 	// it is already in. It follows the packages because a package is what
 	// creates a group such as docker.
 	Groups Step = "groups"
+	// Docker makes ports a container publishes without an address default to
+	// loopback, because Docker routes a wildcard binding around the firewall.
+	// It follows the packages because a package may be what installs Docker.
+	Docker Step = "docker"
 	// Toolchain installs mise, writes the generated config pinning the
 	// blueprint's tools and exporting its env, and puts mise's shims on a
 	// login shell's PATH. It precedes the clones because a token exported
@@ -71,7 +75,7 @@ const (
 // one place: a step is converged before another because it puts something on
 // the box the later one needs, never for tidiness.
 func Order() []Step {
-	return []Step{Placements, Identity, Packages, Groups, Toolchain, Repos, Orphans}
+	return []Step{Placements, Identity, Packages, Groups, Docker, Toolchain, Repos, Orphans}
 }
 
 // Unit is one unit of work the stage converges: which step it belongs to and
@@ -157,6 +161,9 @@ type Env struct {
 	// Profile is where the login profile putting mise's shims on PATH lands.
 	// A run that leaves it unset writes /etc/profile.d/smith.sh.
 	Profile string
+	// DockerConfig is the docker daemon's config file. A run that leaves it
+	// unset uses /etc/docker/daemon.json.
+	DockerConfig string
 	// Proc is the process filesystem a groups step reads the tmux server's
 	// groups from. A run that leaves it unset reads /proc.
 	Proc string
@@ -184,4 +191,10 @@ func (e Env) owner() Owner {
 		return SmithUser{}
 	}
 	return e.Owner
+}
+
+// dockerConfig is the daemon config the run edits: the one the caller named,
+// and /etc/docker/daemon.json when it named none.
+func (e Env) dockerConfig() string {
+	return cmp.Or(e.DockerConfig, defaultDockerConfig)
 }

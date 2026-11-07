@@ -34,14 +34,10 @@ needs:
 2. **Identity** — the resolved git identity is set in the smith user's `~/.gitconfig`. See [Git identity](#git-identity).
 3. **Packages** — the blueprint's `packages` are installed with `apt`.
 4. **Groups** — the smith user joins the blueprint's `groups`. After the packages, because a package is what creates a group such as `docker`. See [Groups](#groups).
-5. **Toolchain** — `mise` is installed, and smith writes the generated config
-   pinning the blueprint's `tools` and exporting its `env`.
-6. **Repos** — each declared repo is cloned bare into
-   `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is
-   in scope for a token-authenticated clone.
-7. **Orphans** — the workspace root is scanned for repos the blueprint no
-   longer declares. This runs on every converge, even when the blueprint
-   declares no repos at all.
+5. **Docker** — published container ports default to loopback in `/etc/docker/daemon.json`. After the packages, because a package may be what installs Docker. See [Docker](#docker).
+6. **Toolchain** — `mise` is installed, and smith writes the generated config pinning the blueprint's `tools` and exporting its `env`.
+7. **Repos** — each declared repo is cloned bare into `<workspace>/<repo>/repo.git`, under `mise exec` so the blueprint's `env` is in scope for a token-authenticated clone.
+8. **Orphans** — the workspace root is scanned for repos the blueprint no longer declares. This runs on every converge, even when the blueprint declares no repos at all.
 
 ## Prerequisites and skips
 
@@ -51,6 +47,7 @@ A step runs only if what it depends on converged. These are the prerequisites, a
 - **Every repo needs the box toolchain.** The clone runs under `mise exec`, so a failed box toolchain skips every repo.
 - **A repo needs its own toolchain override.** A repo's `tools` and `env` file is a prerequisite of that repo alone; a failed override skips that repo and no other. That override in turn needs the box toolchain.
 - **Groups need packages.** A package is what creates a group such as `docker`, so a failed `apt` install skips the groups step.
+- **Docker needs packages.** A package may be what installs Docker, so a failed `apt` install skips the docker step.
 - **Sibling repos are not each other's prerequisite**. The identity step and the orphans scan need nothing, so they always run.
 
 A skip propagates: a unit that needs a unit which failed or was itself skipped is skipped too, and its line names the failure at the root, once each, not the skipped unit between. Everything that does not depend on the failure still runs. One repo failing to clone leaves its siblings cloning, and the orphans scan runs on every converge, failures included. Nothing is attempted for a skipped unit, so nothing is changed on the box for it.
@@ -121,6 +118,31 @@ So on every run that declares `groups`, the step reads the groups of the running
 ```
 
 The note fires whether or not this run added anything, so a re-run still warns, and it never fails the step. Close every session, or wait for them to end, and the next session starts a fresh server that carries the group. A fresh SSH login gets the group at once. With no server running, or one that already carries every declared group, there is no note. A server whose groups cannot be read gets a note of its own (`could not check whether the tmux server running sessions … carries …`), and the step still converges.
+
+## Docker
+
+A port published without a host address (`docker run -p 8081:80`, a Compose `"8081:80"`) binds `0.0.0.0`, and Docker routes that IPv4 traffic around ufw, so it is reachable from the internet while `ufw status` shows default-deny. The docker step makes loopback the default. It runs on every converge, whether or not the blueprint declares anything, so it also covers Docker installed outside the blueprint's packages. It looks for Docker on the box itself: a box without it changes nothing, does not fail, and says `docker is not installed; nothing to change`.
+
+The step merges two settings into `/etc/docker/daemon.json`:
+
+```json
+{
+  "ip": "127.0.0.1",
+  "default-network-opts": {
+    "bridge": { "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1" }
+  }
+}
+```
+
+- **It merges, never overwrites.** Other keys are kept, including other options under `default-network-opts.bridge`.
+- **An operator's value is kept.** A value you set for either setting is left alone, and the step's line carries a note saying so.
+- **An unparseable `daemon.json` fails the step** and is left untouched.
+- **The merge is validated first.** The merged file must pass `dockerd --validate --config-file` before it replaces the live one, so a bad merge cannot stop the daemon starting. A rejected merge fails the step and leaves the live file and the daemon alone.
+- **A converged box changes nothing.** A change restarts the daemon, because a reload does not apply these settings, and the line says `restarted docker`. A converge does not detect or wait for a running loop or stack, so a restart stops containers that have no restart policy. A container with `--restart=always` comes back on loopback.
+
+An explicit binding still exposes the port: `-p 0.0.0.0:8083:80` is reachable from the internet, and so is anything that binds an address other than loopback. `smith machine status` warns of these ([Docker ports](./provisioning.md#docker-ports)).
+
+Networks that exist keep their old binding until they are recreated. After the restart, `docker compose up` reuses an old Compose network and binds `0.0.0.0` again; run `docker compose down` and then `up` to recreate it. Docker's nftables backend, Swarm, networks with IPv6 enabled and `DOCKER-USER` rules are not managed. Services on the box reach the operator through an SSH tunnel (see [ADR-0026](./adr/0026-published-docker-ports-default-to-loopback.md)).
 
 ## The toolchain
 

@@ -82,6 +82,8 @@ func converge(ctx context.Context, env Env, m *mise, unit Unit, progress io.Writ
 		summary, err = installPackages(ctx, env.Command, unit.Packages, progress)
 	case Groups:
 		summary, err = addGroups(ctx, env, unit.Groups, progress)
+	case Docker:
+		summary, err = convergeDocker(ctx, env, progress)
 	case Toolchain:
 		summary, err = convergeToolchain(ctx, env, m, unit.Fragment, progress)
 	case Repos:

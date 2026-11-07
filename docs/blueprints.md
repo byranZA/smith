@@ -294,6 +294,10 @@ groups:
 
 Membership reaches new logins only, and a running tmux server keeps the groups it started with. [The workspace stage](./workspace.md#groups) says what that means for sessions.
 
+### Docker needs nothing declared
+
+If the box has Docker, a `packages` entry such as `docker.io` is all the blueprint says. The workspace stage's docker step runs on every converge and makes ports a container publishes without an address default to loopback, so they stay behind the firewall. It may restart the Docker daemon, and networks that exist keep their old binding until recreated (`docker compose down`, then `up`). An explicit `0.0.0.0` binding is still public. [The workspace stage](./workspace.md#docker) has the detail.
+
 ## smith knows no service by name
 
 smith **places files and exports environment variables**. That is the entirety

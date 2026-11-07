@@ -1,0 +1,377 @@
+package workspace
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// dockerBox fakes a box's docker daemon, its config file and the commands the docker step reaches them by.
+type dockerBox struct {
+	// present reports whether the box holds dockerd.
+	present bool
+	// probeErr makes every existence or read probe fail with it.
+	probeErr error
+	// invalid makes the validation of any config fail.
+	invalid bool
+	// restartErr is what restarting the daemon fails with.
+	restartErr error
+	// restartFailures is how many restarts fail with restartErr before they succeed; negative means all.
+	restartFailures int
+	// path is the live config file.
+	path string
+	// validated are the contents handed to validation, in order.
+	validated []string
+	// restarts counts the daemon restarts.
+	restarts int
+}
+
+func (d *dockerBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	line := strings.Join(append([]string{name}, args...), " ")
+	switch {
+	case line == "sudo sh -c command -v dockerd >/dev/null 2>&1 || exit 3":
+		if d.probeErr != nil {
+			return d.probeErr
+		}
+		if !d.present {
+			return exitStatus(3)
+		}
+		return nil
+	case line == `sudo sh -c [ -e "$1" ] || exit 3; cat "$1" sh `+d.path:
+		if d.probeErr != nil {
+			return d.probeErr
+		}
+		data, err := os.ReadFile(d.path)
+		if errors.Is(err, os.ErrNotExist) {
+			return exitStatus(3)
+		}
+		if err != nil {
+			return fmt.Errorf("read the canned config: %w", err)
+		}
+		return write(stdout, string(data))
+	case strings.HasPrefix(line, "sudo dockerd --validate --config-file "):
+		data, err := os.ReadFile(args[len(args)-1])
+		if err != nil {
+			return fmt.Errorf("read the config handed to validation: %w", err)
+		}
+		d.validated = append(d.validated, string(data))
+		if d.invalid {
+			return exitStatus(1)
+		}
+		return nil
+	case strings.HasPrefix(line, "sudo install -D -m 0644 ") && strings.HasSuffix(line, " "+d.path):
+		data, err := os.ReadFile(args[len(args)-2])
+		if err != nil {
+			return fmt.Errorf("read the config handed to install: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(d.path), 0o755); err != nil {
+			return fmt.Errorf("make the config directory: %w", err)
+		}
+		return os.WriteFile(d.path, data, 0o644)
+	case line == "sudo rm -f "+d.path:
+		return os.Remove(d.path)
+	case line == "sudo systemctl restart docker":
+		d.restarts++
+		if d.restartFailures == 0 {
+			return nil
+		}
+		d.restartFailures--
+		return d.restartErr
+	}
+	return fmt.Errorf("unexpected command %q", line)
+}
+
+// newDockerBox is a box with docker and, when config is not empty, a daemon.json holding it.
+func newDockerBox(t *testing.T, config string) *dockerBox {
+	t.Helper()
+	box := &dockerBox{present: true, path: filepath.Join(t.TempDir(), "docker", "daemon.json")}
+	if config != "" {
+		if err := os.MkdirAll(filepath.Dir(box.path), 0o755); err != nil {
+			t.Fatalf("make the config directory: %v", err)
+		}
+		if err := os.WriteFile(box.path, []byte(config), 0o644); err != nil {
+			t.Fatalf("write the daemon.json: %v", err)
+		}
+	}
+	return box
+}
+
+// converge runs the docker step against the box through the public Converge
+// and returns the summary and error of the docker outcome.
+func (d *dockerBox) converge(t *testing.T) (string, error) {
+	t.Helper()
+	result, err := Converge(t.Context(), Env{Command: d, DockerConfig: d.path}, []Unit{{Step: Docker, Label: "docker"}}, io.Discard)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Step != Docker {
+		t.Fatalf("Converge() outcomes = %+v, want one docker outcome", result.Outcomes)
+	}
+	return result.Outcomes[0].Summary, result.Outcomes[0].Err
+}
+
+// live is the daemon.json on the box, parsed to a generic value.
+func (d *dockerBox) live(t *testing.T) any {
+	t.Helper()
+	return parseJSON(t, d.path)
+}
+
+func parseJSON(t *testing.T, path string) any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return v
+}
+
+func loopbackDefaults() map[string]any {
+	return map[string]any{
+		"ip":                   "127.0.0.1",
+		"default-network-opts": map[string]any{"bridge": map[string]any{"com.docker.network.bridge.host_binding_ipv4": "127.0.0.1"}},
+	}
+}
+
+func TestDockerStepWritesLoopbackDefaultsAndRestarts(t *testing.T) {
+	t.Parallel()
+	box := newDockerBox(t, "")
+	summary, err := box.converge(t)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	if got := box.live(t); !reflect.DeepEqual(got, loopbackDefaults()) {
+		t.Errorf("daemon.json = %v, want %v", got, loopbackDefaults())
+	}
+	if box.restarts != 1 || !strings.Contains(summary, "restarted docker") {
+		t.Errorf("Converge() = %q after %d restarts, want one restart said in the summary", summary, box.restarts)
+	}
+}
+
+func TestDockerStepSecondRunChangesNothingAndDoesNotRestart(t *testing.T) {
+	t.Parallel()
+	box := newDockerBox(t, "")
+	if _, err := box.converge(t); err != nil {
+		t.Fatalf("first Converge() error = %v", err)
+	}
+	before, err := os.ReadFile(box.path)
+	if err != nil {
+		t.Fatalf("read daemon.json: %v", err)
+	}
+	summary, err := box.converge(t)
+	if err != nil {
+		t.Fatalf("second Converge() error = %v", err)
+	}
+	after, err := os.ReadFile(box.path)
+	if err != nil {
+		t.Fatalf("read daemon.json: %v", err)
+	}
+	if string(before) != string(after) || box.restarts != 1 || len(box.validated) != 1 {
+		t.Errorf("second run: file changed %v, restarts %d, validations %d, want unchanged, 1 and 1 (summary %q)", string(before) != string(after), box.restarts, len(box.validated), summary)
+	}
+}
+
+func TestDockerStepKeepsOtherKeysIncludingOtherBridgeOptions(t *testing.T) {
+	t.Parallel()
+	box := newDockerBox(t, `{"log-driver":"json-file","default-network-opts":{"bridge":{"com.docker.network.driver.mtu":"1400"},"overlay":{"x":"y"}}}`)
+	if _, err := box.converge(t); err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	want := map[string]any{
+		"log-driver": "json-file",
+		"ip":         "127.0.0.1",
+		"default-network-opts": map[string]any{
+			"bridge": map[string]any{
+				"com.docker.network.driver.mtu":               "1400",
+				"com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
+			},
+			"overlay": map[string]any{"x": "y"},
+		},
+	}
+	if got := box.live(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("daemon.json = %v, want %v", got, want)
+	}
+}
+
+func TestDockerStepKeepsAnOperatorsValueWithANote(t *testing.T) {
+	t.Parallel()
+	box := newDockerBox(t, `{"ip":"10.0.0.5","default-network-opts":{"bridge":{"com.docker.network.bridge.host_binding_ipv4":"0.0.0.0"}}}`)
+	summary, err := box.converge(t)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	want := map[string]any{
+		"ip":                   "10.0.0.5",
+		"default-network-opts": map[string]any{"bridge": map[string]any{"com.docker.network.bridge.host_binding_ipv4": "0.0.0.0"}},
+	}
+	if got := box.live(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("daemon.json = %v, want %v", got, want)
+	}
+	for _, note := range []string{"ip", "10.0.0.5", "host_binding_ipv4", "0.0.0.0"} {
+		if !strings.Contains(summary, note) {
+			t.Errorf("Converge() = %q, want a note naming %q", summary, note)
+		}
+	}
+	if box.restarts != 0 {
+		t.Errorf("restarts = %d, want none when the operator's values leave nothing to change", box.restarts)
+	}
+}
+
+func TestDockerStepFailsOnUnparseableConfigAndLeavesItUntouched(t *testing.T) {
+	t.Parallel()
+	const broken = `{"log-driver": `
+	box := newDockerBox(t, broken)
+	if _, err := box.converge(t); err == nil {
+		t.Fatal("Converge() error = nil, want a failure on an unparseable daemon.json")
+	}
+	got, err := os.ReadFile(box.path)
+	if err != nil || string(got) != broken || box.restarts != 0 {
+		t.Errorf("daemon.json = %q (%v) after %d restarts, want it untouched and no restart", got, err, box.restarts)
+	}
+}
+
+func TestDockerStepFailsOnEmptyOrBlankExistingConfigAndLeavesItUntouched(t *testing.T) {
+	t.Parallel()
+	for name, content := range map[string]string{"empty": "", "whitespace only": " \n\t\n"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			box := newDockerBox(t, "{}")
+			if err := os.WriteFile(box.path, []byte(content), 0o644); err != nil {
+				t.Fatalf("write the daemon.json: %v", err)
+			}
+			if _, err := box.converge(t); err == nil {
+				t.Fatal("Converge() error = nil, want a failure on an existing daemon.json with no JSON")
+			}
+			got, err := os.ReadFile(box.path)
+			if err != nil || string(got) != content || box.restarts != 0 {
+				t.Errorf("daemon.json = %q (%v) after %d restarts, want it untouched and no restart", got, err, box.restarts)
+			}
+		})
+	}
+}
+
+func TestDockerStepKeepsTheLiveConfigWhenValidationFails(t *testing.T) {
+	t.Parallel()
+	const live = `{"log-driver":"json-file"}`
+	box := newDockerBox(t, live)
+	box.invalid = true
+	if _, err := box.converge(t); err == nil {
+		t.Fatal("Converge() error = nil, want a failure when validation rejects the merge")
+	}
+	got, err := os.ReadFile(box.path)
+	if err != nil || string(got) != live || box.restarts != 0 {
+		t.Errorf("daemon.json = %q (%v) after %d restarts, want it unchanged and no restart", got, err, box.restarts)
+	}
+}
+
+func TestDockerStepReportsAFailedRestart(t *testing.T) {
+	t.Parallel()
+	box := newDockerBox(t, "")
+	box.restartErr = errors.New("unit not found")
+	box.restartFailures = -1
+	if _, err := box.converge(t); !errors.Is(err, box.restartErr) {
+		t.Errorf("Converge() error = %v, want it to wrap %v", err, box.restartErr)
+	}
+}
+
+func TestDockerStepRestoresTheOriginalConfigWhenRestartFailsAndRetries(t *testing.T) {
+	t.Parallel()
+	for name, original := range map[string]string{"existing": `{"log-driver":"json-file"}`, "absent": ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			box := newDockerBox(t, original)
+			box.restartErr = errors.New("unit not found")
+			box.restartFailures = 1
+			if _, err := box.converge(t); !errors.Is(err, box.restartErr) {
+				t.Fatalf("Converge() error = %v, want it to wrap %v", err, box.restartErr)
+			}
+			got, readErr := os.ReadFile(box.path)
+			switch {
+			case original == "" && !os.IsNotExist(readErr):
+				t.Errorf("daemon.json after failed apply = %q (%v), want it removed", got, readErr)
+			case original != "" && (readErr != nil || string(got) != original):
+				t.Errorf("daemon.json after failed apply = %q (%v), want %q restored", got, readErr, original)
+			}
+			summary, err := box.converge(t)
+			if err != nil {
+				t.Fatalf("retry Converge() error = %v, want nil", err)
+			}
+			if !strings.Contains(summary, "restarted docker") {
+				t.Errorf("retry summary = %q, want it to apply and restart", summary)
+			}
+			live, ok := box.live(t).(map[string]any)
+			if !ok || live["ip"] != "127.0.0.1" {
+				t.Errorf("live config = %v, want loopback defaults", live)
+			}
+		})
+	}
+}
+
+func TestDockerStepOnABoxWithoutDockerChangesNothing(t *testing.T) {
+	t.Parallel()
+	box := newDockerBox(t, "")
+	box.present = false
+	summary, err := box.converge(t)
+	if err != nil {
+		t.Fatalf("Converge() error = %v, want nil", err)
+	}
+	if _, statErr := os.Stat(box.path); !os.IsNotExist(statErr) || box.restarts != 0 {
+		t.Errorf("a box without docker got a daemon.json (stat %v) or %d restarts, want neither", statErr, box.restarts)
+	}
+	if want := "docker is not installed; nothing to change"; summary != want {
+		t.Errorf("Converge() = %q, want %q", summary, want)
+	}
+}
+
+func TestDockerStepFailedInstallProbeIsAnErrorNotAbsence(t *testing.T) {
+	box := newDockerBox(t, `{"debug": true}`)
+	box.probeErr = exitStatus(1)
+	summary, err := box.converge(t)
+	if err == nil {
+		t.Fatalf("converge summary = %q, error = nil, want the probe failure", summary)
+	}
+	if len(box.validated) != 0 || box.restarts != 0 {
+		t.Errorf("validated = %v, restarts = %d, want neither after a failed probe", box.validated, box.restarts)
+	}
+}
+
+func TestDockerStepUnreadableConfigLeavesItUntouched(t *testing.T) {
+	box := newDockerBox(t, `{"debug": true}`)
+	box.present = true
+	probe := box.probeErr
+	_ = probe
+	read := &failingRead{dockerBox: box}
+	result, err := Converge(t.Context(), Env{Command: read, DockerConfig: box.path}, []Unit{{Step: Docker, Label: "docker"}}, io.Discard)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if result.Outcomes[0].Err == nil {
+		t.Fatalf("outcome = %+v, want the read failure", result.Outcomes[0])
+	}
+	if len(box.validated) != 0 || box.restarts != 0 {
+		t.Errorf("validated = %v, restarts = %d, want neither after an unreadable config", box.validated, box.restarts)
+	}
+	if got := box.live(t); !reflect.DeepEqual(got, map[string]any{"debug": true}) {
+		t.Errorf("live config = %v, want it untouched", got)
+	}
+}
+
+// failingRead is a docker box whose config read fails the way sudo does when it cannot run.
+type failingRead struct{ *dockerBox }
+
+func (f *failingRead) Run(ctx context.Context, name string, args []string, in io.Reader, stdout, stderr io.Writer) error {
+	if len(args) > 2 && strings.Contains(args[2], "cat") {
+		return exitStatus(1)
+	}
+	return f.dockerBox.Run(ctx, name, args, in, stdout, stderr)
+}

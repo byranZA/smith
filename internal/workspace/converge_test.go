@@ -115,6 +115,8 @@ func (f *fakeBox) Run(_ context.Context, name string, args []string, stdin io.Re
 			return fmt.Errorf("fatal: could not read from remote repository %s", f.remotes[gitDir(argv)])
 		}
 		return f.gitErr
+	case strings.Contains(line, "command -v dockerd"):
+		return exitStatus(probeAbsent)
 	case strings.HasPrefix(line, "sudo install"):
 		return f.install(argv[len(argv)-1], stdin)
 	case strings.Contains(line, "mise.run"):

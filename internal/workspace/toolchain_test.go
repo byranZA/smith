@@ -374,7 +374,7 @@ func TestConvergeRefusesAVariableWithNoStagedValue(t *testing.T) {
 	if !result.Failed() {
 		t.Fatalf("Result.Failed() = false, want true: %s", result.Report())
 	}
-	if err := result.Outcomes[0].Err; err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+	if err := outcomesFor(result, Toolchain)[0].Err; err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
 		t.Errorf("outcome error = %v, want it to name the variable with no staged value", err)
 	}
 	if _, err := os.Stat(fragmentPath(home)); !os.IsNotExist(err) {

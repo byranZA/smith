@@ -18,6 +18,9 @@ import (
 type realGit struct{ home string }
 
 func (g realGit) Run(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if name == "sudo" && len(args) > 2 && strings.Contains(args[2], "command -v dockerd") {
+		return exitStatus(probeAbsent) // the box under test holds no docker
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Env = []string{"HOME=" + g.home, "PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1"}
