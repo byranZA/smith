@@ -27,7 +27,11 @@ const (
 // config, restarting the daemon only when the file changed. A box without
 // docker changes nothing and says so.
 func convergeDocker(ctx context.Context, env Env, progress io.Writer) (string, error) {
-	if err := env.Command.Run(ctx, "sudo", []string{"dockerd", "--version"}, nil, io.Discard, io.Discard); err != nil {
+	installed, err := dockerInstalled(ctx, env.Command)
+	if err != nil {
+		return "", err
+	}
+	if !installed {
 		return "docker is not installed; nothing to change", nil
 	}
 	path := env.dockerConfig()
@@ -56,6 +60,27 @@ func convergeDocker(ctx context.Context, env Env, progress io.Writer) (string, e
 	return "published ports now default to loopback in " + path + "; restarted docker" + suffix, nil
 }
 
+// probeAbsent is the status a privileged probe script exits with for "not
+// there". It is distinct from 1, which sudo itself and most tools use for their
+// own failures, so absence is never mistaken for a failed probe or the reverse.
+const probeAbsent = 3
+
+// dockerInstalled reports whether the box holds dockerd. Only the probe's own
+// absent status means no; any other failure (sudo lost, launch error,
+// cancellation) is returned.
+func dockerInstalled(ctx context.Context, run Runner) (bool, error) {
+	script := `command -v dockerd >/dev/null 2>&1 || exit 3`
+	err := run.Run(ctx, "sudo", []string{"sh", "-c", script}, nil, io.Discard, io.Discard)
+	var exit interface{ ExitCode() int }
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &exit) && exit.ExitCode() == probeAbsent:
+		return false, nil
+	}
+	return false, fmt.Errorf("check whether docker is installed: %w", err)
+}
+
 // noteSuffix renders the notes to append to a summary, none when there are none.
 func noteSuffix(notes []string) string {
 	if len(notes) == 0 {
@@ -67,11 +92,14 @@ func noteSuffix(notes []string) string {
 // readDockerConfig returns the daemon's config at path: nil when the file does
 // not exist, non-nil (possibly empty) when it does.
 func readDockerConfig(ctx context.Context, run Runner, path string) ([]byte, error) {
-	if err := run.Run(ctx, "sudo", []string{"test", "-e", path}, nil, io.Discard, io.Discard); err != nil {
-		return nil, nil
-	}
 	var out bytes.Buffer
-	if err := run.Run(ctx, "sudo", []string{"cat", path}, nil, &out, io.Discard); err != nil {
+	script := `[ -e "$1" ] || exit 3; cat "$1"`
+	err := run.Run(ctx, "sudo", []string{"sh", "-c", script, "sh", path}, nil, &out, io.Discard)
+	var exit interface{ ExitCode() int }
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == probeAbsent:
+		return nil, nil
+	case err != nil:
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	return append([]byte{}, out.Bytes()...), nil

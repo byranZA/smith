@@ -17,6 +17,8 @@ import (
 type dockerBox struct {
 	// present reports whether the box holds dockerd.
 	present bool
+	// probeErr makes every existence or read probe fail with it.
+	probeErr error
 	// invalid makes the validation of any config fail.
 	invalid bool
 	// restartErr is what restarting the daemon fails with.
@@ -34,18 +36,22 @@ type dockerBox struct {
 func (d *dockerBox) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
 	line := strings.Join(append([]string{name}, args...), " ")
 	switch {
-	case line == "sudo dockerd --version":
+	case line == "sudo sh -c command -v dockerd >/dev/null 2>&1 || exit 3":
+		if d.probeErr != nil {
+			return d.probeErr
+		}
 		if !d.present {
-			return exitStatus(127)
+			return exitStatus(3)
 		}
 		return nil
-	case line == "sudo test -e "+d.path:
-		if _, err := os.Stat(d.path); err != nil {
-			return exitStatus(1)
+	case line == `sudo sh -c [ -e "$1" ] || exit 3; cat "$1" sh `+d.path:
+		if d.probeErr != nil {
+			return d.probeErr
 		}
-		return nil
-	case line == "sudo cat "+d.path:
 		data, err := os.ReadFile(d.path)
+		if errors.Is(err, os.ErrNotExist) {
+			return exitStatus(3)
+		}
 		if err != nil {
 			return fmt.Errorf("read the canned config: %w", err)
 		}
@@ -325,4 +331,47 @@ func TestDockerStepOnABoxWithoutDockerChangesNothing(t *testing.T) {
 	if want := "docker is not installed; nothing to change"; summary != want {
 		t.Errorf("Converge() = %q, want %q", summary, want)
 	}
+}
+
+func TestDockerStepFailedInstallProbeIsAnErrorNotAbsence(t *testing.T) {
+	box := newDockerBox(t, `{"debug": true}`)
+	box.probeErr = exitStatus(1)
+	summary, err := box.converge(t)
+	if err == nil {
+		t.Fatalf("converge summary = %q, error = nil, want the probe failure", summary)
+	}
+	if len(box.validated) != 0 || box.restarts != 0 {
+		t.Errorf("validated = %v, restarts = %d, want neither after a failed probe", box.validated, box.restarts)
+	}
+}
+
+func TestDockerStepUnreadableConfigLeavesItUntouched(t *testing.T) {
+	box := newDockerBox(t, `{"debug": true}`)
+	box.present = true
+	probe := box.probeErr
+	_ = probe
+	read := &failingRead{dockerBox: box}
+	result, err := Converge(t.Context(), Env{Command: read, DockerConfig: box.path}, []Unit{{Step: Docker, Label: "docker"}}, io.Discard)
+	if err != nil {
+		t.Fatalf("Converge() error = %v", err)
+	}
+	if result.Outcomes[0].Err == nil {
+		t.Fatalf("outcome = %+v, want the read failure", result.Outcomes[0])
+	}
+	if len(box.validated) != 0 || box.restarts != 0 {
+		t.Errorf("validated = %v, restarts = %d, want neither after an unreadable config", box.validated, box.restarts)
+	}
+	if got := box.live(t); !reflect.DeepEqual(got, map[string]any{"debug": true}) {
+		t.Errorf("live config = %v, want it untouched", got)
+	}
+}
+
+// failingRead is a docker box whose config read fails the way sudo does when it cannot run.
+type failingRead struct{ *dockerBox }
+
+func (f *failingRead) Run(ctx context.Context, name string, args []string, in io.Reader, stdout, stderr io.Writer) error {
+	if len(args) > 2 && strings.Contains(args[2], "cat") {
+		return exitStatus(1)
+	}
+	return f.dockerBox.Run(ctx, name, args, in, stdout, stderr)
 }
