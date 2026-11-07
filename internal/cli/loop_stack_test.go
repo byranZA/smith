@@ -2,12 +2,16 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/byranZA/smith/internal/hint"
@@ -15,30 +19,56 @@ import (
 	"github.com/byranZA/smith/internal/repofile"
 	"github.com/byranZA/smith/internal/stack"
 	"github.com/byranZA/smith/internal/staging"
+	"github.com/byranZA/smith/internal/workbench"
 )
 
-// recordingStack fakes the stack a run on a box brings up and down.
-type recordingStack struct {
-	ups, downs []string
-	recovers   int
+// recordingCommander fakes the process boundary a real stack reaches its
+// commands through, keeping the step of each command it was asked to run.
+type recordingCommander struct {
+	mu    sync.Mutex
+	steps []string
 }
 
-func (r *recordingStack) Recover(context.Context, io.Writer) (*stack.Record, error) {
-	r.recovers++
-	return nil, nil
-}
-
-func (r *recordingStack) Ensure(_ context.Context, dir string, _ io.Writer) error {
-	r.ups = append(r.ups, dir)
+func (r *recordingCommander) Exec(_ context.Context, _, step, _ string, _ io.Writer) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.steps = append(r.steps, step)
 	return nil
 }
 
-func (r *recordingStack) Release(context.Context, io.Writer) error {
-	if len(r.downs) >= len(r.ups) {
-		return nil
+// ran returns the steps run so far, in order.
+func (r *recordingCommander) ran() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.steps)
+}
+
+// realWorktrees is a bench whose task worktrees are real directories holding
+// the repo file, so a real stack can read what the repo declares.
+type realWorktrees struct {
+	benchAt
+	root, repoFile string
+}
+
+func (b realWorktrees) Open(_ context.Context, task int) (string, error) {
+	dir := filepath.Join(b.root, strconv.Itoa(task))
+	if err := os.MkdirAll(filepath.Join(dir, ".smith"), 0o755); err != nil {
+		return "", err
 	}
-	r.downs = append(r.downs, "down")
-	return nil
+	return dir, os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte(b.repoFile), 0o644)
+}
+
+// realStackOn makes the wiring build a real stack over run, in worktrees that
+// hold the repo file.
+func realStackOn(t *testing.T, w *loopWiring, repoFile string, run stack.Commander) {
+	t.Helper()
+	root := t.TempDir()
+	w.bench = func(_ context.Context, _ string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
+		return realWorktrees{benchAt: benchAt{branch: workbench.Branch(req.Number, req.Title)}, root: root, repoFile: repoFile}, workbench.Lag{}, nil
+	}
+	w.newStack = func(state, key, branch string) loop.Stacker {
+		return &stack.Stack{Command: run, State: state, Key: key, Branch: branch}
+	}
 }
 
 // onABox is a box resolver for a machine that has been set up as a box, with
@@ -125,13 +155,13 @@ func TestLoopRunOffABoxWithStackBringsTheStackUpAndDown(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = offABox
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, stackFile, run)
 
 	stdout, stderr, code := runLoopRun(t, w, "80", "--stack")
 
-	if code != 0 || len(stack.ups) != 1 || len(stack.downs) != 1 || !strings.Contains(stdout, "stack:  on (repo file)\n") {
-		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0, one up, one down and the stack line", code, stack.ups, stack.downs, stdout, stderr)
+	if code != 0 || !slices.Equal(run.ran(), []string{"stack up", "stack down"}) || !strings.Contains(stdout, "stack:  on (repo file)\n") {
+		t.Errorf("exit %d, ran %v, stdout %q, stderr %q; want 0, one up, one down and the stack line", code, run.ran(), stdout, stderr)
 	}
 }
 
@@ -140,13 +170,13 @@ func TestLoopRunOnABoxWithStackChangesNothing(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = onABox(t)
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, stackFile, run)
 
 	stdout, stderr, code := runLoopRun(t, w, "80", "--stack")
 
-	if code != 0 || len(stack.ups) != 1 || len(stack.downs) != 1 || !strings.Contains(stdout, "stack:  on (repo file)\n") {
-		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want the same as without --stack", code, stack.ups, stack.downs, stdout, stderr)
+	if code != 0 || !slices.Equal(run.ran(), []string{"stack up", "stack down"}) || !strings.Contains(stdout, "stack:  on (repo file)\n") {
+		t.Errorf("exit %d, ran %v, stdout %q, stderr %q; want the same as without --stack", code, run.ran(), stdout, stderr)
 	}
 }
 
@@ -155,13 +185,13 @@ func TestLoopRunOnABoxBringsTheDeclaredStackUpAndDown(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = onABox(t)
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, stackFile, run)
 
 	stdout, stderr, code := runLoopRun(t, w, "80")
 
-	if code != 0 || len(stack.ups) != 1 || len(stack.downs) != 1 || !strings.Contains(stdout, "stack:  on (repo file)\n") {
-		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0, one up, one down and the stack line", code, stack.ups, stack.downs, stdout, stderr)
+	if code != 0 || !slices.Equal(run.ran(), []string{"stack up", "stack down"}) || !strings.Contains(stdout, "stack:  on (repo file)\n") {
+		t.Errorf("exit %d, ran %v, stdout %q, stderr %q; want 0, one up, one down and the stack line", code, run.ran(), stdout, stderr)
 	}
 }
 
@@ -170,13 +200,34 @@ func TestLoopRunOffABoxRunsNoStack(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = offABox
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, stackFile, run)
 
 	stdout, stderr, code := runLoopRun(t, w, "80")
 
-	if code != 0 || len(stack.ups) != 0 || len(stack.downs) != 0 || !strings.Contains(stdout, "stack:  off (--stack turns it on)\n") {
-		t.Errorf("exit %d, ups %v, downs %v, stdout %q, stderr %q; want 0, no stack and the stack off line", code, stack.ups, stack.downs, stdout, stderr)
+	if code != 0 || len(run.ran()) != 0 || !strings.Contains(stdout, "stack:  off (--stack turns it on)\n") {
+		t.Errorf("exit %d, ran %v, stdout %q, stderr %q; want 0, no stack and the stack off line", code, run.ran(), stdout, stderr)
+	}
+}
+
+// leftBehind sets up a repo whose previous run died holding the stack lease
+// with a down command recorded, so a run that recovers runs "stack down".
+func leftBehind(t *testing.T, w *loopWiring) {
+	t.Helper()
+	state := t.TempDir()
+	w.state = func() (string, error) { return state, nil }
+	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
+	record := stack.Record{Dir: t.TempDir(), Branch: "smith/9-other", Up: "make up", Down: "make down"}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leases := filepath.Join(state, "stacks")
+	if err := os.MkdirAll(leases, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leases, stack.Key("git@github.com:acme/api.git", "")+".json"), data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -185,43 +236,45 @@ func TestLoopRunOffABoxWithoutStackRecoversNothing(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = offABox
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, stackFile, run)
+	leftBehind(t, &w)
 
 	_, stderr, code := runLoopRun(t, w, "80")
 
-	if code != 0 || stack.recovers != 0 {
-		t.Errorf("exit %d, recoveries %d, stderr %q; want 0 and no recovery", code, stack.recovers, stderr)
+	if code != 0 || len(run.ran()) != 0 {
+		t.Errorf("exit %d, ran %v, stderr %q; want 0 and no recovery", code, run.ran(), stderr)
 	}
 }
 
-func TestLoopRunOffABoxWithStackRecoversOnce(t *testing.T) {
+func TestLoopRunOffABoxWithStackRecoversTheStackALeftBehindOnceEvenThoughTheRepoDeclaresNone(t *testing.T) {
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
 	w.box = offABox
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, "push: true\n", run)
+	leftBehind(t, &w)
 
 	_, stderr, code := runLoopRun(t, w, "80", "--stack")
 
-	if code != 0 || stack.recovers != 1 {
-		t.Errorf("exit %d, recoveries %d, stderr %q; want 0 and one recovery though the repo declares no stack", code, stack.recovers, stderr)
+	if want := []string{"stack down"}; code != 0 || !slices.Equal(run.ran(), want) {
+		t.Errorf("exit %d, ran %v, stderr %q; want 0 and %v", code, run.ran(), stderr, want)
 	}
 }
 
-func TestLoopRunOnABoxWhoseCheckoutDeclaresNoStackStillLetsEnsureInspectEachWorktree(t *testing.T) {
+func TestLoopRunOnABoxWhoseCheckoutDeclaresNoStackRunsNoStackCommand(t *testing.T) {
 	t.Parallel()
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
 	w.box = onABox(t)
-	stack := &recordingStack{}
-	w.newStack = func(string, string, string) loop.Stacker { return stack }
+	run := &recordingCommander{}
+	realStackOn(t, &w, "push: true\n", run)
 
 	_, stderr, code := runLoopRun(t, w, "80")
 
-	if code != 0 || len(stack.ups) != 1 {
-		t.Errorf("exit %d, ups %v, stderr %q; want 0 and the worktree handed to the stack", code, stack.ups, stderr)
+	if code != 0 || len(run.ran()) != 0 {
+		t.Errorf("exit %d, ran %v, stderr %q; want 0 and no stack command", code, run.ran(), stderr)
 	}
 }
 
@@ -274,7 +327,7 @@ func TestLoopRunRefusesAStackAnotherRunHoldsBeforeMarkingAnyTask(t *testing.T) {
 	state := t.TempDir()
 	w.state = func() (string, error) { return state, nil }
 	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
-	w.newStack = func(string, string, string) loop.Stacker { return &recordingStack{} }
+	realStackOn(t, &w, stackFile, noopCommander{})
 	leaseHeldBy(t, state, stack.Key("https://github.com/Acme/api", ""), "smith/9-other", t.TempDir())
 
 	_, stderr, code := runLoopRun(t, w, "80")
