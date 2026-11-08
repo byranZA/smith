@@ -60,7 +60,7 @@ Prints the same settings block as `list`, then works the spec or task unattended
 - **No task is available for an agent**: what remains is blocked, for a human, or not ready. Exit 1.
 - **The agent left a task open on every attempt**: see attempts below. Exit 1.
 - **The agent failed on every attempt at a task**, or **could not be started**: see agent failures below. Exit 1.
-- **Reached the cap of N agent runs**: only a run with `--max-iterations` set; see the limits below. Exit 1.
+- **Reached the cap of N agent runs**: only a run with a cap, from `--max-iterations` or the repo file's `limits.agent_runs`; see the limits below. Exit 1.
 - **The review failed**: see [the review](#the-review). Exit 1.
 - **The review is incomplete**: see [the review](#the-review). Exit 1.
 
@@ -71,7 +71,7 @@ However the run stops, the loop also posts its stop report as a comment from smi
 - **`review incomplete`**: a tracker failure while filing the review's tasks, editing its ledger or marking the issue. The loop stops at once without retrying and removes `smith:reviewing`; the report says the ledger is posted and N of M findings are filed. A later run finishes the filing (see [the review](#the-review)).
 - **`waiting on human`**: no task is available for an agent.
 - **`attempts exhausted`**: the agent left a task open on every attempt.
-- **`cap reached`**: the run reached the cap `--max-iterations` set. A run with no cap never ends this way.
+- **`cap reached`**: the run reached its cap, set by `--max-iterations` or the repo file's `limits.agent_runs`. A run with no cap never ends this way.
 - **`agent broken`**: the agent failed on every attempt at a task, or could not be started. The report names the task, the agent's last error and the machine.
 - **`stopped`**: you interrupted the run, such as with Ctrl-C. The report says `interrupted`.
 - **`failed`**: the run stopped on an error, such as a failed push. The report names the error.
@@ -82,10 +82,10 @@ Before every agent attempt, the first and each retry, the loop [prepares](./sess
 
 A stop report that fails to post is a `smith: warning: …` line, and changes neither the outcome nor the exit status. A run refused before its issue is admitted (an issue that cannot be read, a task that is not available, a spec with no tasks, an agent that is not installed, an invalid repo file or prompt) posts nothing; one that fails after that, such as on setting up the work branch, posts the outcome `failed`. `--interactive` posts no stop report.
 
-Two limits bound a run so it can be left alone, and a run has no cap on agent runs unless `--max-iterations` sets one:
+Two limits bound a run so it can be left alone, and a run has no cap on agent runs unless `--max-iterations` or the repo file's `limits.agent_runs` sets one:
 
 - **`--max-attempts`** (default 2): the repo file sets it for every run with `limits.task_attempts` (a whole number of at least 1; the flag beats it, and `--max-attempts 0` is still refused). The settings block shows an `attempts:` line with the number and its origin. The review gets the same number of attempts. A task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the preset its attempts ran on, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.
-- **`--max-iterations`** (default: no cap): the most agent runs the whole loop makes. Unset, or `0`, a run works every task its attempts allow and reviews in the same run; a negative value is refused. The repo file sets it for every run with `limits.agent_runs` (a flag beats it, and `0` lifts it for one run). The settings block shows a `cap:` line, `none` or the number of agent runs, with its origin.
+- **`--max-iterations`** (default: no cap): the most agent runs the whole loop makes. With no cap set, by the flag or the repo file, or with `--max-iterations 0` lifting a repo file's cap for one run, a run works every task its attempts allow and reviews in the same run; a negative value is refused. The repo file sets it for every run with `limits.agent_runs` (a flag beats it, and `0` lifts it for one run). The settings block shows a `cap:` line, `none` or the number of agent runs, with its origin.
 
 An agent that exits with a failure is reported, and the task is checked on the tracker as after any run: a task it closed lands, whatever the exit code. Whether the loop carries on depends on its attempts, as below.
 
