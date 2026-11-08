@@ -42,7 +42,7 @@ func TestExecutionWorksTasksFiledWithPartOfLinesUnderTheirSpec(t *testing.T) {
 		{Number: 101, Title: "Task 101", Open: true, For: tracker.Agent, Body: first},
 		{Number: 102, Title: "Task 102", Open: true, For: tracker.Agent, Blockers: []tracker.Blocker{{Number: 101, Open: true}}, Body: second},
 	}}
-	if !reflect.DeepEqual(sansLabels(got), want) {
+	if !reflect.DeepEqual(executionSansLabels(got), want) {
 		t.Errorf("Execution(42) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -64,7 +64,7 @@ func TestExecutionOfAStandaloneTaskWithPartOfChildrenIsThoseChildren(t *testing.
 	want := tracker.Execution{Number: 80, Title: "Issue 80", Tasks: []tracker.Task{
 		{Number: 81, Title: "Task 81", Open: true, For: tracker.Agent, Body: child},
 	}}
-	if !reflect.DeepEqual(sansLabels(got), want) {
+	if !reflect.DeepEqual(executionSansLabels(got), want) {
 		t.Errorf("Execution(80) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -86,7 +86,7 @@ func TestExecutionOfATaskFiledWithAPartOfLineIsTheTaskAloneUnderItsParent(t *tes
 	want := tracker.Execution{Number: 42, Title: "Spec: the loop", Single: true, Tasks: []tracker.Task{
 		{Number: 101, Title: "Task 101", Open: true, For: tracker.Agent},
 	}}
-	if !reflect.DeepEqual(sansLabels(got), want) {
+	if !reflect.DeepEqual(executionSansLabels(got), want) {
 		t.Errorf("Execution(101) =\n%+v\nwant\n%+v", got, want)
 	}
 }
