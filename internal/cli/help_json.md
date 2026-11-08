@@ -44,3 +44,17 @@ The documents:
   docker          present unless unreachable; kept apart from the findings:
     ports         each published container binding, with exposed: true when it is beyond loopback
     unreadable    true when the bindings could not be checked
+
+`smith session list`
+  schema_version  1
+  sessions        the box's sessions in repo then branch order, [] when none; each has:
+    name          the name the other session verbs take
+    repo          the repo the worktree is cut from
+    branch        the branch checked out; absent for a detached worktree
+    worktree      the absolute path of the checkout on the box
+    live          true when its tmux session is running
+    dirty         true when the worktree holds uncommitted work
+    unpushed      the commits on the branch no remote has
+    driver        human or loop
+    outcome       how a loop-driven run ended; present only when one was recorded
+  A relayed run prints the box's own stdout byte for byte. A version-skew refusal prints nothing on stdout.

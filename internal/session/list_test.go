@@ -83,7 +83,10 @@ func (e errNoSessionType) Error() string { return string(e) }
 // is the bare repo: the name is the sanitized one the other verbs take, and
 // the branch comes back as git holds it rather than as the name spells it.
 func TestListReportsAStartedSessionWithItsTrueBranch(t *testing.T) {
-	workspace := t.TempDir()
+	workspace, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve workspace: %v", err)
+	}
 	writeBareRepo(t, workspace, "smith", "main")
 	env := session.Env{
 		Workspace: workspace,
@@ -100,7 +103,7 @@ func TestListReportsAStartedSessionWithItsTrueBranch(t *testing.T) {
 		t.Fatalf("List() err = %v", err)
 	}
 
-	want := []session.Session{{Name: "smith-smith-spec-42", Repo: "smith", Branch: "smith/spec-42", Live: true}}
+	want := []session.Session{{Name: "smith-smith-spec-42", Repo: "smith", Branch: "smith/spec-42", Worktree: filepath.Join(workspace, "smith", "worktrees", "smith-spec-42"), Live: true}}
 	if len(got) != 1 || got[0] != want[0] {
 		t.Errorf("List() = %+v, want %+v", got, want)
 	}

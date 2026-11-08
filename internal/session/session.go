@@ -134,6 +134,8 @@ type Session struct {
 	// Branch is the branch the worktree is on, as git holds it rather than as
 	// the name spells it.
 	Branch string
+	// Worktree is the absolute path of the session's checkout.
+	Worktree string
 	// Live reports whether the session's tmux session is running. It is
 	// probed, never remembered.
 	Live bool
