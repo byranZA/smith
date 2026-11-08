@@ -19,7 +19,7 @@ func TestBlueprintCheckJSONOfANamedBlueprintPrintsEachValueWithItsOriginToken(t 
 	want := `{"schema_version":1,"preferences":{"path":"` + filepath.Join(dir, "preferences.yaml") + `","found":true},` +
 		`"blueprint":{"name":"acme","path":"` + filepath.Join(dir, "blueprints", "acme.yaml") + `"},` +
 		`"resolved":{"access":{"value":"tailscale","origin":"flag"},"terminal":{"value":"tmux","origin":"blueprint"},` +
-		`"workspace":{"value":"~/dev","origin":"preferences"},"packages":[{"value":"jq","origin":"blueprint"}]},"problems":[]}` + "\n"
+		`"workspace":{"value":"~/dev","origin":"preferences"},"packages":[{"value":"jq","origin":"blueprint"}]},"references":{"resolve":true},"problems":[]}` + "\n"
 	if stdout != want {
 		t.Errorf("stdout =\n%s\nwant\n%s", stdout, want)
 	}
@@ -107,7 +107,37 @@ repos:
 		`"tools":{"node":{"value":"20","origin":"blueprint"}},"env":{"MODE":{"value":"literal:dev","origin":"blueprint"}},` +
 		`"placements":[{"from":"file:local.json","to":"config/local.json","origin":"blueprint"}]}],` +
 		`"tools":{"go":{"value":"1.22","origin":"blueprint"}},` +
-		`"placements":[{"from":"file:secrets/env","to":"~/.env","mode":"converge","perms":"0600","origin":"blueprint"}]},"problems":[]}`
+		`"placements":[{"from":"file:secrets/env","to":"~/.env","mode":"converge","perms":"0600","origin":"blueprint"}]},"references":{"resolve":false,"unresolved":[{"scope":"~/.env","ref":"file:secrets/env"`
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout =\n%s\nwant it to contain\n%s", stdout, want)
+	}
+}
+
+func TestBlueprintCheckJSONReportsUnresolvedReferencesAndEmptyLiteralsApart(t *testing.T) {
+	unsetEnv(t, "SMITH_TEST_UNSET_TOKEN")
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "env:\n  GH_TOKEN: env:SMITH_TEST_UNSET_TOKEN\n  REGION: \"literal:\"\n")
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme", "--json")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	want := `"references":{"resolve":false,` +
+		`"unresolved":[{"scope":"GH_TOKEN","ref":"env:SMITH_TEST_UNSET_TOKEN","reason":"read what this blueprint value names: environment variable \"SMITH_TEST_UNSET_TOKEN\": secret reference resolved to nothing"}],` +
+		`"empty_literals":[{"scope":"REGION","ref":"literal:","reason":`
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout =\n%s\nwant it to contain\n%s", stdout, want)
+	}
+}
+
+func TestBlueprintCheckJSONReportsResolvingReferences(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", "terminal: tmux\n")
+
+	stdout, _, _ := runCheck(t, dir, "check", "acme", "--json")
+
+	want := `"references":{"resolve":true},"problems":[]}`
 	if !strings.Contains(stdout, want) {
 		t.Errorf("stdout =\n%s\nwant it to contain\n%s", stdout, want)
 	}

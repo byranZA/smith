@@ -113,16 +113,14 @@ no box. A valid blueprint exits 0 whether or not its references resolve.
 // but never by value.
 func writeValid(cmd *cobra.Command, name string, doc config.Document, resolution staging.Resolution) error {
 	report := fmt.Sprintf("blueprint %q is valid (%s)", name, doc.Path)
-	var unresolved *staging.UnresolvedError
-	_, err := resolveBlueprint(doc, resolution)
+	references, literals, err := checkReferences(doc, resolution)
 	switch {
-	case errors.As(err, &unresolved):
-		references, literals := splitLiterals(unresolved)
+	case err != nil:
+		return err
+	case references.Count()+literals.Count() > 0:
 		report += ", but `smith machine setup` from here would refuse it:\n" +
 			section(references, "reference(s) will not resolve on this machine") +
 			section(literals, "literal value(s) declare nothing")
-	case err != nil:
-		return err
 	default:
 		report += "\nevery reference it declares resolves on this machine\n"
 	}
@@ -130,6 +128,23 @@ func writeValid(cmd *cobra.Command, name string, doc config.Document, resolution
 		return fmt.Errorf("write report: %w", err)
 	}
 	return nil
+}
+
+// checkReferences resolves what the blueprint declares on this machine and
+// returns what would not, split into references and empty literals. It is the
+// one answer both the prose and the JSON renderers present.
+func checkReferences(doc config.Document, resolution staging.Resolution) (references, literals *staging.UnresolvedError, err error) {
+	var unresolved *staging.UnresolvedError
+	_, err = resolveBlueprint(doc, resolution)
+	switch {
+	case errors.As(err, &unresolved):
+		references, literals = splitLiterals(unresolved)
+		return references, literals, nil
+	case err != nil:
+		return nil, nil, err
+	}
+	empty := &staging.UnresolvedError{}
+	return empty, empty, nil
 }
 
 // splitLiterals separates the env values unresolved names that declare an

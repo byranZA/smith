@@ -7,15 +7,43 @@ import (
 
 	"github.com/byranZA/smith/internal/blueprint"
 	"github.com/byranZA/smith/internal/config"
+	"github.com/byranZA/smith/internal/staging"
 )
 
 // checkDocument is the JSON document `blueprint check --json` prints.
 type checkDocument struct {
-	SchemaVersion int            `json:"schema_version"`
-	Preferences   checkFile      `json:"preferences"`
-	Blueprint     *checkFile     `json:"blueprint,omitempty"`
-	Resolved      *checkResolved `json:"resolved,omitempty"`
-	Problems      []checkProblem `json:"problems"`
+	SchemaVersion int                   `json:"schema_version"`
+	Preferences   checkFile             `json:"preferences"`
+	Blueprint     *checkFile            `json:"blueprint,omitempty"`
+	Resolved      *checkResolved        `json:"resolved,omitempty"`
+	References    *checkReferenceReport `json:"references,omitempty"`
+	Problems      []checkProblem        `json:"problems"`
+}
+
+// checkReferenceReport is whether `smith machine setup` from here would resolve everything the blueprint declares.
+type checkReferenceReport struct {
+	Resolve       bool              `json:"resolve"`
+	Unresolved    []checkUnresolved `json:"unresolved,omitempty"`
+	EmptyLiterals []checkUnresolved `json:"empty_literals,omitempty"`
+}
+
+// checkUnresolved is one declaration that would not resolve, by scope and reason but never by value.
+type checkUnresolved struct {
+	Scope  string `json:"scope"`
+	Ref    string `json:"ref"`
+	Reason string `json:"reason"`
+}
+
+// newCheckUnresolved shapes what did not resolve as the document's entries.
+func newCheckUnresolved(u *staging.UnresolvedError) []checkUnresolved {
+	var out []checkUnresolved
+	for _, s := range u.Sources {
+		out = append(out, checkUnresolved{Scope: s.Scope(), Ref: s.From, Reason: s.Err.Error()})
+	}
+	for _, v := range u.Values {
+		out = append(out, checkUnresolved{Scope: v.Scope(), Ref: v.Ref, Reason: v.Err.Error()})
+	}
+	return out
 }
 
 // checkFile names a config file the check read. Found is set for preferences, whose file is optional.
@@ -218,6 +246,15 @@ func runCheckJSON(cmd *cobra.Command, home config.Home, args []string, accessMod
 		problems, _ := problemsOf(err)
 		doc.Problems = problems
 		return printCheck(cmd, doc)
+	}
+	references, literals, err := checkReferences(loaded, resolutionToStage(resolved))
+	if err != nil {
+		return reportInvalid(cmd, err)
+	}
+	doc.References = &checkReferenceReport{
+		Resolve:       references.Count()+literals.Count() == 0,
+		Unresolved:    newCheckUnresolved(references),
+		EmptyLiterals: newCheckUnresolved(literals),
 	}
 	doc.Resolved = newCheckResolved(resolved)
 	return printCheck(cmd, doc)

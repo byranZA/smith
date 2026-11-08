@@ -78,10 +78,10 @@ func (e *UnresolvedError) Count() int {
 func (e *UnresolvedError) List() string {
 	var b strings.Builder
 	for _, s := range e.Sources {
-		fmt.Fprintf(&b, "\n  %s from %s: %v", s.scope(), s.From, s.Err)
+		fmt.Fprintf(&b, "\n  %s from %s: %v", s.Scope(), s.From, s.Err)
 	}
 	for _, v := range e.Values {
-		fmt.Fprintf(&b, "\n  %s from %s: %v", v.scope(), v.Ref, v.Err)
+		fmt.Fprintf(&b, "\n  %s from %s: %v", v.Scope(), v.Ref, v.Err)
 	}
 	return b.String()
 }
@@ -99,18 +99,18 @@ func (e *UnresolvedError) Unwrap() []error {
 	return errs
 }
 
-// scope names the placement as the blueprint declares it: its destination,
+// Scope names the placement as the blueprint declares it: its destination,
 // qualified by the repo when it is repo-scoped.
-func (s UnresolvedSource) scope() string {
+func (s UnresolvedSource) Scope() string {
 	if s.Repo == "" {
 		return s.Destination
 	}
 	return s.Repo + " " + s.Destination
 }
 
-// scope names the variable as the blueprint declares it, qualified by the repo
+// Scope names the variable as the blueprint declares it, qualified by the repo
 // when it is repo-scoped.
-func (v UnresolvedValue) scope() string {
+func (v UnresolvedValue) Scope() string {
 	if v.Repo == "" {
 		return v.Name
 	}
