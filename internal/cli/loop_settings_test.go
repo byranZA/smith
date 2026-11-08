@@ -21,7 +21,8 @@ func TestLoopListReportsAnUntouchedStarterAsClaudeWithItsOwnDefaults(t *testing.
 		"agent:  claude (repo file)\n" +
 		"model:  the agent's own default (repo file)\n" +
 		"effort: the agent's own default (repo file)\n" +
-		"push:   on (built-in default)\n"
+		"push:   on (built-in default)\n" +
+		"cap:    none (built-in default)\n"
 	if code != 0 || !strings.HasPrefix(stdout, want) {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and the settings\n%s", code, stdout, stderr, want)
 	}

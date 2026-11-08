@@ -2,6 +2,7 @@ package loop
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/preset"
@@ -18,6 +19,8 @@ type Flags struct {
 	Push *bool
 	// NoReview skips the review for this run.
 	NoReview bool
+	// MaxIterations is the cap on agent runs the flag sets, nil when unset.
+	MaxIterations *int
 	// Stack says the run brings the stack its repo file declares up and
 	// down, as a run on a box does.
 	Stack bool
@@ -30,6 +33,8 @@ type Settings struct {
 	// Push is "on" or "off": whether the loop pushes the branch after each
 	// task the agent closes.
 	Push config.Value
+	// Cap is the cap on agent runs, "none" or a number, with where it came from.
+	Cap config.Value
 	// AgentLabel, HumanLabel and SpecLabel name the tracker's triage labels.
 	// They are set in the repo file alone, never by a flag.
 	AgentLabel config.Value
@@ -60,6 +65,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 	s := Settings{
 		Preset:     choice.Work(),
 		Push:       resolveSwitch(flags.Push, file.Push, true),
+		Cap:        resolveCap(flags.MaxIterations),
 		AgentLabel: resolveSetting("", file.Labels.Agent, defaults.Agent),
 		HumanLabel: resolveSetting("", file.Labels.Human, defaults.Human),
 		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
@@ -165,4 +171,16 @@ func resolveSetting(flag, file, fallback string) config.Value {
 	default:
 		return config.Value{Value: fallback, Origin: config.FromDefault}
 	}
+}
+
+// resolveCap names the cap on agent runs a flag sets, or no cap from smith's
+// default when the flag is unset.
+func resolveCap(flag *int) config.Value {
+	if flag == nil {
+		return config.Value{Value: "none", Origin: config.FromDefault}
+	}
+	if *flag == 0 {
+		return config.Value{Value: "none", Origin: config.FromFlag}
+	}
+	return config.Value{Value: strconv.Itoa(*flag), Origin: config.FromFlag}
 }

@@ -199,16 +199,20 @@ type Loop struct {
 
 // Limits bound an unattended run so it can be left alone.
 type Limits struct {
-	// MaxIterations caps the agent runs the whole loop makes.
+	// MaxIterations caps the agent runs the whole loop makes; zero is no cap.
 	MaxIterations int
 	// MaxAttempts caps the agent runs one task gets before it is skipped, or
 	// the run stops when every one of them was an agent failure.
 	MaxAttempts int
 }
 
-// DefaultLimits are the limits of a run that sets none: ten agent runs in
-// all, and two attempts at each task.
-func DefaultLimits() Limits { return Limits{MaxIterations: 10, MaxAttempts: 2} }
+// DefaultLimits are the limits of a run that sets none: no cap on agent runs
+// in all, and two attempts at each task.
+func DefaultLimits() Limits { return Limits{MaxAttempts: 2} }
+
+// CapReached reports whether a run that has made runs agent runs has used up
+// its cap. A run with no cap never has.
+func (l Limits) CapReached(runs int) bool { return l.MaxIterations > 0 && runs >= l.MaxIterations }
 
 // Outcome is how a run ended: what remained of the spec when it stopped,
 // with the tasks it skipped among it, whether the iteration cap stopped it,
@@ -374,7 +378,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			done.cleanup = remaining.Complete()
 			return done, nil
 		}
-		if runs >= l.Limits.MaxIterations {
+		if l.Limits.CapReached(runs) {
 			capped := stopped(remaining)
 			capped.Capped = true
 			return capped, nil

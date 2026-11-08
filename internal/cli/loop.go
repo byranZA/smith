@@ -321,6 +321,7 @@ func settingsReport(s loop.Settings) string {
 		{"model", s.Preset.Model},
 		{"effort", s.Preset.Effort},
 		{"push", s.Push},
+		{"cap", s.Cap},
 		{"stack", s.Stack},
 	} {
 		if setting.name == "stack" && setting.value.Value == "" {
@@ -441,6 +442,9 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 			if err := checkLimits(limits); err != nil {
 				return reportInvalid(cmd, err)
 			}
+			if cmd.Flags().Changed("max-iterations") {
+				flags.MaxIterations = &limits.MaxIterations
+			}
 			if noPush {
 				off := false
 				flags.Push = &off
@@ -486,7 +490,7 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 	cmd.Flags().StringVar(&flags.Preset.Model, "model", "", "the model the agent runs, over the work preset's")
 	cmd.Flags().StringVar(&flags.Preset.Effort, "effort", "", "how hard the agent thinks (low, medium, high), over the preset's")
 	cmd.Flags().BoolVar(&flags.NoReview, "no-review", false, "skip the review of a complete execution for this run, leaving it unmarked so a later run reviews it")
-	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all")
+	cmd.Flags().IntVar(&limits.MaxIterations, "max-iterations", limits.MaxIterations, "most agent runs the loop makes in all (default: no cap; 0 is no cap)")
 	cmd.Flags().IntVar(&limits.MaxAttempts, "max-attempts", limits.MaxAttempts, "most agent runs one task gets before it is skipped")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "run the next task alone, with the agent attached to this terminal")
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch, used exactly as named (default: the spec's or task's smith/<n>-<slug> branch)")
@@ -692,10 +696,11 @@ func interactiveReport(name string, outcome loop.InteractiveOutcome) string {
 	}
 }
 
-// checkLimits refuses a limit below one, naming its flag.
+// checkLimits refuses an attempts limit below one and a negative cap, naming
+// the flag.
 func checkLimits(limits loop.Limits) error {
-	if limits.MaxIterations < 1 {
-		return fmt.Errorf("--max-iterations must be at least 1, got %d", limits.MaxIterations)
+	if limits.MaxIterations < 0 {
+		return fmt.Errorf("--max-iterations must be at least 0, got %d", limits.MaxIterations)
 	}
 	if limits.MaxAttempts < 1 {
 		return fmt.Errorf("--max-attempts must be at least 1, got %d", limits.MaxAttempts)

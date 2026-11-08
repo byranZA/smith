@@ -111,3 +111,13 @@ func TestLoopRunWithABoxRefusesStackBeforeRelaying(t *testing.T) {
 		t.Errorf("exit %d, stderr %q, ssh %d, gh %v; want a refusal saying %q before anything is relayed", code, stderr, len(ssh.calls), gh.ran, want)
 	}
 }
+
+func TestLoopRunWithABoxForwardsMaxIterationsZero(t *testing.T) {
+	ssh := &fakeSSHRelay{}
+
+	_, stderr, code := runLoopRun(t, laptopLoop(t, ssh, readySpec()), "dev", "42", "--repo", "smith", "--max-iterations", "0")
+
+	if line := ssh.line(t); code != 0 || !strings.Contains(line, "'--max-iterations=0'") {
+		t.Errorf("exit %d, stderr %q, ssh %q; want 0 and --max-iterations=0 forwarded", code, stderr, line)
+	}
+}
