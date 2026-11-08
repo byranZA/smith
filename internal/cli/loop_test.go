@@ -467,7 +467,7 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
-	want := strings.Replace(defaultSettings, "attempts: 2 (built-in default)", "attempts: 3 (flag)", 1) + "spec #42 stopped: the agent left a task open on every attempt\n" +
+	want := strings.Replace(defaultSettings, "attempts: 2 (built-in default)", "attempts: 3 (--max-attempts)", 1) + "spec #42 stopped: the agent left a task open on every attempt\n" +
 		"  skipped after 3 attempts: #43\n" +
 		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
@@ -500,7 +500,7 @@ func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-iterations", "3")
 
-	want := strings.Replace(defaultSettings, "cap:    none (built-in default)", "cap:    3 (flag)", 1) + "spec #42 stopped: reached the cap of 3 agent runs\n" +
+	want := strings.Replace(defaultSettings, "cap:    none (built-in default)", "cap:    3 agent runs (--max-iterations)", 1) + "spec #42 stopped: reached the cap of 3 agent runs\n" +
 		"  available: #44\n" +
 		"  skipped after 2 attempts: #43\n" +
 		"  #43 left in /bench/43\n" + workBranch
@@ -965,7 +965,7 @@ func TestLoopRunWithMaxIterationsZeroShowsNoCapFromTheFlag(t *testing.T) {
 
 	stdout, _, _ := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-iterations", "0")
 
-	if !strings.Contains(stdout, "cap:    none (flag)\n") {
+	if !strings.Contains(stdout, "cap:    none (--max-iterations)\n") {
 		t.Errorf("stdout %q; want the cap line none (flag)", stdout)
 	}
 }
@@ -975,7 +975,7 @@ func TestLoopRunWithMaxIterationsShowsTheCapFromTheFlag(t *testing.T) {
 
 	stdout, _, _ := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-iterations", "3")
 
-	if !strings.Contains(stdout, "cap:    3 (flag)\n") {
+	if !strings.Contains(stdout, "cap:    3 agent runs (--max-iterations)\n") {
 		t.Errorf("stdout %q; want the cap line 3 (flag)", stdout)
 	}
 }
@@ -1053,8 +1053,8 @@ func TestLoopRunFlagOverridesTheRepoFileAttempts(t *testing.T) {
 
 	stdout, _, _ := runLoopRun(t, w, "42", "--max-attempts", "1")
 
-	if idle.runs != 1 || !strings.Contains(stdout, "attempts: 1 (flag)\n") {
-		t.Errorf("%d agent runs, stdout =\n%s\nwant 1 run and attempts: 1 (flag)", idle.runs, stdout)
+	if idle.runs != 1 || !strings.Contains(stdout, "attempts: 1 (--max-attempts)\n") {
+		t.Errorf("%d agent runs, stdout =\n%s\nwant 1 run and attempts: 1 (--max-attempts)", idle.runs, stdout)
 	}
 }
 

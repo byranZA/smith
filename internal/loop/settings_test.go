@@ -198,9 +198,9 @@ func TestResolveSettingsTakesTheCapFromTheFlagOverTheRepoFile(t *testing.T) {
 		wantMax int
 	}{
 		{"the repo file alone", nil, 2, config.Value{Value: "2", Origin: config.FromRepoFile}, 2},
-		{"the flag over the repo file", &five, 2, config.Value{Value: "5", Origin: config.FromFlag}, 5},
-		{"zero lifts the repo file cap", &zero, 2, config.Value{Value: "none", Origin: config.FromFlag}, 0},
-		{"the flag with no repo file cap", &two, 0, config.Value{Value: "2", Origin: config.FromFlag}, 2},
+		{"the flag over the repo file", &five, 2, config.Value{Value: "5 agent runs", Origin: "--max-iterations"}, 5},
+		{"zero lifts the repo file cap", &zero, 2, config.Value{Value: "none", Origin: "--max-iterations"}, 0},
+		{"the flag with no repo file cap", &two, 0, config.Value{Value: "2 agent runs", Origin: "--max-iterations"}, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -226,8 +226,8 @@ func TestResolveSettingsTakesTheAttemptsFromTheFlagOverTheRepoFile(t *testing.T)
 		want config.Value
 	}{
 		{"the repo file alone", nil, 3, config.Value{Value: "3", Origin: config.FromRepoFile}},
-		{"the flag over the repo file", &one, 3, config.Value{Value: "1", Origin: config.FromFlag}},
-		{"the flag with no repo file value", &three, 0, config.Value{Value: "3", Origin: config.FromFlag}},
+		{"the flag over the repo file", &one, 3, config.Value{Value: "1", Origin: "--max-attempts"}},
+		{"the flag with no repo file value", &three, 0, config.Value{Value: "3", Origin: "--max-attempts"}},
 		{"neither", nil, 0, config.Value{Value: "2", Origin: config.FromDefault}},
 	}
 	for _, tt := range tests {

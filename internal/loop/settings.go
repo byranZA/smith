@@ -3,6 +3,7 @@ package loop
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/preset"
@@ -83,7 +84,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, preset.Choice{}, err
 	}
-	s.MaxIterations, _ = strconv.Atoi(s.Cap.Value)
+	s.MaxIterations, _ = strconv.Atoi(strings.Fields(s.Cap.Value)[0])
 	s.MaxAttempts, _ = strconv.Atoi(s.Attempts.Value)
 	s.StackDeclared = file.Stack.Declared()
 	s.StackRuns = flags.Stack
@@ -185,14 +186,21 @@ func resolveSetting(flag, file, fallback string) config.Value {
 	}
 }
 
+// The origins of the two limits a flag sets, worded as the flag itself so the
+// settings report names which flag set them.
+const (
+	originMaxIterations config.Origin = "--max-iterations"
+	originMaxAttempts   config.Origin = "--max-attempts"
+)
+
 // resolveCap names the cap on agent runs: the flag, zero of it meaning none,
 // then the repo file's, then no cap from smith's default.
 func resolveCap(flag *int, file int) config.Value {
 	switch {
 	case flag != nil && *flag == 0:
-		return config.Value{Value: "none", Origin: config.FromFlag}
+		return config.Value{Value: "none", Origin: originMaxIterations}
 	case flag != nil:
-		return config.Value{Value: strconv.Itoa(*flag), Origin: config.FromFlag}
+		return config.Value{Value: strconv.Itoa(*flag) + " agent runs", Origin: originMaxIterations}
 	case file > 0:
 		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
 	default:
@@ -208,7 +216,7 @@ const defaultAttempts = 2
 func resolveAttempts(flag *int, file int) config.Value {
 	switch {
 	case flag != nil:
-		return config.Value{Value: strconv.Itoa(*flag), Origin: config.FromFlag}
+		return config.Value{Value: strconv.Itoa(*flag), Origin: originMaxAttempts}
 	case file > 0:
 		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
 	default:

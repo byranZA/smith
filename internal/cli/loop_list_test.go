@@ -100,7 +100,7 @@ func TestLoopListShowsTheCapFromMaxIterations(t *testing.T) {
 
 	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-iterations", "5")
 
-	if code != 0 || !strings.Contains(stdout, "cap:    5 (flag)\n") {
+	if code != 0 || !strings.Contains(stdout, "cap:    5 agent runs (--max-iterations)\n") {
 		t.Errorf("exit %d, stdout %q, stderr %q; want the cap line 5 (flag)", code, stdout, stderr)
 	}
 }
@@ -110,7 +110,7 @@ func TestLoopListShowsNoCapFromMaxIterationsZero(t *testing.T) {
 
 	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-iterations", "0")
 
-	if code != 0 || !strings.Contains(stdout, "cap:    none (flag)\n") {
+	if code != 0 || !strings.Contains(stdout, "cap:    none (--max-iterations)\n") {
 		t.Errorf("exit %d, stdout %q, stderr %q; want the cap line none (flag)", code, stdout, stderr)
 	}
 }
@@ -120,7 +120,7 @@ func TestLoopListShowsTheAttemptsFromMaxAttempts(t *testing.T) {
 
 	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-attempts", "1")
 
-	if code != 0 || !strings.Contains(stdout, "attempts: 1 (flag)\n") {
+	if code != 0 || !strings.Contains(stdout, "attempts: 1 (--max-attempts)\n") {
 		t.Errorf("exit %d, stdout %q, stderr %q; want the attempts line 1 (flag)", code, stdout, stderr)
 	}
 }

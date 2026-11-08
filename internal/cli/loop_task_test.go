@@ -38,7 +38,7 @@ func TestLoopRunFailsAStandaloneTaskSkippedAfterItsAttempts(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: standaloneTask(), launcher: idle, lookPath: onPath}, "80", "--max-attempts", "2")
 
-	want := strings.Replace(defaultSettings, "attempts: 2 (built-in default)", "attempts: 2 (flag)", 1) + "task #80 stopped: the agent left a task open on every attempt\n" +
+	want := strings.Replace(defaultSettings, "attempts: 2 (built-in default)", "attempts: 2 (--max-attempts)", 1) + "task #80 stopped: the agent left a task open on every attempt\n" +
 		"  skipped after 2 attempts: #80\n" +
 		"  #80 left in /bench/80\n" +
 		"work branch: smith/80-task-80\n"
