@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// runVersion executes a version command built for the given binary and returns its stdout and stderr.
 func runVersion(t *testing.T, version string, stamp buildStamp, args ...string) (string, string) {
 	t.Helper()
 	cmd := newVersionCmd(version, stamp)
@@ -58,6 +59,7 @@ func TestVersionWithoutJSONStaysProse(t *testing.T) {
 	}
 }
 
+// jsonVerbs returns every command under root that has a --json flag.
 func jsonVerbs(root *cobra.Command) []*cobra.Command {
 	var verbs []*cobra.Command
 	var walk func(*cobra.Command)
