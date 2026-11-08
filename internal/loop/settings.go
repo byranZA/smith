@@ -208,18 +208,13 @@ func resolveCap(flag *int, file int) (int, config.Origin) {
 	}
 }
 
-// capReport formats the cap on agent runs for the settings report. A cap the
-// flag sets reads as a count of agent runs; the repo file's reads as a bare
-// number.
+// capReport formats the cap on agent runs for the settings report: "none", or
+// a count of agent runs wherever it came from.
 func capReport(n int, origin config.Origin) config.Value {
-	switch {
-	case n == 0:
+	if n == 0 {
 		return config.Value{Value: "none", Origin: origin}
-	case origin == originMaxIterations:
-		return config.Value{Value: strconv.Itoa(n) + " agent runs", Origin: origin}
-	default:
-		return config.Value{Value: strconv.Itoa(n), Origin: origin}
 	}
+	return config.Value{Value: strconv.Itoa(n) + " agent runs", Origin: origin}
 }
 
 // resolveAttempts resolves the attempts at each task: the flag, then the repo

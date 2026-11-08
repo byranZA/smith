@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/byranZA/smith/internal/loop"
+	"github.com/byranZA/smith/internal/workbench"
 )
 
 func TestLoopRunWithNoCapWorksMoreThanTenAgentRuns(t *testing.T) {
@@ -69,8 +74,8 @@ func TestLoopRunShowsTheRepoFileAsTheCapOrigin(t *testing.T) {
 
 	stdout, _, _ := runLoopRun(t, w, "42")
 
-	if !strings.Contains(stdout, "cap:    2 (repo file)\n") {
-		t.Errorf("stdout =\n%s\nwant the cap line 2 (repo file)", stdout)
+	if !strings.Contains(stdout, "cap:    2 agent runs (repo file)\n") {
+		t.Errorf("stdout =\n%s\nwant the cap line 2 agent runs (repo file)", stdout)
 	}
 }
 
@@ -140,5 +145,21 @@ func TestLoopRunRefusesAnInvalidRepoFileAttemptsNamingTheFileAndKey(t *testing.T
 
 	if code == 0 || idle.runs != 0 || !strings.Contains(stderr, path) || !strings.Contains(stderr, "limits.task_attempts") {
 		t.Errorf("exit %d after %d runs, stderr %q; want a refusal naming %s and limits.task_attempts", code, idle.runs, stderr, path)
+	}
+}
+
+func TestLoopRunGivesTheReviewTheRepoFileAttempts(t *testing.T) {
+	idle := &idleAgent{}
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "CLOSED", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, idle, opusRepoFile+"  review: codex\nlimits:\n  task_attempts: 3\n")
+	findings := filepath.Join(t.TempDir(), "smith", "review-42.json")
+	w.bench = func(_ context.Context, _ string, req workbench.Request) (loop.Bench, workbench.Lag, error) {
+		return reviewingBench{benchAt: benchAt{branch: workbench.Branch(req.Number, req.Title)}, file: findings}, workbench.Lag{}, nil
+	}
+
+	stdout, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || idle.runs != 3 {
+		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nstderr %q; want non-zero after 3 review attempts", code, idle.runs, stdout, stderr)
 	}
 }

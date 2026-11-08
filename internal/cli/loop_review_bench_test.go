@@ -23,3 +23,21 @@ func (noReview) ReviewStrays(context.Context, string, string) (loop.Strays, erro
 }
 
 func (noReview) FindingsFile(int) string { return "" }
+
+// reviewingBench is a bench whose review opens without fault, with a findings file at file.
+type reviewingBench struct {
+	benchAt
+	file string
+}
+
+func (reviewingBench) OpenReview(context.Context, int) (string, error) { return "/bench/review", nil }
+
+func (reviewingBench) ReviewBase(context.Context) (string, string, error) {
+	return "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", nil
+}
+
+func (reviewingBench) ReviewStrays(context.Context, string, string) (loop.Strays, error) {
+	return loop.Strays{}, nil
+}
+
+func (r reviewingBench) FindingsFile(int) string { return r.file }

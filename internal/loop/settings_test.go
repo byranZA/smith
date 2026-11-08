@@ -196,7 +196,7 @@ func TestResolveSettingsTakesTheCapFromTheFlagOverTheRepoFile(t *testing.T) {
 		wantCap config.Value
 		wantMax int
 	}{
-		{"the repo file alone", nil, 2, config.Value{Value: "2", Origin: config.FromRepoFile}, 2},
+		{"the repo file alone", nil, 2, config.Value{Value: "2 agent runs", Origin: config.FromRepoFile}, 2},
 		{"the flag over the repo file", &five, 2, config.Value{Value: "5 agent runs", Origin: "--max-iterations"}, 5},
 		{"zero lifts the repo file cap", &zero, 2, config.Value{Value: "none", Origin: "--max-iterations"}, 0},
 		{"the flag with no repo file cap", &two, 0, config.Value{Value: "2 agent runs", Origin: "--max-iterations"}, 2},

@@ -252,6 +252,39 @@ func TestReviewAttemptCountsAgainstTheCap(t *testing.T) {
 	}
 }
 
+func TestRunWithNoCapReviewsInTheSameRunAfterElevenTasks(t *testing.T) {
+	var tasks []tracker.Task
+	for n := 43; n < 54; n++ {
+		tasks = append(tasks, agentTask(n))
+	}
+	b := &board{tasks: tasks}
+	l, _ := reviewingLoop(t, b, noFindings)
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	if err != nil || outcome.Ending() != loop.Complete || !slices.Contains(b.events, "launch review") {
+		t.Errorf("Run() = %+v, %v with events %q; want complete with the review run", outcome, err, b.events)
+	}
+}
+
+func TestReviewGetsAsManyAttemptsAsTheLimitAllows(t *testing.T) {
+	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
+	l, _ := reviewingLoop(t, b, "")
+	l.Limits.MaxAttempts = 3
+
+	outcome, err := l.Run(t.Context(), 42)
+
+	launches := 0
+	for _, e := range b.events {
+		if e == "launch review" {
+			launches++
+		}
+	}
+	if err != nil || outcome.Ending() != loop.ReviewFailed || launches != 3 {
+		t.Errorf("Run() = %+v, %v with %d review launches; want review failed after 3", outcome, err, launches)
+	}
+}
+
 func TestReviewEveryAttemptAnAgentFailureEndsAgentBroken(t *testing.T) {
 	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
 	l, launcher := reviewingLoop(t, b, noFindings)
