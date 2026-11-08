@@ -122,6 +122,22 @@ func (v Verdict) ExitCode() int {
 	}
 }
 
+// Token is the verdict's fixed name in the JSON document.
+func (v Verdict) Token() string {
+	switch v {
+	case VerdictUnreachable:
+		return "unreachable"
+	case VerdictNeverBootstrapped:
+		return "never_set_up"
+	case VerdictPartial:
+		return "partial"
+	case VerdictMatches:
+		return "matches"
+	default:
+		return "drifted"
+	}
+}
+
 // FindingStatus is how one probed fact reconciled against its expected value.
 type FindingStatus int
 
@@ -136,6 +152,20 @@ const (
 	// so the fact could not be checked — a consequence of lost passwordless sudo.
 	StatusUnverifiable
 )
+
+// Token is the status's fixed name in the JSON document.
+func (s FindingStatus) Token() string {
+	switch s {
+	case StatusMatch:
+		return "match"
+	case StatusUnknown:
+		return "unknown"
+	case StatusUnverifiable:
+		return "unverifiable"
+	default:
+		return "drift"
+	}
+}
 
 // Finding is one probed fact reconciled against what setup established.
 type Finding struct {

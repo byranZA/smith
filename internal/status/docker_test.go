@@ -22,7 +22,10 @@ func TestGatherReadsPublishedDockerBindings(t *testing.T) {
 		{
 			"container bindings",
 			"docker-ports=ok\ndocker-container=web 0.0.0.0:8083->80/tcp, [::]:8083->80/tcp, 127.0.0.1:5432->5432/tcp\ndocker-container=db 127.0.0.1:5433->5432/tcp\n",
-			DockerPorts{Exposed: []string{"web 0.0.0.0:8083->80/tcp", "web [::]:8083->80/tcp"}},
+			DockerPorts{
+				Exposed:  []string{"web 0.0.0.0:8083->80/tcp", "web [::]:8083->80/tcp"},
+				Loopback: []string{"web 127.0.0.1:5432->5432/tcp", "db 127.0.0.1:5433->5432/tcp"},
+			},
 		},
 		{
 			"port range and unpublished port",

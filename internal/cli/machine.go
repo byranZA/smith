@@ -319,7 +319,8 @@ func probeBoxes(ctx context.Context, inv inventory.Inventory, exec connection.Ex
 // into the smith user, so an operator who relied on that one is told the
 // address to pass and the command that registers the box under a name.
 func newStatusCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
-	return &cobra.Command{
+	var asJSON *bool
+	cmd := &cobra.Command{
 		Use:         "status <name-or-target>",
 		Annotations: verbTraits(false, false, false),
 		Short:       "Report how a box has drifted from what setup established",
@@ -329,11 +330,14 @@ argument is a box name from the inventory or a raw ssh target: one with an "@"
 is used as it is.
 
 The exit code is the verdict: 0 the box matches, 1 it has drifted, 2 it was
-never set up or its setup is partial, 3 smith could not connect to it.
+never set up or its setup is partial, 3 smith could not connect to it. With
+--json, print the verdict and findings as one JSON document; every verdict,
+unreachable included, is an answer and prints one, see "smith help json".
 
 ` + exits(0, 1, 2, 3),
 		Example: `  smith machine status dev
-  smith machine status smith@203.0.113.10`,
+  smith machine status smith@203.0.113.10
+  smith machine status dev --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inv, err := lookupInventory(resolve, args[0])
@@ -357,11 +361,26 @@ never set up or its setup is partial, 3 smith could not connect to it.
 			if gathered.Reachable {
 				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
 			}
+			if *asJSON && gathered.Reachable || *asJSON && inventory.ConnectHint(inv, args[0]) == "" {
+				if err := writeDocument(cmd.OutOrStdout(), newStatusDocument(args[0], report)); err != nil {
+					return err
+				}
+				if code := report.ExitCode(); code != 0 {
+					return &exitError{code: code}
+				}
+				return nil
+			}
 			out := report.String()
 			if !gathered.Reachable {
 				out += inventory.ConnectHint(inv, args[0])
 			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), out); err != nil {
+			w := cmd.OutOrStdout()
+			if *asJSON {
+				// An unregistered bare name that did not answer is no box smith
+				// knows, so it has no document: the prose says why, on stderr.
+				w = cmd.ErrOrStderr()
+			}
+			if _, err := fmt.Fprint(w, out); err != nil {
 				return fmt.Errorf("write status report: %w", err)
 			}
 			if code := report.ExitCode(); code != 0 {
@@ -370,6 +389,8 @@ never set up or its setup is partial, 3 smith could not connect to it.
 			return nil
 		},
 	}
+	asJSON = addJSONFlag(cmd)
+	return cmd
 }
 
 // lookupInventory locates the config home and returns the inventory a verb

@@ -23,3 +23,24 @@ The documents:
     name          the box's name
     target        the SSH target registered for it
     reachable     true or false whether the box answered; present only under --probe
+
+`smith machine status`
+  schema_version  1
+  box             the name or target as given
+  verdict         matches, drifted, partial, never_set_up or unreachable; every verdict prints
+                  a document, and the exit code is the same as without --json
+  access_mode     public or tailscale, when the box has a marker
+  findings        [] unless the box matches or has drifted; each finding has:
+    phase         the setup phase that owns the fact
+    fact          the fact's name
+    expected      the value setup established
+    actual        the probed value
+    status        match, drift, unknown or unverifiable
+  missing_phases  the phases setup has not recorded; present only when partial
+  error           why smith could not connect; present only when unreachable
+  note            the marker's schema-skew note, when there is one
+  memory_kib      the box's RAM; absent when unreadable
+  swap_kib        the box's swap, 0 for none; absent when unreadable
+  docker          present unless unreachable; kept apart from the findings:
+    ports         each published container binding, with exposed: true when it is beyond loopback
+    unreadable    true when the bindings could not be checked
