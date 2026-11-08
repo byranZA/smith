@@ -18,9 +18,7 @@ const (
 )
 
 // Origin is where a resolved value came from. It is the stable token a
-// program branches on; String gives the wording an operator reads. It is
-// returned data rather than something printed on the way past, so precedence is
-// a fact a caller can assert on and the command surface stays a formatter.
+// program branches on; String gives the wording an operator reads.
 type Origin string
 
 // The origins a resolved value can have, most specific first. Each constant is
