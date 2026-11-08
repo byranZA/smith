@@ -178,6 +178,8 @@ A container port published without a host address is reachable from the internet
 
 The warning never changes the verdict or the exit code, because re-running setup cannot fix an explicit binding and a deliberately public port must not mark the box as drifted. A box without Docker reports nothing. If the bindings cannot be read, status says `docker: could not check the published ports`. A converge that changes the Docker config restarts the daemon, which stops containers that have no restart policy.
 
+`smith machine status --json` prints the verdict, the findings, the memory and the Docker bindings as one JSON document on stdout, whatever the verdict, with the same exit code. `smith help json` documents its shape.
+
 ### The swap phase
 
 `swap` is the first base-layer phase, before `packages`, so the rest of setup already runs with swap. On a box with no active swap it creates `/swapfile`, readable only by root, enables it, and adds an `/etc/fstab` entry so it comes back after a reboot. The swapfile is the smaller of 2 GB and a quarter of the free disk on its filesystem: 8 GB free gives 2 GB of swap, 2 GB free gives 512 MB.

@@ -133,6 +133,8 @@ would setup actually do?* before any box exists. Exit 0 valid, exit 1 invalid or
 not found; the resolved configuration goes to stdout and any refusal to stderr,
 so the two compose separately.
 
+`--json` prints the resolved configuration, each value with its origin, as one JSON document on stdout. Problems move into the document and the exit code stays 1; a blueprint that cannot be found prints nothing on stdout. `smith help json` documents its shape.
+
 The success case is the resolved configuration, with where each value came
 from:
 
@@ -296,17 +298,17 @@ Membership reaches new logins only, and a running tmux server keeps the groups i
 
 ### Docker needs nothing declared
 
-If the box has Docker, a `packages` entry such as `docker.io` is all the blueprint says. The workspace stage's docker step runs on every converge and makes ports a container publishes without an address default to loopback, so they stay behind the firewall. It may restart the Docker daemon, and networks that exist keep their old binding until recreated (`docker compose down`, then `up`). An explicit `0.0.0.0` binding is still public. [The workspace stage](./workspace.md#docker) has the detail.
+If the box has Docker, the blueprint says nothing about its published ports: a `packages` entry such as `docker.io`, and `docker` under `groups` to run it without `sudo`, are all it declares. The workspace stage's docker step runs on every converge and makes ports a container publishes without an address default to loopback, so they stay behind the firewall. It may restart the Docker daemon, and networks that exist keep their old binding until recreated (`docker compose down`, then `up`). An explicit `0.0.0.0` binding is still public. [The workspace stage](./workspace.md#docker) has the detail.
 
 ## smith knows no service by name
 
 smith **places files and exports environment variables**. That is the entirety
 of its credential story. It provisions no credential for GitHub, GitLab,
 Anthropic or npm — the moment it did for GitHub it would owe GitLab, `gh`
-version skew, and a choice between auth modes. The one place smith knows a
-service by name is [the loop](./loop.md), which reads GitHub Issues through
+version skew, and a choice between auth modes. The two places smith knows a
+service by name are [the loop](./loop.md), which reads GitHub Issues through
 your own authenticated `gh` and holds no credential of its own
-([ADR-0012](./adr/0012-the-repo-file.md)).
+([ADR-0012](./adr/0012-the-repo-file.md)), and the workspace stage's docker step, which knows Docker by name because Docker routes around the firewall smith sets up, and takes no credential either ([ADR-0026](./adr/0026-published-docker-ports-default-to-loopback.md)).
 
 The concrete consequence, worth reading twice:
 

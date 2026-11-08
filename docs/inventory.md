@@ -202,6 +202,8 @@ scratch  smith@203.0.113.42  unreachable
 Reachability is a display concern, never a stored one: probing writes nothing,
 prunes no entry, and an unreachable box does not fail the command.
 
+`--json` prints the boxes as one JSON document on stdout, for a program to parse. `smith help json` documents its shape.
+
 ## Registering a box smith already provisioned
 
 `machine add` registers a box that already carries a marker — the way you

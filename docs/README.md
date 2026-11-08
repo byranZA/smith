@@ -2,14 +2,14 @@
 
 Start at the repository [README](../README.md) for what smith is and a
 five-minute path from a fresh VPS to a running session. These pages carry the
-detail. Each verb's own `--help` has examples and the exit codes it can return, `smith help exit-codes` lists every code smith exits with, and `smith help agents` is the guide for an agent that drives smith.
+detail. Each verb's own `--help` has examples and the exit codes it can return, `smith help exit-codes` lists every code smith exits with, `smith help json` documents the JSON document each read verb prints under `--json`, and `smith help agents` is the guide for an agent that drives smith.
 
 ## Getting a box running
 
 | page | what it covers |
 | --- | --- |
 | [Installing smith](./install.md) | release downloads per platform, updating with `smith update`, checksum verification, `go install`, building from source, Gatekeeper and SmartScreen, the `v0.x` compatibility position |
-| [Provisioning a box](./provisioning.md) | `machine setup` prerequisites, provisioning over public SSH, provisioning over Tailscale including the two ACL entries you must add yourself, the memory advisory and the swap and tmux OOM-policy phases |
+| [Provisioning a box](./provisioning.md) | `machine setup` prerequisites, provisioning over public SSH, provisioning over Tailscale including the two ACL entries you must add yourself, the memory advisory, the Docker ports warning, and the swap and tmux OOM-policy phases |
 | [Provider adapters](./providers.md) | describing your provider's CLI as data so `machine create` can make the box too |
 
 ## Using a box
@@ -18,9 +18,9 @@ detail. Each verb's own `--help` has examples and the exit codes it can return, 
 | --- | --- |
 | [Blueprints and preferences](./blueprints.md) | the config home, the split between the two files, precedence, the groups the smith user joins, what smith does and does not do about credentials, and what a box needs to clone a private repo and run the loop |
 | [The box inventory](./inventory.md) | the `machine` verbs that read or write it (setup naming, `list`, `add`, `rename`, `forget`), naming rules, collisions and renames, the file's schema versioning |
-| [The workspace stage](./workspace.md) | what `workspace converge` converges, the order the steps land in, and why it is that order, which steps a failure skips |
+| [The workspace stage](./workspace.md) | what `workspace converge` converges, the order the steps land in, and why it is that order, which steps a failure skips, the docker step that defaults published ports to loopback |
 | [Sessions](./sessions.md) | the five session verbs and their flags, the three paths through `start`, the two access levels, what `rm` destroys, the pre-teardown read, worktree preparation, loop-driven sessions |
-| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, attempts and the iteration cap, stop reports and outcomes, agent failures, `--interactive` and pairing on a task meant for a human, running on a box (`--repo`, `loop run <box>`), the agent adapters, the repo file and its precedence, presets and roles, the prepare command, triage labels, ejecting the loop prompt, the review and its prompt |
+| [The loop](./loop.md) | how a spec's tasks are chosen from GitHub, `loop list` and `loop run`, the work branch and task worktrees, pushing, the limits on a run, stop reports and outcomes, agent failures, `--interactive` and pairing on a task meant for a human, running on a box (`--repo`, `loop run <box>`), the agent adapters, the repo file and its precedence, presets and roles, the prepare command, the stack, triage labels, ejecting the loop prompt, the review and its prompt |
 | [smith on the box](./on-box.md) | the setup pipeline's stages, the relay, version skew and `machine upgrade`, the refusal paths, what a shell on the box gets |
 
 ## Examples

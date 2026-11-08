@@ -10,7 +10,7 @@ Five verbs manage them:
 ```
 smith session start   [<box>] --repo <name> --branch <name> [--base <ref>] [--detach]
 smith session attach  [<box>] <name> [--interact]
-smith session list    [<box>] [--repo <name>] [--live|--stopped] [--names]
+smith session list    [<box>] [--repo <name>] [--live|--stopped] [--names] [--json]
 smith session stop    [<box>] <name>
 smith session rm      [<box>] <name>... [--force]
 ```
@@ -350,6 +350,8 @@ smith session list dev --stopped         # only what is not
 `--live` and `--stopped` are opposites; asking for both is refused rather than
 answered with an empty table, which reads exactly like a box with no sessions.
 
+`--json` prints the sessions as one JSON document on stdout, for a program to parse. `smith help json` documents its shape.
+
 ## Sweeping up
 
 `--names` drops the table, the header and the summary and prints one bare name
@@ -409,7 +411,7 @@ When the loop stops, it writes its **outcome** into the same record, and `list` 
 - **Keystrokes.** Everything smith does to a session it does by starting or
   stopping it. There is no `send-keys`.
 - **Exit statuses.** smith reports liveness and, for a loop-driven session, the outcome the loop recorded, never a process's exit status.
-- **A browser terminal**, a per-session log, `--json` on `list`, and a box
+- **A browser terminal**, a per-session log, and a box
   `destroy` verb. Deferred, and nothing here forecloses them.
 
 Background reading:
