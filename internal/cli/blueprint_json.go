@@ -210,54 +210,26 @@ func problemsOf(err error) ([]checkProblem, bool) {
 	return problems, true
 }
 
-// runCheckJSON is `blueprint check --json`. A document with problems is still an answer, so it prints and exits 1; a blueprint that cannot be found or read is not, so it prints nothing on stdout.
-func runCheckJSON(cmd *cobra.Command, home config.Home, args []string, accessMode string) error {
-	prefs, err := config.LoadPreferences(home)
-	doc := checkDocument{SchemaVersion: 1, Problems: []checkProblem{}}
-	found := prefs.Found
-	doc.Preferences = checkFile{Path: prefs.Path, Found: &found}
-	if err != nil {
-		problems, ok := problemsOf(err)
-		if !ok {
-			return reportInvalid(cmd, err)
+// newCheckDocument shapes a check result as the JSON document. A document with problems is still an answer.
+func newCheckDocument(r checkResult) checkDocument {
+	found := r.Prefs.Found
+	doc := checkDocument{SchemaVersion: 1, Problems: []checkProblem{}, Preferences: checkFile{Path: r.Prefs.Path, Found: &found}}
+	if r.HasDoc {
+		doc.Blueprint = &checkFile{Name: r.Name, Path: r.Doc.Path}
+	}
+	if r.Findings != nil {
+		doc.Problems, _ = problemsOf(r.Findings)
+		return doc
+	}
+	doc.Resolved = newCheckResolved(*r.Resolved)
+	if r.References != nil {
+		doc.References = &checkReferenceReport{
+			Resolve:       r.References.Count()+r.Literals.Count() == 0,
+			Unresolved:    newCheckUnresolved(r.References),
+			EmptyLiterals: newCheckUnresolved(r.Literals),
 		}
-		found = true
-		doc.Problems = problems
-		return printCheck(cmd, doc)
 	}
-	overrides := config.Overrides{Access: accessMode}
-	if len(args) == 0 {
-		doc.Resolved = newCheckResolved(config.Resolve(overrides, nil, &prefs.Declared))
-		return printCheck(cmd, doc)
-	}
-	loaded, err := config.LoadDocument(home, args[0])
-	if err != nil {
-		problems, ok := problemsOf(err)
-		if !ok {
-			return reportInvalid(cmd, err)
-		}
-		doc.Blueprint = &checkFile{Name: args[0], Path: loaded.Path}
-		doc.Problems = problems
-		return printCheck(cmd, doc)
-	}
-	doc.Blueprint = &checkFile{Name: args[0], Path: loaded.Path}
-	resolved := config.Resolve(overrides, &loaded.Blueprint, &prefs.Declared)
-	if err := resolved.Conflicts(); err != nil {
-		problems, _ := problemsOf(err)
-		doc.Problems = problems
-		return printCheck(cmd, doc)
-	}
-	references, literals, err := checkReferences(loaded, resolutionToStage(resolved))
-	if err != nil {
-		return reportInvalid(cmd, err)
-	}
-	doc.References = &checkReferenceReport{
-		Resolve:       references.Count()+literals.Count() == 0,
-		Unresolved:    newCheckUnresolved(references),
-		EmptyLiterals: newCheckUnresolved(literals),
-	}
-	doc.Resolved = newCheckResolved(resolved)
-	return printCheck(cmd, doc)
+	return doc
 }
 
 // printCheck writes doc, and carries exit code 1 out when it holds problems.
