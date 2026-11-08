@@ -205,7 +205,7 @@ func TestExecutionReadsTheSpecAndItsTasksInListedOrder(t *testing.T) {
 		{Number: 44, Title: "The prompt", Open: true, For: tracker.Human, Blockers: []tracker.Blocker{{Number: 45, Open: true}, {Number: 43, Open: false}, {Number: 7, Open: false}}, Body: "## Blocked by\n\n- #43\n- #7\n"},
 		{Number: 50, Title: "Fix the summary", Open: true, For: tracker.Nobody},
 	}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(42) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -241,7 +241,7 @@ func TestExecutionOfAStandaloneTaskIsTheTaskAlone(t *testing.T) {
 	want := tracker.Execution{Number: 80, Title: "Fix X", Single: true, Tasks: []tracker.Task{
 		{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Blockers: []tracker.Blocker{{Number: 79, Open: false}, {Number: 7, Open: false}}},
 	}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(80) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -265,7 +265,7 @@ func TestExecutionOfAChildTaskIsTheTaskAloneUnderItsParent(t *testing.T) {
 	want := tracker.Execution{Number: 74, Title: "Spec: Widgets", Single: true, Tasks: []tracker.Task{
 		{Number: 82, Title: "Task 82", Open: true, For: tracker.Agent},
 	}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(82) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -281,7 +281,7 @@ func TestExecutionOfATaskUnderANestedSpecIsUnderItsImmediateParent(t *testing.T)
 	want := tracker.Execution{Number: 76, Title: "Gadgets", Single: true, Tasks: []tracker.Task{
 		{Number: 82, Title: "Task 82", Open: true, For: tracker.Agent},
 	}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(82) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -601,7 +601,7 @@ func TestExecutionOfAnIssueWithSubIssuesIsASpec(t *testing.T) {
 				{Number: 78, Title: "Task 78", Open: true, For: tracker.Agent},
 				{Number: 79, Title: "Task 79", Open: true, For: tracker.Agent},
 			}}
-			if !reflect.DeepEqual(got, want) {
+			if !reflect.DeepEqual(sansLabels(got), want) {
 				t.Errorf("Execution(%d) =\n%+v\nwant\n%+v", tc.number, got, want)
 			}
 		})
@@ -620,7 +620,7 @@ func TestExecutionOfASpecWithNoSubIssuesHasNoTasks(t *testing.T) {
 	}
 
 	want := tracker.Execution{Number: 76, Title: "Gadgets", Tasks: []tracker.Task{}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(76) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -645,7 +645,7 @@ func TestExecutionNeverHandsANestedSpecToAnyone(t *testing.T) {
 				{Number: 78, Title: "Task 78", Open: true, For: tracker.Agent},
 				{Number: 79, Title: "Task 79", Open: true, For: tracker.Nobody},
 			}
-			if !reflect.DeepEqual(got.Tasks, want) {
+			if !reflect.DeepEqual(sansLabels(got).Tasks, want) {
 				t.Errorf("tasks of Execution(74) =\n%+v\nwant\n%+v", got.Tasks, want)
 			}
 		})
@@ -672,7 +672,7 @@ func TestTaskReadsATaskThatBecameASpecAsThatTask(t *testing.T) {
 				t.Fatalf("Task(80) error = %v", err)
 			}
 
-			if want := (tracker.Task{Number: 80, Title: "Fix X", Open: false, For: tracker.Nobody}); !reflect.DeepEqual(got, want) {
+			if want := (tracker.Task{Number: 80, Title: "Fix X", Open: false, For: tracker.Nobody}); !reflect.DeepEqual(sansLabels(got), want) {
 				t.Errorf("Task(80) = %+v, want %+v", got, want)
 			}
 		})
@@ -692,7 +692,7 @@ func TestTaskReadsAnOpenTasksBlockers(t *testing.T) {
 	}
 
 	want := tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Blockers: []tracker.Blocker{{Number: 79, Open: true}, {Number: 7, Open: false}}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Task(80) = %+v, want %+v", got, want)
 	}
 }
@@ -810,7 +810,7 @@ func TestExecutionReportsATaskLabelledAsWorked(t *testing.T) {
 		{Number: 43, Title: "Task 43", Open: true, For: tracker.Agent, Working: true},
 		{Number: 44, Title: "Task 44", Open: true, For: tracker.Agent},
 	}
-	if !reflect.DeepEqual(got.Tasks, want) {
+	if !reflect.DeepEqual(sansLabels(got).Tasks, want) {
 		t.Errorf("Execution(42) tasks =\n%+v\nwant\n%+v", got.Tasks, want)
 	}
 }
@@ -826,7 +826,7 @@ func TestTaskReportsATaskLabelledAsWorked(t *testing.T) {
 		t.Fatalf("Task(80) error = %v", err)
 	}
 
-	if want := (tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Working: true}); !reflect.DeepEqual(got, want) {
+	if want := (tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Working: true}); !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Task(80) = %+v, want %+v", got, want)
 	}
 }
@@ -848,7 +848,7 @@ func TestExecutionReadsEachTasksPresetLabels(t *testing.T) {
 		{Number: 43, Title: "Task 43", Open: true, For: tracker.Agent, Presets: []string{"opus", "codex"}},
 		{Number: 44, Title: "Task 44", Open: true, For: tracker.Agent},
 	}
-	if !reflect.DeepEqual(got.Tasks, want) {
+	if !reflect.DeepEqual(sansLabels(got).Tasks, want) {
 		t.Errorf("Execution(42) tasks =\n%+v\nwant\n%+v", got.Tasks, want)
 	}
 }
@@ -864,7 +864,7 @@ func TestTaskReadsItsPresetLabel(t *testing.T) {
 		t.Fatalf("Task(80) error = %v", err)
 	}
 
-	if want := (tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Presets: []string{"codex"}}); !reflect.DeepEqual(got, want) {
+	if want := (tracker.Task{Number: 80, Title: "Fix X", Open: true, For: tracker.Agent, Presets: []string{"codex"}}); !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Task(80) = %+v, want %+v", got, want)
 	}
 }
@@ -891,7 +891,7 @@ func TestExecutionReadsTasksByTheConfiguredLabels(t *testing.T) {
 		{Number: 44, Title: "Task 44", Open: true, For: tracker.Human},
 		{Number: 45, Title: "Task 45", Open: true, For: tracker.Nobody},
 	}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(42) =\n%+v\nwant\n%+v", got, want)
 	}
 }
@@ -908,7 +908,7 @@ func TestExecutionTakesAnIssueWithTheConfiguredSpecLabelForASpec(t *testing.T) {
 	}
 
 	want := tracker.Execution{Number: 76, Title: "Gadgets", Tasks: []tracker.Task{}}
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(sansLabels(got), want) {
 		t.Errorf("Execution(76) = %+v, want %+v", got, want)
 	}
 }
@@ -966,5 +966,41 @@ func TestLabelsReportsAnUnusableGH(t *testing.T) {
 	var unavailable *tracker.UnavailableError
 	if !errors.As(err, &unavailable) || unavailable.Detail != "HTTP 502: Bad Gateway\n" {
 		t.Errorf("Labels() error = %v, want an *tracker.UnavailableError carrying what gh said", err)
+	}
+}
+
+// sansLabels returns v with every task's Labels cleared, for tests that are not about labels.
+func sansLabels[T tracker.Execution | tracker.Task | []tracker.Task](v T) T {
+	switch x := any(v).(type) {
+	case tracker.Execution:
+		x.Tasks = sansLabels(x.Tasks)
+		return any(x).(T)
+	case tracker.Task:
+		x.Labels = nil
+		return any(x).(T)
+	case []tracker.Task:
+		out := make([]tracker.Task, len(x))
+		for i, t := range x {
+			out[i] = sansLabels(t)
+		}
+		return any(out).(T)
+	}
+	return v
+}
+
+func TestExecutionReadsEachTasksLabelNamesInOrder(t *testing.T) {
+	t.Parallel()
+	gh := &fakeGH{replies: map[string]string{
+		specView(42): `{"body":"","labels":[{"name":"spec"}],"number":42,"state":"OPEN","url":"https://github.com/o/r/issues/42","subIssues":{"nodes":[{"number":43,"state":"OPEN","url":"https://github.com/o/r/issues/43"}],"totalCount":1},"title":"Spec"}`,
+		taskView(43): `{"blockedBy":{"nodes":[],"totalCount":0},"body":"","labels":[{"name":"ready-for-agent"},{"name":"bug"}],"number":43,"state":"OPEN","title":"Task 43"}`,
+	}}
+
+	got, err := tracker.NewGitHub(gh, tracker.DefaultLabels()).Execution(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("Execution(42) error = %v", err)
+	}
+
+	if want := []string{"ready-for-agent", "bug"}; !reflect.DeepEqual(got.Tasks[0].Labels, want) {
+		t.Errorf("labels = %v, want %v", got.Tasks[0].Labels, want)
 	}
 }

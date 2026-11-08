@@ -246,7 +246,7 @@ func (g GitHub) Execution(ctx context.Context, number int) (Execution, error) {
 		if err != nil {
 			return Execution{}, err
 		}
-		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Working: issues[n].labelled(workingLabel), Presets: issues[n].presets(), Body: issues[n].Body})
+		tasks = append(tasks, Task{Number: n, Title: issues[n].Title, Open: isOpen(issues[n].State), For: issues[n].audience(g.labels), Blockers: blockers, Labels: issues[n].labelNames(), Working: issues[n].labelled(workingLabel), Presets: issues[n].presets(), Body: issues[n].Body})
 	}
 	return Execution{Number: spec.Number, Title: spec.Title, Tasks: tasks, Reviewed: spec.labelled(reviewedLabel), Reviewing: spec.labelled(reviewingLabel), Comments: spec.commentsOf()}, nil
 }
@@ -288,7 +288,7 @@ func (g GitHub) Task(ctx context.Context, number int) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Working: task.labelled(workingLabel), Presets: task.presets()}, nil
+	return Task{Number: task.Number, Title: task.Title, Open: isOpen(task.State), For: task.audience(g.labels), Blockers: blockers, Labels: task.labelNames(), Working: task.labelled(workingLabel), Presets: task.presets()}, nil
 }
 
 // partOf returns the numbers of the issues whose body says, in the "Part of"
@@ -607,6 +607,15 @@ func (g GitHub) linkedPage(ctx context.Context, number int, name, cursor string)
 // labelled reports whether the issue carries the label called name.
 func (i issue) labelled(name string) bool {
 	return slices.Contains(i.Labels, label{Name: name})
+}
+
+// labelNames returns the name of each label the issue carries, in label order.
+func (i issue) labelNames() []string {
+	var names []string
+	for _, l := range i.Labels {
+		names = append(names, l.Name)
+	}
+	return names
 }
 
 // presets returns the name each of the issue's preset: labels carries, in

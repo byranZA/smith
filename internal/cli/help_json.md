@@ -58,3 +58,16 @@ The documents:
     driver        human or loop
     outcome       how a loop-driven run ended; present only when one was recorded
   A relayed run prints the box's own stdout byte for byte. A version-skew refusal prints nothing on stdout.
+
+`smith loop list`
+  schema_version  1
+  spec            the number of the spec, or of the task run on its own
+  work_branch     the work branch a run would use
+  next            the number of the first available task, or null when there is none
+  tasks           every task in the spec's order, each with:
+    number        the task's issue number
+    title         the task's title
+    labels        the names of its labels, [] when none
+    state         available, blocked, human, unready or closed
+    blocked_by    the numbers of its open blockers, [] when none
+  Label warnings go to stderr. An issue that cannot be read prints nothing on stdout.

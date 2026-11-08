@@ -711,6 +711,7 @@ func checkLimits(limits loop.Limits) error {
 func newLoopListCmd(w loopWiring) *cobra.Command {
 	var branch, base string
 	var stackFlag bool
+	var asJSON *bool
 	cmd := &cobra.Command{
 		Use:         "list <issue>",
 		Annotations: verbTraits(false, false, false),
@@ -754,6 +755,9 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 			if err != nil {
 				return reportInvalid(cmd, fmt.Errorf("find the work branch for #%d: %w", execution.Number, err))
 			}
+			if *asJSON {
+				return writeDocument(cmd.OutOrStdout(), newLoopListDocument(execution, loop.Survey(execution), workBranch))
+			}
 			report := settingsReport(settings) + branchReport(workBranch, workBase) + listReport(execution, loop.Survey(execution))
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
 				return fmt.Errorf("write report: %w", err)
@@ -764,6 +768,7 @@ nothing, and exits 0 once the issue is read, whatever it holds.
 	cmd.Flags().StringVar(&branch, "branch", "", "the work branch a run would use, named exactly (default: the spec's or task's smith/<n>-<slug> branch)")
 	cmd.Flags().StringVar(&base, "base", "", "the branch on origin a run would cut a new work branch from (default: origin's default branch)")
 	cmd.Flags().BoolVar(&stackFlag, "stack", false, "off a box, show the settings of a run that brings the repo file's stack up, as a box always does")
+	asJSON = addJSONFlag(cmd)
 	return cmd
 }
 
