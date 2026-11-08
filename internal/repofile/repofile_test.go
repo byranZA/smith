@@ -390,3 +390,38 @@ func TestParseRefusesAnInvalidLimitsBlockNamingItsKey(t *testing.T) {
 		})
 	}
 }
+
+func TestParseReadsTheTaskAttempts(t *testing.T) {
+	t.Parallel()
+	data := "limits:\n  task_attempts: 4\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	if got.Limits.TaskAttempts != 4 {
+		t.Errorf("Limits.TaskAttempts = %d, want 4", got.Limits.TaskAttempts)
+	}
+}
+
+func TestParseRefusesInvalidTaskAttemptsNamingTheKey(t *testing.T) {
+	t.Parallel()
+	const whole = "task_attempts must be a whole number of at least 1"
+	for name, value := range map[string]string{"zero": "0", "negative": "-1", "fraction": "1.5", "text": "twice", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			data := "push: true\nlimits:\n  task_attempts: " + value + "\n"
+
+			_, err := repofile.Parse([]byte(data))
+
+			var verr *blueprint.ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+			}
+			if want := []blueprint.Finding{{Line: 3, Path: "limits.task_attempts", Message: whole}}; !reflect.DeepEqual(verr.Findings, want) {
+				t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+			}
+		})
+	}
+}

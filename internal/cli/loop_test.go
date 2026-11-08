@@ -180,7 +180,8 @@ const defaultSettings = "preset: default (built-in default)\n" +
 	"model:  the agent's own default (built-in default)\n" +
 	"effort: the agent's own default (built-in default)\n" +
 	"push:   on (built-in default)\n" +
-	"cap:    none (built-in default)\n"
+	"cap:    none (built-in default)\n" +
+	"attempts: 2 (built-in default)\n"
 
 func runLoopList(t *testing.T, gh *fakeTracker, ref string) (stdout, stderr string, code int) {
 	t.Helper()
@@ -466,7 +467,7 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
-	want := defaultSettings + "spec #42 stopped: the agent left a task open on every attempt\n" +
+	want := strings.Replace(defaultSettings, "attempts: 2 (built-in default)", "attempts: 3 (flag)", 1) + "spec #42 stopped: the agent left a task open on every attempt\n" +
 		"  skipped after 3 attempts: #43\n" +
 		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
@@ -1030,5 +1031,41 @@ func TestLoopRunRefusesAnInvalidRepoFileCapNamingTheFileAndKey(t *testing.T) {
 
 	if code == 0 || idle.runs != 0 || !strings.Contains(stderr, path) || !strings.Contains(stderr, "limits.agent_runs") {
 		t.Errorf("exit %d after %d runs, stderr %q; want a refusal naming %s and limits.agent_runs", code, idle.runs, stderr, path)
+	}
+}
+
+func TestLoopRunGivesATaskTheRepoFileAttempts(t *testing.T) {
+	idle := &idleAgent{}
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, idle, "limits:\n  task_attempts: 3\n")
+
+	stdout, _, _ := runLoopRun(t, w, "42")
+
+	if idle.runs != 3 || !strings.Contains(stdout, "attempts: 3 (repo file)\n") {
+		t.Errorf("%d agent runs, stdout =\n%s\nwant 3 runs and attempts: 3 (repo file)", idle.runs, stdout)
+	}
+}
+
+func TestLoopRunFlagOverridesTheRepoFileAttempts(t *testing.T) {
+	idle := &idleAgent{}
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	w, _ := repoWith(t, gh, idle, "limits:\n  task_attempts: 3\n")
+
+	stdout, _, _ := runLoopRun(t, w, "42", "--max-attempts", "1")
+
+	if idle.runs != 1 || !strings.Contains(stdout, "attempts: 1 (flag)\n") {
+		t.Errorf("%d agent runs, stdout =\n%s\nwant 1 run and attempts: 1 (flag)", idle.runs, stdout)
+	}
+}
+
+func TestLoopRunRefusesAnInvalidRepoFileAttemptsNamingTheFileAndKey(t *testing.T) {
+	idle := &idleAgent{}
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+	w, path := repoWith(t, gh, idle, "limits:\n  task_attempts: 0\n")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || idle.runs != 0 || !strings.Contains(stderr, path) || !strings.Contains(stderr, "limits.task_attempts") {
+		t.Errorf("exit %d after %d runs, stderr %q; want a refusal naming %s and limits.task_attempts", code, idle.runs, stderr, path)
 	}
 }

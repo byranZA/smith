@@ -15,6 +15,9 @@ const limitsKey = "limits"
 type Limits struct {
 	// AgentRuns is the most agent runs one loop run makes. Zero is no cap.
 	AgentRuns int
+	// TaskAttempts is the most agent runs each task, and the review, gets
+	// before it is skipped. Zero is unset.
+	TaskAttempts int
 }
 
 // limitsOf reads the limits from node, the value written under limitsKey, as
@@ -22,15 +25,18 @@ type Limits struct {
 func limitsOf(node *yaml.Node) Limits {
 	var l Limits
 	for _, e := range effectiveEntries(node) {
-		if e.key.Value == "agent_runs" {
+		switch e.key.Value {
+		case "agent_runs":
 			l.AgentRuns, _ = strconv.Atoi(e.value.Value)
+		case "task_attempts":
+			l.TaskAttempts, _ = strconv.Atoi(e.value.Value)
 		}
 	}
 	return l
 }
 
 // limitsFindings checks that the limits the document sets, if any, are a
-// mapping whose only key is agent_runs, a whole number of at least 1,
+// mapping whose only keys are agent_runs and task_attempts, each a whole number of at least 1,
 // reporting each fault with its line. An empty block sets nothing.
 func limitsFindings(data []byte) []blueprint.Finding {
 	var doc yaml.Node
@@ -47,9 +53,9 @@ func limitsFindings(data []byte) []blueprint.Finding {
 	var findings []blueprint.Finding
 	for _, e := range effectiveEntries(value) {
 		switch e.key.Value {
-		case "agent_runs":
+		case "agent_runs", "task_attempts":
 			if n, err := strconv.Atoi(e.value.Value); e.value.Kind != yaml.ScalarNode || e.value.Tag != "!!int" || err != nil || n < 1 {
-				findings = append(findings, blueprint.Finding{Line: e.key.Line, Path: limitsKey + ".agent_runs", Message: "agent_runs must be a whole number of at least 1"})
+				findings = append(findings, blueprint.Finding{Line: e.key.Line, Path: limitsKey + "." + e.key.Value, Message: e.key.Value + " must be a whole number of at least 1"})
 			}
 		default:
 			findings = append(findings, blueprint.Finding{Line: e.key.Line, Path: limitsKey, Message: `unknown field "` + e.key.Value + `"`})

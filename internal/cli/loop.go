@@ -322,6 +322,7 @@ func settingsReport(s loop.Settings) string {
 		{"effort", s.Preset.Effort},
 		{"push", s.Push},
 		{"cap", s.Cap},
+		{"attempts", s.Attempts},
 		{"stack", s.Stack},
 	} {
 		if setting.name == "stack" && setting.value.Value == "" {
@@ -445,6 +446,9 @@ started again.`, "With nobody at the terminal, --interactive refuses at once, na
 			if cmd.Flags().Changed("max-iterations") {
 				flags.MaxIterations = &limits.MaxIterations
 			}
+			if cmd.Flags().Changed("max-attempts") {
+				flags.MaxAttempts = &limits.MaxAttempts
+			}
 			if noPush {
 				off := false
 				flags.Push = &off
@@ -550,7 +554,7 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
-	l.Limits.MaxIterations = settings.MaxIterations
+	l.Limits.MaxIterations, l.Limits.MaxAttempts = settings.MaxIterations, settings.MaxAttempts
 	if resolved, ok := presets.Review(); ok {
 		l.Review = &loop.Review{Preset: resolved, Prompt: reviewPrompt}
 	}

@@ -1,6 +1,7 @@
 package loop_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,8 +33,9 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 					Model:  config.Value{Origin: config.FromDefault},
 					Effort: config.Value{Origin: config.FromDefault},
 				},
-				Push:       config.Value{Value: "on", Origin: config.FromDefault},
-				Cap:        config.Value{Value: "none", Origin: config.FromDefault},
+				Push:     config.Value{Value: "on", Origin: config.FromDefault},
+				Cap:      config.Value{Value: "none", Origin: config.FromDefault},
+				Attempts: config.Value{Value: "2", Origin: config.FromDefault}, MaxAttempts: 2,
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -50,8 +52,9 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 					Model:  config.Value{Value: "opus", Origin: config.FromRepoFile},
 					Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
 				},
-				Push:       config.Value{Value: "off", Origin: config.FromRepoFile},
-				Cap:        config.Value{Value: "none", Origin: config.FromDefault},
+				Push:     config.Value{Value: "off", Origin: config.FromRepoFile},
+				Cap:      config.Value{Value: "none", Origin: config.FromDefault},
+				Attempts: config.Value{Value: "2", Origin: config.FromDefault}, MaxAttempts: 2,
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -69,8 +72,9 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 					Model:  config.Value{Value: "sonnet", Origin: config.FromFlag},
 					Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
 				},
-				Push:       config.Value{Value: "off", Origin: config.FromFlag},
-				Cap:        config.Value{Value: "none", Origin: config.FromDefault},
+				Push:     config.Value{Value: "off", Origin: config.FromFlag},
+				Cap:      config.Value{Value: "none", Origin: config.FromDefault},
+				Attempts: config.Value{Value: "2", Origin: config.FromDefault}, MaxAttempts: 2,
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -207,6 +211,35 @@ func TestResolveSettingsTakesTheCapFromTheFlagOverTheRepoFile(t *testing.T) {
 
 			if err != nil || got.Cap != tt.wantCap || got.MaxIterations != tt.wantMax {
 				t.Errorf("ResolveSettings() cap = %+v, max %d, %v; want %+v, %d", got.Cap, got.MaxIterations, err, tt.wantCap, tt.wantMax)
+			}
+		})
+	}
+}
+
+func TestResolveSettingsTakesTheAttemptsFromTheFlagOverTheRepoFile(t *testing.T) {
+	t.Parallel()
+	one, three := 1, 3
+	tests := []struct {
+		name string
+		flag *int
+		file int
+		want config.Value
+	}{
+		{"the repo file alone", nil, 3, config.Value{Value: "3", Origin: config.FromRepoFile}},
+		{"the flag over the repo file", &one, 3, config.Value{Value: "1", Origin: config.FromFlag}},
+		{"the flag with no repo file value", &three, 0, config.Value{Value: "3", Origin: config.FromFlag}},
+		{"neither", nil, 0, config.Value{Value: "2", Origin: config.FromDefault}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			file := repofile.File{Limits: repofile.Limits{TaskAttempts: tt.file}}
+
+			got, _, err := loop.ResolveSettings(loop.Flags{MaxAttempts: tt.flag}, file)
+
+			wantN, _ := strconv.Atoi(tt.want.Value)
+			if err != nil || got.Attempts != tt.want || got.MaxAttempts != wantN {
+				t.Errorf("ResolveSettings() attempts = %+v, max %d, %v; want %+v, %d", got.Attempts, got.MaxAttempts, err, tt.want, wantN)
 			}
 		})
 	}

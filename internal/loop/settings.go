@@ -21,6 +21,8 @@ type Flags struct {
 	NoReview bool
 	// MaxIterations is the cap on agent runs the flag sets, nil when unset.
 	MaxIterations *int
+	// MaxAttempts is the attempts the flag sets, nil when unset.
+	MaxAttempts *int
 	// Stack says the run brings the stack its repo file declares up and
 	// down, as a run on a box does.
 	Stack bool
@@ -37,6 +39,11 @@ type Settings struct {
 	Cap config.Value
 	// MaxIterations is the cap as a number of agent runs, zero for none.
 	MaxIterations int
+	// Attempts is the attempts at each task and the review, a number, with
+	// where it came from.
+	Attempts config.Value
+	// MaxAttempts is Attempts as a number.
+	MaxAttempts int
 	// AgentLabel, HumanLabel and SpecLabel name the tracker's triage labels.
 	// They are set in the repo file alone, never by a flag.
 	AgentLabel config.Value
@@ -68,6 +75,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 		Preset:     choice.Work(),
 		Push:       resolveSwitch(flags.Push, file.Push, true),
 		Cap:        resolveCap(flags.MaxIterations, file.Limits.AgentRuns),
+		Attempts:   resolveAttempts(flags.MaxAttempts, file.Limits.TaskAttempts),
 		AgentLabel: resolveSetting("", file.Labels.Agent, defaults.Agent),
 		HumanLabel: resolveSetting("", file.Labels.Human, defaults.Human),
 		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
@@ -76,6 +84,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 		return Settings{}, preset.Choice{}, err
 	}
 	s.MaxIterations, _ = strconv.Atoi(s.Cap.Value)
+	s.MaxAttempts, _ = strconv.Atoi(s.Attempts.Value)
 	s.StackDeclared = file.Stack.Declared()
 	s.StackRuns = flags.Stack
 	if flags.Stack && s.StackDeclared {
@@ -188,5 +197,21 @@ func resolveCap(flag *int, file int) config.Value {
 		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
 	default:
 		return config.Value{Value: "none", Origin: config.FromDefault}
+	}
+}
+
+// defaultAttempts is the attempts each task gets when nothing sets them.
+const defaultAttempts = 2
+
+// resolveAttempts names the attempts at each task: the flag, then the repo
+// file's, then smith's default.
+func resolveAttempts(flag *int, file int) config.Value {
+	switch {
+	case flag != nil:
+		return config.Value{Value: strconv.Itoa(*flag), Origin: config.FromFlag}
+	case file > 0:
+		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
+	default:
+		return config.Value{Value: strconv.Itoa(defaultAttempts), Origin: config.FromDefault}
 	}
 }
