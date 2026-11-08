@@ -48,6 +48,17 @@ func Lookup(inv Inventory, arg string) (string, bool) {
 // asks the same question.
 func literal(arg string) bool { return strings.Contains(arg, "@") }
 
+// Unregistered reports whether arg is a bare value the inventory does not
+// know: neither a literal ssh target nor a registered name. Resolve hands such
+// a value to ssh as written.
+func Unregistered(inv Inventory, arg string) bool {
+	if literal(arg) {
+		return false
+	}
+	_, ok := Lookup(inv, arg)
+	return !ok
+}
+
 // ConnectHint returns what to tell an operator whose connection to arg failed,
 // or "" when there is nothing worth saying — a literal target and a registered
 // name both mean smith connected to what the operator asked for.
@@ -57,7 +68,7 @@ func literal(arg string) bool { return strings.Contains(arg, "@") }
 // user. The hint names both fixes — the address that would have worked, and
 // the command that registers the box so the name works from now on.
 func ConnectHint(inv Inventory, arg string) string {
-	if _, ok := Lookup(inv, arg); ok || literal(arg) {
+	if !Unregistered(inv, arg) {
 		return ""
 	}
 	return fmt.Sprintf(`%s is not a registered box, so smith handed it to ssh as written.

@@ -74,3 +74,24 @@ func TestConnectHintStaysSilentWhenThereIsNothingToSuggest(t *testing.T) {
 		})
 	}
 }
+
+func TestUnregisteredIsTrueOnlyForABareValueTheInventoryLacks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		arg  string
+		want bool
+	}{
+		{"a bare value not in the inventory", "203.0.113.10", true},
+		{"a registered name", "dev", false},
+		{"a literal target", "root@203.0.113.10", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := inventory.Unregistered(registered(), tt.arg); got != tt.want {
+				t.Errorf("Unregistered(%q) = %v, want %v", tt.arg, got, tt.want)
+			}
+		})
+	}
+}

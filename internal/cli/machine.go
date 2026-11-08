@@ -361,25 +361,24 @@ unreachable included, is an answer and prints one, see "smith help json".
 			if gathered.Reachable {
 				report = status.Reconcile(gathered.Marker, gathered.Skew, gathered.MarkerPresent, gathered.Facts)
 			}
-			if *asJSON && gathered.Reachable || *asJSON && inventory.ConnectHint(inv, args[0]) == "" {
+			unreachableBare := !gathered.Reachable && inventory.Unregistered(inv, args[0])
+			switch {
+			case *asJSON && !unreachableBare:
 				if err := writeDocument(cmd.OutOrStdout(), newStatusDocument(args[0], report)); err != nil {
 					return err
 				}
-				if code := report.ExitCode(); code != 0 {
-					return &exitError{code: code}
+			default:
+				out := report.String()
+				if unreachableBare {
+					out += inventory.ConnectHint(inv, args[0])
 				}
-				return nil
-			}
-			out := report.String()
-			if !gathered.Reachable {
-				out += inventory.ConnectHint(inv, args[0])
-			}
-			w := cmd.OutOrStdout()
-			if *asJSON {
-				w = cmd.ErrOrStderr()
-			}
-			if _, err := fmt.Fprint(w, out); err != nil {
-				return fmt.Errorf("write status report: %w", err)
+				w := cmd.OutOrStdout()
+				if *asJSON {
+					w = cmd.ErrOrStderr()
+				}
+				if _, err := fmt.Fprint(w, out); err != nil {
+					return fmt.Errorf("write status report: %w", err)
+				}
 			}
 			if code := report.ExitCode(); code != 0 {
 				return &exitError{code: code}
