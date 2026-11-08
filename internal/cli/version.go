@@ -59,34 +59,48 @@ func readBuildStamp() buildStamp {
 	return s
 }
 
-// newVersionCmd builds `smith version`. It prints the resolved version and,
-// when the binary was built inside a git tree, the commit and build time.
-func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
+// versionDocument is the JSON document `smith version --json` prints.
+type versionDocument struct {
+	SchemaVersion int    `json:"schema_version"`
+	Version       string `json:"version"`
+	Commit        string `json:"commit,omitempty"`
+	BuiltAt       string `json:"built_at,omitempty"`
+}
+
+// newVersionCmd builds `smith version` for a binary with the given version and build stamp. It prints them
+// as prose, or as a JSON document under --json.
+func newVersionCmd(version string, stamp buildStamp) *cobra.Command {
+	cmd := &cobra.Command{
 		Use:         "version",
 		Annotations: verbTraits(false, false, false),
 		Short:       "Print the smith version and build provenance",
 		Long: `Print the version of this smith binary and, when it was built inside a git
-tree, the commit and build time it came from.
+tree, the commit and build time it came from. With --json, print them as one
+JSON document; see "smith help json".
 
 ` + exits(0, 1),
-		Example: `  smith version`,
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			out := fmt.Sprintf("smith %s\n", resolveVersion())
-			stamp := readBuildStamp()
-			if stamp.commit != "" {
-				out += fmt.Sprintf("commit: %s\n", shortCommit(stamp.commit))
-			}
-			if stamp.date != "" {
-				out += fmt.Sprintf("built:  %s\n", stamp.date)
-			}
-			if _, err := fmt.Fprint(cmd.OutOrStdout(), out); err != nil {
-				return fmt.Errorf("write version: %w", err)
-			}
-			return nil
-		},
+		Example: `  smith version
+  smith version --json`,
+		Args: cobra.NoArgs,
 	}
+	asJSON := addJSONFlag(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if *asJSON {
+			return writeDocument(cmd.OutOrStdout(), versionDocument{SchemaVersion: 1, Version: version, Commit: stamp.commit, BuiltAt: stamp.date})
+		}
+		out := fmt.Sprintf("smith %s\n", version)
+		if stamp.commit != "" {
+			out += fmt.Sprintf("commit: %s\n", shortCommit(stamp.commit))
+		}
+		if stamp.date != "" {
+			out += fmt.Sprintf("built:  %s\n", stamp.date)
+		}
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), out); err != nil {
+			return fmt.Errorf("write version: %w", err)
+		}
+		return nil
+	}
+	return cmd
 }
 
 // shortCommit trims a full VCS revision to its first seven characters, the

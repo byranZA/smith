@@ -136,7 +136,7 @@ func newRootCmd() *cobra.Command {
 		ssh:        connection.System(),
 		version:    resolveVersion(),
 		skew:       operatorSkew(),
-	}), newInitCmd(userConfigHome, connection.System()), newLoopCmd(systemLoop()), newRepoCmd(userConfigHome, connection.System(), currentDir, secret.NewStdTerminal()), newUpdateCmd(systemUpdate()), newVersionCmd(), newExitCodesTopic(), newAgentsTopic())
+	}), newInitCmd(userConfigHome, connection.System()), newLoopCmd(systemLoop()), newRepoCmd(userConfigHome, connection.System(), currentDir, secret.NewStdTerminal()), newUpdateCmd(systemUpdate()), newVersionCmd(resolveVersion(), readBuildStamp()), newExitCodesTopic(), newAgentsTopic(), newJSONTopic())
 	return root
 }
 
