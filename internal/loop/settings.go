@@ -71,13 +71,13 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 		return Settings{}, preset.Choice{}, fmt.Errorf("choose the preset: %w", err)
 	}
 	defaults := tracker.DefaultLabels()
-	capValue, maxIterations := resolveCap(flags.MaxIterations, file.Limits.AgentRuns)
-	attemptsValue, maxAttempts := resolveAttempts(flags.MaxAttempts, file.Limits.TaskAttempts)
+	maxIterations, capOrigin := resolveCap(flags.MaxIterations, file.Limits.AgentRuns)
+	maxAttempts, attemptsOrigin := resolveAttempts(flags.MaxAttempts, file.Limits.TaskAttempts)
 	s := Settings{
 		Preset:        choice.Work(),
 		Push:          resolveSwitch(flags.Push, file.Push, true),
-		Cap:           capValue,
-		Attempts:      attemptsValue,
+		Cap:           capReport(maxIterations, capOrigin),
+		Attempts:      config.Value{Value: strconv.Itoa(maxAttempts), Origin: attemptsOrigin},
 		MaxIterations: maxIterations,
 		MaxAttempts:   maxAttempts,
 		AgentLabel:    resolveSetting("", file.Labels.Agent, defaults.Agent),
@@ -194,33 +194,43 @@ const (
 	originMaxAttempts   config.Origin = "--max-attempts"
 )
 
-// resolveCap names the cap on agent runs: the flag, zero of it meaning none,
-// then the repo file's, then no cap from smith's default.
-func resolveCap(flag *int, file int) (config.Value, int) {
+// resolveCap resolves the cap on agent runs: the flag, zero of it meaning
+// none, then the repo file's, then no cap from smith's default. It returns the
+// number of runs, zero for none, and where it came from.
+func resolveCap(flag *int, file int) (int, config.Origin) {
 	switch {
-	case flag != nil && *flag == 0:
-		return config.Value{Value: "none", Origin: originMaxIterations}, 0
 	case flag != nil:
-		return config.Value{Value: strconv.Itoa(*flag) + " agent runs", Origin: originMaxIterations}, *flag
+		return *flag, originMaxIterations
 	case file > 0:
-		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}, file
+		return file, config.FromRepoFile
 	default:
-		return config.Value{Value: "none", Origin: config.FromDefault}, 0
+		return DefaultLimits().MaxIterations, config.FromDefault
 	}
 }
 
-// defaultAttempts is the attempts each task gets when nothing sets them.
-const defaultAttempts = 2
+// capReport formats the cap on agent runs for the settings report. A cap the
+// flag sets reads as a count of agent runs; the repo file's reads as a bare
+// number.
+func capReport(n int, origin config.Origin) config.Value {
+	switch {
+	case n == 0:
+		return config.Value{Value: "none", Origin: origin}
+	case origin == originMaxIterations:
+		return config.Value{Value: strconv.Itoa(n) + " agent runs", Origin: origin}
+	default:
+		return config.Value{Value: strconv.Itoa(n), Origin: origin}
+	}
+}
 
-// resolveAttempts names the attempts at each task: the flag, then the repo
-// file's, then smith's default.
-func resolveAttempts(flag *int, file int) (config.Value, int) {
+// resolveAttempts resolves the attempts at each task: the flag, then the repo
+// file's, then smith's default. It returns the number and where it came from.
+func resolveAttempts(flag *int, file int) (int, config.Origin) {
 	switch {
 	case flag != nil:
-		return config.Value{Value: strconv.Itoa(*flag), Origin: originMaxAttempts}, *flag
+		return *flag, originMaxAttempts
 	case file > 0:
-		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}, file
+		return file, config.FromRepoFile
 	default:
-		return config.Value{Value: strconv.Itoa(defaultAttempts), Origin: config.FromDefault}, defaultAttempts
+		return DefaultLimits().MaxAttempts, config.FromDefault
 	}
 }
