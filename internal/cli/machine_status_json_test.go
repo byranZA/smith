@@ -2,97 +2,94 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/byranZA/smith/internal/bootstrap"
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/connection"
-	"github.com/byranZA/smith/internal/marker"
-	"github.com/byranZA/smith/internal/memory"
 	"github.com/byranZA/smith/internal/provider"
-	"github.com/byranZA/smith/internal/status"
 )
 
-func statusJSON(t *testing.T, box string, r status.Report) string {
-	t.Helper()
-	b, err := json.Marshal(newStatusDocument(box, r))
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
+// probeBoxSSH stands in for ssh to a reachable box: it answers the reach check
+// and the shipping of the script, and prints probeOutput for the probe.
+type probeBoxSSH struct{ probeOutput string }
+
+func (p probeBoxSSH) Run(_ context.Context, name string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	if name != "ssh" || len(args) < 2 {
+		return nil
 	}
-	return string(b)
+	remoteCmd := args[len(args)-1]
+	if answered, err := answerShip(remoteCmd, stdout); answered {
+		return err
+	}
+	if isSubcommand(remoteCmd, "probe") {
+		_, err := io.WriteString(stdout, p.probeOutput)
+		return err
+	}
+	return nil
 }
 
-func TestStatusDocumentOfAnUnreachableBoxCarriesWhy(t *testing.T) {
-	r := status.Unreachable("root@203.0.113.10", errString("ssh: connect to host 203.0.113.10 port 22: Connection timed out"))
-
-	got := statusJSON(t, "dev", r)
-
-	want := `{"schema_version":1,"box":"dev","verdict":"unreachable","findings":[],"error":"ssh: connect to host 203.0.113.10 port 22: Connection timed out"}`
-	if got != want {
-		t.Errorf("document = %s, want %s", got, want)
-	}
+func probeOutputWithMarker(markerJSON, access string) string {
+	return "marker-begin\n" + markerJSON + "\nmarker-end\n" +
+		"smith-user-exists=yes\npasswordless-sudo=yes\n" +
+		"ufw-active=active\nufw-default-deny=deny\nufw-ssh-allow=" + access + "\n" +
+		"permit-root-login=no\npassword-authentication=no\n" +
+		"fail2ban=running\nauto-updates=enabled\n" +
+		"mem-total-kb=4026532\nswap-total-kb=0\n" +
+		"docker-ports=ok\ndocker-container=web 0.0.0.0:8083->80/tcp\n"
 }
 
-type errString string
-
-func (e errString) Error() string { return string(e) }
-
-func TestStatusDocumentOfANeverSetUpBox(t *testing.T) {
-	r := status.Reconcile(marker.Marker{}, marker.SkewNone, false, status.Facts{Memory: memory.FromKiB(4026532), Swap: memory.SwapFromKiB(0)})
-
-	got := statusJSON(t, "dev", r)
-
-	want := `{"schema_version":1,"box":"dev","verdict":"never_set_up","findings":[],"memory_kib":4026532,"swap_kib":0,"docker":{"ports":[],"unreadable":false}}`
-	if got != want {
-		t.Errorf("document = %s, want %s", got, want)
-	}
-}
-
-func TestStatusDocumentOfAPartialBoxNamesTheMissingPhases(t *testing.T) {
-	m := marker.Marker{AccessMode: "public", CompletedPhases: []string{"swap"}}
-	r := status.Reconcile(m, marker.SkewNone, true, status.Facts{})
-
-	doc := newStatusDocument("dev", r)
-
-	if doc.Verdict != "partial" || len(doc.MissingPhases) == 0 || doc.MissingPhases[0] != "packages" {
-		t.Errorf("verdict = %q, missing = %v, want partial missing from packages on", doc.Verdict, doc.MissingPhases)
-	}
-}
-
-func okFact(v string) status.Fact { return status.Fact{Value: v, Known: true} }
-
-func TestStatusDocumentOfADriftedBoxHoldsBothValues(t *testing.T) {
-	m := marker.Marker{AccessMode: "public", CompletedPhases: bootstrap.Phases}
-	facts := status.Facts{
-		SmithUserExists: true, PasswordlessSudo: true,
-		UFWActive: okFact("active"), UFWDefaultDeny: okFact("deny"), UFWSSHAllow: okFact("deny"),
-		PermitRootLogin: okFact("no"), PasswordAuth: okFact("no"),
-		Fail2banRunning: okFact("running"), AutoUpdates: okFact("enabled"),
-		Docker: status.DockerPorts{
-			Exposed:  []string{"web 0.0.0.0:8083->80/tcp"},
-			Loopback: []string{"db 127.0.0.1:5433->5432/tcp"},
+func TestMachineStatusJSONPrintsOneDocumentPerVerdict(t *testing.T) {
+	allPhases := `["` + strings.Join(bootstrap.Phases, `","`) + `"]`
+	tests := []struct {
+		name     string
+		exec     connection.Exec
+		wantOut  string
+		wantCode int
+	}{
+		{
+			"matches",
+			probeBoxSSH{probeOutputWithMarker(`{"schema_version":2,"access_mode":"public","completed_phases":`+allPhases+`}`, "allow")},
+			`{"schema_version":1,"box":"root@203.0.113.10","verdict":"matches","access_mode":"public","findings":[{"phase":"smith-user","fact":"smith user","expected":"present","actual":"present","status":"match"},{"phase":"smith-user","fact":"passwordless sudo","expected":"present","actual":"present","status":"match"},{"phase":"firewall","fact":"ufw active","expected":"active","actual":"active","status":"match"},{"phase":"firewall","fact":"ufw default-deny incoming","expected":"deny","actual":"deny","status":"match"},{"phase":"firewall","fact":"public SSH (port 22)","expected":"allow","actual":"allow","status":"match"},{"phase":"ssh-hardening","fact":"PermitRootLogin","expected":"no","actual":"no","status":"match"},{"phase":"ssh-hardening","fact":"PasswordAuthentication","expected":"no","actual":"no","status":"match"},{"phase":"fail2ban","fact":"fail2ban service","expected":"running","actual":"running","status":"match"},{"phase":"auto-updates","fact":"unattended security upgrades","expected":"enabled","actual":"enabled","status":"match"}],"memory_kib":4026532,"swap_kib":0,"docker":{"ports":[{"binding":"web 0.0.0.0:8083-\u003e80/tcp","exposed":true}],"unreadable":false}}` + "\n", 0,
+		},
+		{
+			"drifted",
+			probeBoxSSH{probeOutputWithMarker(`{"schema_version":2,"access_mode":"public","completed_phases":`+allPhases+`}`, "deny")},
+			`{"schema_version":1,"box":"root@203.0.113.10","verdict":"drifted","access_mode":"public","findings":[{"phase":"smith-user","fact":"smith user","expected":"present","actual":"present","status":"match"},{"phase":"smith-user","fact":"passwordless sudo","expected":"present","actual":"present","status":"match"},{"phase":"firewall","fact":"ufw active","expected":"active","actual":"active","status":"match"},{"phase":"firewall","fact":"ufw default-deny incoming","expected":"deny","actual":"deny","status":"match"},{"phase":"firewall","fact":"public SSH (port 22)","expected":"allow","actual":"deny","status":"drift"},{"phase":"ssh-hardening","fact":"PermitRootLogin","expected":"no","actual":"no","status":"match"},{"phase":"ssh-hardening","fact":"PasswordAuthentication","expected":"no","actual":"no","status":"match"},{"phase":"fail2ban","fact":"fail2ban service","expected":"running","actual":"running","status":"match"},{"phase":"auto-updates","fact":"unattended security upgrades","expected":"enabled","actual":"enabled","status":"match"}],"memory_kib":4026532,"swap_kib":0,"docker":{"ports":[{"binding":"web 0.0.0.0:8083-\u003e80/tcp","exposed":true}],"unreadable":false}}` + "\n", 1,
+		},
+		{
+			"partial",
+			probeBoxSSH{probeOutputWithMarker(`{"schema_version":2,"access_mode":"public","completed_phases":["swap"]}`, "allow")},
+			`{"schema_version":1,"box":"root@203.0.113.10","verdict":"partial","access_mode":"public","findings":[],"missing_phases":["packages","tmux-oom-policy","smith-user","smith-keys","firewall","ssh-hardening","fail2ban","auto-updates","access"],"memory_kib":4026532,"swap_kib":0,"docker":{"ports":[{"binding":"web 0.0.0.0:8083-\u003e80/tcp","exposed":true}],"unreadable":false}}` + "\n", 2,
+		},
+		{
+			"never set up",
+			probeBoxSSH{"mem-total-kb=4026532\nswap-total-kb=0\n"},
+			`{"schema_version":1,"box":"root@203.0.113.10","verdict":"never_set_up","findings":[],"memory_kib":4026532,"swap_kib":0,"docker":{"ports":[],"unreadable":false}}` + "\n", 2,
+		},
+		{
+			"unreachable",
+			unconnectableSSH{stderr: "ssh: connect to host 203.0.113.10 port 22: Connection timed out\n"},
+			`{"schema_version":1,"box":"root@203.0.113.10","verdict":"unreachable","findings":[],"error":"ssh root@203.0.113.10: could not connect to box: the box did not answer; check the address, that sshd is listening on port 22, and the provider's firewall"}` + "\n", 3,
 		},
 	}
-	r := status.Reconcile(m, marker.SkewNone, true, facts)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, code := runStatus(t, t.TempDir(), tt.exec, "root@203.0.113.10", "--json")
 
-	doc := newStatusDocument("dev", r)
-
-	if doc.Verdict != "drifted" || doc.AccessMode != "public" {
-		t.Fatalf("verdict = %q, access = %q, want drifted public", doc.Verdict, doc.AccessMode)
-	}
-	want := statusFinding{Phase: "firewall", Fact: "public SSH (port 22)", Expected: "allow", Actual: "deny", Status: "drift"}
-	found := false
-	for _, f := range doc.Findings {
-		found = found || f == want
-	}
-	if !found {
-		t.Errorf("findings = %+v, want %+v among them", doc.Findings, want)
-	}
-	wantPorts := []statusPort{{"web 0.0.0.0:8083->80/tcp", true}, {"db 127.0.0.1:5433->5432/tcp", false}}
-	if len(doc.Docker.Ports) != 2 || doc.Docker.Ports[0] != wantPorts[0] || doc.Docker.Ports[1] != wantPorts[1] {
-		t.Errorf("ports = %+v, want %+v", doc.Docker.Ports, wantPorts)
+			if stdout != tt.wantOut {
+				t.Errorf("stdout = %s, want %s", stdout, tt.wantOut)
+			}
+			if stderr != "" {
+				t.Errorf("stderr = %q, want empty", stderr)
+			}
+			if code != tt.wantCode {
+				t.Errorf("exit code = %d, want %d", code, tt.wantCode)
+			}
+		})
 	}
 }
 
@@ -109,22 +106,6 @@ func runStatus(t *testing.T, dir string, exec connection.Exec, args ...string) (
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
 	code = codeFromError(cmd.Execute())
 	return out.String(), errBuf.String(), code
-}
-
-func TestMachineStatusJSONOfAnUnreachableBoxIsADocumentWithExit3(t *testing.T) {
-	stdout, _, code := runStatus(t, t.TempDir(), unconnectableSSH{stderr: "ssh: connect to host 203.0.113.10 port 22: Connection timed out\n"},
-		"root@203.0.113.10", "--json")
-
-	if code != 3 {
-		t.Errorf("exit code = %d, want 3", code)
-	}
-	var doc statusDocument
-	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
-		t.Fatalf("stdout = %q, want one JSON document: %v", stdout, err)
-	}
-	if doc.Verdict != "unreachable" || doc.Box != "root@203.0.113.10" || doc.Error == "" {
-		t.Errorf("document = %+v, want unreachable with the box and an error", doc)
-	}
 }
 
 func TestMachineStatusJSONOfAnUnregisteredNameThatDoesNotAnswerPrintsNoDocument(t *testing.T) {
