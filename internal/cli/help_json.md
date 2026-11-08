@@ -16,3 +16,10 @@ The documents:
   version         the smith version, or "dev" for a development build
   commit          the VCS commit, when the binary carries it
   built_at        the build time, when the binary carries it
+
+`smith machine list`
+  schema_version  1
+  boxes           the inventory in name order, [] when empty; each box has:
+    name          the box's name
+    target        the SSH target registered for it
+    reachable     true or false whether the box answered; present only under --probe

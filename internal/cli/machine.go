@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -212,6 +214,7 @@ nothing is provisioned yet. Run:
 // fetch a pruned entry back.
 func newListCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 	var probe bool
+	var asJSON *bool
 	cmd := &cobra.Command{
 		Use:         "list",
 		Annotations: verbTraits(false, false, false),
@@ -219,11 +222,12 @@ func newListCmd(resolve homeResolver, exec connection.Exec) *cobra.Command {
 		Long: `List the boxes in the box inventory, sorted by name. It is offline: no box is
 connected to unless --probe asks smith to try every box and report whether it
 answers. A box that does not answer is shown, never pruned, and does not fail
-the command.
+the command. With --json, print the boxes as one JSON document; see "smith help json".
 
 ` + exits(0, 1),
 		Example: `  smith machine list
-  smith machine list --probe`,
+  smith machine list --probe
+  smith machine list --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := resolve()
@@ -240,6 +244,14 @@ the command.
 					return reportInvalid(cmd, err)
 				}
 			}
+			if *asJSON {
+				if note := skew.Note(); note != "" {
+					if _, err := fmt.Fprintln(cmd.ErrOrStderr(), note); err != nil {
+						return fmt.Errorf("write inventory note: %w", err)
+					}
+				}
+				return writeDocument(cmd.OutOrStdout(), newListDocument(inv, reach))
+			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), inventory.Readout(inv, skew, reach)); err != nil {
 				return fmt.Errorf("write box listing: %w", err)
 			}
@@ -248,7 +260,34 @@ the command.
 	}
 	cmd.Flags().BoolVar(&probe, "probe", false,
 		"connect to every listed box and report whether it answers; nothing is stored and no entry is pruned")
+	asJSON = addJSONFlag(cmd)
 	return cmd
+}
+
+// listDocument is the JSON document `smith machine list --json` prints.
+type listDocument struct {
+	SchemaVersion int       `json:"schema_version"`
+	Boxes         []listBox `json:"boxes"`
+}
+
+// listBox is one box in a listDocument. Reachable is set only when a probe ran.
+type listBox struct {
+	Name      string `json:"name"`
+	Target    string `json:"target"`
+	Reachable *bool  `json:"reachable,omitempty"`
+}
+
+// newListDocument builds the listing document in name order. reach is nil when no probe ran.
+func newListDocument(inv inventory.Inventory, reach map[string]bool) listDocument {
+	doc := listDocument{SchemaVersion: 1, Boxes: []listBox{}}
+	for _, name := range slices.Sorted(maps.Keys(inv.Boxes)) {
+		box := listBox{Name: name, Target: inv.Boxes[name].Target}
+		if r, probed := reach[name]; probed {
+			box.Reachable = &r
+		}
+		doc.Boxes = append(doc.Boxes, box)
+	}
+	return doc
 }
 
 // probeBoxes reports which of the inventory's boxes answer, opening one
