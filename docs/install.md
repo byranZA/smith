@@ -180,7 +180,7 @@ downloads over time. If SmartScreen blocks it, choose **More info → Run anyway
 
 smith is **`v0.x` — there is no compatibility promise.** Flags, config, and
 behavior may change between releases without notice. Pin to an exact tag rather
-than tracking `latest`.
+than tracking `latest`. The one exception is the JSON documents the read verbs print under `--json`: renaming or removing a field bumps that document's `schema_version` and is announced in the release notes (`smith help json`, [ADR-0029](./adr/0029-a-json-document-is-a-versioned-contract.md)).
 
 Local smith and on-box smith must be the **same version**: every relayed command
 declares the version it was built by, and on-box smith refuses a mismatch.
