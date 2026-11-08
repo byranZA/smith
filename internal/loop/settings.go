@@ -3,7 +3,6 @@ package loop
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/preset"
@@ -72,20 +71,22 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 		return Settings{}, preset.Choice{}, fmt.Errorf("choose the preset: %w", err)
 	}
 	defaults := tracker.DefaultLabels()
+	capValue, maxIterations := resolveCap(flags.MaxIterations, file.Limits.AgentRuns)
+	attemptsValue, maxAttempts := resolveAttempts(flags.MaxAttempts, file.Limits.TaskAttempts)
 	s := Settings{
-		Preset:     choice.Work(),
-		Push:       resolveSwitch(flags.Push, file.Push, true),
-		Cap:        resolveCap(flags.MaxIterations, file.Limits.AgentRuns),
-		Attempts:   resolveAttempts(flags.MaxAttempts, file.Limits.TaskAttempts),
-		AgentLabel: resolveSetting("", file.Labels.Agent, defaults.Agent),
-		HumanLabel: resolveSetting("", file.Labels.Human, defaults.Human),
-		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
+		Preset:        choice.Work(),
+		Push:          resolveSwitch(flags.Push, file.Push, true),
+		Cap:           capValue,
+		Attempts:      attemptsValue,
+		MaxIterations: maxIterations,
+		MaxAttempts:   maxAttempts,
+		AgentLabel:    resolveSetting("", file.Labels.Agent, defaults.Agent),
+		HumanLabel:    resolveSetting("", file.Labels.Human, defaults.Human),
+		SpecLabel:     resolveSetting("", file.Labels.Spec, defaults.Spec),
 	}
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, preset.Choice{}, err
 	}
-	s.MaxIterations, _ = strconv.Atoi(strings.Fields(s.Cap.Value)[0])
-	s.MaxAttempts, _ = strconv.Atoi(s.Attempts.Value)
 	s.StackDeclared = file.Stack.Declared()
 	s.StackRuns = flags.Stack
 	if flags.Stack && s.StackDeclared {
@@ -195,16 +196,16 @@ const (
 
 // resolveCap names the cap on agent runs: the flag, zero of it meaning none,
 // then the repo file's, then no cap from smith's default.
-func resolveCap(flag *int, file int) config.Value {
+func resolveCap(flag *int, file int) (config.Value, int) {
 	switch {
 	case flag != nil && *flag == 0:
-		return config.Value{Value: "none", Origin: originMaxIterations}
+		return config.Value{Value: "none", Origin: originMaxIterations}, 0
 	case flag != nil:
-		return config.Value{Value: strconv.Itoa(*flag) + " agent runs", Origin: originMaxIterations}
+		return config.Value{Value: strconv.Itoa(*flag) + " agent runs", Origin: originMaxIterations}, *flag
 	case file > 0:
-		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
+		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}, file
 	default:
-		return config.Value{Value: "none", Origin: config.FromDefault}
+		return config.Value{Value: "none", Origin: config.FromDefault}, 0
 	}
 }
 
@@ -213,13 +214,13 @@ const defaultAttempts = 2
 
 // resolveAttempts names the attempts at each task: the flag, then the repo
 // file's, then smith's default.
-func resolveAttempts(flag *int, file int) config.Value {
+func resolveAttempts(flag *int, file int) (config.Value, int) {
 	switch {
 	case flag != nil:
-		return config.Value{Value: strconv.Itoa(*flag), Origin: originMaxAttempts}
+		return config.Value{Value: strconv.Itoa(*flag), Origin: originMaxAttempts}, *flag
 	case file > 0:
-		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
+		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}, file
 	default:
-		return config.Value{Value: strconv.Itoa(defaultAttempts), Origin: config.FromDefault}
+		return config.Value{Value: strconv.Itoa(defaultAttempts), Origin: config.FromDefault}, defaultAttempts
 	}
 }

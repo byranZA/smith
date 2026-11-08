@@ -1,6 +1,7 @@
 package repofile
 
 import (
+	"fmt"
 	"strconv"
 
 	"go.yaml.in/yaml/v3"
@@ -22,17 +23,25 @@ type Limits struct {
 
 // limitsOf reads the limits from node, the value written under limitsKey, as
 // limitsFindings has accepted it.
-func limitsOf(node *yaml.Node) Limits {
+func limitsOf(node *yaml.Node) (Limits, error) {
 	var l Limits
 	for _, e := range effectiveEntries(node) {
+		var dst *int
 		switch e.key.Value {
 		case "agent_runs":
-			l.AgentRuns, _ = strconv.Atoi(e.value.Value)
+			dst = &l.AgentRuns
 		case "task_attempts":
-			l.TaskAttempts, _ = strconv.Atoi(e.value.Value)
+			dst = &l.TaskAttempts
+		default:
+			continue
 		}
+		n, err := strconv.Atoi(e.value.Value)
+		if err != nil {
+			return Limits{}, fmt.Errorf("read limits.%s: %w", e.key.Value, err)
+		}
+		*dst = n
 	}
-	return l
+	return l, nil
 }
 
 // limitsFindings checks that the limits the document sets, if any, are a

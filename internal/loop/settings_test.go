@@ -1,7 +1,6 @@
 package loop_test
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
@@ -220,15 +219,16 @@ func TestResolveSettingsTakesTheAttemptsFromTheFlagOverTheRepoFile(t *testing.T)
 	t.Parallel()
 	one, three := 1, 3
 	tests := []struct {
-		name string
-		flag *int
-		file int
-		want config.Value
+		name  string
+		flag  *int
+		file  int
+		want  config.Value
+		wantN int
 	}{
-		{"the repo file alone", nil, 3, config.Value{Value: "3", Origin: config.FromRepoFile}},
-		{"the flag over the repo file", &one, 3, config.Value{Value: "1", Origin: "--max-attempts"}},
-		{"the flag with no repo file value", &three, 0, config.Value{Value: "3", Origin: "--max-attempts"}},
-		{"neither", nil, 0, config.Value{Value: "2", Origin: config.FromDefault}},
+		{"the repo file alone", nil, 3, config.Value{Value: "3", Origin: config.FromRepoFile}, 3},
+		{"the flag over the repo file", &one, 3, config.Value{Value: "1", Origin: "--max-attempts"}, 1},
+		{"the flag with no repo file value", &three, 0, config.Value{Value: "3", Origin: "--max-attempts"}, 3},
+		{"neither", nil, 0, config.Value{Value: "2", Origin: config.FromDefault}, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -237,9 +237,8 @@ func TestResolveSettingsTakesTheAttemptsFromTheFlagOverTheRepoFile(t *testing.T)
 
 			got, _, err := loop.ResolveSettings(loop.Flags{MaxAttempts: tt.flag}, file)
 
-			wantN, _ := strconv.Atoi(tt.want.Value)
-			if err != nil || got.Attempts != tt.want || got.MaxAttempts != wantN {
-				t.Errorf("ResolveSettings() attempts = %+v, max %d, %v; want %+v, %d", got.Attempts, got.MaxAttempts, err, tt.want, wantN)
+			if err != nil || got.Attempts != tt.want || got.MaxAttempts != tt.wantN {
+				t.Errorf("ResolveSettings() attempts = %+v, max %d, %v; want %+v, %d", got.Attempts, got.MaxAttempts, err, tt.want, tt.wantN)
 			}
 		})
 	}

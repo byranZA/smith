@@ -101,7 +101,11 @@ func Parse(data []byte) (File, error) {
 		f.Stack = stackOf(resolved(&doc.Stack))
 	}
 	if doc.Limits.Kind != 0 {
-		f.Limits = limitsOf(resolved(&doc.Limits))
+		limits, err := limitsOf(resolved(&doc.Limits))
+		if err != nil {
+			return File{}, err
+		}
+		f.Limits = limits
 	}
 	return f, nil
 }
