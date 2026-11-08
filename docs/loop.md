@@ -85,7 +85,7 @@ A stop report that fails to post is a `smith: warning: …` line, and changes ne
 Two limits bound a run so it can be left alone, and a run has no cap on agent runs unless `--max-iterations` sets one:
 
 - **`--max-attempts`** (default 2): a task the agent leaves open is handed out again until it has had this many runs, then skipped for the rest of the run. A skipped task stays open on GitHub, usually with the agent's WIP note on it, and is handed to you: the loop moves it from `ready-for-agent` to `ready-for-human` and labels it `smith:failed`. Moving it back from `ready-for-human` to `ready-for-agent` sends it back to the loop, which removes `smith:failed` when it next hands the task out. Its task worktree and task branch are left for you: the report names the worktree (`#N left in <worktree>`), and the loop comments on the task's issue with the machine's hostname, the worktree's path, the task branch, the preset its attempts ran on, the attempts it made in this run, and how many commits the task branch has beyond the work branch ([ADR-0016](./adr/0016-the-loop-comments-on-a-task-it-skips.md)). A hostname or commit count it cannot read shows as unknown, and a comment that fails to post is a `smith: warning: …` line, as a failed label write is.
-- **`--max-iterations`** (default: no cap): the most agent runs the whole loop makes. Unset, or `0`, a run works every task its attempts allow and reviews in the same run; a negative value is refused. The settings block shows a `cap:` line, `none` or the number of agent runs, with its origin.
+- **`--max-iterations`** (default: no cap): the most agent runs the whole loop makes. Unset, or `0`, a run works every task its attempts allow and reviews in the same run; a negative value is refused. The repo file sets it for every run with `limits.agent_runs` (a flag beats it, and `0` lifts it for one run). The settings block shows a `cap:` line, `none` or the number of agent runs, with its origin.
 
 An agent that exits with a failure is reported, and the task is checked on the tracker as after any run: a task it closed lands, whatever the exit code. Whether the loop carries on depends on its attempts, as below.
 
@@ -208,6 +208,8 @@ presets:
 roles:
   work: opus
 push: true
+limits:
+  agent_runs: 20
 prepare: uv sync
 stack:
   up: docker compose up -d --build --wait db redis
@@ -226,9 +228,9 @@ Each setting resolves most specific first:
 2. The repo file.
 3. The built-in default: the `default` preset, which is `claude` with the agent's own model and effort, push on, and the triage labels shown above.
 
-The triage labels and the prepare command have no flags: they are set in the repo file or left to their defaults.
+The cap has a flag, `--max-iterations`, over the repo file's `limits.agent_runs`, and `--max-iterations 0` lifts a repo file's cap for one run. The triage labels and the prepare command have no flags: they are set in the repo file or left to their defaults.
 
-The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, a `prepare:` that is not one non-empty string, and a `stack:` that is not a mapping of a required `up` and a required `down`, each one non-empty string, with no other key. The presets and roles are checked as [Presets and roles](#presets-and-roles) says. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
+The file is validated strictly: an unknown key is refused with its line, and so is a label under `labels:` set to no name or to a name another key under it already has, a `prepare:` that is not one non-empty string, a `limits:` that is not a mapping or holds a key other than `agent_runs`, an `agent_runs` that is not a whole number of at least 1 (an empty `limits:` sets nothing), and a `stack:` that is not a mapping of a required `up` and a required `down`, each one non-empty string, with no other key. The presets and roles are checked as [Presets and roles](#presets-and-roles) says. A repo whose `.smith/` is your config home (a home directory kept in git, say) is refused, so your own config and a repo's never share a directory. The [repo file ADR](./adr/0012-the-repo-file.md) has the reasoning.
 
 ### Presets and roles
 

@@ -44,6 +44,12 @@ roles:
 #   up: docker compose up -d --wait
 #   down: docker compose down
 
+# The limits on a loop run. agent_runs caps the agent runs one run makes in
+# all, counting every attempt and the review. Unset, there is no cap.
+# `smith loop run --max-iterations` overrides it for one run, and 0 lifts it.
+# limits:
+#   agent_runs: 20
+
 # The tracker's triage labels: the one that marks a task for an agent, the one
 # that marks it for a human (where a task the loop skips goes), and the one
 # that marks a spec not yet split into tasks. Set only those this repo names

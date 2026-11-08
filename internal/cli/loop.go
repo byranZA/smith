@@ -550,6 +550,7 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Tracker, l.Presets, l.Prompt = admitted.github, presets, prompt
+	l.Limits.MaxIterations = settings.MaxIterations
 	if resolved, ok := presets.Review(); ok {
 		l.Review = &loop.Review{Preset: resolved, Prompt: reviewPrompt}
 	}

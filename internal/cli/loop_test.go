@@ -978,3 +978,57 @@ func TestLoopRunWithMaxIterationsShowsTheCapFromTheFlag(t *testing.T) {
 		t.Errorf("stdout %q; want the cap line 3 (flag)", stdout)
 	}
 }
+
+// threeTaskSpec is a spec of three open tasks for an agent.
+func threeTaskSpec() *fakeTracker {
+	return &fakeTracker{issues: map[string]string{
+		"42": specJSON(43, 44, 45),
+		"43": taskJSON(43, "OPEN", "ready-for-agent"),
+		"44": taskJSON(44, "OPEN", "ready-for-agent"),
+		"45": taskJSON(45, "OPEN", "ready-for-agent"),
+	}}
+}
+
+func TestLoopRunStopsAtTheRepoFileCapAndShowsItsOrigin(t *testing.T) {
+	idle := &idleAgent{}
+	w, _ := repoWith(t, threeTaskSpec(), idle, "limits:\n  agent_runs: 2\n")
+
+	stdout, _, code := runLoopRun(t, w, "42")
+
+	if code == 0 || idle.runs != 2 || !strings.Contains(stdout, "cap:    2 (repo file)\n") || !strings.Contains(stdout, "reached the cap of 2 agent runs") {
+		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 2 runs, cap 2 (repo file)", code, idle.runs, stdout)
+	}
+}
+
+func TestLoopRunFlagOverridesTheRepoFileCap(t *testing.T) {
+	idle := &idleAgent{}
+	w, _ := repoWith(t, threeTaskSpec(), idle, "limits:\n  agent_runs: 2\n")
+
+	stdout, _, _ := runLoopRun(t, w, "42", "--max-iterations", "5")
+
+	if idle.runs != 5 || !strings.Contains(stdout, "reached the cap of 5 agent runs") {
+		t.Errorf("%d agent runs, stdout =\n%s\nwant the cap of 5 to stop the run", idle.runs, stdout)
+	}
+}
+
+func TestLoopRunMaxIterationsZeroLiftsTheRepoFileCap(t *testing.T) {
+	idle := &idleAgent{}
+	w, _ := repoWith(t, threeTaskSpec(), idle, "limits:\n  agent_runs: 2\n")
+
+	stdout, _, _ := runLoopRun(t, w, "42", "--max-iterations", "0")
+
+	if idle.runs != 6 || strings.Contains(stdout, "cap of") {
+		t.Errorf("%d agent runs, stdout =\n%s\nwant 6 runs (2 attempts of 3 tasks) and no cap reached", idle.runs, stdout)
+	}
+}
+
+func TestLoopRunRefusesAnInvalidRepoFileCapNamingTheFileAndKey(t *testing.T) {
+	idle := &idleAgent{}
+	w, path := repoWith(t, threeTaskSpec(), idle, "limits:\n  agent_runs: 0\n")
+
+	_, stderr, code := runLoopRun(t, w, "42")
+
+	if code == 0 || idle.runs != 0 || !strings.Contains(stderr, path) || !strings.Contains(stderr, "limits.agent_runs") {
+		t.Errorf("exit %d after %d runs, stderr %q; want a refusal naming %s and limits.agent_runs", code, idle.runs, stderr, path)
+	}
+}

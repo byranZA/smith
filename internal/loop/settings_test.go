@@ -182,3 +182,32 @@ func TestResolveSettingsRefusesALabelNamedForOneOfSmithsOwnMarks(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSettingsTakesTheCapFromTheFlagOverTheRepoFile(t *testing.T) {
+	t.Parallel()
+	two, five, zero := 2, 5, 0
+	tests := []struct {
+		name    string
+		flag    *int
+		file    int
+		wantCap config.Value
+		wantMax int
+	}{
+		{"the repo file alone", nil, 2, config.Value{Value: "2", Origin: config.FromRepoFile}, 2},
+		{"the flag over the repo file", &five, 2, config.Value{Value: "5", Origin: config.FromFlag}, 5},
+		{"zero lifts the repo file cap", &zero, 2, config.Value{Value: "none", Origin: config.FromFlag}, 0},
+		{"the flag with no repo file cap", &two, 0, config.Value{Value: "2", Origin: config.FromFlag}, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			file := repofile.File{Limits: repofile.Limits{AgentRuns: tt.file}}
+
+			got, _, err := loop.ResolveSettings(loop.Flags{MaxIterations: tt.flag}, file)
+
+			if err != nil || got.Cap != tt.wantCap || got.MaxIterations != tt.wantMax {
+				t.Errorf("ResolveSettings() cap = %+v, max %d, %v; want %+v, %d", got.Cap, got.MaxIterations, err, tt.wantCap, tt.wantMax)
+			}
+		})
+	}
+}

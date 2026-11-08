@@ -35,6 +35,8 @@ type Settings struct {
 	Push config.Value
 	// Cap is the cap on agent runs, "none" or a number, with where it came from.
 	Cap config.Value
+	// MaxIterations is the cap as a number of agent runs, zero for none.
+	MaxIterations int
 	// AgentLabel, HumanLabel and SpecLabel name the tracker's triage labels.
 	// They are set in the repo file alone, never by a flag.
 	AgentLabel config.Value
@@ -65,7 +67,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 	s := Settings{
 		Preset:     choice.Work(),
 		Push:       resolveSwitch(flags.Push, file.Push, true),
-		Cap:        resolveCap(flags.MaxIterations),
+		Cap:        resolveCap(flags.MaxIterations, file.Limits.AgentRuns),
 		AgentLabel: resolveSetting("", file.Labels.Agent, defaults.Agent),
 		HumanLabel: resolveSetting("", file.Labels.Human, defaults.Human),
 		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
@@ -73,6 +75,7 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, preset.Choice{}, err
 	}
+	s.MaxIterations, _ = strconv.Atoi(s.Cap.Value)
 	s.StackDeclared = file.Stack.Declared()
 	s.StackRuns = flags.Stack
 	if flags.Stack && s.StackDeclared {
@@ -173,14 +176,17 @@ func resolveSetting(flag, file, fallback string) config.Value {
 	}
 }
 
-// resolveCap names the cap on agent runs a flag sets, or no cap from smith's
-// default when the flag is unset.
-func resolveCap(flag *int) config.Value {
-	if flag == nil {
+// resolveCap names the cap on agent runs: the flag, zero of it meaning none,
+// then the repo file's, then no cap from smith's default.
+func resolveCap(flag *int, file int) config.Value {
+	switch {
+	case flag != nil && *flag == 0:
+		return config.Value{Value: "none", Origin: config.FromFlag}
+	case flag != nil:
+		return config.Value{Value: strconv.Itoa(*flag), Origin: config.FromFlag}
+	case file > 0:
+		return config.Value{Value: strconv.Itoa(file), Origin: config.FromRepoFile}
+	default:
 		return config.Value{Value: "none", Origin: config.FromDefault}
 	}
-	if *flag == 0 {
-		return config.Value{Value: "none", Origin: config.FromFlag}
-	}
-	return config.Value{Value: strconv.Itoa(*flag), Origin: config.FromFlag}
 }
