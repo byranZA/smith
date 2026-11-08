@@ -50,46 +50,70 @@ type checkGit struct {
 	UserEmail *checkValue `json:"user_email,omitempty"`
 }
 
-// checkRepo is one repo the box carries.
+// checkRepo is one repo the box carries, each value beside its origin.
 type checkRepo struct {
-	Name       string            `json:"name"`
-	URL        string            `json:"url"`
-	Base       string            `json:"base,omitempty"`
-	Tools      map[string]string `json:"tools,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	Placements []checkPlacement  `json:"placements,omitempty"`
+	Name       checkValue            `json:"name"`
+	URL        checkValue            `json:"url"`
+	Base       *checkValue           `json:"base,omitempty"`
+	Tools      map[string]checkValue `json:"tools,omitempty"`
+	Env        map[string]checkValue `json:"env,omitempty"`
+	Placements []checkPlacement      `json:"placements,omitempty"`
 }
 
 // checkPlacement is one file put on the box, from its source to its destination.
 type checkPlacement struct {
-	From  string `json:"from"`
-	To    string `json:"to"`
-	Mode  string `json:"mode,omitempty"`
-	Perms string `json:"perms,omitempty"`
+	From   string        `json:"from"`
+	To     string        `json:"to"`
+	Mode   string        `json:"mode,omitempty"`
+	Perms  string        `json:"perms,omitempty"`
+	Origin config.Origin `json:"origin"`
 }
+
+// The collections come only from the blueprint, so every entry of them carries that origin.
 
 // newCheckPlacements shapes placements as the document's entries.
 func newCheckPlacements(placements []blueprint.Placement) []checkPlacement {
 	var out []checkPlacement
 	for _, p := range placements {
-		out = append(out, checkPlacement{From: p.From, To: p.To, Mode: p.Mode, Perms: p.Perms})
+		out = append(out, checkPlacement{From: p.From, To: p.To, Mode: p.Mode, Perms: p.Perms, Origin: config.FromBlueprint})
+	}
+	return out
+}
+
+// newCheckValues shapes each entry of a list as a value beside its origin.
+func newCheckValues(items []string) []checkValue {
+	var out []checkValue
+	for _, item := range items {
+		out = append(out, checkValue{Value: item, Origin: config.FromBlueprint})
+	}
+	return out
+}
+
+// newCheckPairs shapes each entry of a keyed map as a value beside its origin.
+func newCheckPairs(m map[string]string) map[string]checkValue {
+	var out map[string]checkValue
+	for k, v := range m {
+		if out == nil {
+			out = map[string]checkValue{}
+		}
+		out[k] = checkValue{Value: v, Origin: config.FromBlueprint}
 	}
 	return out
 }
 
 // checkResolved is the configuration smith would use.
 type checkResolved struct {
-	Access     checkValue        `json:"access"`
-	Terminal   checkValue        `json:"terminal"`
-	Workspace  checkValue        `json:"workspace"`
-	Provider   *checkProvider    `json:"provider,omitempty"`
-	Git        *checkGit         `json:"git,omitempty"`
-	Repos      []checkRepo       `json:"repos,omitempty"`
-	Packages   []string          `json:"packages,omitempty"`
-	Groups     []string          `json:"groups,omitempty"`
-	Tools      map[string]string `json:"tools,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	Placements []checkPlacement  `json:"placements,omitempty"`
+	Access     checkValue            `json:"access"`
+	Terminal   checkValue            `json:"terminal"`
+	Workspace  checkValue            `json:"workspace"`
+	Provider   *checkProvider        `json:"provider,omitempty"`
+	Git        *checkGit             `json:"git,omitempty"`
+	Repos      []checkRepo           `json:"repos,omitempty"`
+	Packages   []checkValue          `json:"packages,omitempty"`
+	Groups     []checkValue          `json:"groups,omitempty"`
+	Tools      map[string]checkValue `json:"tools,omitempty"`
+	Env        map[string]checkValue `json:"env,omitempty"`
+	Placements []checkPlacement      `json:"placements,omitempty"`
 }
 
 // newCheckResolved shapes the resolved configuration as the document's values.
@@ -98,10 +122,10 @@ func newCheckResolved(r config.Resolved) *checkResolved {
 		Access:     checkValue(r.Access),
 		Terminal:   checkValue(r.Terminal),
 		Workspace:  checkValue(r.Workspace),
-		Packages:   r.Packages,
-		Groups:     r.Groups,
-		Tools:      r.Tools,
-		Env:        r.Env,
+		Packages:   newCheckValues(r.Packages),
+		Groups:     newCheckValues(r.Groups),
+		Tools:      newCheckPairs(r.Tools),
+		Env:        newCheckPairs(r.Env),
 		Placements: newCheckPlacements(r.Placements),
 	}
 	if r.Provider.Provider != nil {
@@ -114,10 +138,16 @@ func newCheckResolved(r config.Resolved) *checkResolved {
 		out.Git = &checkGit{UserName: half, UserEmail: declaredValue(r.Git.UserEmail)}
 	}
 	for _, repo := range r.Repos {
-		out.Repos = append(out.Repos, checkRepo{
-			Name: repo.Name, URL: repo.URL, Base: repo.Base,
-			Tools: repo.Tools, Env: repo.Env, Placements: newCheckPlacements(repo.Placements),
-		})
+		entry := checkRepo{
+			Name:  checkValue{Value: repo.Name, Origin: config.FromBlueprint},
+			URL:   checkValue{Value: repo.URL, Origin: config.FromBlueprint},
+			Tools: newCheckPairs(repo.Tools), Env: newCheckPairs(repo.Env),
+			Placements: newCheckPlacements(repo.Placements),
+		}
+		if repo.Base != "" {
+			entry.Base = &checkValue{Value: repo.Base, Origin: config.FromBlueprint}
+		}
+		out.Repos = append(out.Repos, entry)
 	}
 	return out
 }

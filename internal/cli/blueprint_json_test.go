@@ -19,7 +19,7 @@ func TestBlueprintCheckJSONOfANamedBlueprintPrintsEachValueWithItsOriginToken(t 
 	want := `{"schema_version":1,"preferences":{"path":"` + filepath.Join(dir, "preferences.yaml") + `","found":true},` +
 		`"blueprint":{"name":"acme","path":"` + filepath.Join(dir, "blueprints", "acme.yaml") + `"},` +
 		`"resolved":{"access":{"value":"tailscale","origin":"flag"},"terminal":{"value":"tmux","origin":"blueprint"},` +
-		`"workspace":{"value":"~/dev","origin":"preferences"},"packages":["jq"]},"problems":[]}` + "\n"
+		`"workspace":{"value":"~/dev","origin":"preferences"},"packages":[{"value":"jq","origin":"blueprint"}]},"problems":[]}` + "\n"
 	if stdout != want {
 		t.Errorf("stdout =\n%s\nwant\n%s", stdout, want)
 	}
@@ -102,10 +102,12 @@ repos:
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stdout: %s stderr: %s)", code, stdout, stderr)
 	}
-	want := `"repos":[{"name":"api","url":"https://github.com/acme/api.git","base":"main",` +
-		`"tools":{"node":"20"},"env":{"MODE":"literal:dev"},"placements":[{"from":"file:local.json","to":"config/local.json"}]}],` +
-		`"tools":{"go":"1.22"},` +
-		`"placements":[{"from":"file:secrets/env","to":"~/.env","mode":"converge","perms":"0600"}]},"problems":[]}`
+	want := `"repos":[{"name":{"value":"api","origin":"blueprint"},"url":{"value":"https://github.com/acme/api.git","origin":"blueprint"},` +
+		`"base":{"value":"main","origin":"blueprint"},` +
+		`"tools":{"node":{"value":"20","origin":"blueprint"}},"env":{"MODE":{"value":"literal:dev","origin":"blueprint"}},` +
+		`"placements":[{"from":"file:local.json","to":"config/local.json","origin":"blueprint"}]}],` +
+		`"tools":{"go":{"value":"1.22","origin":"blueprint"}},` +
+		`"placements":[{"from":"file:secrets/env","to":"~/.env","mode":"converge","perms":"0600","origin":"blueprint"}]},"problems":[]}`
 	if !strings.Contains(stdout, want) {
 		t.Errorf("stdout =\n%s\nwant it to contain\n%s", stdout, want)
 	}
