@@ -64,7 +64,7 @@ type Incomplete struct {
 // of agent runs, counted in runs, and posts a valid review on its issue. An
 // error is the run failing; a review that fails is reported in the result.
 func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int) (result reviewed, err error) {
-	if *runs >= l.Limits.MaxIterations {
+	if l.Limits.CapReached(*runs) {
 		return reviewed{capped: true}, nil
 	}
 	number, title := execution.Issue()
@@ -84,7 +84,7 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 	prompt := l.Review.Prompt.Render(ReviewTarget{Number: number, Title: title, MergeBase: mergeBase, FindingsFile: file})
 	agentFailures := 0
 	for attempt := 1; attempt <= l.Limits.MaxAttempts; attempt++ {
-		if *runs >= l.Limits.MaxIterations {
+		if l.Limits.CapReached(*runs) {
 			return reviewed{dir: result.dir, capped: true}, nil
 		}
 		var findings review.File

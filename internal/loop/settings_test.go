@@ -32,7 +32,9 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 					Model:  config.Value{Origin: config.FromDefault},
 					Effort: config.Value{Origin: config.FromDefault},
 				},
-				Push:       config.Value{Value: "on", Origin: config.FromDefault},
+				Push:     config.Value{Value: "on", Origin: config.FromDefault},
+				Cap:      config.Value{Value: "none", Origin: config.FromDefault},
+				Attempts: config.Value{Value: "2", Origin: config.FromDefault}, MaxAttempts: 2,
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -49,7 +51,9 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 					Model:  config.Value{Value: "opus", Origin: config.FromRepoFile},
 					Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
 				},
-				Push:       config.Value{Value: "off", Origin: config.FromRepoFile},
+				Push:     config.Value{Value: "off", Origin: config.FromRepoFile},
+				Cap:      config.Value{Value: "none", Origin: config.FromDefault},
+				Attempts: config.Value{Value: "2", Origin: config.FromDefault}, MaxAttempts: 2,
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -67,7 +71,9 @@ func TestResolveSettingsTakesTheMostSpecificSource(t *testing.T) {
 					Model:  config.Value{Value: "sonnet", Origin: config.FromFlag},
 					Effort: config.Value{Value: "high", Origin: config.FromRepoFile},
 				},
-				Push:       config.Value{Value: "off", Origin: config.FromFlag},
+				Push:     config.Value{Value: "off", Origin: config.FromFlag},
+				Cap:      config.Value{Value: "none", Origin: config.FromDefault},
+				Attempts: config.Value{Value: "2", Origin: config.FromDefault}, MaxAttempts: 2,
 				AgentLabel: defaultLabel("ready-for-agent"),
 				HumanLabel: defaultLabel("ready-for-human"),
 				SpecLabel:  defaultLabel("spec"),
@@ -175,6 +181,64 @@ func TestResolveSettingsRefusesALabelNamedForOneOfSmithsOwnMarks(t *testing.T) {
 
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("ResolveSettings(labels %+v) error = %v, want %q", tt.labels, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveSettingsTakesTheCapFromTheFlagOverTheRepoFile(t *testing.T) {
+	t.Parallel()
+	two, five, zero := 2, 5, 0
+	tests := []struct {
+		name    string
+		flag    *int
+		file    int
+		wantCap config.Value
+		wantMax int
+	}{
+		{"the repo file alone", nil, 2, config.Value{Value: "2 agent runs", Origin: config.FromRepoFile}, 2},
+		{"the flag over the repo file", &five, 2, config.Value{Value: "5 agent runs", Origin: "--max-iterations"}, 5},
+		{"zero lifts the repo file cap", &zero, 2, config.Value{Value: "none", Origin: "--max-iterations"}, 0},
+		{"the flag with no repo file cap", &two, 0, config.Value{Value: "2 agent runs", Origin: "--max-iterations"}, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			file := repofile.File{Limits: repofile.Limits{AgentRuns: tt.file}}
+
+			got, _, err := loop.ResolveSettings(loop.Flags{MaxIterations: tt.flag}, file)
+
+			if err != nil || got.Cap != tt.wantCap || got.MaxIterations != tt.wantMax {
+				t.Errorf("ResolveSettings() cap = %+v, max %d, %v; want %+v, %d", got.Cap, got.MaxIterations, err, tt.wantCap, tt.wantMax)
+			}
+		})
+	}
+}
+
+func TestResolveSettingsTakesTheAttemptsFromTheFlagOverTheRepoFile(t *testing.T) {
+	t.Parallel()
+	one, three := 1, 3
+	tests := []struct {
+		name  string
+		flag  *int
+		file  int
+		want  config.Value
+		wantN int
+	}{
+		{"the repo file alone", nil, 3, config.Value{Value: "3", Origin: config.FromRepoFile}, 3},
+		{"the flag over the repo file", &one, 3, config.Value{Value: "1", Origin: "--max-attempts"}, 1},
+		{"the flag with no repo file value", &three, 0, config.Value{Value: "3", Origin: "--max-attempts"}, 3},
+		{"neither", nil, 0, config.Value{Value: "2", Origin: config.FromDefault}, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			file := repofile.File{Limits: repofile.Limits{TaskAttempts: tt.file}}
+
+			got, _, err := loop.ResolveSettings(loop.Flags{MaxAttempts: tt.flag}, file)
+
+			if err != nil || got.Attempts != tt.want || got.MaxAttempts != tt.wantN {
+				t.Errorf("ResolveSettings() attempts = %+v, max %d, %v; want %+v, %d", got.Attempts, got.MaxAttempts, err, tt.want, tt.wantN)
 			}
 		})
 	}

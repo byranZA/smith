@@ -2,6 +2,7 @@ package loop
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/byranZA/smith/internal/config"
 	"github.com/byranZA/smith/internal/preset"
@@ -18,6 +19,10 @@ type Flags struct {
 	Push *bool
 	// NoReview skips the review for this run.
 	NoReview bool
+	// MaxIterations is the cap on agent runs the flag sets, nil when unset.
+	MaxIterations *int
+	// MaxAttempts is the attempts the flag sets, nil when unset.
+	MaxAttempts *int
 	// Stack says the run brings the stack its repo file declares up and
 	// down, as a run on a box does.
 	Stack bool
@@ -30,6 +35,15 @@ type Settings struct {
 	// Push is "on" or "off": whether the loop pushes the branch after each
 	// task the agent closes.
 	Push config.Value
+	// Cap is the cap on agent runs, "none" or a number, with where it came from.
+	Cap config.Value
+	// MaxIterations is the cap as a number of agent runs, zero for none.
+	MaxIterations int
+	// Attempts is the attempts at each task and the review, a number, with
+	// where it came from.
+	Attempts config.Value
+	// MaxAttempts is Attempts as a number.
+	MaxAttempts int
 	// AgentLabel, HumanLabel and SpecLabel name the tracker's triage labels.
 	// They are set in the repo file alone, never by a flag.
 	AgentLabel config.Value
@@ -57,12 +71,18 @@ func ResolveSettings(flags Flags, file repofile.File) (Settings, preset.Choice, 
 		return Settings{}, preset.Choice{}, fmt.Errorf("choose the preset: %w", err)
 	}
 	defaults := tracker.DefaultLabels()
+	maxIterations, capOrigin := resolveCap(flags.MaxIterations, file.Limits.AgentRuns)
+	maxAttempts, attemptsOrigin := resolveAttempts(flags.MaxAttempts, file.Limits.TaskAttempts)
 	s := Settings{
-		Preset:     choice.Work(),
-		Push:       resolveSwitch(flags.Push, file.Push, true),
-		AgentLabel: resolveSetting("", file.Labels.Agent, defaults.Agent),
-		HumanLabel: resolveSetting("", file.Labels.Human, defaults.Human),
-		SpecLabel:  resolveSetting("", file.Labels.Spec, defaults.Spec),
+		Preset:        choice.Work(),
+		Push:          resolveSwitch(flags.Push, file.Push, true),
+		Cap:           capReport(maxIterations, capOrigin),
+		Attempts:      config.Value{Value: strconv.Itoa(maxAttempts), Origin: attemptsOrigin},
+		MaxIterations: maxIterations,
+		MaxAttempts:   maxAttempts,
+		AgentLabel:    resolveSetting("", file.Labels.Agent, defaults.Agent),
+		HumanLabel:    resolveSetting("", file.Labels.Human, defaults.Human),
+		SpecLabel:     resolveSetting("", file.Labels.Spec, defaults.Spec),
 	}
 	if err := s.distinctLabels(); err != nil {
 		return Settings{}, preset.Choice{}, err
@@ -164,5 +184,48 @@ func resolveSetting(flag, file, fallback string) config.Value {
 		return config.Value{Value: file, Origin: config.FromRepoFile}
 	default:
 		return config.Value{Value: fallback, Origin: config.FromDefault}
+	}
+}
+
+// The origins of the two limits a flag sets, worded as the flag itself so the
+// settings report names which flag set them.
+const (
+	originMaxIterations config.Origin = "--max-iterations"
+	originMaxAttempts   config.Origin = "--max-attempts"
+)
+
+// resolveCap resolves the cap on agent runs: the flag, zero of it meaning
+// none, then the repo file's, then no cap from smith's default. It returns the
+// number of runs, zero for none, and where it came from.
+func resolveCap(flag *int, file int) (int, config.Origin) {
+	switch {
+	case flag != nil:
+		return *flag, originMaxIterations
+	case file > 0:
+		return file, config.FromRepoFile
+	default:
+		return DefaultLimits().MaxIterations, config.FromDefault
+	}
+}
+
+// capReport formats the cap on agent runs for the settings report: "none", or
+// a count of agent runs wherever it came from.
+func capReport(n int, origin config.Origin) config.Value {
+	if n == 0 {
+		return config.Value{Value: "none", Origin: origin}
+	}
+	return config.Value{Value: strconv.Itoa(n) + " agent runs", Origin: origin}
+}
+
+// resolveAttempts resolves the attempts at each task: the flag, then the repo
+// file's, then smith's default. It returns the number and where it came from.
+func resolveAttempts(flag *int, file int) (int, config.Origin) {
+	switch {
+	case flag != nil:
+		return *flag, originMaxAttempts
+	case file > 0:
+		return file, config.FromRepoFile
+	default:
+		return DefaultLimits().MaxAttempts, config.FromDefault
 	}
 }

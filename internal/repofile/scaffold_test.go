@@ -277,3 +277,31 @@ func TestScaffoldStarterShowsACommentedStackBlockBesidePrepare(t *testing.T) {
 		}
 	}
 }
+
+func TestScaffoldStarterShowsACommentedAgentRunsCap(t *testing.T) {
+	t.Parallel()
+	repo := locate(t, t.TempDir())
+	scaffold(t, repo, repofile.Preset{})
+
+	data, err := os.ReadFile(repo.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# limits:\n#   agent_runs: 20\n"; !strings.Contains(string(data), want) {
+		t.Errorf("starter lacks %q:\n%s", want, data)
+	}
+}
+
+func TestScaffoldStarterShowsACommentedTaskAttempts(t *testing.T) {
+	t.Parallel()
+	repo := locate(t, t.TempDir())
+	scaffold(t, repo, repofile.Preset{})
+
+	data, err := os.ReadFile(repo.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "#   task_attempts: 2\n"; !strings.Contains(string(data), want) {
+		t.Errorf("starter lacks %q:\n%s", want, data)
+	}
+}

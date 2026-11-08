@@ -30,6 +30,8 @@ type File struct {
 	Push *bool `yaml:"push"`
 	// Labels name the triage labels the loop reads and writes on the tracker.
 	Labels Labels `yaml:"labels"`
+	// Limits bound the runs of the loop on this repo.
+	Limits Limits `yaml:"-"`
 	// Prepare is the command that prepares a worktree of the repo, run by
 	// sh -c in the worktree under its toolchain. Empty runs none.
 	Prepare string `yaml:"-"`
@@ -70,6 +72,8 @@ type document struct {
 	Prepare yaml.Node `yaml:"prepare"`
 	// Stack is the node written under stackKey.
 	Stack yaml.Node `yaml:"stack"`
+	// Limits is the node written under limitsKey.
+	Limits yaml.Node `yaml:"limits"`
 	// Agent, Model and Effort are the retired flat keys, taken as whatever
 	// was written so that their own check reports them.
 	Agent  yaml.Node `yaml:"agent"`
@@ -88,13 +92,20 @@ func Parse(data []byte) (File, error) {
 	if err := blueprint.DecodeStrict(data, subject, &doc); err != nil {
 		return File{}, fmt.Errorf("parse repo file: %w", err)
 	}
-	if err := validationError(slices.Concat(flatFindings(data), presetFindings(data), roleFindings(data, doc.Presets), labelFindings(data), prepareFindings(data), stackFindings(data))); err != nil {
+	if err := validationError(slices.Concat(flatFindings(data), presetFindings(data), roleFindings(data, doc.Presets), labelFindings(data), prepareFindings(data), stackFindings(data), limitsFindings(data))); err != nil {
 		return File{}, err
 	}
 	f := doc.File
 	f.Prepare = resolved(&doc.Prepare).Value
 	if doc.Stack.Kind != 0 {
 		f.Stack = stackOf(resolved(&doc.Stack))
+	}
+	if doc.Limits.Kind != 0 {
+		limits, err := limitsOf(resolved(&doc.Limits))
+		if err != nil {
+			return File{}, err
+		}
+		f.Limits = limits
 	}
 	return f, nil
 }

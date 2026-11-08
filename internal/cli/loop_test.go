@@ -179,7 +179,9 @@ const defaultSettings = "preset: default (built-in default)\n" +
 	"agent:  claude (built-in default)\n" +
 	"model:  the agent's own default (built-in default)\n" +
 	"effort: the agent's own default (built-in default)\n" +
-	"push:   on (built-in default)\n"
+	"push:   on (built-in default)\n" +
+	"cap:    none (built-in default)\n" +
+	"attempts: 2 (built-in default)\n"
 
 func runLoopList(t *testing.T, gh *fakeTracker, ref string) (stdout, stderr string, code int) {
 	t.Helper()
@@ -465,7 +467,7 @@ func TestLoopRunRetriesATaskLeftOpenThenStopsNamingItSkipped(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-attempts", "3")
 
-	want := defaultSettings + "spec #42 stopped: the agent left a task open on every attempt\n" +
+	want := strings.Replace(defaultSettings, "attempts: 2 (built-in default)", "attempts: 3 (--max-attempts)", 1) + "spec #42 stopped: the agent left a task open on every attempt\n" +
 		"  skipped after 3 attempts: #43\n" +
 		"  #43 left in /bench/43\n" + workBranch
 	if code == 0 || idle.runs != 3 || stdout != want {
@@ -498,7 +500,7 @@ func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
 
 	stdout, _, code := runLoopRun(t, loopWiring{gh: gh, launcher: idle, lookPath: onPath}, "42", "--max-iterations", "3")
 
-	want := defaultSettings + "spec #42 stopped: reached the cap of 3 agent runs\n" +
+	want := strings.Replace(defaultSettings, "cap:    none (built-in default)", "cap:    3 agent runs (--max-iterations)", 1) + "spec #42 stopped: reached the cap of 3 agent runs\n" +
 		"  available: #44\n" +
 		"  skipped after 2 attempts: #43\n" +
 		"  #43 left in /bench/43\n" + workBranch
@@ -507,12 +509,13 @@ func TestLoopRunStopsAtTheIterationCap(t *testing.T) {
 	}
 }
 
-func TestLoopRunRefusesLimitsBelowOne(t *testing.T) {
-	for _, flag := range []string{"--max-iterations", "--max-attempts"} {
+func TestLoopRunRefusesLimitsBelowTheirMinimum(t *testing.T) {
+	for _, tc := range []struct{ flag, value string }{{"--max-iterations", "-1"}, {"--max-attempts", "0"}} {
+		flag := tc.flag
 		t.Run(flag, func(t *testing.T) {
 			gh := &fakeTracker{issues: map[string]string{}}
 
-			_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", flag, "0")
+			_, stderr, code := runLoopRun(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", flag, tc.value)
 
 			if code == 0 || !strings.Contains(stderr, flag) || len(gh.ran) != 0 {
 				t.Errorf("exit %d, stderr %q, ran %v; want non-zero naming %s, gh never run", code, stderr, gh.ran, flag)

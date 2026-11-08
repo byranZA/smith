@@ -331,3 +331,97 @@ func TestParseLeavesTheStackEmptyWhenNoneIsDeclared(t *testing.T) {
 		t.Errorf("Stack = %+v, want none", got.Stack)
 	}
 }
+
+func TestParseReadsTheAgentRunsCap(t *testing.T) {
+	t.Parallel()
+	data := "limits:\n  agent_runs: 20\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	if got.Limits.AgentRuns != 20 {
+		t.Errorf("Limits.AgentRuns = %d, want 20", got.Limits.AgentRuns)
+	}
+}
+
+func TestParseTakesAnEmptyLimitsBlockAsNoCap(t *testing.T) {
+	t.Parallel()
+	for _, data := range []string{"limits:\n", "limits: {}\n", "push: true\n"} {
+		got, err := repofile.Parse([]byte(data))
+		if err != nil {
+			t.Fatalf("Parse(%q) error = %v", data, err)
+		}
+		if got.Limits.AgentRuns != 0 {
+			t.Errorf("Parse(%q) Limits.AgentRuns = %d, want 0", data, got.Limits.AgentRuns)
+		}
+	}
+}
+
+func TestParseRefusesAnInvalidLimitsBlockNamingItsKey(t *testing.T) {
+	t.Parallel()
+	const whole = "agent_runs must be a whole number of at least 1"
+	cases := map[string]struct {
+		data string
+		want blueprint.Finding
+	}{
+		"zero":          {"push: true\nlimits:\n  agent_runs: 0\n", blueprint.Finding{Line: 3, Path: "limits.agent_runs", Message: whole}},
+		"negative":      {"push: true\nlimits:\n  agent_runs: -3\n", blueprint.Finding{Line: 3, Path: "limits.agent_runs", Message: whole}},
+		"fraction":      {"push: true\nlimits:\n  agent_runs: 2.5\n", blueprint.Finding{Line: 3, Path: "limits.agent_runs", Message: whole}},
+		"text":          {"push: true\nlimits:\n  agent_runs: many\n", blueprint.Finding{Line: 3, Path: "limits.agent_runs", Message: whole}},
+		"empty":         {"push: true\nlimits:\n  agent_runs:\n", blueprint.Finding{Line: 3, Path: "limits.agent_runs", Message: whole}},
+		"unknown key":   {"push: true\nlimits:\n  agent_run: 3\n", blueprint.Finding{Line: 3, Path: "limits", Message: `unknown field "agent_run"`}},
+		"not a mapping": {"push: true\nlimits: 3\n", blueprint.Finding{Line: 2, Path: "limits", Message: "limits is a mapping, such as agent_runs: 20"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := repofile.Parse([]byte(tc.data))
+
+			var verr *blueprint.ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", tc.data, err)
+			}
+			if want := []blueprint.Finding{tc.want}; !reflect.DeepEqual(verr.Findings, want) {
+				t.Errorf("Parse(%q) findings = %+v, want %+v", tc.data, verr.Findings, want)
+			}
+		})
+	}
+}
+
+func TestParseReadsTheTaskAttempts(t *testing.T) {
+	t.Parallel()
+	data := "limits:\n  task_attempts: 4\n"
+
+	got, err := repofile.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", data, err)
+	}
+
+	if got.Limits.TaskAttempts != 4 {
+		t.Errorf("Limits.TaskAttempts = %d, want 4", got.Limits.TaskAttempts)
+	}
+}
+
+func TestParseRefusesInvalidTaskAttemptsNamingTheKey(t *testing.T) {
+	t.Parallel()
+	const whole = "task_attempts must be a whole number of at least 1"
+	for name, value := range map[string]string{"zero": "0", "negative": "-1", "fraction": "1.5", "text": "twice", "empty": ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			data := "push: true\nlimits:\n  task_attempts: " + value + "\n"
+
+			_, err := repofile.Parse([]byte(data))
+
+			var verr *blueprint.ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Parse(%q) error = %v, want a *blueprint.ValidationError", data, err)
+			}
+			if want := []blueprint.Finding{{Line: 3, Path: "limits.task_attempts", Message: whole}}; !reflect.DeepEqual(verr.Findings, want) {
+				t.Errorf("Parse(%q) findings = %+v, want %+v", data, verr.Findings, want)
+			}
+		})
+	}
+}

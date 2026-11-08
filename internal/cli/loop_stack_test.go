@@ -93,7 +93,7 @@ func TestLoopListOnABoxShowsTheStackOnFromTheRepoFile(t *testing.T) {
 
 	stdout, stderr, code := runLoopListIn(t, w, "42")
 
-	if want := "push:   on (built-in default)\nstack:  on (repo file)\n"; code != 0 || !strings.Contains(stdout, want) {
+	if want := "push:   on (built-in default)\ncap:    none (built-in default)\nattempts: 2 (built-in default)\nstack:  on (repo file)\n"; code != 0 || !strings.Contains(stdout, want) {
 		t.Errorf("exit %d, stderr %q, stdout =\n%s\nwant 0 holding %q", code, stderr, stdout, want)
 	}
 }
