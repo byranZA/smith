@@ -376,8 +376,6 @@ unreachable included, is an answer and prints one, see "smith help json".
 			}
 			w := cmd.OutOrStdout()
 			if *asJSON {
-				// An unregistered bare name that did not answer is no box smith
-				// knows, so it has no document: the prose says why, on stderr.
 				w = cmd.ErrOrStderr()
 			}
 			if _, err := fmt.Fprint(w, out); err != nil {
