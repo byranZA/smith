@@ -4,6 +4,8 @@ This guide is for an agent that drives smith: one that plans work and runs smith
 
 Each verb's `--help` has its examples and the exit codes it returns. `smith help exit-codes` lists every code.
 
+The read verbs take `--json` and print one JSON document on stdout instead of prose, for a program to parse. `smith help json` documents each document's shape and the change policy.
+
 ## Mental model
 
 The operator brings a **box**, a fresh Ubuntu VPS. `smith machine setup` provisions it: a `smith` user, a firewall, hardened SSH, and smith itself installed on the box. From then on the operator names the box and runs smith verbs against it from their own machine. Verbs that work on a box relay to the box's own smith over SSH.

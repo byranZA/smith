@@ -140,8 +140,8 @@ func TestResolveReplacesThePreferenceProviderWholesale(t *testing.T) {
 			}
 		})
 	}
-	if got.Origin != config.FromBlueprintReplacing {
-		t.Errorf("resolved provider origin = %q, want %q", got.Origin, config.FromBlueprintReplacing)
+	if got.Origin != config.FromBlueprint || !got.Replaces {
+		t.Errorf("resolved provider = origin %q, replaces %v, want blueprint, true", got.Origin, got.Replaces)
 	}
 }
 

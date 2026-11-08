@@ -43,6 +43,11 @@ func (t Total) Known() bool {
 	return t.kiB > 0
 }
 
+// KiB returns the memory in kibibytes and whether it could be read.
+func (t Total) KiB() (uint64, bool) {
+	return t.kiB, t.Known()
+}
+
 // String renders the memory as operators read it: whole MB under 1 GB, GB to
 // one decimal place above, and "unknown" when it could not be read.
 func (t Total) String() string {
@@ -84,6 +89,12 @@ func ParseSwap(v string) Swap {
 		return Swap{}
 	}
 	return SwapFromKiB(kiB)
+}
+
+// KiB returns the swap in kibibytes and whether it could be read; a box
+// without swap is known, at zero.
+func (s Swap) KiB() (uint64, bool) {
+	return s.kiB, s.known
 }
 
 // String renders the swap as Total renders memory, with "none" for a box without

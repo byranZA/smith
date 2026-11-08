@@ -60,6 +60,8 @@ type Task struct {
 	Open     bool
 	For      Audience
 	Blockers []Blocker
+	// Labels names each label the task carries, in label order.
+	Labels []string
 	// Working reports whether the task is marked as worked by an agent. It is
 	// a signal for people, never a reason to choose a task or pass one over.
 	Working bool

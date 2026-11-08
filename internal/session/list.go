@@ -97,6 +97,7 @@ func List(ctx context.Context, env Env, filter Filter) ([]Session, error) {
 			Name:     name,
 			Repo:     p.repo.Name,
 			Branch:   p.wt.branch,
+			Worktree: p.wt.path,
 			Live:     live,
 			Dirty:    dirty.any(),
 			Unpushed: unpushed,

@@ -322,6 +322,7 @@ func (w sessionWiring) splitBox(args []string, v sessionVerb) (string, []string,
 func newSessionListCmd(w sessionWiring) *cobra.Command {
 	var repo string
 	var live, stopped, names bool
+	var asJSON *bool
 	cmd := &cobra.Command{
 		Use:         "list [<box>]",
 		Annotations: verbTraits(true, false, false),
@@ -346,6 +347,9 @@ not pushed. --names prints one bare session name per line, for composing a
 				if err != nil {
 					return reportInvalid(cmd, err)
 				}
+				if *asJSON {
+					return writeDocument(cmd.OutOrStdout(), newSessionListDocument(sessions))
+				}
 				listing := session.Readout(sessions, env.Hint)
 				if names {
 					listing = session.Names(sessions)
@@ -361,6 +365,7 @@ not pushed. --names prints one bare session name per line, for composing a
 	cmd.Flags().BoolVar(&live, "live", false, "list only the sessions that are running")
 	cmd.Flags().BoolVar(&stopped, "stopped", false, "list only the sessions that are not running")
 	cmd.Flags().BoolVar(&names, "names", false, "print one bare session name per line, with no table and no summary")
+	asJSON = addJSONFlag(cmd)
 	return cmd
 }
 

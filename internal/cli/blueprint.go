@@ -45,6 +45,7 @@ func newBlueprintCmd(resolve homeResolver) *cobra.Command {
 // missing one.
 func newCheckCmd(resolve homeResolver) *cobra.Command {
 	var accessMode string
+	var asJSON *bool
 	cmd := &cobra.Command{
 		Use:         "check [<name-or-path>]",
 		Annotations: verbTraits(false, false, false),
@@ -71,60 +72,55 @@ no box. A valid blueprint exits 0 whether or not its references resolve.
 					return reportInvalid(cmd, fmt.Errorf("--access %w", err))
 				}
 			}
-			// Preferences are part of what smith would use on every run, so
-			// they are validated whether or not a blueprint was named.
-			prefs, err := checkPreferences(cmd, home, len(args) == 0)
-			if err != nil {
-				return err
-			}
-			overrides := config.Overrides{Access: accessMode}
-			if len(args) == 0 {
-				return writeResolved(cmd, config.Resolve(overrides, nil, &prefs))
-			}
-			name := args[0]
-			doc, err := config.LoadDocument(home, name)
+			result, err := checkBlueprint(home, args, accessMode)
 			if err != nil {
 				return reportInvalid(cmd, err)
 			}
-			// The resolved picture is what setup would act on, and a
-			// preference-declared field can disagree with a blueprint one, so
-			// it is checked before anything is reported as valid.
-			resolved := config.Resolve(overrides, &doc.Blueprint, &prefs)
-			if err := resolved.Conflicts(); err != nil {
-				return reportInvalid(cmd, err)
+			if *asJSON {
+				return printCheck(cmd, newCheckDocument(result))
 			}
-			if err := writeValid(cmd, name, doc, resolutionToStage(resolved)); err != nil {
-				return err
-			}
-			return writeResolved(cmd, resolved)
+			return writeCheck(cmd, result)
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "", "override how the box is reached: public or tailscale")
+	asJSON = addJSONFlag(cmd)
 	return cmd
 }
 
 // writeValid reports a valid blueprint and whether `machine setup` would
 // resolve everything it declares, listing what it would not by scope and reason
 // but never by value.
-func writeValid(cmd *cobra.Command, name string, doc config.Document, resolution staging.Resolution) error {
-	report := fmt.Sprintf("blueprint %q is valid (%s)", name, doc.Path)
-	var unresolved *staging.UnresolvedError
-	_, err := resolveBlueprint(doc, resolution)
-	switch {
-	case errors.As(err, &unresolved):
-		references, literals := splitLiterals(unresolved)
+func writeValid(cmd *cobra.Command, r checkResult) error {
+	report := fmt.Sprintf("blueprint %q is valid (%s)", r.Name, r.Doc.Path)
+	references, literals := r.References, r.Literals
+	if references.Count()+literals.Count() > 0 {
 		report += ", but `smith machine setup` from here would refuse it:\n" +
 			section(references, "reference(s) will not resolve on this machine") +
 			section(literals, "literal value(s) declare nothing")
-	case err != nil:
-		return err
-	default:
+	} else {
 		report += "\nevery reference it declares resolves on this machine\n"
 	}
 	if _, err := fmt.Fprint(cmd.OutOrStdout(), report); err != nil {
 		return fmt.Errorf("write report: %w", err)
 	}
 	return nil
+}
+
+// checkReferences resolves what the blueprint declares on this machine and
+// returns what would not, split into references and empty literals. It is the
+// one answer both the prose and the JSON renderers present.
+func checkReferences(doc config.Document, resolution staging.Resolution) (references, literals *staging.UnresolvedError, err error) {
+	var unresolved *staging.UnresolvedError
+	_, err = resolveBlueprint(doc, resolution)
+	switch {
+	case errors.As(err, &unresolved):
+		references, literals = splitLiterals(unresolved)
+		return references, literals, nil
+	case err != nil:
+		return nil, nil, err
+	}
+	empty := &staging.UnresolvedError{}
+	return empty, empty, nil
 }
 
 // splitLiterals separates the env values unresolved names that declare an
@@ -160,32 +156,89 @@ func writeResolved(cmd *cobra.Command, resolved config.Resolved) error {
 	return nil
 }
 
-// checkPreferences validates the operator's preferences and hands them back
-// for the precedence chain, reporting on them when report is set — which is
-// when no blueprint was named and they are the whole subject of the check.
-// Under a named blueprint they are validated silently, so a valid preferences
-// file does not narrate itself in front of the blueprint the operator asked
-// about.
-//
-// Preferences and the config home holding them are both optional, so an absent
-// file is reported and the command succeeds: smith falls through to its
-// built-in defaults. Nothing is created.
-func checkPreferences(cmd *cobra.Command, home config.Home, report bool) (blueprint.Preferences, error) {
+// checkResult is everything one check of preferences and an optional blueprint
+// found. Both renderers present it; neither loads or validates anything itself.
+type checkResult struct {
+	Prefs      config.Preferences
+	Name       string
+	Doc        config.Document
+	HasDoc     bool
+	Resolved   *config.Resolved
+	References *staging.UnresolvedError
+	Literals   *staging.UnresolvedError
+	// Findings is the validation failure that stopped the check, if any.
+	Findings error
+}
+
+// checkBlueprint loads preferences and the named blueprint, resolves them and
+// checks the result for conflicts and unresolved references. A file that
+// fails validation is a Findings on the result; a file that cannot be read at
+// all is the returned error.
+func checkBlueprint(home config.Home, args []string, accessMode string) (checkResult, error) {
+	var r checkResult
 	prefs, err := config.LoadPreferences(home)
+	r.Prefs = prefs
 	if err != nil {
-		return blueprint.Preferences{}, reportInvalid(cmd, err)
+		if _, ok := problemsOf(err); ok {
+			// A file that fails validation was there to be read.
+			r.Prefs.Found = true
+			r.Findings = err
+			return r, nil
+		}
+		return r, err //nolint:wrapcheck // reportInvalid prints the cause verbatim.
 	}
-	if !report {
-		return prefs.Declared, nil
+	overrides := config.Overrides{Access: accessMode}
+	if len(args) == 0 {
+		resolved := config.Resolve(overrides, nil, &prefs.Declared)
+		r.Resolved = &resolved
+		return r, nil
 	}
-	line := fmt.Sprintf("preferences file %s is valid\n", prefs.Path)
-	if !prefs.Found {
-		line = fmt.Sprintf("no preferences file at %s; using smith's built-in defaults\n", prefs.Path)
+	r.Name = args[0]
+	r.HasDoc = true
+	doc, err := config.LoadDocument(home, r.Name)
+	r.Doc = doc
+	if err != nil {
+		if _, ok := problemsOf(err); ok {
+			r.Findings = err
+			return r, nil
+		}
+		return r, err //nolint:wrapcheck // reportInvalid prints the cause verbatim.
 	}
-	if _, err := fmt.Fprint(cmd.OutOrStdout(), line); err != nil {
-		return blueprint.Preferences{}, fmt.Errorf("write report: %w", err)
+	// The resolved picture is what setup would act on, and a
+	// preference-declared field can disagree with a blueprint one, so
+	// it is checked before anything is reported as valid.
+	resolved := config.Resolve(overrides, &doc.Blueprint, &prefs.Declared)
+	if err := resolved.Conflicts(); err != nil {
+		r.Findings = err
+		return r, nil
 	}
-	return prefs.Declared, nil
+	r.References, r.Literals, err = checkReferences(doc, resolutionToStage(resolved))
+	if err != nil {
+		return r, err
+	}
+	r.Resolved = &resolved
+	return r, nil
+}
+
+// writeCheck prints r as prose. Preferences are part of what smith would use on
+// every run, so they are validated whether or not a blueprint was named, but
+// only reported when none was.
+func writeCheck(cmd *cobra.Command, r checkResult) error {
+	if r.Findings != nil {
+		return reportInvalid(cmd, r.Findings)
+	}
+	if !r.HasDoc {
+		line := fmt.Sprintf("preferences file %s is valid\n", r.Prefs.Path)
+		if !r.Prefs.Found {
+			line = fmt.Sprintf("no preferences file at %s; using smith's built-in defaults\n", r.Prefs.Path)
+		}
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), line); err != nil {
+			return fmt.Errorf("write report: %w", err)
+		}
+	} else if err := writeValid(cmd, r); err != nil {
+		return err
+	}
+	return writeResolved(cmd, *r.Resolved)
 }
 
 // reportInvalid writes a refusal to stderr and carries the invalid-blueprint

@@ -17,34 +17,40 @@ const (
 	defaultWorkspace = "~/workspace"
 )
 
-// Origin is where a resolved value came from. It is returned data rather than
-// something printed on the way past, so precedence is a fact a caller can
-// assert on and the command surface stays a formatter.
+// Origin is where a resolved value came from. It is the stable token a
+// program branches on; String gives the wording an operator reads.
 type Origin string
 
-// The origins a resolved value can have, most specific first. They are worded
-// as the operator would say them, because they are what the resolved
-// configuration reports.
+// The origins a resolved value can have, most specific first. Each constant is
+// the token, kept apart from its operator wording.
 const (
 	// FromFlag is a value the operator named on the command line.
 	FromFlag Origin = "flag"
 	// FromBlueprint is a value the blueprint declared.
 	FromBlueprint Origin = "blueprint"
-	// FromBlueprintReplacing is a blueprint's provider block standing in place
-	// of the one the preferences declared. It is worded apart from
-	// FromBlueprint because an operator reading it needs to see that their
-	// preference adapter is not in play at all, rather than assume the two
-	// were merged.
-	FromBlueprintReplacing Origin = "blueprint, replacing the preference"
 	// FromTaskLabel is a value a label on the task's issue chose.
-	FromTaskLabel Origin = "task label"
+	FromTaskLabel Origin = "task_label"
 	// FromRepoFile is a value the repo file declared.
-	FromRepoFile Origin = "repo file"
+	FromRepoFile Origin = "repo_file"
 	// FromPreferences is a value the operator's preferences declared.
 	FromPreferences Origin = "preferences"
 	// FromDefault is a value nobody declared, filled in by smith.
-	FromDefault Origin = "built-in default"
+	FromDefault Origin = "default"
 )
+
+// String is the origin as the operator would say it.
+func (o Origin) String() string {
+	switch o {
+	case FromTaskLabel:
+		return "task label"
+	case FromRepoFile:
+		return "repo file"
+	case FromDefault:
+		return "built-in default"
+	default:
+		return string(o)
+	}
+}
 
 // Overrides are the values the operator named on the command line, which
 // outrank every declared one. An unset field is not an override.
@@ -74,6 +80,10 @@ type Adapter struct {
 	Provider *blueprint.Provider
 	// Origin is where the adapter came from.
 	Origin Origin
+	// Replaces reports that a blueprint's block stands in place of one the
+	// preferences declared, so the preference adapter is not in play at all
+	// rather than merged with it.
+	Replaces bool
 }
 
 // String renders the resolved adapter as the command its templates run
@@ -83,17 +93,21 @@ func (a Adapter) String() string {
 	if a.Provider == nil {
 		return "none declared"
 	}
-	return fmt.Sprintf("%s (%s)", adapterCommand(a.Provider), a.Origin)
+	origin := a.Origin.String()
+	if a.Replaces {
+		origin += ", replacing the preference"
+	}
+	return fmt.Sprintf("%s (%s)", a.Command(), origin)
 }
 
-// adapterCommand is the provider CLI an adapter drives, read off the create
+// Command is the provider CLI the adapter drives, read off the create
 // template. An adapter with no create template is named by nothing, so it is
 // reported as declared and left at that.
-func adapterCommand(p *blueprint.Provider) string {
-	if len(p.Create) == 0 {
+func (a Adapter) Command() string {
+	if a.Provider == nil || len(a.Provider.Create) == 0 {
 		return "declared"
 	}
-	return p.Create[0]
+	return a.Provider.Create[0]
 }
 
 // Identity is the resolved git identity the box commits as, resolved field by
@@ -309,7 +323,7 @@ func Resolve(o Overrides, b *blueprint.Blueprint, p *blueprint.Preferences) Reso
 func resolveProvider(declared, preferred *blueprint.Provider) Adapter {
 	switch {
 	case declared != nil && preferred != nil:
-		return Adapter{Provider: declared, Origin: FromBlueprintReplacing}
+		return Adapter{Provider: declared, Origin: FromBlueprint, Replaces: true}
 	case declared != nil:
 		return Adapter{Provider: declared, Origin: FromBlueprint}
 	case preferred != nil:

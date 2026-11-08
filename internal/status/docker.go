@@ -11,6 +11,9 @@ type DockerPorts struct {
 	// Exposed are the container bindings on a non-loopback address, each as
 	// "container binding".
 	Exposed []string
+	// Loopback are the container bindings published on loopback only, in the
+	// same form. They are noted in the JSON document, never warned of.
+	Loopback []string
 	// Unreadable reports that Docker is present but its bindings could not be
 	// read, so nothing can be said of them.
 	Unreadable bool
@@ -25,8 +28,12 @@ func (d *DockerPorts) readDocker(key, value string) {
 	case "docker-container":
 		name, ports, _ := strings.Cut(value, " ")
 		for _, binding := range strings.Split(ports, ", ") {
-			if exposed(binding) {
+			switch {
+			case !strings.Contains(binding, "->"):
+			case exposed(binding):
 				d.Exposed = append(d.Exposed, name+" "+binding)
+			default:
+				d.Loopback = append(d.Loopback, name+" "+binding)
 			}
 		}
 	}
