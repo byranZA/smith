@@ -45,6 +45,7 @@ func newBlueprintCmd(resolve homeResolver) *cobra.Command {
 // missing one.
 func newCheckCmd(resolve homeResolver) *cobra.Command {
 	var accessMode string
+	var asJSON *bool
 	cmd := &cobra.Command{
 		Use:         "check [<name-or-path>]",
 		Annotations: verbTraits(false, false, false),
@@ -70,6 +71,9 @@ no box. A valid blueprint exits 0 whether or not its references resolve.
 				if err := blueprint.ValidateAccess(accessMode); err != nil {
 					return reportInvalid(cmd, fmt.Errorf("--access %w", err))
 				}
+			}
+			if *asJSON {
+				return runCheckJSON(cmd, home, args, accessMode)
 			}
 			// Preferences are part of what smith would use on every run, so
 			// they are validated whether or not a blueprint was named.
@@ -100,6 +104,7 @@ no box. A valid blueprint exits 0 whether or not its references resolve.
 		},
 	}
 	cmd.Flags().StringVar(&accessMode, "access", "", "override how the box is reached: public or tailscale")
+	asJSON = addJSONFlag(cmd)
 	return cmd
 }
 

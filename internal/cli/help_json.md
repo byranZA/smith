@@ -71,3 +71,18 @@ The documents:
     state         available, blocked, human, unready or closed
     blocked_by    the numbers of its open blockers, [] when none
   Label warnings go to stderr. An issue that cannot be read prints nothing on stdout.
+
+`smith blueprint check`
+  schema_version  1
+  preferences     the preferences file: path, and found (false when there is none)
+  blueprint       the blueprint, present only when one was named: name as given, and path
+  resolved        the configuration setup would use; absent when there are problems. Each of
+                  access, terminal, workspace is {value, origin}. Also present when declared:
+    provider      {value, origin}, value being the provider command; replaces_preference: true
+                  when a blueprint's block replaces the preferences' whole block
+    git           user_name and user_email, each {value, origin}
+    repos, packages, groups, tools, env   as the blueprint declares them
+  problems        [] when the files are valid; each has message, and line and path when known
+  origin is one of flag, blueprint, task_label, repo_file, preferences, default.
+  Problems print in the document and the exit code stays 1. A blueprint that cannot be found
+  prints nothing on stdout.
