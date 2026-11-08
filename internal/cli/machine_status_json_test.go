@@ -43,6 +43,7 @@ func probeOutputWithMarker(markerJSON, access string) string {
 }
 
 func TestMachineStatusJSONPrintsOneDocumentPerVerdict(t *testing.T) {
+	t.Parallel()
 	allPhases := `["` + strings.Join(bootstrap.Phases, `","`) + `"]`
 	tests := []struct {
 		name     string
@@ -109,6 +110,7 @@ func runStatus(t *testing.T, dir string, exec connection.Exec, args ...string) (
 }
 
 func TestMachineStatusJSONOfAnUnregisteredNameThatDoesNotAnswerPrintsNoDocument(t *testing.T) {
+	t.Parallel()
 	stdout, stderr, code := runStatus(t, t.TempDir(), unconnectableSSH{}, "ghost", "--json")
 
 	if stdout != "" {

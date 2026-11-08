@@ -7,6 +7,7 @@ import (
 )
 
 func TestBlueprintCheckJSONOfANamedBlueprintPrintsEachValueWithItsOriginToken(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writePreferences(t, dir, "workspace: ~/dev\n")
 	writeBlueprint(t, dir, "acme", "terminal: tmux\npackages: [jq]\n")
@@ -26,6 +27,7 @@ func TestBlueprintCheckJSONOfANamedBlueprintPrintsEachValueWithItsOriginToken(t 
 }
 
 func TestBlueprintCheckJSONMarksAProviderThatReplacesThePreference(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writePreferences(t, dir, hetznerPreferences)
 	writeBlueprint(t, dir, "acme", "provider:\n  create: [doctl, compute, droplet, create]\n")
@@ -39,6 +41,7 @@ func TestBlueprintCheckJSONMarksAProviderThatReplacesThePreference(t *testing.T)
 }
 
 func TestBlueprintCheckJSONWithNoBlueprintReportsThePreferencesAlone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	stdout, stderr, code := runCheck(t, dir, "check", "--json")
@@ -55,6 +58,7 @@ func TestBlueprintCheckJSONWithNoBlueprintReportsThePreferencesAlone(t *testing.
 }
 
 func TestBlueprintCheckJSONPrintsProblemsAndExitsOne(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "access: tailscale\nterminals: tmux\n")
 
@@ -69,6 +73,7 @@ func TestBlueprintCheckJSONPrintsProblemsAndExitsOne(t *testing.T) {
 }
 
 func TestBlueprintCheckJSONOfAMissingBlueprintPrintsNoDocument(t *testing.T) {
+	t.Parallel()
 	stdout, stderr, code := runCheck(t, t.TempDir(), "check", "ghost", "--json")
 
 	if code != 1 || stdout != "" || !strings.Contains(stderr, "ghost") {
@@ -77,6 +82,7 @@ func TestBlueprintCheckJSONOfAMissingBlueprintPrintsNoDocument(t *testing.T) {
 }
 
 func TestBlueprintCheckJSONPrintsPlacementsAndEachRepoWholeConfiguration(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", `placements:
   - from: "file:secrets/env"
@@ -132,6 +138,7 @@ func TestBlueprintCheckJSONReportsUnresolvedReferencesAndEmptyLiteralsApart(t *t
 }
 
 func TestBlueprintCheckJSONReportsResolvingReferences(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeBlueprint(t, dir, "acme", "terminal: tmux\n")
 

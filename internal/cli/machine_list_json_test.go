@@ -7,6 +7,7 @@ import (
 )
 
 func TestMachineListJSONPrintsTheBoxesInNameOrder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeInventory(t, dir, twoBoxInventory)
 
@@ -22,6 +23,7 @@ func TestMachineListJSONPrintsTheBoxesInNameOrder(t *testing.T) {
 }
 
 func TestMachineListJSONOfAnEmptyInventoryIsAnEmptyList(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "absent")
 
 	stdout, stderr, code := runList(t, dir, "--json")
@@ -35,6 +37,7 @@ func TestMachineListJSONOfAnEmptyInventoryIsAnEmptyList(t *testing.T) {
 }
 
 func TestMachineListJSONProbeReportsReach(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeInventory(t, dir, twoBoxInventory)
 	ssh := &probingSSH{unreachable: map[string]bool{"smith@203.0.113.42": true}}
@@ -51,6 +54,7 @@ func TestMachineListJSONProbeReportsReach(t *testing.T) {
 }
 
 func TestMachineListJSONKeepsANewerSmithNoteOffStdout(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeInventory(t, dir, `{"schema_version":99,"boxes":{"dev":{"target":"smith@100.92.14.7"}}}`)
 
@@ -68,6 +72,7 @@ func TestMachineListJSONKeepsANewerSmithNoteOffStdout(t *testing.T) {
 }
 
 func TestMachineListJSONPrintsNothingForAnUnreadableInventory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeInventory(t, dir, "{not json")
 
