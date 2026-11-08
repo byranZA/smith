@@ -516,7 +516,7 @@ What `smith help agents` prints: how a coding agent that plans work drives smith
 _Avoid_: skill, docs, manual.
 
 **JSON document**:
-The one object a read verb prints on stdout under `--json`: the same answer its prose gives, for a program rather than a person. It is the contract, and the prose is free to change. A verb whose answer is bad news, such as a drifted box or a blueprint with problems, still prints its document; a verb that could not produce an answer prints none and says why on stderr, and the exit code is the same either way. Before v1 a document may gain fields at any time, while renaming or removing one is a breaking change the release notes announce.
+The one object a read verb prints on stdout under `--json`: the same answer its prose gives, for a program rather than a person. It is the contract, and the prose is free to change. A verb whose answer is bad news, such as a drifted box or a blueprint with problems, still prints its document; a verb that could not produce an answer prints none and says why on stderr, and the exit code is the same either way. Before v1 a document may gain fields at any time, while renaming or removing one, or changing the fixed set of tokens one holds, is a breaking change the release notes announce.
 _Avoid_: JSON output, API, wire format (the relay's own protocol).
 
 **Repo guide**:

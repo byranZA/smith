@@ -107,7 +107,7 @@ func TestHelpJSONStatesTheChangePolicy(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("help json: %v", err)
 	}
-	for _, want := range []string{"schema_version", "may gain fields", "breaking"} {
+	for _, want := range []string{"schema_version", "may gain fields", "breaking", "a new token"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("smith help json lacks %q", want)
 		}

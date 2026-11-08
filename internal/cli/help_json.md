@@ -7,7 +7,7 @@ Rules for every document:
 - Keys are snake_case. Timestamps are RFC 3339 UTC. An absent optional value is left out.
 - Every document has an integer `schema_version`, starting at 1 and versioned per document.
 
-Change policy, before v1: a document may gain fields at any time, so ignore keys you do not know. Renaming or removing a field is a breaking change: it bumps `schema_version` and the release notes announce it.
+Change policy, before v1: a document may gain fields at any time, so ignore keys you do not know. Renaming or removing a field is a breaking change. So is a new token in a field that holds a fixed set of them, such as a verdict or a task state, and so is renaming or removing one. A breaking change bumps `schema_version` and the release notes announce it.
 
 The documents:
 
