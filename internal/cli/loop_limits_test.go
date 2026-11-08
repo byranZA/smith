@@ -53,14 +53,24 @@ func threeTaskSpec() *fakeTracker {
 	}}
 }
 
-func TestLoopRunStopsAtTheRepoFileCapAndShowsItsOrigin(t *testing.T) {
+func TestLoopRunStopsAtTheRepoFileCap(t *testing.T) {
 	idle := &idleAgent{}
 	w, _ := repoWith(t, threeTaskSpec(), idle, "limits:\n  agent_runs: 2\n")
 
 	stdout, _, code := runLoopRun(t, w, "42")
 
-	if code == 0 || idle.runs != 2 || !strings.Contains(stdout, "cap:    2 (repo file)\n") || !strings.Contains(stdout, "reached the cap of 2 agent runs") {
-		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 2 runs, cap 2 (repo file)", code, idle.runs, stdout)
+	if code == 0 || idle.runs != 2 || !strings.Contains(stdout, "reached the cap of 2 agent runs") {
+		t.Errorf("exit %d after %d agent runs, stdout =\n%s\nwant non-zero after 2 runs", code, idle.runs, stdout)
+	}
+}
+
+func TestLoopRunShowsTheRepoFileAsTheCapOrigin(t *testing.T) {
+	w, _ := repoWith(t, threeTaskSpec(), &idleAgent{}, "limits:\n  agent_runs: 2\n")
+
+	stdout, _, _ := runLoopRun(t, w, "42")
+
+	if !strings.Contains(stdout, "cap:    2 (repo file)\n") {
+		t.Errorf("stdout =\n%s\nwant the cap line 2 (repo file)", stdout)
 	}
 }
 
