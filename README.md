@@ -186,7 +186,7 @@ smith session attach dev app-smith-42-login-flow    # watch, read-only
 smith session list dev                              # each session's state and outcome
 ```
 
-If you plan the work from inside a coding agent, point it at `smith help agents`: a guide built into the binary, with the mental model, the verb map, the exit codes and recipes that match the smith you have installed.
+If you plan the work from inside a coding agent, point it at `smith help agents`: a guide built into the binary, with the mental model, the verb map, the exit codes and recipes that match the smith you have installed. The read verbs take `--json` and print one JSON document for a program to parse: `smith help json` documents each one.
 
 On a new repo or prompt, try one task with you watching first: `smith loop run --interactive 42` in a checkout, on your machine or in a session on the box.
 
