@@ -261,13 +261,7 @@ A commented config file `smith init` writes into an empty config home — a star
 _Avoid_: template (reserved for an adapter's command lines), skeleton, default config.
 
 **Resolved configuration**:
-What smith would actually use for one box, every field carrying the **origin** it came from —
-flag, blueprint, preferences, or built-in default. Precedence is field-level and most-specific
-wins (**CLI flag > blueprint field > home preference > built-in default**), with one exception:
-the `provider` block **replaces wholesale**, because half of one adapter beside half of another
-is never wanted and the mismatch would surface only at box creation. Origins are returned data,
-not printed side effects, which is why `blueprint check` is a formatter over them. An origin has a
-stable name a program can read, apart from the wording an operator is shown.
+What smith would actually use for one box, every field carrying the **origin** it came from — flag, blueprint, preferences, or built-in default. Precedence is field-level and most-specific wins (**CLI flag > blueprint field > home preference > built-in default**), with one exception: the `provider` block **replaces wholesale**, because half of one adapter beside half of another is never wanted and the mismatch would surface only at box creation. Origins are returned data, not printed side effects, which is why `blueprint check` is a formatter over them. An origin has a stable name a program can read, apart from the wording an operator is shown.
 _Avoid_: merged config, effective settings, final config.
 
 **Credential-agnostic**:
