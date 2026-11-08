@@ -52,35 +52,57 @@ type checkGit struct {
 
 // checkRepo is one repo the box carries.
 type checkRepo struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-	Base string `json:"base,omitempty"`
+	Name       string            `json:"name"`
+	URL        string            `json:"url"`
+	Base       string            `json:"base,omitempty"`
+	Tools      map[string]string `json:"tools,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	Placements []checkPlacement  `json:"placements,omitempty"`
+}
+
+// checkPlacement is one file put on the box, from its source to its destination.
+type checkPlacement struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Mode  string `json:"mode,omitempty"`
+	Perms string `json:"perms,omitempty"`
+}
+
+// newCheckPlacements shapes placements as the document's entries.
+func newCheckPlacements(placements []blueprint.Placement) []checkPlacement {
+	var out []checkPlacement
+	for _, p := range placements {
+		out = append(out, checkPlacement{From: p.From, To: p.To, Mode: p.Mode, Perms: p.Perms})
+	}
+	return out
 }
 
 // checkResolved is the configuration smith would use.
 type checkResolved struct {
-	Access    checkValue        `json:"access"`
-	Terminal  checkValue        `json:"terminal"`
-	Workspace checkValue        `json:"workspace"`
-	Provider  *checkProvider    `json:"provider,omitempty"`
-	Git       *checkGit         `json:"git,omitempty"`
-	Repos     []checkRepo       `json:"repos,omitempty"`
-	Packages  []string          `json:"packages,omitempty"`
-	Groups    []string          `json:"groups,omitempty"`
-	Tools     map[string]string `json:"tools,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
+	Access     checkValue        `json:"access"`
+	Terminal   checkValue        `json:"terminal"`
+	Workspace  checkValue        `json:"workspace"`
+	Provider   *checkProvider    `json:"provider,omitempty"`
+	Git        *checkGit         `json:"git,omitempty"`
+	Repos      []checkRepo       `json:"repos,omitempty"`
+	Packages   []string          `json:"packages,omitempty"`
+	Groups     []string          `json:"groups,omitempty"`
+	Tools      map[string]string `json:"tools,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	Placements []checkPlacement  `json:"placements,omitempty"`
 }
 
 // newCheckResolved shapes the resolved configuration as the document's values.
 func newCheckResolved(r config.Resolved) *checkResolved {
 	out := &checkResolved{
-		Access:    checkValue(r.Access),
-		Terminal:  checkValue(r.Terminal),
-		Workspace: checkValue(r.Workspace),
-		Packages:  r.Packages,
-		Groups:    r.Groups,
-		Tools:     r.Tools,
-		Env:       r.Env,
+		Access:     checkValue(r.Access),
+		Terminal:   checkValue(r.Terminal),
+		Workspace:  checkValue(r.Workspace),
+		Packages:   r.Packages,
+		Groups:     r.Groups,
+		Tools:      r.Tools,
+		Env:        r.Env,
+		Placements: newCheckPlacements(r.Placements),
 	}
 	if r.Provider.Provider != nil {
 		out.Provider = &checkProvider{
@@ -92,7 +114,10 @@ func newCheckResolved(r config.Resolved) *checkResolved {
 		out.Git = &checkGit{UserName: half, UserEmail: declaredValue(r.Git.UserEmail)}
 	}
 	for _, repo := range r.Repos {
-		out.Repos = append(out.Repos, checkRepo{Name: repo.Name, URL: repo.URL, Base: repo.Base})
+		out.Repos = append(out.Repos, checkRepo{
+			Name: repo.Name, URL: repo.URL, Base: repo.Base,
+			Tools: repo.Tools, Env: repo.Env, Placements: newCheckPlacements(repo.Placements),
+		})
 	}
 	return out
 }

@@ -81,7 +81,9 @@ The documents:
     provider      {value, origin}, value being the provider command; replaces_preference: true
                   when a blueprint's block replaces the preferences' whole block
     git           user_name and user_email, each {value, origin}
-    repos, packages, groups, tools, env   as the blueprint declares them
+    repos         each repo has name, url, and when declared base, tools, env and placements
+    packages, groups, tools, env, placements   as the blueprint declares them; a placement
+                  has from, to, and when declared mode and perms
   problems        [] when the files are valid; each has message, and line and path when known
   origin is one of flag, blueprint, task_label, repo_file, preferences, default.
   Problems print in the document and the exit code stays 1. A blueprint that cannot be found

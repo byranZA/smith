@@ -75,3 +75,38 @@ func TestBlueprintCheckJSONOfAMissingBlueprintPrintsNoDocument(t *testing.T) {
 		t.Errorf("exit code = %d, stdout = %q, stderr = %q, want 1, empty stdout and the name on stderr", code, stdout, stderr)
 	}
 }
+
+func TestBlueprintCheckJSONPrintsPlacementsAndEachRepoWholeConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	writeBlueprint(t, dir, "acme", `placements:
+  - from: "file:secrets/env"
+    to: ~/.env
+    mode: converge
+    perms: "0600"
+tools:
+  go: "1.22"
+repos:
+  - url: https://github.com/acme/api.git
+    base: main
+    tools:
+      node: "20"
+    env:
+      MODE: "literal:dev"
+    placements:
+      - from: "file:local.json"
+        to: config/local.json
+`)
+
+	stdout, stderr, code := runCheck(t, dir, "check", "acme", "--json")
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stdout: %s stderr: %s)", code, stdout, stderr)
+	}
+	want := `"repos":[{"name":"api","url":"https://github.com/acme/api.git","base":"main",` +
+		`"tools":{"node":"20"},"env":{"MODE":"literal:dev"},"placements":[{"from":"file:local.json","to":"config/local.json"}]}],` +
+		`"tools":{"go":"1.22"},` +
+		`"placements":[{"from":"file:secrets/env","to":"~/.env","mode":"converge","perms":"0600"}]},"problems":[]}`
+	if !strings.Contains(stdout, want) {
+		t.Errorf("stdout =\n%s\nwant it to contain\n%s", stdout, want)
+	}
+}
