@@ -94,3 +94,48 @@ func TestLoopListNamesTheBranchAndBaseTheFlagsGive(t *testing.T) {
 		t.Errorf("stdout =\n%s\nwant it to contain %q", out.String(), want)
 	}
 }
+
+func TestLoopListShowsTheCapFromMaxIterations(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+
+	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-iterations", "5")
+
+	if code != 0 || !strings.Contains(stdout, "cap:    5 (flag)\n") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want the cap line 5 (flag)", code, stdout, stderr)
+	}
+}
+
+func TestLoopListShowsNoCapFromMaxIterationsZero(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+
+	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-iterations", "0")
+
+	if code != 0 || !strings.Contains(stdout, "cap:    none (flag)\n") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want the cap line none (flag)", code, stdout, stderr)
+	}
+}
+
+func TestLoopListShowsTheAttemptsFromMaxAttempts(t *testing.T) {
+	gh := &fakeTracker{issues: map[string]string{"42": specJSON(43), "43": taskJSON(43, "OPEN", "ready-for-agent")}}
+
+	stdout, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", "--max-attempts", "1")
+
+	if code != 0 || !strings.Contains(stdout, "attempts: 1 (flag)\n") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want the attempts line 1 (flag)", code, stdout, stderr)
+	}
+}
+
+func TestLoopListRefusesLimitsBelowTheirMinimum(t *testing.T) {
+	for _, tc := range []struct{ flag, value string }{{"--max-iterations", "-1"}, {"--max-attempts", "0"}} {
+		flag := tc.flag
+		t.Run(flag, func(t *testing.T) {
+			gh := &fakeTracker{issues: map[string]string{}}
+
+			_, stderr, code := runLoopListIn(t, loopWiring{gh: gh, launcher: &idleAgent{}, lookPath: onPath}, "42", flag, tc.value)
+
+			if code == 0 || !strings.Contains(stderr, flag) || len(gh.ran) != 0 {
+				t.Errorf("exit %d, stderr %q, ran %v; want non-zero naming %s, gh never run", code, stderr, gh.ran, flag)
+			}
+		})
+	}
+}
