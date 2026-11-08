@@ -266,7 +266,8 @@ flag, blueprint, preferences, or built-in default. Precedence is field-level and
 wins (**CLI flag > blueprint field > home preference > built-in default**), with one exception:
 the `provider` block **replaces wholesale**, because half of one adapter beside half of another
 is never wanted and the mismatch would surface only at box creation. Origins are returned data,
-not printed side effects, which is why `blueprint check` is a formatter over them.
+not printed side effects, which is why `blueprint check` is a formatter over them. An origin has a
+stable name a program can read, apart from the wording an operator is shown.
 _Avoid_: merged config, effective settings, final config.
 
 **Credential-agnostic**:
@@ -515,6 +516,10 @@ _Avoid_: review skill, review template.
 **Agent guide**:
 What `smith help agents` prints: how a coding agent that plans work drives smith — its mental model, the verbs, the exit codes, the issue shape the loop expects, and recipes for common workflows. It is for the agent that runs smith, never for a task's agent, which the loop prompt alone instructs. Built into the binary, so it always matches the installed smith, and never written to disk.
 _Avoid_: skill, docs, manual.
+
+**JSON document**:
+The one object a read verb prints on stdout under `--json`: the same answer its prose gives, for a program rather than a person. It is the contract, and the prose is free to change. A verb whose answer is bad news, such as a drifted box or a blueprint with problems, still prints its document; a verb that could not produce an answer prints none and says why on stderr, and the exit code is the same either way. Before v1 a document may gain fields at any time, while renaming or removing one is a breaking change the release notes announce.
+_Avoid_: JSON output, API, wire format (the relay's own protocol).
 
 **Repo guide**:
 `.smith/README.md`: the short note `smith repo init` writes so a coding agent working the repo knows smith drives it. It holds only pointers and rules that do not change between releases — read the **agent guide**, ask `smith loop list` for a spec's work branch before committing to it — so a repo owns it once written, as it owns an ejected **loop prompt**, and it never goes stale. The repo's `AGENTS.md` or `CLAUDE.md` points at it.
