@@ -97,17 +97,17 @@ func (a Adapter) String() string {
 	if a.Replaces {
 		origin += ", replacing the preference"
 	}
-	return fmt.Sprintf("%s (%s)", adapterCommand(a.Provider), origin)
+	return fmt.Sprintf("%s (%s)", a.Command(), origin)
 }
 
-// adapterCommand is the provider CLI an adapter drives, read off the create
+// Command is the provider CLI the adapter drives, read off the create
 // template. An adapter with no create template is named by nothing, so it is
 // reported as declared and left at that.
-func adapterCommand(p *blueprint.Provider) string {
-	if len(p.Create) == 0 {
+func (a Adapter) Command() string {
+	if a.Provider == nil || len(a.Provider.Create) == 0 {
 		return "declared"
 	}
-	return p.Create[0]
+	return a.Provider.Create[0]
 }
 
 // Identity is the resolved git identity the box commits as, resolved field by

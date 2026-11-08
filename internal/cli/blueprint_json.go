@@ -158,7 +158,7 @@ func newCheckResolved(r config.Resolved) *checkResolved {
 	}
 	if r.Provider.Provider != nil {
 		out.Provider = &checkProvider{
-			checkValue:         checkValue{Value: adapterCommand(r.Provider), Origin: r.Provider.Origin},
+			checkValue:         checkValue{Value: r.Provider.Command(), Origin: r.Provider.Origin},
 			ReplacesPreference: r.Provider.Replaces,
 		}
 	}
@@ -187,14 +187,6 @@ func declaredValue(v config.Value) *checkValue {
 	}
 	c := checkValue(v)
 	return &c
-}
-
-// adapterCommand is the provider CLI the adapter drives, or "declared" when it has no create template.
-func adapterCommand(a config.Adapter) string {
-	if len(a.Provider.Create) == 0 {
-		return "declared"
-	}
-	return a.Provider.Create[0]
 }
 
 // problemsOf lists the findings err carries, and reports whether it carried any. A malformed document has its one finding.
