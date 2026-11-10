@@ -10,7 +10,7 @@ import (
 )
 
 // jsonFlagUsage is the help every read verb's --json flag carries, pointing at the topic that documents the shapes.
-const jsonFlagUsage = "print the answer as one JSON document on stdout; see `smith help json`"
+const jsonFlagUsage = "print the answer as one JSON document on stdout; see \"smith help json\""
 
 // helpJSON is the text of the `smith help json` topic.
 //
