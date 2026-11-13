@@ -717,7 +717,7 @@ func TestLoopRunRefusesAnUnknownPlaceholderBeforeAnyAgentRuns(t *testing.T) {
 
 	_, stderr, code := runLoopRun(t, w, "42")
 
-	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}\n") || idle.runs != 0 || len(gh.ran) != 0 {
+	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}\n") || idle.runs != 0 || len(gh.ran) != 0 {
 		t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming the placeholder and the known ones, no agent and no gh", code, stderr, idle.runs, gh.ran)
 	}
 }
@@ -942,3 +942,9 @@ func TestLoopRunStopsOnAFailedPushNamingTheTaskAndTheError(t *testing.T) {
 		t.Errorf("exit %d, stderr %q, handed %v; want non-zero naming #43 and the push error, with #44 never handed", code, stderr, claude.handed)
 	}
 }
+
+func (benchAt) ReportFile(task int) string {
+	return filepath.Join(os.TempDir(), "smith-fake", fmt.Sprintf("report-%d.md", task))
+}
+
+func (benchAt) TaskTip(context.Context, int) (string, error) { return "abc1234", nil }

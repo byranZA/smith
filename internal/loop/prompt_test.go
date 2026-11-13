@@ -13,7 +13,7 @@ import (
 func TestRenderFillsInTheTask(t *testing.T) {
 	prompt := loop.Prompt("Do #{{TASK_NUMBER}} ({{TASK_TITLE}}); close #{{TASK_NUMBER}}.")
 
-	got := prompt.Render(tracker.Task{Number: 43, Title: "Loop: run"})
+	got := prompt.Render(tracker.Task{Number: 43, Title: "Loop: run"}, "")
 
 	if want := "Do #43 (Loop: run); close #43."; got != want {
 		t.Errorf("Render() = %q, want %q", got, want)
@@ -21,7 +21,7 @@ func TestRenderFillsInTheTask(t *testing.T) {
 }
 
 func TestTheBuiltInPromptNamesTheTaskAndPointsToItsParent(t *testing.T) {
-	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"})
+	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "")
 
 	for _, want := range []string{"#43", "Loop: run", "`parent:`"} {
 		if !strings.Contains(got, want) {
@@ -34,7 +34,7 @@ func TestTheBuiltInPromptNamesTheTaskAndPointsToItsParent(t *testing.T) {
 }
 
 func TestAnInteractivePromptCarriesTheInteractiveNoteAfterTheTask(t *testing.T) {
-	got := loop.Prompt("Do #{{TASK_NUMBER}}.").Interactive().Render(tracker.Task{Number: 43})
+	got := loop.Prompt("Do #{{TASK_NUMBER}}.").Interactive().Render(tracker.Task{Number: 43}, "")
 
 	if !strings.HasPrefix(got, "Do #43.\n") || !strings.Contains(got, "A human is at the terminal") {
 		t.Errorf("interactive prompt = %q, want the task followed by the interactive note", got)
@@ -52,7 +52,7 @@ func TestAnEjectedPromptReplacesTheBuiltInWithItsPlaceholdersFilled(t *testing.T
 		t.Fatalf("LoadPrompt() error = %v", err)
 	}
 
-	if got, want := prompt.Render(tracker.Task{Number: 43}), "Do #43. Run make check before closing.\n"; got != want {
+	if got, want := prompt.Render(tracker.Task{Number: 43}, ""), "Do #43. Run make check before closing.\n"; got != want {
 		t.Errorf("Render() = %q, want %q", got, want)
 	}
 }
@@ -80,7 +80,7 @@ func TestAnEjectedCopyOfTheBuiltInRendersTheSameAsTheBuiltIn(t *testing.T) {
 		t.Fatalf("LoadPrompt() error = %v", err)
 	}
 
-	if got, want := prompt.Interactive().Render(task), loop.BuiltinPrompt().Interactive().Render(task); got != want {
+	if got, want := prompt.Interactive().Render(task, ""), loop.BuiltinPrompt().Interactive().Render(task, ""); got != want {
 		t.Errorf("ejected copy renders\n%s\nwant\n%s", got, want)
 	}
 }
@@ -93,7 +93,7 @@ func TestAnUnknownPlaceholderInAnEjectedPromptIsRefused(t *testing.T) {
 
 	_, err := loop.LoadPrompt(path)
 
-	want := []string{path, "{{ISSUE_URL}}", "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}\n"}
+	want := []string{path, "{{ISSUE_URL}}", "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}\n"}
 	for _, w := range want {
 		if err == nil || !strings.Contains(err.Error()+"\n", w) {
 			t.Errorf("LoadPrompt() error = %v, want one naming %q", err, w)
@@ -109,7 +109,7 @@ func TestAnEjectedPromptHoldingTheSpecPlaceholderIsRefused(t *testing.T) {
 
 	_, err := loop.LoadPrompt(path)
 
-	want := path + ": unknown placeholder {{SPEC_NUMBER}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}"
+	want := path + ": unknown placeholder {{SPEC_NUMBER}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}"
 	if err == nil || err.Error() != want {
 		t.Errorf("LoadPrompt() error = %v, want %q", err, want)
 	}
@@ -118,7 +118,7 @@ func TestAnEjectedPromptHoldingTheSpecPlaceholderIsRefused(t *testing.T) {
 func TestParsePromptRefusesAnUnknownPlaceholderNamingItsSource(t *testing.T) {
 	_, err := loop.ParsePrompt("main:.smith/prompt.md", []byte("Do {{TASK}}.\n"))
 
-	want := "main:.smith/prompt.md: unknown placeholder {{TASK}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}"
+	want := "main:.smith/prompt.md: unknown placeholder {{TASK}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}"
 	if err == nil || err.Error() != want {
 		t.Errorf("ParsePrompt() err = %v, want %q", err, want)
 	}
@@ -167,5 +167,45 @@ func TestLoadReviewPromptFallsBackToTheBuiltInWhenNothingIsEjected(t *testing.T)
 
 	if err != nil || ejected || got != loop.BuiltinReviewPrompt() {
 		t.Errorf("LoadReviewPrompt() ejected = %v, err = %v, built-in = %v; want the built-in, not ejected", ejected, err, got == loop.BuiltinReviewPrompt())
+	}
+}
+
+func TestTheBuiltInPromptAsksForTheTwoPartReportAtTheReportFile(t *testing.T) {
+	t.Parallel()
+
+	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "/repo/.git/smith/report-43.md")
+
+	for _, want := range []string{
+		"/repo/.git/smith/report-43.md",
+		"**The task**", "**The environment**",
+		"Done", "Deviations / skipped", "Left open", "For review", "Friction", "Recommendations",
+		"None",
+		"`gh issue close 43`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("built-in prompt is missing %q", want)
+		}
+	}
+}
+
+func TestTheBuiltInPromptNoLongerAsksForAWIPNoteOrACloseComment(t *testing.T) {
+	t.Parallel()
+
+	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "/r.md")
+
+	for _, banned := range []string{"WIP:", "gh issue comment", "--comment \"Done in"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("built-in prompt still holds %q", banned)
+		}
+	}
+}
+
+func TestTheInteractivePromptAsksToShowTheReportBeforeClosing(t *testing.T) {
+	t.Parallel()
+
+	got := loop.BuiltinPrompt().Interactive().Render(tracker.Task{Number: 43}, "")
+
+	if !strings.Contains(got, "show them your attempt report") {
+		t.Errorf("interactive prompt = %q, want it to ask to show the human the report", got)
 	}
 }
