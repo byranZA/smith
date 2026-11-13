@@ -5,6 +5,8 @@
 > **Amended by [ADR-0017](./0017-the-loop-starts-its-own-session-on-a-box.md).** The loop also posts its stop report as a comment on the spec.
 >
 > **Amended by [ADR-0020](./0020-the-loop-stops-on-a-broken-agent.md).** A run that stops as `agent broken` skips no task, so posts no skip comment.
+>
+> **Amended by [ADR-0030](./0030-the-loop-posts-each-attempts-report-on-its-task.md).** The loop also posts each attempt's report on the task, interactive runs included, so "nothing else is commented on" no longer holds.
 
 ## Context
 
