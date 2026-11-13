@@ -378,5 +378,6 @@ The prompt takes these placeholders, filled in for each task:
 | --- | --- |
 | `{{TASK_NUMBER}}` | the task's issue number |
 | `{{TASK_TITLE}}` | the task's title |
+| `{{REPORT_FILE}}` | the path the agent writes its attempt report to; the loop posts it on the task. Optional: a prompt without it gets no reports |
 
 A prompt holding any other `{{…}}` is refused, naming it.

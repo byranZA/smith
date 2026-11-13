@@ -364,6 +364,22 @@ func (w Workbench) FindingsFile(issue int) string {
 	return filepath.Join(w.common, "smith", "review-"+strconv.Itoa(issue)+".json")
 }
 
+// ReportFile is where the agent working task writes its attempt report: an
+// absolute path beside the findings file in the repo's git common directory.
+func (w Workbench) ReportFile(task int) string {
+	return filepath.Join(w.common, "smith", "report-"+strconv.Itoa(task)+".md")
+}
+
+// TaskTip returns the short sha of the commit task's branch is at, and is an
+// error when the branch cannot be read.
+func (w Workbench) TaskTip(ctx context.Context, task int) (string, error) {
+	out, err := w.run(ctx, w.dir, "rev-parse", "--short", "--verify", branchRefPrefix+w.TaskBranch(task))
+	if err != nil {
+		return "", fmt.Errorf("read task branch %s: %w", w.TaskBranch(task), err)
+	}
+	return out, nil
+}
+
 // Finish removes the execution's recycled worktrees, those landed tasks left,
 // once a run has landed every task. It leaves any worktree with a task branch
 // checked out, such as a skipped task's, and refuses one holding changes.

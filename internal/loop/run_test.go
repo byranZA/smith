@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -511,7 +513,7 @@ func TestRunInteractiveHandsTheAgentThePromptWithTheInteractiveNote(t *testing.T
 		t.Fatalf("RunInteractive() error = %v", err)
 	}
 
-	if want := loop.Prompt("{{TASK_NUMBER}}").Interactive().Render(agentTask(43)); len(b.launched) != 1 || b.launched[0].Args[len(b.launched[0].Args)-1] != want {
+	if want := loop.Prompt("{{TASK_NUMBER}}").Interactive().Render(agentTask(43), ""); len(b.launched) != 1 || b.launched[0].Args[len(b.launched[0].Args)-1] != want {
 		t.Errorf("launched %+v, want one run on the prompt with the interactive note", b.launched)
 	}
 }
@@ -933,3 +935,10 @@ func (noReview) ReviewStrays(context.Context, string, string) (loop.Strays, erro
 }
 
 func (noReview) FindingsFile(int) string { return "" }
+
+// ReportFile is a path no attempt writes, so a test of another behaviour posts no report.
+func (noReview) ReportFile(task int) string {
+	return filepath.Join(os.TempDir(), "smith-fake", "report-"+strconv.Itoa(task)+".md")
+}
+
+func (noReview) TaskTip(context.Context, int) (string, error) { return "abc1234", nil }

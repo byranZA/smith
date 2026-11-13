@@ -87,6 +87,11 @@ type Bench interface {
 	// FindingsFile is the absolute path the review of issue writes its
 	// findings to.
 	FindingsFile(issue int) string
+	// ReportFile is the absolute path the agent working task writes its
+	// attempt report to.
+	ReportFile(task int) string
+	// TaskTip returns the short sha of the commit task's branch is at.
+	TaskTip(ctx context.Context, task int) (string, error)
 	// Finish removes the worktree landed tasks were recycled through, once
 	// every task has landed and the review is done.
 	Finish(ctx context.Context) error
@@ -387,7 +392,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		if err != nil {
 			return Outcome{}, err
 		}
-		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.Render(next), resolved.Options()))
+		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -406,6 +411,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		closed := closedIn(current, next)
 		if exhausted && !closed && !ran[next.Number] {
 			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
+		}
+		if err := l.postReport(ctx, next, attempts[next.Number], closed); err != nil {
+			return Outcome{}, err
 		}
 		skipped[next.Number] = exhausted
 		skip := exhausted && !closed
@@ -532,7 +540,7 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
-	if _, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next), resolved.Options())); err != nil {
+	if _, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options())); err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -646,6 +654,9 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resol
 		return attempt{}, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
 	cmd.Dir = dir
+	if err := removeReport(l.Bench.ReportFile(task.Number)); err != nil {
+		return attempt{}, err
+	}
 	if err := l.Placements.into(ctx, dir); err != nil {
 		return attempt{}, fmt.Errorf("place files into the worktree of #%d in %s: %w", task.Number, dir, err)
 	}

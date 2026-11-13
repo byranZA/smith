@@ -21,12 +21,12 @@ var builtinPrompt string
 var interactiveNote string
 
 // Prompt is a loop prompt: the text handed to an agent for one task, with
-// {{TASK_NUMBER}} and {{TASK_TITLE}} placeholders.
+// {{TASK_NUMBER}}, {{TASK_TITLE}} and {{REPORT_FILE}} placeholders.
 type Prompt string
 
 // placeholders are the placeholders a loop prompt may hold, in the order a
 // refusal lists them.
-var placeholders = []string{"{{TASK_NUMBER}}", "{{TASK_TITLE}}"}
+var placeholders = []string{"{{TASK_NUMBER}}", "{{TASK_TITLE}}", "{{REPORT_FILE}}"}
 
 // placeholderPattern matches anything written as a placeholder, known or not.
 var placeholderPattern = regexp.MustCompile(`\{\{[^{}]*\}\}`)
@@ -64,10 +64,12 @@ func (p Prompt) Interactive() Prompt {
 	return Prompt(strings.TrimRight(string(p), "\n") + "\n\n" + interactiveNote)
 }
 
-// Render fills p's placeholders in with task.
-func (p Prompt) Render(task tracker.Task) string {
+// Render fills p's placeholders in with task and the path reportFile the
+// agent writes its attempt report to.
+func (p Prompt) Render(task tracker.Task, reportFile string) string {
 	return strings.NewReplacer(
 		"{{TASK_NUMBER}}", strconv.Itoa(task.Number),
 		"{{TASK_TITLE}}", task.Title,
+		"{{REPORT_FILE}}", reportFile,
 	).Replace(string(p))
 }
