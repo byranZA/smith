@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/byranZA/smith/internal/tracker"
 )
@@ -25,9 +26,10 @@ func removeReport(file string) error {
 
 // postReport posts the report the agent left for attempt number attempt at
 // task as a comment on task's issue, under a header saying how the attempt
-// ended: closed at the task branch's tip, or left open. No report, or a
+// ended (closed at the task branch's tip, killed, ended in an agent failure,
+// or left open), the preset it ran on and how long it took. No report, or a
 // failed read, tip or comment write, is a warning.
-func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, closed bool) error {
+func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, closed bool, run attempt) error {
 	file := l.Bench.ReportFile(task.Number)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -37,6 +39,12 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, cl
 		return l.warnIf(err, "could not read the report of #%d", task.Number)
 	}
 	ending := "left open"
+	switch {
+	case run.killed():
+		ending = "killed"
+	case run.agentFailure():
+		ending = "ended in an agent failure"
+	}
 	if closed {
 		tip, terr := l.Bench.TaskTip(ctx, task.Number)
 		if terr != nil {
@@ -44,6 +52,6 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, cl
 		}
 		ending = "closed at " + tip
 	}
-	body := fmt.Sprintf("smith: attempt %d of %d, %s.\n\n%s", attempt, l.Limits.MaxAttempts, ending, data)
+	body := fmt.Sprintf("smith: attempt %d of %d, %s, on %s, took %s.\n\n%s", attempt, l.Limits.MaxAttempts, ending, presetPhrase(run.preset), run.took.Round(time.Second), data)
 	return l.warnIf(l.Tracker.Comment(ctx, task.Number, body), "could not comment on #%d", task.Number)
 }

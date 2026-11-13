@@ -2,11 +2,13 @@ package loop_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/loop"
@@ -22,6 +24,8 @@ type reporter struct {
 	writes string
 	// leftover logs a report file still present when the agent launched.
 	leftover []string
+	// fails is the error Launch returns after the report is written.
+	fails error
 }
 
 func (r *reporter) ReportFile(int) string { return r.file }
@@ -37,7 +41,7 @@ func (r *reporter) Launch(ctx context.Context, cmd agent.Command) error {
 			return err
 		}
 	}
-	return r.journal.Launch(ctx, cmd)
+	return errors.Join(r.journal.Launch(ctx, cmd), r.fails)
 }
 
 // logging logs each comment into the journal's events.
@@ -51,12 +55,21 @@ func (l logging) Comment(ctx context.Context, number int, body string) error {
 	return l.board.Comment(ctx, number, body)
 }
 
+// stepClock is a clock that moves 90 seconds on each reading.
+type stepClock struct{ at time.Time }
+
+func (c *stepClock) Now() time.Time {
+	c.at = c.at.Add(90 * time.Second)
+	return c.at
+}
+
 func reportingLoop(t *testing.T, r *reporter) loop.Loop {
 	t.Helper()
 	l := journalLoop(t, r.journal)
 	l.Bench = r
 	l.Launcher = r
 	l.Tracker = logging{board: r.board, events: &r.events}
+	l.Clock = (&stepClock{}).Now
 	return l
 }
 
@@ -73,11 +86,11 @@ func TestAClosedAttemptsReportIsPostedBeforeItsWorkIsPushed(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := []string{"open 43", "hand 43 in /bench/43", "comment smith: attempt 1 of 2, closed at abc1234.", "land 43", "push smith/42-spec", "finish", "comment smith stopped its run of this spec: **complete**."}
+	want := []string{"open 43", "hand 43 in /bench/43", "comment smith: attempt 1 of 2, closed at abc1234, on preset default, took 1m30s.", "land 43", "push smith/42-spec", "finish", "comment smith stopped its run of this spec: **complete**."}
 	if !slices.Equal(r.events, want) {
 		t.Errorf("events = %q, want %q", r.events, want)
 	}
-	if got, want := r.board.comments[0].body, "smith: attempt 1 of 2, closed at abc1234.\n\n## Done\nIt works.\n"; got != want {
+	if got, want := r.board.comments[0].body, "smith: attempt 1 of 2, closed at abc1234, on preset default, took 1m30s.\n\n## Done\nIt works.\n"; got != want {
 		t.Errorf("comment = %q, want %q", got, want)
 	}
 }
@@ -93,7 +106,7 @@ func TestAnOpenAttemptsReportIsPostedBeforeTheSkipComment(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if len(b.comments) < 2 || !strings.HasPrefix(b.comments[0].body, "smith: attempt 1 of 1, left open.\n\n## Left open") || !strings.HasPrefix(b.comments[1].body, "smith skipped this task") {
+	if len(b.comments) < 2 || !strings.HasPrefix(b.comments[0].body, "smith: attempt 1 of 1, left open, on preset default, took 1m30s.\n\n## Left open") || !strings.HasPrefix(b.comments[1].body, "smith skipped this task") {
 		t.Errorf("comments = %+v, want the report, then the skip comment", b.comments)
 	}
 }
@@ -210,4 +223,37 @@ func reportsOf(b *board) []posted {
 		}
 	}
 	return reports
+}
+
+func TestAKilledAttemptsReportHeaderSaysItWasKilled(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	r := newReporter(t, b, "## Stuck\n")
+	r.fails = errKilled
+	l := reportingLoop(t, r)
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := "smith: attempt 1 of 1, killed, on preset default, took 1m30s.\n\n## Stuck\n"; b.comments[0].body != want {
+		t.Errorf("comment = %q, want %q", b.comments[0].body, want)
+	}
+}
+
+func TestAFailedAttemptsReportHeaderSaysItEndedInAnAgentFailure(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	r := newReporter(t, b, "## Stuck\n")
+	r.fails = errors.New("exit status 1")
+	l := reportingLoop(t, r)
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := "smith: attempt 1 of 2, ended in an agent failure, on preset default, took 1m30s.\n\n## Stuck\n"; b.comments[0].body != want {
+		t.Errorf("comment = %q, want %q", b.comments[0].body, want)
+	}
 }

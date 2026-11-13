@@ -193,6 +193,8 @@ type Loop struct {
 	// for this run: nothing is reviewed or marked, and the report says so.
 	NoReview bool
 	Limits   Limits
+	// Clock reads the time an attempt is timed by; nil reads the system clock.
+	Clock func() time.Time
 	// Progress is where the loop names each task as it hands it out.
 	Progress io.Writer
 	// Hostname names the machine the loop runs on, for the comment on a
@@ -412,7 +414,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		if exhausted && !closed && !ran[next.Number] {
 			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
 		}
-		if err := l.postReport(ctx, next, attempts[next.Number], closed); err != nil {
+		if err := l.postReport(ctx, next, attempts[next.Number], closed, run); err != nil {
 			return Outcome{}, err
 		}
 		skipped[next.Number] = exhausted
@@ -631,6 +633,7 @@ func (l Loop) reviewHint(ctx context.Context, current tracker.Execution, remaini
 type attempt struct {
 	dir     string
 	preset  preset.Resolved
+	took    time.Duration
 	failure error
 }
 
@@ -669,7 +672,9 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resol
 	if err := l.warnIf(l.Tracker.Start(ctx, task.Number), "could not mark #%d as worked", task.Number); err != nil {
 		return attempt{}, err
 	}
+	began := l.now()
 	run := attempt{dir: dir, preset: resolved, failure: l.Launcher.Launch(ctx, cmd)}
+	run.took = l.now().Sub(began)
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
 		return attempt{}, errors.Join(interrupted, l.unmarkDetached(ctx, task))
@@ -681,6 +686,14 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resol
 		return attempt{}, errors.Join(err, l.unmarkDetached(ctx, task))
 	}
 	return run, nil
+}
+
+// now reads the loop's clock.
+func (l Loop) now() time.Time {
+	if l.Clock != nil {
+		return l.Clock()
+	}
+	return time.Now()
 }
 
 // presetPhrase names resolved as the hand-off line does: "preset opus", or
