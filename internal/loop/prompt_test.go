@@ -169,3 +169,29 @@ func TestLoadReviewPromptFallsBackToTheBuiltInWhenNothingIsEjected(t *testing.T)
 		t.Errorf("LoadReviewPrompt() ejected = %v, err = %v, built-in = %v; want the built-in, not ejected", ejected, err, got == loop.BuiltinReviewPrompt())
 	}
 }
+
+func TestTheBuiltInPromptAsksForTheTwoPartReportAtTheReportFile(t *testing.T) {
+	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "/repo/.git/smith/report-43.md")
+
+	for _, want := range []string{
+		"/repo/.git/smith/report-43.md",
+		"**The task**", "**The environment**",
+		"Done", "Deviations / skipped", "Left open", "For review", "Friction", "Recommendations",
+		"None",
+		"`gh issue close 43`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("built-in prompt is missing %q", want)
+		}
+	}
+}
+
+func TestTheBuiltInPromptNoLongerAsksForAWIPNoteOrACloseComment(t *testing.T) {
+	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "/r.md")
+
+	for _, banned := range []string{"WIP:", "gh issue comment", "--comment \"Done in"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("built-in prompt still holds %q", banned)
+		}
+	}
+}
