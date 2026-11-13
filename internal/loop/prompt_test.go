@@ -171,6 +171,8 @@ func TestLoadReviewPromptFallsBackToTheBuiltInWhenNothingIsEjected(t *testing.T)
 }
 
 func TestTheBuiltInPromptAsksForTheTwoPartReportAtTheReportFile(t *testing.T) {
+	t.Parallel()
+
 	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "/repo/.git/smith/report-43.md")
 
 	for _, want := range []string{
@@ -187,6 +189,8 @@ func TestTheBuiltInPromptAsksForTheTwoPartReportAtTheReportFile(t *testing.T) {
 }
 
 func TestTheBuiltInPromptNoLongerAsksForAWIPNoteOrACloseComment(t *testing.T) {
+	t.Parallel()
+
 	got := loop.BuiltinPrompt().Render(tracker.Task{Number: 43, Title: "Loop: run"}, "/r.md")
 
 	for _, banned := range []string{"WIP:", "gh issue comment", "--comment \"Done in"} {
@@ -197,6 +201,8 @@ func TestTheBuiltInPromptNoLongerAsksForAWIPNoteOrACloseComment(t *testing.T) {
 }
 
 func TestTheInteractivePromptAsksToShowTheReportBeforeClosing(t *testing.T) {
+	t.Parallel()
+
 	got := loop.BuiltinPrompt().Interactive().Render(tracker.Task{Number: 43}, "")
 
 	if !strings.Contains(got, "show them your attempt report") {
