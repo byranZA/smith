@@ -299,3 +299,32 @@ func TestAReportUnderTheCapIsPostedWholeWithNoMarker(t *testing.T) {
 		t.Errorf("comment was cut or marked")
 	}
 }
+
+func TestAnInteractiveRunsReportIsPostedUnderAnInteractiveRunHeader(t *testing.T) {
+	t.Parallel()
+	r := newReporter(t, &board{tasks: []tracker.Task{agentTask(43)}}, "## Done\nIt works.\n")
+
+	if _, err := reportingLoop(t, r).RunInteractive(t.Context(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	if got, want := r.board.comments[0].body, "smith: interactive run, closed at abc1234, on preset default, took 1m30s.\n\n## Done\nIt works.\n"; got != want {
+		t.Errorf("comment = %q, want %q", got, want)
+	}
+}
+
+func TestAnInteractiveRunWithNoReportGetsNoCommentAndAWarning(t *testing.T) {
+	t.Parallel()
+	r := newReporter(t, &board{tasks: []tracker.Task{agentTask(43)}}, "")
+	var warned strings.Builder
+	l := reportingLoop(t, r)
+	l.Progress = &warned
+
+	if _, err := l.RunInteractive(t.Context(), 42); err != nil {
+		t.Fatalf("RunInteractive() error = %v", err)
+	}
+
+	if len(r.board.comments) != 0 || !strings.Contains(warned.String(), "the agent left no report for #43") {
+		t.Errorf("comments = %+v, output = %q, want no comment and a no-report warning", r.board.comments, warned.String())
+	}
+}

@@ -195,3 +195,11 @@ func TestTheBuiltInPromptNoLongerAsksForAWIPNoteOrACloseComment(t *testing.T) {
 		}
 	}
 }
+
+func TestTheInteractivePromptAsksToShowTheReportBeforeClosing(t *testing.T) {
+	got := loop.BuiltinPrompt().Interactive().Render(tracker.Task{Number: 43}, "")
+
+	if !strings.Contains(got, "show them your attempt report") {
+		t.Errorf("interactive prompt = %q, want it to ask to show the human the report", got)
+	}
+}

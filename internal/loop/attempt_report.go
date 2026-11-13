@@ -25,12 +25,12 @@ func removeReport(file string) error {
 	return nil
 }
 
-// postReport posts the report the agent left for attempt number attempt at
-// task as a comment on task's issue, under a header saying how the attempt
+// postReport posts the report the agent left for the run named by who, such as
+// "attempt 1 of 2" or "interactive run", at task as a comment on task's issue, under a header saying how the attempt
 // ended (closed at the task branch's tip, killed, ended in an agent failure,
 // or left open), the preset it ran on and how long it took. No report, or a
 // failed read, tip or comment write, is a warning.
-func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, closed bool, run attempt) error {
+func (l Loop) postReport(ctx context.Context, task tracker.Task, who string, closed bool, run attempt) error {
 	file := l.Bench.ReportFile(task.Number)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -53,7 +53,7 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, cl
 		}
 		ending = "closed at " + tip
 	}
-	header := fmt.Sprintf("smith: attempt %d of %d, %s, on %s, took %s.\n\n", attempt, l.Limits.MaxAttempts, ending, presetPhrase(run.preset), run.took.Round(time.Second))
+	header := fmt.Sprintf("smith: %s, %s, on %s, took %s.\n\n", who, ending, presetPhrase(run.preset), run.took.Round(time.Second))
 	body := header + tailWithin(string(data), commentCap-utf8.RuneCountInString(header))
 	return l.warnIf(l.Tracker.Comment(ctx, task.Number, body), "could not comment on #%d", task.Number)
 }

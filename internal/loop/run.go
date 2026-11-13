@@ -414,7 +414,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		if exhausted && !closed && !ran[next.Number] {
 			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
 		}
-		if err := l.postReport(ctx, next, attempts[next.Number], closed, run); err != nil {
+		if err := l.postReport(ctx, next, fmt.Sprintf("attempt %d of %d", attempts[next.Number], l.Limits.MaxAttempts), closed, run); err != nil {
 			return Outcome{}, err
 		}
 		skipped[next.Number] = exhausted
@@ -542,7 +542,8 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
-	if _, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options())); err != nil {
+	run, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
+	if err != nil {
 		return InteractiveOutcome{}, err
 	}
 	if err := l.release(ctx, next, false); err != nil {
@@ -552,7 +553,11 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
-	if closedIn(after, next) {
+	closed := closedIn(after, next)
+	if err := l.postReport(ctx, next, "interactive run", closed, run); err != nil {
+		return InteractiveOutcome{}, err
+	}
+	if closed {
 		if err := l.land(ctx, next); err != nil {
 			return InteractiveOutcome{}, err
 		}
