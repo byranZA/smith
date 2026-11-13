@@ -411,11 +411,11 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 			return Outcome{}, errors.Join(err, l.unmarkDetached(ctx, next))
 		}
 		closed := closedIn(current, next)
-		if exhausted && !closed && !ran[next.Number] {
-			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
-		}
 		if err := l.postReport(ctx, next, fmt.Sprintf("attempt %d of %d", attempts[next.Number], l.Limits.MaxAttempts), closed, run); err != nil {
 			return Outcome{}, err
+		}
+		if exhausted && !closed && !ran[next.Number] {
+			return l.broken(ctx, stopped(survey(current, skipped)), next, run.failure)
 		}
 		skipped[next.Number] = exhausted
 		skip := exhausted && !closed

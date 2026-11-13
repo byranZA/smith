@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -326,5 +327,42 @@ func TestAnInteractiveRunWithNoReportGetsNoCommentAndAWarning(t *testing.T) {
 
 	if len(r.board.comments) != 0 || !strings.Contains(warned.String(), "the agent left no report for #43") {
 		t.Errorf("comments = %+v, output = %q, want no comment and a no-report warning", r.board.comments, warned.String())
+	}
+}
+
+func TestTheFinalAgentFailureAttemptsReportIsPosted(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	r := newReporter(t, b, "## Stuck\n")
+	r.fails = errors.New("exit status 1")
+	l := reportingLoop(t, r)
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if want := "smith: attempt 1 of 1, ended in an agent failure, on preset default, took 1m30s.\n\n## Stuck\n"; len(commentsOn(b, 43)) < 1 || commentsOn(b, 43)[0] != want {
+		t.Errorf("comments on #43 = %q, want first %q", commentsOn(b, 43), want)
+	}
+}
+
+func TestEveryAttemptsReportAcrossConsecutiveAgentFailuresIsPosted(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	r := newReporter(t, b, "## Stuck\n")
+	r.fails = errors.New("exit status 1")
+	l := reportingLoop(t, r)
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{
+		"smith: attempt 1 of 2, ended in an agent failure, on preset default, took 1m30s.\n\n## Stuck\n",
+		"smith: attempt 2 of 2, ended in an agent failure, on preset default, took 1m30s.\n\n## Stuck\n",
+	}
+	if got := commentsOn(b, 43); !reflect.DeepEqual(got, want) {
+		t.Errorf("comments on #43 = %q, want %q", got, want)
 	}
 }
