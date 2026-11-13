@@ -366,3 +366,27 @@ func TestEveryAttemptsReportAcrossConsecutiveAgentFailuresIsPosted(t *testing.T)
 		t.Errorf("comments on #43 = %q, want %q", got, want)
 	}
 }
+
+func TestComposeReportHeadsTheReportWithHowTheAttemptEnded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		facts  loop.ReportFacts
+		report string
+		want   string
+	}{
+		{"closed with a sha", loop.ReportFacts{Who: "attempt 1 of 2", Ending: loop.EndedClosed, Tip: "abc1234", Preset: "preset opus", Took: 90 * time.Second}, "## Done\n", "smith: attempt 1 of 2, closed at abc1234, on preset opus, took 1m30s.\n\n## Done\n"},
+		{"closed interactive", loop.ReportFacts{Who: "interactive run", Ending: loop.EndedClosed, Tip: "f00d", Preset: "a one-off preset", Took: 3 * time.Second}, "ok", "smith: interactive run, closed at f00d, on a one-off preset, took 3s.\n\nok"},
+		{"left open", loop.ReportFacts{Who: "attempt 2 of 3", Ending: loop.EndedOpen, Preset: "preset opus", Took: time.Minute}, "Stuck", "smith: attempt 2 of 3, left open, on preset opus, took 1m0s.\n\nStuck"},
+		{"killed", loop.ReportFacts{Who: "attempt 1 of 1", Ending: loop.EndedKilled, Preset: "preset opus", Took: time.Minute}, "x", "smith: attempt 1 of 1, killed, on preset opus, took 1m0s.\n\nx"},
+		{"agent failure interactive", loop.ReportFacts{Who: "interactive run", Ending: loop.EndedAgentFailure, Preset: "preset opus", Took: time.Minute}, "x", "smith: interactive run, ended in an agent failure, on preset opus, took 1m0s.\n\nx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := loop.ComposeReport(tt.facts, tt.report); got != tt.want {
+				t.Errorf("ComposeReport() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

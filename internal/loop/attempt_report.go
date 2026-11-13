@@ -39,23 +39,65 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, who string, clo
 	if err != nil {
 		return l.warnIf(err, "could not read the report of #%d", task.Number)
 	}
-	ending := "left open"
+	facts := ReportFacts{Who: who, Ending: EndedOpen, Preset: presetPhrase(run.preset), Took: run.took}
 	switch {
 	case run.killed():
-		ending = "killed"
+		facts.Ending = EndedKilled
 	case run.agentFailure():
-		ending = "ended in an agent failure"
+		facts.Ending = EndedAgentFailure
 	}
 	if closed {
 		tip, terr := l.Bench.TaskTip(ctx, task.Number)
 		if terr != nil {
 			return l.warnIf(terr, "could not read the commit #%d closed at, so its report is not posted", task.Number)
 		}
-		ending = "closed at " + tip
+		facts.Ending, facts.Tip = EndedClosed, tip
 	}
-	header := fmt.Sprintf("smith: %s, %s, on %s, took %s.\n\n", who, ending, presetPhrase(run.preset), run.took.Round(time.Second))
-	body := header + tailWithin(string(data), commentCap-utf8.RuneCountInString(header))
+	body := ComposeReport(facts, string(data))
 	return l.warnIf(l.Tracker.Comment(ctx, task.Number, body), "could not comment on #%d", task.Number)
+}
+
+// AttemptEnding is how an attempt ended, as its report header says it.
+type AttemptEnding int
+
+// The ways an attempt ends.
+const (
+	EndedOpen AttemptEnding = iota
+	EndedClosed
+	EndedKilled
+	EndedAgentFailure
+)
+
+// ReportFacts are the resolved facts a report header states.
+type ReportFacts struct {
+	// Who names the run, such as "attempt 1 of 2" or "interactive run".
+	Who string
+	// Ending is how the attempt ended.
+	Ending AttemptEnding
+	// Tip is the commit the task closed at; used only for EndedClosed.
+	Tip string
+	// Preset is the phrase naming the preset the attempt ran on.
+	Preset string
+	// Took is how long the attempt ran.
+	Took time.Duration
+}
+
+// ComposeReport returns the comment body for report: a header stating facts,
+// then the report, cut to its tail behind a marker when the whole would
+// exceed the comment cap. It does no I/O.
+func ComposeReport(facts ReportFacts, report string) string {
+	ending := "left open"
+	switch facts.Ending {
+	case EndedClosed:
+		ending = "closed at " + facts.Tip
+	case EndedKilled:
+		ending = "killed"
+	case EndedAgentFailure:
+		ending = "ended in an agent failure"
+	case EndedOpen:
+	}
+	header := fmt.Sprintf("smith: %s, %s, on %s, took %s.\n\n", facts.Who, ending, facts.Preset, facts.Took.Round(time.Second))
+	return header + tailWithin(report, commentCap-utf8.RuneCountInString(header))
 }
 
 // commentCap is the most characters a report comment, header included, may
