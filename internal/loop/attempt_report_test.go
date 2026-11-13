@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/loop"
@@ -255,5 +256,46 @@ func TestAFailedAttemptsReportHeaderSaysItEndedInAnAgentFailure(t *testing.T) {
 
 	if want := "smith: attempt 1 of 2, ended in an agent failure, on preset default, took 1m30s.\n\n## Stuck\n"; b.comments[0].body != want {
 		t.Errorf("comment = %q, want %q", b.comments[0].body, want)
+	}
+}
+
+func TestAReportOverTheCapIsPostedAsItsTailBehindACutMarker(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	r := newReporter(t, b, "START"+strings.Repeat("é", 70000)+"END")
+	l := reportingLoop(t, r)
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	body := b.comments[0].body
+	if n := utf8.RuneCountInString(body); n > 60000 {
+		t.Errorf("comment has %d characters, want at most 60000", n)
+	}
+	header := "smith: attempt 1 of 1, left open, on preset default, took 1m30s.\n\n(earlier text was cut)\n\n"
+	if !strings.HasPrefix(body, header+"é") {
+		t.Errorf("comment starts %q, want header and cut marker then the tail", body[:120])
+	}
+	if !strings.HasSuffix(body, "éEND") || strings.Contains(body, "START") {
+		t.Errorf("comment does not keep the tail and drop the start")
+	}
+}
+
+func TestAReportUnderTheCapIsPostedWholeWithNoMarker(t *testing.T) {
+	t.Parallel()
+	b := &board{tasks: []tracker.Task{agentTask(43)}, leaveOpen: []int{43}}
+	r := newReporter(t, b, strings.Repeat("é", 50000)+"END")
+	l := reportingLoop(t, r)
+	l.Limits.MaxAttempts = 1
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	body := b.comments[0].body
+	if strings.Contains(body, "cut") || !strings.HasSuffix(body, "é"+"END") || utf8.RuneCountInString(body) < 50003 {
+		t.Errorf("comment was cut or marked")
 	}
 }

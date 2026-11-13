@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"github.com/byranZA/smith/internal/tracker"
 )
@@ -52,6 +53,25 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, attempt int, cl
 		}
 		ending = "closed at " + tip
 	}
-	body := fmt.Sprintf("smith: attempt %d of %d, %s, on %s, took %s.\n\n%s", attempt, l.Limits.MaxAttempts, ending, presetPhrase(run.preset), run.took.Round(time.Second), data)
+	header := fmt.Sprintf("smith: attempt %d of %d, %s, on %s, took %s.\n\n", attempt, l.Limits.MaxAttempts, ending, presetPhrase(run.preset), run.took.Round(time.Second))
+	body := header + tailWithin(string(data), commentCap-utf8.RuneCountInString(header))
 	return l.warnIf(l.Tracker.Comment(ctx, task.Number, body), "could not comment on #%d", task.Number)
+}
+
+// commentCap is the most characters a report comment, header included, may
+// hold: under GitHub's 65,536-character limit.
+const commentCap = 60000
+
+// cutMarker leads a report that was cut to its tail.
+const cutMarker = "(earlier text was cut)\n\n"
+
+// tailWithin returns report whole when it fits in room characters, otherwise
+// its tail behind cutMarker, the marker counted in room.
+func tailWithin(report string, room int) string {
+	if utf8.RuneCountInString(report) <= room {
+		return report
+	}
+	keep := max(room-utf8.RuneCountInString(cutMarker), 0)
+	runes := []rune(report)
+	return cutMarker + string(runes[len(runes)-keep:])
 }
