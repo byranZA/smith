@@ -34,7 +34,7 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, who string, clo
 	file := l.Bench.ReportFile(task.Number)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return l.report("smith: warning: the agent left no report for #%d at %s\n", task.Number, file)
+		return l.report("smith: warning: the agent left no report for #%d (%s) at %s\n", task.Number, who, file)
 	}
 	if err != nil {
 		return l.warnIf(err, "could not read the report of #%d", task.Number)

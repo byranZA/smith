@@ -150,7 +150,7 @@ func TestAnAttemptWithNoReportGetsNoCommentAndAWarning(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if len(reportsOf(b)) != 0 || !strings.Contains(progress.String(), "smith: warning: the agent left no report for #43 at "+r.file) {
+	if len(reportsOf(b)) != 0 || !strings.Contains(progress.String(), "smith: warning: the agent left no report for #43 (attempt 1 of 2) at "+r.file) {
 		t.Errorf("comments = %+v, progress = %q, want no comment and a warning", b.comments, progress.String())
 	}
 }
@@ -325,7 +325,7 @@ func TestAnInteractiveRunWithNoReportGetsNoCommentAndAWarning(t *testing.T) {
 		t.Fatalf("RunInteractive() error = %v", err)
 	}
 
-	if len(r.board.comments) != 0 || !strings.Contains(warned.String(), "the agent left no report for #43") {
+	if len(r.board.comments) != 0 || !strings.Contains(warned.String(), "the agent left no report for #43 (interactive run) at ") {
 		t.Errorf("comments = %+v, output = %q, want no comment and a no-report warning", r.board.comments, warned.String())
 	}
 }
