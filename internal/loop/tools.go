@@ -83,6 +83,15 @@ func (l Loop) prepareTools() error {
 	return nil
 }
 
+// startTools readies the tools directory and notes a prompt without the tools
+// placeholder, before a run marks any task.
+func (l Loop) startTools() error {
+	if err := l.prepareTools(); err != nil {
+		return err
+	}
+	return l.noteToolsPlaceholder()
+}
+
 // launch runs cmd through the Launcher with a smith tools socket served for
 // its duration, its path in SMITH_TOOLS, and closes the socket when the agent
 // exits. It returns what the agent's tool calls came to, and how the launch

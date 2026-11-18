@@ -309,10 +309,7 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 		failed := fmt.Errorf("read #%d: %w", spec, err)
 		return Outcome{}, errors.Join(failed, l.Abort(ctx, spec, failed))
 	}
-	if err := l.prepareTools(); err != nil {
-		return Outcome{}, err
-	}
-	if err := l.noteToolsPlaceholder(); err != nil {
+	if err := l.startTools(); err != nil {
 		return Outcome{}, err
 	}
 	if err := l.recoverStack(ctx); err != nil {
@@ -527,6 +524,9 @@ func (o InteractiveOutcome) Succeeded() bool {
 // cannot resolve. When the spec is complete once it ends, the recycled task
 // worktree is removed.
 func (l Loop) RunInteractive(ctx context.Context, spec int) (InteractiveOutcome, error) {
+	if err := l.startTools(); err != nil {
+		return InteractiveOutcome{}, err
+	}
 	if err := l.recoverStack(ctx); err != nil {
 		return InteractiveOutcome{}, err
 	}
