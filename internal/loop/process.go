@@ -11,6 +11,7 @@ import (
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/misetrust"
+	"github.com/byranZA/smith/internal/procgroup"
 	"github.com/byranZA/smith/internal/tailbuf"
 )
 
@@ -61,7 +62,7 @@ func (p Process) Launch(ctx context.Context, cmd agent.Command) error {
 	if cmd.Attached {
 		proc.Stdin = p.Stdin
 	} else {
-		stopTogether(proc)
+		procgroup.Stop(proc)
 	}
 	if err := proc.Start(); err != nil {
 		return fmt.Errorf("run %s: %w: %w", cmd.Name, ErrNotStarted, err)
