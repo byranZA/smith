@@ -88,16 +88,16 @@ func alive(path string) bool {
 
 // Server serves one registry on one socket, one call at a time.
 type Server struct {
-	path     string
-	listener net.Listener
-	registry Registry
-	onCall   func(Served)
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	turn     sync.Mutex
-	errsMu   sync.Mutex
-	errs     []error
+	path      string
+	listener  net.Listener
+	registry  Registry
+	onRefused func(name string, err error)
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	turn      sync.Mutex
+	errsMu    sync.Mutex
+	errs      []error
 }
 
 // disconnected reports whether err is the client going away, which a server
@@ -132,9 +132,9 @@ func (s *Server) closeConn(conn net.Conn) {
 }
 
 // Serve starts a server for registry on a new socket with a random name in
-// dir, which PrepareDir has prepared. onCall, when set, is told of each call
-// once it ends.
-func Serve(dir string, registry Registry, onCall func(Served)) (*Server, error) {
+// dir, which PrepareDir has prepared. onRefused, when set, is told of each call
+// turned away because no tool of that name is served; tools report their own calls.
+func Serve(dir string, registry Registry, onRefused func(name string, err error)) (*Server, error) {
 	var raw [randomNameBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return nil, fmt.Errorf("name the tool socket: %w", err)
@@ -148,7 +148,7 @@ func Serve(dir string, registry Registry, onCall func(Served)) (*Server, error) 
 		return nil, fmt.Errorf("listen on the tool socket %s: %w", path, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{path: path, listener: listener, registry: registry, onCall: onCall, ctx: ctx, cancel: cancel}
+	s := &Server{path: path, listener: listener, registry: registry, onRefused: onRefused, ctx: ctx, cancel: cancel}
 	s.wg.Add(1)
 	go s.accept()
 	return s, nil
@@ -226,8 +226,8 @@ func (s *Server) call(conn net.Conn, enc *json.Encoder, req request) {
 	tool, ok := s.registry.find(req.Name)
 	if !ok {
 		err := s.registry.unknown(req.Name)
-		if s.onCall != nil {
-			s.onCall(Served{Name: req.Name, Err: err, Refused: true})
+		if s.onRefused != nil {
+			s.onRefused(req.Name, err)
 		}
 		s.send(enc, frame{Done: true, Status: statusRefused, Error: err.Error()})
 		return
@@ -237,7 +237,6 @@ func (s *Server) call(conn net.Conn, enc *json.Encoder, req request) {
 	if s.ctx.Err() != nil {
 		return
 	}
-	began := time.Now()
 	err := tool.Run(s.ctx, req.Args, frameWriter{enc: enc})
 	end := frame{Done: true}
 	var refused *RefusedError
@@ -246,9 +245,6 @@ func (s *Server) call(conn net.Conn, enc *json.Encoder, req request) {
 		end.Status, end.Error = statusRefused, err.Error()
 	case err != nil:
 		end.Status, end.Error = statusFailed, err.Error()
-	}
-	if s.onCall != nil {
-		s.onCall(Served{Name: tool.Name, Err: err, Took: time.Since(began)})
 	}
 	s.send(enc, end)
 }

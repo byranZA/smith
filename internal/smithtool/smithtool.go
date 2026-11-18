@@ -13,7 +13,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"time"
 )
 
 // Tool is one named action the loop performs for its agent.
@@ -109,18 +108,5 @@ type FailedError struct {
 
 // Error returns the reason.
 func (e *FailedError) Error() string { return e.Reason }
-
-// Served is one call the server served, as it reports it.
-type Served struct {
-	// Name is the tool called.
-	Name string
-	// Err is how the call ended, nil when it succeeded.
-	Err error
-	// Took is how long the tool ran.
-	Took time.Duration
-	// Refused is set when the call was turned away before any tool ran: the
-	// name is unknown or withheld, and Err says why.
-	Refused bool
-}
 
 var errNoSocket = errors.New("smith is not running a loop for this shell: SMITH_TOOLS is not set")

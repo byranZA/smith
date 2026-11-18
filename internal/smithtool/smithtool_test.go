@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,13 +33,13 @@ func shortDir(t *testing.T) string {
 }
 
 // serve starts a server for tools in a prepared short dir and closes it with the test.
-func serve(t *testing.T, onCall func(smithtool.Served), tools ...smithtool.Tool) *smithtool.Server {
+func serve(t *testing.T, onRefused func(string, error), tools ...smithtool.Tool) *smithtool.Server {
 	t.Helper()
 	dir := filepath.Join(shortDir(t), "tools")
 	if err := smithtool.PrepareDir(dir); err != nil {
 		t.Fatalf("PrepareDir(%q) = %v", dir, err)
 	}
-	s, err := smithtool.Serve(dir, smithtool.NewRegistry(tools...), onCall)
+	s, err := smithtool.Serve(dir, smithtool.NewRegistry(tools...), onRefused)
 	if err != nil {
 		t.Fatalf("Serve = %v", err)
 	}
@@ -232,27 +233,6 @@ func TestCloseCancelsARunningCall(t *testing.T) {
 	}
 }
 
-func TestServerReportsEachCallToOnCall(t *testing.T) {
-	t.Parallel()
-	var got []smithtool.Served
-	var mu sync.Mutex
-	ok := smithtool.Tool{Name: "ok", Run: func(context.Context, []string, io.Writer) error { return nil }}
-	bad := smithtool.Tool{Name: "bad", Run: func(context.Context, []string, io.Writer) error { return errors.New("boom") }}
-	s := serve(t, func(c smithtool.Served) { mu.Lock(); got = append(got, c); mu.Unlock() }, ok, bad)
-	if err := smithtool.Call(t.Context(), s.Path(), "ok", nil, io.Discard); err != nil {
-		t.Fatalf("Call(ok) = %v, want nil", err)
-	}
-	var failed *smithtool.FailedError
-	if err := smithtool.Call(t.Context(), s.Path(), "bad", nil, io.Discard); !errors.As(err, &failed) {
-		t.Fatalf("Call(bad) = %v, want a FailedError", err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(got) != 2 || got[0].Name != "ok" || got[0].Err != nil || got[1].Name != "bad" || got[1].Err == nil {
-		t.Errorf("onCall saw %+v, want ok then bad with an error", got)
-	}
-}
-
 func TestPrepareDirMakesDirectoryPrivate(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(shortDir(t), "tools")
@@ -303,18 +283,18 @@ func TestPrepareDirRefusesPathTooLongForSocketBeforeMakingIt(t *testing.T) {
 	}
 }
 
-func TestServerReportsAnUnknownToolCallAsRefused(t *testing.T) {
+func TestServerTellsOnRefusedOfAnUnknownToolCall(t *testing.T) {
 	t.Parallel()
-	var got []smithtool.Served
+	var got []string
 	var mu sync.Mutex
-	s := serve(t, func(c smithtool.Served) { mu.Lock(); got = append(got, c); mu.Unlock() })
+	s := serve(t, func(name string, _ error) { mu.Lock(); got = append(got, name); mu.Unlock() })
 	var refused *smithtool.RefusedError
 	if err := smithtool.Call(t.Context(), s.Path(), "frobnicate", nil, io.Discard); !errors.As(err, &refused) {
 		t.Fatalf("Call(frobnicate) = %v, want a RefusedError", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(got) != 1 || got[0].Name != "frobnicate" || !got[0].Refused || got[0].Err == nil {
-		t.Errorf("onCall saw %+v, want one refused call to frobnicate with an error", got)
+	if !slices.Equal(got, []string{"frobnicate"}) {
+		t.Errorf("onRefused saw %q, want [frobnicate]", got)
 	}
 }
