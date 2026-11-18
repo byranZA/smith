@@ -516,8 +516,12 @@ The prompt the loop hands the agent for a **review**, built in and ejectable lik
 _Avoid_: review skill, review template.
 
 **Agent guide**:
-What `smith help agents` prints: how a coding agent that plans work drives smith — its mental model, the verbs, the exit codes, the issue shape the loop expects, and recipes for common workflows. It is for the agent that runs smith, never for a task's agent, which the loop prompt alone instructs. Built into the binary, so it always matches the installed smith, and never written to disk.
+What `smith help agents` prints: how a coding agent that plans work drives smith — its mental model, the verbs, the exit codes, the issue shape the loop expects, and recipes for common workflows. It is for the agent that runs smith, never for the loop's own agent, which its prompt instructs and which runs smith only through **smith tools**. Built into the binary, so it always matches the installed smith, and never written to disk.
 _Avoid_: skill, docs, manual.
+
+**Smith tool**:
+An action the loop's agent, working a task or the review, may ask the running loop to perform during its run, through `smith tool <name>`, such as re-running the **stack**'s recorded `up`. The loop performs it in that run, for that worktree, so it is refused anywhere else, and the prompt lists only the tools available in this run. A closed, named set that smith grows, and the only way that agent runs smith.
+_Avoid_: tool (the coding agent's own), task tool, MCP tool, verb.
 
 **JSON document**:
 The one object a read verb prints on stdout under `--json`: the same answer its prose gives, for a program rather than a person. It is the contract, and the prose is free to change. A verb whose answer is bad news, such as a drifted box or a blueprint with problems, still prints its document; a verb that could not produce an answer prints none and says why on stderr, and the exit code is the same either way. Before v1 a document may gain fields at any time, while renaming or removing one, or changing the fixed set of tokens one holds, is a breaking change the release notes announce.
