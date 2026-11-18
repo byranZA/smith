@@ -9,11 +9,15 @@ import (
 	"github.com/byranZA/smith/internal/tracker"
 )
 
-func TestBuiltinPromptsCarryTheToolsPlaceholder(t *testing.T) {
+func TestBuiltinWorkPromptCarriesTheToolsPlaceholder(t *testing.T) {
 	t.Parallel()
 	if !strings.Contains(string(loop.BuiltinPrompt()), "{{SMITH_TOOLS}}") {
 		t.Error("the built-in work prompt has no {{SMITH_TOOLS}}")
 	}
+}
+
+func TestBuiltinReviewPromptCarriesTheToolsPlaceholder(t *testing.T) {
+	t.Parallel()
 	if !strings.Contains(string(loop.BuiltinReviewPrompt()), "{{SMITH_TOOLS}}") {
 		t.Error("the built-in review prompt has no {{SMITH_TOOLS}}")
 	}
