@@ -146,6 +146,7 @@ func TestRunRefusesATooLongToolsDirBeforeMarkingAnyTask(t *testing.T) {
 type callingLauncher struct {
 	next    loop.Launcher
 	name    string
+	args    []string
 	output  []string
 	errs    []error
 	listing [][]smithtool.Info
@@ -155,7 +156,7 @@ func (c *callingLauncher) Launch(ctx context.Context, cmd agent.Command) error {
 	for _, kv := range cmd.Env {
 		if path, ok := strings.CutPrefix(kv, loop.ToolsEnv+"="); ok {
 			var out strings.Builder
-			c.errs = append(c.errs, smithtool.Call(ctx, path, c.name, nil, &out))
+			c.errs = append(c.errs, smithtool.Call(ctx, path, c.name, c.args, &out))
 			c.output = append(c.output, out.String())
 			infos, _ := smithtool.List(ctx, path)
 			c.listing = append(c.listing, infos)
@@ -205,6 +206,26 @@ func TestStackUpToolRerunsTheRecordedUpAndStreamsItsOutput(t *testing.T) {
 	}
 	if want := []smithtool.Info{{Name: "stack-up", Summary: "re-run the stack's recorded up in this worktree"}}; !reflect.DeepEqual(call.listing[0], want) {
 		t.Errorf("listing = %v, want %v", call.listing[0], want)
+	}
+}
+
+func TestStackUpToolIsRefusedWithArgumentsAndRunsNoUp(t *testing.T) {
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, d := stackedJournalLoop(t, j, nil)
+	call := &callingLauncher{next: l.Launcher, name: "stack-up", args: []string{"--fresh"}}
+	l.Launcher = call
+	l.ToolsDir = toolsDir(t)
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var refused *smithtool.RefusedError
+	if !errors.As(call.errs[0], &refused) || !strings.Contains(refused.Error(), "takes no arguments") {
+		t.Errorf("stack-up error = %v, want a refusal saying it takes no arguments", call.errs[0])
+	}
+	if got := countPrefix(j.events, "up "+d); got != 1 {
+		t.Errorf("events = %q, want only the initial up", j.events)
 	}
 }
 

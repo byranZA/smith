@@ -47,7 +47,10 @@ func (l Loop) registry(log *toolLog) smithtool.Registry {
 	return smithtool.NewRegistry(smithtool.Tool{
 		Name:    stackUpTool,
 		Summary: "re-run the stack's recorded up in this worktree",
-		Run: func(ctx context.Context, _ []string, out io.Writer) error {
+		Run: func(ctx context.Context, args []string, out io.Writer) error {
+			if len(args) > 0 {
+				return smithtool.Refuse(fmt.Sprintf("%s takes no arguments, got %q", stackUpTool, strings.Join(args, " ")))
+			}
 			log.mu.Lock()
 			log.captured = tailbuf.Buffer{Limit: PrepareTailLimit}
 			log.status = 0
