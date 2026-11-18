@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
@@ -15,7 +16,25 @@ import (
 const ToolsEnv = "SMITH_TOOLS"
 
 // registry returns the smith tools this run serves.
-func (l Loop) registry() smithtool.Registry { return smithtool.NewRegistry() }
+// stack-up is there only when smith runs the stack in this run.
+func (l Loop) registry() smithtool.Registry {
+	if l.Stack == nil {
+		return smithtool.NewRegistry().Withhold(stackUpTool, "smith runs no stack in this run")
+	}
+	return smithtool.NewRegistry(smithtool.Tool{
+		Name:    stackUpTool,
+		Summary: "re-run the stack's recorded up in this worktree",
+		Run: func(ctx context.Context, _ []string, out io.Writer) error {
+			if err := l.Stack.Reup(ctx, out); err != nil {
+				return &smithtool.FailedError{Reason: err.Error()}
+			}
+			return nil
+		},
+	})
+}
+
+// stackUpTool is the name of the tool that re-runs the stack's recorded up.
+const stackUpTool = "stack-up"
 
 // prepareTools readies the tools directory for the run, refusing before any
 // task is marked when a socket's path would be too long. It does nothing when

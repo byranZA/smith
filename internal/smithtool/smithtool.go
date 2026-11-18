@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -36,6 +37,20 @@ type Info struct {
 // Registry is the closed set of tools a run serves.
 type Registry struct {
 	tools []Tool
+	// withheld maps the name of a tool this run does not serve to why.
+	withheld map[string]string
+}
+
+// Withhold returns the registry with name noted as a tool this run does not
+// serve, so a call to it is refused with reason rather than as unknown.
+func (r Registry) Withhold(name, reason string) Registry {
+	withheld := maps.Clone(r.withheld)
+	if withheld == nil {
+		withheld = map[string]string{}
+	}
+	withheld[name] = reason
+	r.withheld = withheld
+	return r
 }
 
 // NewRegistry returns a registry of tools, listed in the order given.
@@ -61,6 +76,9 @@ func (r Registry) find(name string) (Tool, bool) {
 
 // unknown is the refusal of a tool the registry does not hold, naming the ones it does.
 func (r Registry) unknown(name string) error {
+	if reason, ok := r.withheld[name]; ok {
+		return &RefusedError{Reason: reason}
+	}
 	names := make([]string, len(r.tools))
 	for i, t := range r.tools {
 		names[i] = t.Name

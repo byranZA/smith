@@ -286,3 +286,60 @@ func TestReleaseStopsAHungDownAtItsTimeoutAndSaysSo(t *testing.T) {
 		}
 	})
 }
+
+func TestReupRunsTheRecordedUpWithoutReadingTheRepoFile(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, declared)
+	run := &fakeCommander{}
+	s := &stack.Stack{Command: run}
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatalf("Ensure() err = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".smith", "repo.yaml"), []byte("stack:\n  up: other up\n  down: other down\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Reup(t.Context(), io.Discard); err != nil {
+		t.Fatalf("Reup() err = %v", err)
+	}
+
+	want := []call{{"stack up", dir, "make up"}, {"stack up", dir, "make up"}}
+	if !reflect.DeepEqual(run.calls, want) {
+		t.Errorf("ran %v, want %v", run.calls, want)
+	}
+}
+
+func TestReupWithNoStackRunningIsAnError(t *testing.T) {
+	t.Parallel()
+	run := &fakeCommander{}
+	s := &stack.Stack{Command: run}
+
+	if err := s.Reup(t.Context(), io.Discard); err == nil {
+		t.Error("Reup() err = nil, want an error")
+	}
+	if len(run.calls) != 0 {
+		t.Errorf("ran %v, want no command", run.calls)
+	}
+}
+
+func TestReupFailureKeepsTheStackRecordedForRelease(t *testing.T) {
+	t.Parallel()
+	dir := worktree(t, declared)
+	run := &fakeCommander{}
+	s := &stack.Stack{Command: run}
+	if err := s.Ensure(t.Context(), dir, io.Discard); err != nil {
+		t.Fatalf("Ensure() err = %v", err)
+	}
+	run.fail = map[string]error{stack.Up: errors.New("boom")}
+
+	if err := s.Reup(t.Context(), io.Discard); err == nil {
+		t.Fatal("Reup() err = nil, want the failed up")
+	}
+	if err := s.Release(t.Context(), io.Discard); err != nil {
+		t.Fatalf("Release() err = %v", err)
+	}
+
+	if last := run.calls[len(run.calls)-1]; last != (call{"stack down", dir, "make down"}) {
+		t.Errorf("last call = %v, want the recorded down", last)
+	}
+}

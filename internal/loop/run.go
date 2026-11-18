@@ -136,6 +136,9 @@ type Stacker interface {
 	// Ensure brings the stack the worktree at dir declares up, streaming its
 	// output to out. A worktree that declares none runs nothing.
 	Ensure(ctx context.Context, dir string, out io.Writer) error
+	// Reup runs the recorded up of the running stack again, streaming its
+	// output to out. It is an error when no stack is up.
+	Reup(ctx context.Context, out io.Writer) error
 	// Release takes down the stack Ensure brought up, once, streaming its
 	// output to out, even though ctx is cancelled. It does nothing when no
 	// stack is up.
