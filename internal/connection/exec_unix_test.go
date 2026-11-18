@@ -5,6 +5,8 @@ package connection_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,8 +30,17 @@ func TestRunCancelledKillsTheProcessesTheCommandStarted(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for pid == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
-		raw, _ := os.ReadFile(pidFile)
-		pid, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
+		raw, err := os.ReadFile(pidFile)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("read the pid file: %v", err)
+		}
+		// A partly written file does not parse yet; the next poll reads it whole.
+		if n, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+			pid = n
+		}
 	}
 	if pid == 0 {
 		t.Fatal("the command never reported its child's pid")

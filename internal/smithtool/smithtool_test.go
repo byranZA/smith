@@ -23,7 +23,11 @@ func shortDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("make temp dir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove temp dir: %v", err)
+		}
+	})
 	return dir
 }
 
@@ -38,8 +42,20 @@ func serve(t *testing.T, onCall func(smithtool.Served), tools ...smithtool.Tool)
 	if err != nil {
 		t.Fatalf("Serve = %v", err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close the tool server: %v", err)
+		}
+	})
 	return s
+}
+
+// slowCall runs the slow tool with arg, failing the test when the call does.
+func slowCall(t *testing.T, s *smithtool.Server, arg string) {
+	t.Helper()
+	if err := smithtool.Call(t.Context(), s.Path(), "slow", []string{arg}, io.Discard); err != nil {
+		t.Errorf("Call(slow %s) = %v, want nil", arg, err)
+	}
 }
 
 func TestCallStreamsOutputAndSucceeds(t *testing.T) {
@@ -59,7 +75,9 @@ func TestCallStreamsOutputAndSucceeds(t *testing.T) {
 
 func TestCallOfFailingToolReturnsFailedErrorAfterItsOutput(t *testing.T) {
 	bad := smithtool.Tool{Name: "bad", Run: func(_ context.Context, _ []string, out io.Writer) error {
-		_, _ = io.WriteString(out, "partial\n")
+		if _, err := io.WriteString(out, "partial\n"); err != nil {
+			return err
+		}
 		return errors.New("up exited 3")
 	}}
 	s := serve(t, nil, bad)
@@ -166,9 +184,9 @@ func TestCallsRunOneAtATime(t *testing.T) {
 	s := serve(t, nil, slow)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); _ = smithtool.Call(t.Context(), s.Path(), "slow", []string{"1"}, io.Discard) }()
+	go func() { defer wg.Done(); slowCall(t, s, "1") }()
 	<-started
-	go func() { defer wg.Done(); _ = smithtool.Call(t.Context(), s.Path(), "slow", []string{"2"}, io.Discard) }()
+	go func() { defer wg.Done(); slowCall(t, s, "2") }()
 	time.Sleep(100 * time.Millisecond)
 	close(release)
 	wg.Wait()
@@ -210,8 +228,13 @@ func TestServerReportsEachCallToOnCall(t *testing.T) {
 	ok := smithtool.Tool{Name: "ok", Run: func(context.Context, []string, io.Writer) error { return nil }}
 	bad := smithtool.Tool{Name: "bad", Run: func(context.Context, []string, io.Writer) error { return errors.New("boom") }}
 	s := serve(t, func(c smithtool.Served) { mu.Lock(); got = append(got, c); mu.Unlock() }, ok, bad)
-	_ = smithtool.Call(t.Context(), s.Path(), "ok", nil, io.Discard)
-	_ = smithtool.Call(t.Context(), s.Path(), "bad", nil, io.Discard)
+	if err := smithtool.Call(t.Context(), s.Path(), "ok", nil, io.Discard); err != nil {
+		t.Fatalf("Call(ok) = %v, want nil", err)
+	}
+	var failed *smithtool.FailedError
+	if err := smithtool.Call(t.Context(), s.Path(), "bad", nil, io.Discard); !errors.As(err, &failed) {
+		t.Fatalf("Call(bad) = %v, want a FailedError", err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(got) != 2 || got[0].Name != "ok" || got[0].Err != nil || got[1].Name != "bad" || got[1].Err == nil {
@@ -270,7 +293,10 @@ func TestServerReportsAnUnknownToolCallAsRefused(t *testing.T) {
 	var got []smithtool.Served
 	var mu sync.Mutex
 	s := serve(t, func(c smithtool.Served) { mu.Lock(); got = append(got, c); mu.Unlock() })
-	_ = smithtool.Call(t.Context(), s.Path(), "frobnicate", nil, io.Discard)
+	var refused *smithtool.RefusedError
+	if err := smithtool.Call(t.Context(), s.Path(), "frobnicate", nil, io.Discard); !errors.As(err, &refused) {
+		t.Fatalf("Call(frobnicate) = %v, want a RefusedError", err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(got) != 1 || got[0].Name != "frobnicate" || !got[0].Refused || got[0].Err == nil {

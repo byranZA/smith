@@ -2,6 +2,7 @@ package loop_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -58,15 +59,20 @@ type reupsPerAttempt struct {
 }
 
 func (r *reupsPerAttempt) Launch(ctx context.Context, cmd agent.Command) error {
+	var callErrs error
 	for _, kv := range cmd.Env {
 		if path, ok := strings.CutPrefix(kv, loop.ToolsEnv+"="); ok {
 			for range r.counts[r.launch] {
-				_ = smithtool.Call(ctx, path, "stack-up", nil, io.Discard)
+				// A re-up that ran and failed is what some tests set up; any other error is not.
+				var failed *smithtool.FailedError
+				if err := smithtool.Call(ctx, path, "stack-up", nil, io.Discard); err != nil && !errors.As(err, &failed) {
+					callErrs = errors.Join(callErrs, err)
+				}
 			}
 		}
 	}
 	r.launch++
-	return r.next.Launch(ctx, cmd)
+	return errors.Join(callErrs, r.next.Launch(ctx, cmd))
 }
 
 // reupReport runs two attempts of task 43, the agent re-upping counts[i] times in attempt i, and returns the posted report headers.

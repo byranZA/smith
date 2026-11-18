@@ -26,13 +26,19 @@ func dial(ctx context.Context, path string) (net.Conn, error) {
 
 // exchange sends req on the socket at path and reads frames until the final
 // one, copying output to out when it is set, and returns the final frame.
-func exchange(ctx context.Context, path string, req request, out io.Writer) (frame, error) {
+func exchange(ctx context.Context, path string, req request, out io.Writer) (_ frame, err error) {
 	conn, err := dial(ctx, path)
 	if err != nil {
 		return frame{}, err
 	}
-	defer func() { _ = conn.Close() }()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer func() {
+		if cerr := closeConn(conn); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
+	}()
+	// A cancelled context closes conn to end the read; the failure that
+	// follows says so, and closeConn above tolerates the second close.
+	stop := context.AfterFunc(ctx, func() { conn.Close() }) //nolint:errcheck,gosec // see above
 	defer stop()
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return frame{}, &RefusedError{Reason: fmt.Sprintf("smith is not running a loop for this shell: send the call: %v", err)}
@@ -52,6 +58,15 @@ func exchange(ctx context.Context, path string, req request, out io.Writer) (fra
 			}
 		}
 	}
+}
+
+// closeConn closes conn, treating one already closed as done: a cancelled
+// call closes it from the context hook first.
+func closeConn(conn net.Conn) error {
+	if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return fmt.Errorf("close the tool socket: %w", err)
+	}
+	return nil
 }
 
 // final turns a final frame into the error it stands for, nil for success.

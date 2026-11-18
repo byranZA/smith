@@ -35,6 +35,16 @@ type toolLog struct {
 	record   toolRecord
 	captured tailbuf.Buffer
 	status   int
+	// reportErrs are the failures to show the operator a call, kept for launch to return.
+	reportErrs []error
+}
+
+// noteReport keeps err, when set, so launch returns it: the operator's view of
+// a tool call must not be lost silently. The caller holds mu.
+func (t *toolLog) noteReport(err error) {
+	if err != nil {
+		t.reportErrs = append(t.reportErrs, err)
+	}
 }
 
 // registry returns the smith tools this run serves, noting in log what the
@@ -120,7 +130,7 @@ func (l Loop) launch(ctx context.Context, cmd agent.Command) (toolRecord, error)
 	}
 	log.mu.Lock()
 	defer log.mu.Unlock()
-	return log.record, errors.Join(failure, closed)
+	return log.record, errors.Join(failure, closed, errors.Join(log.reportErrs...))
 }
 
 // toolServed shows the operator one smith tool call the agent made, and notes
@@ -129,19 +139,19 @@ func (l Loop) toolServed(log *toolLog, call smithtool.Served) {
 	log.mu.Lock()
 	defer log.mu.Unlock()
 	if call.Refused {
-		_ = l.report("smith tool: %s refused (%s)\n", call.Name, call.Err)
+		log.noteReport(l.report("smith tool: %s refused (%s)\n", call.Name, call.Err))
 		return
 	}
 	took := call.Took.Round(time.Second)
 	if call.Err == nil {
-		_ = l.report("smith tool: %s ok (%s)\n", call.Name, took)
+		log.noteReport(l.report("smith tool: %s ok (%s)\n", call.Name, took))
 	} else {
 		result := "exit " + strconv.Itoa(log.status)
 		if log.status == 0 {
 			result = call.Err.Error()
 		}
-		_ = l.report("smith tool: %s failed (%s, %s)\n", call.Name, result, took)
-		_ = l.reportTail(&log.captured)
+		log.noteReport(l.report("smith tool: %s failed (%s, %s)\n", call.Name, result, took))
+		log.noteReport(l.reportTail(&log.captured))
 	}
 	if call.Name == stackUpTool {
 		log.record.reups++

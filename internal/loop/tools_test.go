@@ -53,7 +53,11 @@ func toolsDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove temp dir: %v", err)
+		}
+	})
 	return filepath.Join(dir, "tools")
 }
 
@@ -153,16 +157,18 @@ type callingLauncher struct {
 }
 
 func (c *callingLauncher) Launch(ctx context.Context, cmd agent.Command) error {
+	var listErr error
 	for _, kv := range cmd.Env {
 		if path, ok := strings.CutPrefix(kv, loop.ToolsEnv+"="); ok {
 			var out strings.Builder
 			c.errs = append(c.errs, smithtool.Call(ctx, path, c.name, c.args, &out))
 			c.output = append(c.output, out.String())
-			infos, _ := smithtool.List(ctx, path)
+			infos, err := smithtool.List(ctx, path)
+			listErr = errors.Join(listErr, err)
 			c.listing = append(c.listing, infos)
 		}
 	}
-	return c.next.Launch(ctx, cmd)
+	return errors.Join(listErr, c.next.Launch(ctx, cmd))
 }
 
 // failSecondUp fails every up after the first, as a stack that came up and then broke.

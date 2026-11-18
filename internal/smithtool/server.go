@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -80,7 +81,8 @@ func alive(path string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	// Something answered; whether the probe's close succeeds does not change that.
+	conn.Close() //nolint:errcheck,gosec // see above
 	return true
 }
 
@@ -94,6 +96,39 @@ type Server struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	turn     sync.Mutex
+	errsMu   sync.Mutex
+	errs     []error
+}
+
+// disconnected reports whether err is the client going away, which a server
+// expects and does not count as its own failure.
+func disconnected(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
+}
+
+// note keeps err for Close to return, unless it is a client disconnecting.
+func (s *Server) note(err error) {
+	if err == nil || disconnected(err) {
+		return
+	}
+	s.errsMu.Lock()
+	defer s.errsMu.Unlock()
+	s.errs = append(s.errs, err)
+}
+
+// send writes f to enc, noting a failure that is not a disconnect.
+func (s *Server) send(enc *json.Encoder, f frame) {
+	if err := enc.Encode(f); err != nil {
+		s.note(fmt.Errorf("answer a tool request: %w", err))
+	}
+}
+
+// closeConn closes conn, noting a failure other than it being closed already.
+func (s *Server) closeConn(conn net.Conn) {
+	if err := conn.Close(); err != nil {
+		s.note(fmt.Errorf("close a tool connection: %w", err))
+	}
 }
 
 // Serve starts a server for registry on a new socket with a random name in
@@ -132,9 +167,13 @@ func (s *Server) Close() error {
 		err = errors.Join(err, fmt.Errorf("remove the tool socket %s: %w", s.path, rerr))
 	}
 	if err != nil && !errors.Is(err, net.ErrClosed) {
-		return fmt.Errorf("close the tool server: %w", err)
+		err = fmt.Errorf("close the tool server: %w", err)
+	} else {
+		err = nil
 	}
-	return nil
+	s.errsMu.Lock()
+	defer s.errsMu.Unlock()
+	return errors.Join(append([]error{err}, s.errs...)...)
 }
 
 // accept serves each connection in its own goroutine until the listener closes.
@@ -155,26 +194,29 @@ func (s *Server) accept() {
 
 // serve answers the one request on conn and closes it.
 func (s *Server) serve(conn net.Conn) {
-	defer func() { _ = conn.Close() }()
-	stop := context.AfterFunc(s.ctx, func() { _ = conn.Close() })
+	defer s.closeConn(conn)
+	stop := context.AfterFunc(s.ctx, func() { s.closeConn(conn) })
 	defer stop()
+	enc := json.NewEncoder(conn)
 	var req request
 	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&req); err != nil {
+		if !disconnected(err) && s.ctx.Err() == nil {
+			s.send(enc, frame{Done: true, Status: statusRefused, Error: fmt.Sprintf("malformed request: %v", err)})
+		}
 		return
 	}
-	enc := json.NewEncoder(conn)
 	switch req.Op {
 	case opList:
 		tools, err := json.Marshal(s.registry.List())
 		if err != nil {
-			_ = enc.Encode(frame{Done: true, Status: statusFailed, Error: err.Error()})
+			s.send(enc, frame{Done: true, Status: statusFailed, Error: err.Error()})
 			return
 		}
-		_ = enc.Encode(frame{Done: true, Tools: tools})
+		s.send(enc, frame{Done: true, Tools: tools})
 	case opCall:
 		s.call(conn, enc, req)
 	default:
-		_ = enc.Encode(frame{Done: true, Status: statusRefused, Error: fmt.Sprintf("unknown request %q", req.Op)})
+		s.send(enc, frame{Done: true, Status: statusRefused, Error: fmt.Sprintf("unknown request %q", req.Op)})
 	}
 }
 
@@ -187,7 +229,7 @@ func (s *Server) call(conn net.Conn, enc *json.Encoder, req request) {
 		if s.onCall != nil {
 			s.onCall(Served{Name: req.Name, Err: err, Refused: true})
 		}
-		_ = enc.Encode(frame{Done: true, Status: statusRefused, Error: err.Error()})
+		s.send(enc, frame{Done: true, Status: statusRefused, Error: err.Error()})
 		return
 	}
 	s.turn.Lock()
@@ -208,7 +250,7 @@ func (s *Server) call(conn net.Conn, enc *json.Encoder, req request) {
 	if s.onCall != nil {
 		s.onCall(Served{Name: tool.Name, Err: err, Took: time.Since(began)})
 	}
-	_ = enc.Encode(end)
+	s.send(enc, end)
 }
 
 // frameWriter writes a tool's output as frames.

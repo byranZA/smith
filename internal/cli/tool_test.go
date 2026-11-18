@@ -38,7 +38,11 @@ func serveTools(t *testing.T, tools ...smithtool.Tool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove temp dir: %v", err)
+		}
+	})
 	dir := filepath.Join(root, "tools")
 	if err := smithtool.PrepareDir(dir); err != nil {
 		t.Fatal(err)
@@ -47,7 +51,11 @@ func serveTools(t *testing.T, tools ...smithtool.Tool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close the tool server: %v", err)
+		}
+	})
 	return s.Path()
 }
 
