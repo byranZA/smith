@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -566,6 +567,13 @@ func (w loopWiring) prepare(cmd *cobra.Command, ref tracker.Ref, l *loop.Loop, f
 		return admitted.execution, err
 	}
 	l.Bench = bench
+	if w.state != nil {
+		state, err := w.state()
+		if err != nil {
+			return admitted.execution, err
+		}
+		l.ToolsDir = filepath.Join(state, "tools")
+	}
 	if w.newStack != nil {
 		stacker, err := w.stacker(cmd.Context(), bench.WorkBranch())
 		if err != nil {

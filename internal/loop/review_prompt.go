@@ -25,7 +25,7 @@ func BuiltinReviewPrompt() ReviewPrompt { return ReviewPrompt(builtinReviewPromp
 
 // reviewPlaceholders are the placeholders a review prompt may hold, in the
 // order a refusal lists them.
-var reviewPlaceholders = []string{"{{ISSUE_NUMBER}}", "{{ISSUE_TITLE}}", "{{MERGE_BASE}}", "{{FINDINGS_FILE}}"}
+var reviewPlaceholders = []string{"{{ISSUE_NUMBER}}", "{{ISSUE_TITLE}}", "{{MERGE_BASE}}", "{{FINDINGS_FILE}}", toolsPlaceholder}
 
 // LoadReviewPrompt reads the review prompt a repo ejected to path, and reports
 // whether it found one. With none it returns the built-in prompt. It refuses a
@@ -64,12 +64,19 @@ type ReviewTarget struct {
 	FindingsFile string
 }
 
-// Render fills p's placeholders in with target.
+// WithTools returns p with the tools placeholder filled in with section, the
+// text listing the smith tools a run serves, empty when it serves none.
+func (p ReviewPrompt) WithTools(section string) ReviewPrompt {
+	return ReviewPrompt(fillTools(string(p), section))
+}
+
+// Render fills p's placeholders in with target. A tools placeholder WithTools
+// has not filled expands to nothing.
 func (p ReviewPrompt) Render(target ReviewTarget) string {
 	return strings.NewReplacer(
 		"{{ISSUE_NUMBER}}", strconv.Itoa(target.Number),
 		"{{ISSUE_TITLE}}", target.Title,
 		"{{MERGE_BASE}}", target.MergeBase,
 		"{{FINDINGS_FILE}}", target.FindingsFile,
-	).Replace(string(p))
+	).Replace(fillTools(string(p), ""))
 }

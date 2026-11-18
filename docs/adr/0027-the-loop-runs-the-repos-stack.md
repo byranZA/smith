@@ -1,6 +1,6 @@
 # The loop runs the repo's stack, one run at a time
 
-> Amends [ADR-0019](./0019-worktree-preparation.md), which kept services out of worktree preparation.
+> Amends [ADR-0019](./0019-worktree-preparation.md), which kept services out of worktree preparation. [ADR-0031](./0031-a-loops-agent-asks-the-loop-through-smith-tools.md) amends it: the loop's agent can ask the loop to re-run the recorded `up` mid-attempt.
 
 ## Context
 

@@ -79,6 +79,24 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	return nil
 }
 
+// Running reports whether a stack is up, so that a re-up has something to run.
+func (s *Stack) Running() bool { return s.running != nil }
+
+// Reup runs the recorded up of the stack that is running again, in the
+// worktree it came up in, streaming its output to out. It reads no repo file,
+// takes no down and leaves the record and lease as they are; with no stack
+// running it is an error.
+func (s *Stack) Reup(ctx context.Context, out io.Writer) error {
+	if s.running == nil {
+		return errors.New("re-up the stack: no stack is running")
+	}
+	r := *s.running
+	if err := s.Command.Exec(ctx, r.dir, Up, r.up, out); err != nil {
+		return fmt.Errorf("re-up the stack in %s: %w", r.dir, err)
+	}
+	return nil
+}
+
 // hold takes the stack lease if the stack has a state home and holds none,
 // recovering a dead run's stack first, and records declared in it.
 func (s *Stack) hold(ctx context.Context, declared running, out io.Writer) error {

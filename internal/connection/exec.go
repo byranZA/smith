@@ -8,7 +8,13 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
+
+	"github.com/byranZA/smith/internal/procgroup"
 )
+
+// groupStopDelay is how long a cancelled command's output pipes may stay open after its group is killed.
+const groupStopDelay = 2 * time.Second
 
 // SystemExec runs real local processes via os/exec. It is the production Exec
 // used to launch the system ssh and scp binaries.
@@ -27,6 +33,10 @@ func (SystemExec) Run(ctx context.Context, name string, args []string, stdin io.
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if stdin == nil {
+		procgroup.Stop(cmd)
+		cmd.WaitDelay = groupStopDelay
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s: %w", name, err)
 	}

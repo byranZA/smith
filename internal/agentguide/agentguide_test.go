@@ -47,7 +47,7 @@ func TestRenderSaysWhoTheGuideIsFor(t *testing.T) {
 	t.Parallel()
 	verbs, codes := fixture()
 	got := agentguide.Render(verbs, codes)
-	for _, want := range []string{"for an agent that drives smith", "handed a task by the loop does not run smith"} {
+	for _, want := range []string{"for an agent that drives smith", "handed a task by the loop runs smith only through the smith tools its prompt lists (`smith tool …`)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Render() missing %q in:\n%s", want, got)
 		}

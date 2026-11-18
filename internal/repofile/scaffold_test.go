@@ -109,7 +109,7 @@ func TestTheRepoGuidePointsAtTheAgentGuideAndTheWorkBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"smith help agents", "smith <verb> --help", "smith loop list <n>", ".smith/repo.yaml", ".smith/prompt.md", "does not run smith"} {
+	for _, want := range []string{"smith help agents", "smith <verb> --help", "smith loop list <n>", ".smith/repo.yaml", ".smith/prompt.md", "runs smith only through the smith tools its prompt lists (`smith tool …`)"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("repo guide lacks %q:\n%s", want, data)
 		}

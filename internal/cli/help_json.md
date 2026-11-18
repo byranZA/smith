@@ -72,6 +72,13 @@ The documents:
     blocked_by    the numbers of its open blockers, [] when none
   Label warnings go to stderr. An issue that cannot be read prints nothing on stdout.
 
+`smith tool list`
+  schema_version  1
+  tools           the smith tools this run serves, [] when none; each has:
+    name          the name `smith tool <name>` takes
+    summary       what the tool does, in one line
+  Only a loop's agent can run it: with no SMITH_TOOLS, or a dead socket, it prints nothing on stdout and exits 2.
+
 `smith blueprint check`
   schema_version  1
   preferences     the preferences file: path, and found (false when there is none)

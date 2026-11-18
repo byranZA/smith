@@ -2,6 +2,8 @@ You are the review step of a smith loop. Every task in issue **#{{ISSUE_NUMBER}}
 
 The work is the diff `git diff {{MERGE_BASE}}...HEAD`, with its commits in `git log --oneline {{MERGE_BASE}}..HEAD`. `{{MERGE_BASE}}` is where this branch left the base branch, so the diff is exactly the work under review: commits the base branch gained since are not part of it.
 
+{{SMITH_TOOLS}}
+
 ## Review
 
 Start three subagents, one per axis below, each with a fresh context, using your agent's own way of doing so. Run them at the same time if you can. Give each one its axis's brief, verbatim, as its whole instruction, so that each reads the work with its own eyes and one axis cannot colour another.

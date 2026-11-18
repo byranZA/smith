@@ -8,6 +8,8 @@ Your task is issue **#{{TASK_NUMBER}} — {{TASK_TITLE}}**.
 - Read the spec the task belongs to: the `parent:` line of `gh issue view {{TASK_NUMBER}}` names it. The task body may reference the spec rather than repeating it. A task with no parent stands alone, and its body is the whole brief.
 - Read the repo's agent instructions (`AGENTS.md`, `CLAUDE.md` or similar) and what they point to. They hold the repo's own rules (design, coding standards, the checks to run, the paths to leave alone), and where they are more specific than this prompt, they win.
 
+{{SMITH_TOOLS}}
+
 ## Steps
 
 1. **Understand the task.** Its acceptance criteria are your definition of done. Do not start a second task, even one that looks quick: the loop picks the next one.

@@ -214,7 +214,7 @@ func TestLoopRunOffABoxRunsNoStack(t *testing.T) {
 // with a down command recorded, so a run that recovers runs "stack down".
 func leftBehind(t *testing.T, w *loopWiring) {
 	t.Helper()
-	state := t.TempDir()
+	state := shortStateHome(t)
 	w.state = func() (string, error) { return state, nil }
 	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
 	record := stack.Record{Dir: t.TempDir(), Branch: "smith/9-other", Up: "make up", Down: "make down"}
@@ -324,7 +324,7 @@ func TestLoopRunRefusesAStackAnotherRunHoldsBeforeMarkingAnyTask(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, stackFile)
 	w.box = onABox(t)
-	state := t.TempDir()
+	state := shortStateHome(t)
 	w.state = func() (string, error) { return state, nil }
 	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
 	realStackOn(t, &w, stackFile, noopCommander{})
@@ -347,7 +347,7 @@ func TestLoopRunWithNoStackGoesOnBesideAHolder(t *testing.T) {
 	gh := &fakeTracker{issues: map[string]string{"80": taskJSON(80, "OPEN", "ready-for-agent")}}
 	w, _ := repoWith(t, gh, &fakeAgent{gh: gh}, "push: true\n")
 	w.box = onABox(t)
-	state := t.TempDir()
+	state := shortStateHome(t)
 	w.state = func() (string, error) { return state, nil }
 	w.git = keyedGit{origin: "git@github.com:acme/api.git", next: w.git}
 	leaseHeldBy(t, state, stack.Key("git@github.com:acme/api.git", ""), "smith/9-other", t.TempDir())
@@ -364,7 +364,7 @@ func TestLoopRunOnABoxWithARepoRefusesAHeldStackCreatingNothing(t *testing.T) {
 	w, workspace := sessionLoop(t, readySpec(), tmux)
 	writeBareRepoWithRepoFiles(t, workspace, "api", stackFile, "unused", stackFile+"push: false\n")
 	w.box = resolvedBox(workspace, "api")
-	state := t.TempDir()
+	state := shortStateHome(t)
 	w.state = func() (string, error) { return state, nil }
 	key, err := w.stackLeaseKey(t.Context(), filepath.Join(workspace, "api", "repo.git"))
 	if err != nil {
@@ -415,4 +415,15 @@ func TestStackLeaseKeyFallsBackToTheGitDirectoryWhenThereIsNoOrigin(t *testing.T
 	if want := stack.Key("", "/repo/.git"); err != nil || got != want {
 		t.Errorf("stackLeaseKey() = %q, %v, want %q", got, err, want)
 	}
+}
+
+// shortStateHome returns a state home whose tool sockets' paths fit the platform's limit.
+func shortStateHome(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "sh")
+	if err != nil {
+		t.Fatalf("make state home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
