@@ -120,3 +120,21 @@ type stackedReporter struct {
 }
 
 func (s stackedReporter) Open(context.Context, int) (string, error) { return s.dir, nil }
+
+func TestAnUnknownToolCallShowsAsRefusedOnTheTerminal(t *testing.T) {
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, _ := stackedJournalLoop(t, j, nil)
+	l.Launcher = &callingLauncher{next: l.Launcher, name: "frobnicate"}
+	l.ToolsDir = toolsDir(t)
+	var progress strings.Builder
+	l.Progress = &progress
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := `smith tool: frobnicate refused (unknown smith tool "frobnicate"; available in this run: stack-up)` + "\n"
+	if !strings.Contains(progress.String(), want) {
+		t.Errorf("progress = %q, want it to contain %q", progress.String(), want)
+	}
+}

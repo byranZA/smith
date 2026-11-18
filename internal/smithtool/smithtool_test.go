@@ -265,3 +265,15 @@ func TestPrepareDirRefusesPathTooLongForSocketBeforeMakingIt(t *testing.T) {
 		t.Errorf("directory stat = %v, want nothing made", serr)
 	}
 }
+
+func TestServerReportsAnUnknownToolCallAsRefused(t *testing.T) {
+	var got []smithtool.Served
+	var mu sync.Mutex
+	s := serve(t, func(c smithtool.Served) { mu.Lock(); got = append(got, c); mu.Unlock() })
+	_ = smithtool.Call(t.Context(), s.Path(), "frobnicate", nil, io.Discard)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0].Name != "frobnicate" || !got[0].Refused || got[0].Err == nil {
+		t.Errorf("onCall saw %+v, want one refused call to frobnicate with an error", got)
+	}
+}

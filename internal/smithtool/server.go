@@ -184,6 +184,9 @@ func (s *Server) call(conn net.Conn, enc *json.Encoder, req request) {
 	tool, ok := s.registry.find(req.Name)
 	if !ok {
 		err := s.registry.unknown(req.Name)
+		if s.onCall != nil {
+			s.onCall(Served{Name: req.Name, Err: err, Refused: true})
+		}
 		_ = enc.Encode(frame{Done: true, Status: statusRefused, Error: err.Error()})
 		return
 	}

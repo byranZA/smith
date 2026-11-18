@@ -128,6 +128,10 @@ func (l Loop) launch(ctx context.Context, cmd agent.Command) (toolRecord, error)
 func (l Loop) toolServed(log *toolLog, call smithtool.Served) {
 	log.mu.Lock()
 	defer log.mu.Unlock()
+	if call.Refused {
+		_ = l.report("smith tool: %s refused (%s)\n", call.Name, call.Err)
+		return
+	}
 	took := call.Took.Round(time.Second)
 	if call.Err == nil {
 		_ = l.report("smith tool: %s ok (%s)\n", call.Name, took)

@@ -118,6 +118,9 @@ type Served struct {
 	Err error
 	// Took is how long the tool ran.
 	Took time.Duration
+	// Refused is set when the call was turned away before any tool ran: the
+	// name is unknown or withheld, and Err says why.
+	Refused bool
 }
 
 var errNoSocket = errors.New("smith is not running a loop for this shell: SMITH_TOOLS is not set")
