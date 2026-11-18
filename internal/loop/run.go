@@ -202,6 +202,9 @@ type Loop struct {
 	Hostname func() (string, error)
 	// Recorder keeps how each unattended run ended; nil keeps it nowhere.
 	Recorder Recorder
+	// ToolsDir is the directory the smith tools' sockets are served in, one
+	// for each agent launch; empty serves none.
+	ToolsDir string
 }
 
 // Limits bound an unattended run so it can be left alone.
@@ -302,6 +305,9 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	if err != nil {
 		failed := fmt.Errorf("read #%d: %w", spec, err)
 		return Outcome{}, errors.Join(failed, l.Abort(ctx, spec, failed))
+	}
+	if err := l.prepareTools(); err != nil {
+		return Outcome{}, err
 	}
 	if err := l.recoverStack(ctx); err != nil {
 		return Outcome{}, err
@@ -678,7 +684,7 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resol
 		return attempt{}, err
 	}
 	began := l.now()
-	run := attempt{dir: dir, preset: resolved, failure: l.Launcher.Launch(ctx, cmd)}
+	run := attempt{dir: dir, preset: resolved, failure: l.launch(ctx, cmd)}
 	run.took = l.now().Sub(began)
 	if ctx.Err() != nil {
 		interrupted := fmt.Errorf("agent on #%d interrupted: %w", task.Number, ctx.Err())
