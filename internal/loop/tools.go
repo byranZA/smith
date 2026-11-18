@@ -110,9 +110,8 @@ func (l Loop) startTools() error {
 }
 
 // launch runs cmd through the Launcher with a smith tools socket served for
-// its duration, its path in SMITH_TOOLS, and closes the socket when the agent
-// exits. It returns what the agent's tool calls came to, and how the launch
-// ended. With no ToolsDir it launches cmd as it is.
+// its duration (path in SMITH_TOOLS), or as it is with no ToolsDir. It returns
+// what the agent's tool calls came to and how the launch ended.
 func (l Loop) launch(ctx context.Context, cmd agent.Command) (toolRecord, error) {
 	var server *smithtool.Server
 	log := &toolLog{}
