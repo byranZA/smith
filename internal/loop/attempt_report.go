@@ -39,7 +39,7 @@ func (l Loop) postReport(ctx context.Context, task tracker.Task, who string, clo
 	if err != nil {
 		return l.warnIf(err, "could not read the report of #%d", task.Number)
 	}
-	facts := ReportFacts{Who: who, Ending: EndedOpen, Preset: presetPhrase(run.preset), Took: run.took}
+	facts := ReportFacts{Who: who, Ending: EndedOpen, Preset: presetPhrase(run.preset), Took: run.took, Reups: run.tools.reups, ReupFailed: run.tools.reupFailed}
 	switch {
 	case run.killed():
 		facts.Ending = EndedKilled
@@ -80,6 +80,10 @@ type ReportFacts struct {
 	Preset string
 	// Took is how long the attempt ran.
 	Took time.Duration
+	// Reups is how many times the agent re-upped the stack in the attempt.
+	Reups int
+	// ReupFailed reports whether the last re-up failed.
+	ReupFailed bool
 }
 
 // ComposeReport returns the comment body for report: a header stating facts,
@@ -96,8 +100,25 @@ func ComposeReport(facts ReportFacts, report string) string {
 		ending = "ended in an agent failure"
 	case EndedOpen:
 	}
-	header := fmt.Sprintf("smith: %s, %s, on %s, took %s.\n\n", facts.Who, ending, facts.Preset, facts.Took.Round(time.Second))
+	header := fmt.Sprintf("smith: %s, %s, on %s, took %s%s.\n\n", facts.Who, ending, facts.Preset, facts.Took.Round(time.Second), reupClause(facts))
 	return header + tailWithin(report, commentCap-utf8.RuneCountInString(header))
+}
+
+// reupClause returns the header clause saying how often the stack was
+// re-upped, or "" when it was not.
+func reupClause(facts ReportFacts) string {
+	if facts.Reups == 0 {
+		return ""
+	}
+	times := fmt.Sprintf("%d times", facts.Reups)
+	if facts.Reups == 1 {
+		times = "1 time"
+	}
+	clause := ", re-upped the stack " + times
+	if facts.ReupFailed {
+		clause += ", the last failed"
+	}
+	return clause
 }
 
 // commentCap is the most characters a report comment, header included, may

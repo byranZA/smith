@@ -142,7 +142,7 @@ func (l Loop) reviewAttempt(ctx context.Context, number int, file, tip string, c
 	if err := l.report("smith: handing the review of #%d to %s on %s in %s\n", number, l.Review.Preset.Agent.Value, presetPhrase(l.Review.Preset), dir); err != nil {
 		return review.File{}, dir, nil, false, err
 	}
-	failure = l.launch(ctx, cmd)
+	_, failure = l.launch(ctx, cmd)
 	if ctx.Err() != nil {
 		return review.File{}, dir, nil, false, fmt.Errorf("review of #%d interrupted: %w", number, ctx.Err())
 	}

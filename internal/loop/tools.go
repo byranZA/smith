@@ -5,19 +5,41 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/byranZA/smith/internal/agent"
+	"github.com/byranZA/smith/internal/prepare"
 	"github.com/byranZA/smith/internal/smithtool"
+	"github.com/byranZA/smith/internal/tailbuf"
 )
 
 // ToolsEnv names the environment variable that hands an agent the socket of
 // the smith tools its run serves.
 const ToolsEnv = "SMITH_TOOLS"
 
-// registry returns the smith tools this run serves.
-// stack-up is there only when smith runs the stack in this run.
-func (l Loop) registry() smithtool.Registry {
+// toolRecord is what one agent launch's smith tool calls came to.
+type toolRecord struct {
+	// reups is how many times the agent re-upped the stack.
+	reups int
+	// reupFailed reports whether the last re-up failed.
+	reupFailed bool
+}
+
+// toolLog collects one launch's tool calls: the record for the attempt report
+// and the output tail of the re-up in flight.
+type toolLog struct {
+	mu       sync.Mutex
+	record   toolRecord
+	captured tailbuf.Buffer
+	status   int
+}
+
+// registry returns the smith tools this run serves, noting in log what the
+// agent's calls come to. stack-up is there only when smith runs the stack in
+// this run.
+func (l Loop) registry(log *toolLog) smithtool.Registry {
 	if l.Stack == nil {
 		return smithtool.NewRegistry().Withhold(stackUpTool, "smith runs no stack in this run")
 	}
@@ -25,10 +47,21 @@ func (l Loop) registry() smithtool.Registry {
 		Name:    stackUpTool,
 		Summary: "re-run the stack's recorded up in this worktree",
 		Run: func(ctx context.Context, _ []string, out io.Writer) error {
-			if err := l.Stack.Reup(ctx, out); err != nil {
-				return &smithtool.FailedError{Reason: err.Error()}
+			log.mu.Lock()
+			log.captured = tailbuf.Buffer{Limit: PrepareTailLimit}
+			log.status = 0
+			log.mu.Unlock()
+			err := l.Stack.Reup(ctx, io.MultiWriter(out, &log.captured))
+			if err == nil {
+				return nil
 			}
-			return nil
+			var step *prepare.StepError
+			if errors.As(err, &step) {
+				log.mu.Lock()
+				log.status = step.Status
+				log.mu.Unlock()
+			}
+			return &smithtool.FailedError{Reason: err.Error()}
 		},
 	})
 }
@@ -51,13 +84,15 @@ func (l Loop) prepareTools() error {
 
 // launch runs cmd through the Launcher with a smith tools socket served for
 // its duration, its path in SMITH_TOOLS, and closes the socket when the agent
-// exits. With no ToolsDir it launches cmd as it is.
-func (l Loop) launch(ctx context.Context, cmd agent.Command) error {
+// exits. It returns what the agent's tool calls came to, and how the launch
+// ended. With no ToolsDir it launches cmd as it is.
+func (l Loop) launch(ctx context.Context, cmd agent.Command) (toolRecord, error) {
 	var server *smithtool.Server
+	log := &toolLog{}
 	if l.ToolsDir != "" {
 		var err error
-		if server, err = smithtool.Serve(l.ToolsDir, l.registry(), l.toolServed); err != nil {
-			return fmt.Errorf("serve the smith tools: %w", err)
+		if server, err = smithtool.Serve(l.ToolsDir, l.registry(log), func(call smithtool.Served) { l.toolServed(log, call) }); err != nil {
+			return toolRecord{}, fmt.Errorf("serve the smith tools: %w", err)
 		}
 		cmd.Env = append(cmd.Env[:len(cmd.Env):len(cmd.Env)], ToolsEnv+"="+server.Path())
 	}
@@ -66,14 +101,29 @@ func (l Loop) launch(ctx context.Context, cmd agent.Command) error {
 	if server != nil {
 		closed = server.Close()
 	}
-	return errors.Join(failure, closed)
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	return log.record, errors.Join(failure, closed)
 }
 
-// toolServed shows the operator one smith tool call the agent made.
-func (l Loop) toolServed(call smithtool.Served) {
-	outcome := "succeeded"
-	if call.Err != nil {
-		outcome = "failed: " + call.Err.Error()
+// toolServed shows the operator one smith tool call the agent made, and notes
+// a re-up in log. A failed call shows its exit status, then the output tail.
+func (l Loop) toolServed(log *toolLog, call smithtool.Served) {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	took := call.Took.Round(time.Second)
+	if call.Err == nil {
+		_ = l.report("smith tool: %s ok (%s)\n", call.Name, took)
+	} else {
+		result := "exit " + strconv.Itoa(log.status)
+		if log.status == 0 {
+			result = call.Err.Error()
+		}
+		_ = l.report("smith tool: %s failed (%s, %s)\n", call.Name, result, took)
+		_ = l.reportTail(&log.captured)
 	}
-	_ = l.report("smith: tool %s %s in %s\n", call.Name, outcome, call.Took.Round(100*time.Millisecond))
+	if call.Name == stackUpTool {
+		log.record.reups++
+		log.record.reupFailed = call.Err != nil
+	}
 }

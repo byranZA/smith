@@ -380,6 +380,8 @@ func TestComposeReportHeadsTheReportWithHowTheAttemptEnded(t *testing.T) {
 		{"left open", loop.ReportFacts{Who: "attempt 2 of 3", Ending: loop.EndedOpen, Preset: "preset opus", Took: time.Minute}, "Stuck", "smith: attempt 2 of 3, left open, on preset opus, took 1m0s.\n\nStuck"},
 		{"killed", loop.ReportFacts{Who: "attempt 1 of 1", Ending: loop.EndedKilled, Preset: "preset opus", Took: time.Minute}, "x", "smith: attempt 1 of 1, killed, on preset opus, took 1m0s.\n\nx"},
 		{"agent failure interactive", loop.ReportFacts{Who: "interactive run", Ending: loop.EndedAgentFailure, Preset: "preset opus", Took: time.Minute}, "x", "smith: interactive run, ended in an agent failure, on preset opus, took 1m0s.\n\nx"},
+		{"re-upped twice", loop.ReportFacts{Who: "attempt 1 of 2", Ending: loop.EndedOpen, Preset: "preset opus", Took: time.Minute, Reups: 2}, "x", "smith: attempt 1 of 2, left open, on preset opus, took 1m0s, re-upped the stack 2 times.\n\nx"},
+		{"re-upped once, failed", loop.ReportFacts{Who: "attempt 1 of 2", Ending: loop.EndedOpen, Preset: "preset opus", Took: time.Minute, Reups: 1, ReupFailed: true}, "x", "smith: attempt 1 of 2, left open, on preset opus, took 1m0s, re-upped the stack 1 time, the last failed.\n\nx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
