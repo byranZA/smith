@@ -336,6 +336,18 @@ Before any agent runs, `run` reads the repo's labels once and writes a `smith: w
 
 A label left to its default is never checked, so a repo file with no `labels:` reads no labels at all. If the labels cannot be read, `run` warns that it could not check them and carries on.
 
+### Smith tools
+
+A loop's agent, working a task or the review, runs smith only through **smith tools**: a closed, named set of actions it asks the running loop to perform, with `smith tool <name>`. [ADR-0031](./adr/0031-a-loops-agent-asks-the-loop-through-smith-tools.md) has the reasoning. The prompt lists the tools this run serves in a "Smith tools" section, and `smith tool list` prints the same list (`--json` for a document). Outside a loop's agent, `smith tool` exits 2.
+
+**`stack-up`.** The loop serves it only when smith runs the stack in this run: always on a box, and off a box only with `--stack`. It re-runs the recorded `up` in the agent's worktree, for the whole stack: there is no service argument. It is the recorded `up`, not an edited one in the worktree's repo file, and `down` does not run, so a changed stack command takes effect at the next attempt. The agent sees `up`'s output as it runs. The command exits 0 once `up` returns and 1 when `up` fails, and a failed re-up does not end the attempt. Calls run one at a time, and a re-up still running when the attempt ends is stopped.
+
+The repo's `up` should apply migrations to head, so a migration added mid-attempt lands with `stack-up`. Code reloading is the repo's job: `stack-up` does not restart code.
+
+**What you see.** Each call shows on the loop's terminal as one line, `smith tool: stack-up ok (3s)` or `smith tool: stack-up failed (exit 1, 3s)` followed by the tail of `up`'s output. The attempt report's header says how many times the stack was re-upped, and when the last failed, for example `, re-upped the stack 2 times, the last failed`. It says nothing when there was no re-up.
+
+An ejected prompt without `{{SMITH_TOOLS}}` does not list the tools, but the agent can still call them.
+
 ### The review prompt
 
 The review has its own built-in prompt, `internal/loop/review.md`, with the placeholders `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{MERGE_BASE}}` and `{{FINDINGS_FILE}}`. It starts three subagents with fresh contexts, one for each of the Spec, Standards and Quality axes, and has the agent write what they return to the findings file.
@@ -378,6 +390,7 @@ The prompt takes these placeholders, filled in for each task:
 | --- | --- |
 | `{{TASK_NUMBER}}` | the task's issue number |
 | `{{TASK_TITLE}}` | the task's title |
+| `{{SMITH_TOOLS}}` | a "Smith tools" section listing the smith tools this run serves, empty when it serves none. Optional: a prompt without it still works, and the agent can still call the tools |
 | `{{REPORT_FILE}}` | the path the agent writes its attempt report to; the loop posts it on the task. Optional: a prompt without it gets no reports |
 
 A prompt holding any other `{{…}}` is refused, naming it.
