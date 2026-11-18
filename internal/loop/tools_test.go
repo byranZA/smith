@@ -62,6 +62,7 @@ func toolsDir(t *testing.T) string {
 }
 
 func TestRunServesEachTaskAttemptASocketInSmithTools(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43), agentTask(44)}}
 	probe := &toolsProbe{next: b}
 	l := loopOn(t, b, probe)
@@ -80,6 +81,7 @@ func TestRunServesEachTaskAttemptASocketInSmithTools(t *testing.T) {
 }
 
 func TestRunClosesTheSocketWhenTheAgentExits(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	probe := &toolsProbe{next: b}
 	l := loopOn(t, b, probe)
@@ -97,6 +99,7 @@ func TestRunClosesTheSocketWhenTheAgentExits(t *testing.T) {
 }
 
 func TestRunWithNoToolsDirGivesTheAgentNoSmithTools(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	probe := &toolsProbe{next: b}
 
@@ -110,6 +113,7 @@ func TestRunWithNoToolsDirGivesTheAgentNoSmithTools(t *testing.T) {
 }
 
 func TestRunServesTheReviewASocketToo(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
 	l, launcher := reviewingLoop(t, b, noFindings)
 	probe := &toolsProbe{next: launcher}
@@ -126,6 +130,7 @@ func TestRunServesTheReviewASocketToo(t *testing.T) {
 }
 
 func TestRunRefusesATooLongToolsDirBeforeMarkingAnyTask(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	l := loopOn(t, b, b)
 	l.ToolsDir = filepath.Join(t.TempDir(), strings.Repeat("d", 120), "tools")
@@ -191,6 +196,7 @@ func (f *failSecondUp) Exec(ctx context.Context, dir, step, command string, out 
 }
 
 func TestStackUpToolRerunsTheRecordedUpAndStreamsItsOutput(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, d := stackedJournalLoop(t, j, nil)
 	call := &callingLauncher{next: l.Launcher, name: "stack-up"}
@@ -216,6 +222,7 @@ func TestStackUpToolRerunsTheRecordedUpAndStreamsItsOutput(t *testing.T) {
 }
 
 func TestStackUpToolIsRefusedWithArgumentsAndRunsNoUp(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, d := stackedJournalLoop(t, j, nil)
 	call := &callingLauncher{next: l.Launcher, name: "stack-up", args: []string{"--fresh"}}
@@ -236,6 +243,7 @@ func TestStackUpToolIsRefusedWithArgumentsAndRunsNoUp(t *testing.T) {
 }
 
 func TestAFailedStackUpToolReportsUpsStatusAndLeavesTheAttemptAlone(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, d := stackedJournalLoop(t, j, nil)
 	l.Stack = &stack.Stack{Command: &failSecondUp{stackCommands: stackCommands{events: &j.events}}}
@@ -257,6 +265,7 @@ func TestAFailedStackUpToolReportsUpsStatusAndLeavesTheAttemptAlone(t *testing.T
 }
 
 func TestStackUpToolIsRefusedWhenSmithRunsNoStack(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	call := &callingLauncher{next: b, name: "stack-up"}
 	l := loopOn(t, b, call)
@@ -276,6 +285,7 @@ func TestStackUpToolIsRefusedWhenSmithRunsNoStack(t *testing.T) {
 }
 
 func TestReviewAgentCanReupTheStack(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{closed(agentTask(43))}}
 	l, launcher := reviewingLoop(t, b, noFindings)
 	dir := repoFileIn(t, t.TempDir())
@@ -341,6 +351,7 @@ func (c *concurrentCaller) Launch(ctx context.Context, cmd agent.Command) error 
 }
 
 func TestTwoConcurrentStackUpCallsRunOneAfterTheOtherEachWithItsOwnOutput(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	var running, overlapped atomic.Int32
@@ -387,6 +398,7 @@ func (c *leavingCaller) Launch(ctx context.Context, cmd agent.Command) error {
 }
 
 func TestAStackUpStillRunningWhenTheAgentExitsIsCancelledAndTheRunGoesOn(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, d := stackedJournalLoop(t, j, nil)
 	stopped := make(chan struct{})
@@ -419,6 +431,7 @@ func TestAStackUpStillRunningWhenTheAgentExitsIsCancelledAndTheRunGoesOn(t *test
 }
 
 func TestStackUpToolIsRefusedWhenStackIsEnabledButTheWorktreeDeclaresNone(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	call := &callingLauncher{next: b, name: "stack-up"}
 	l := loopOn(t, b, call)

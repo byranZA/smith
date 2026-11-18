@@ -44,6 +44,7 @@ func TestReviewPromptWithoutToolsDropsThePlaceholder(t *testing.T) {
 }
 
 func TestRunWithAStackListsStackUpInTheWorkPrompt(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	l.ToolsDir = toolsDir(t)
@@ -63,6 +64,7 @@ func TestRunWithAStackListsStackUpInTheWorkPrompt(t *testing.T) {
 }
 
 func TestRunWithNoStackLeavesNoSmithToolsHeadingInThePrompt(t *testing.T) {
+	t.Parallel()
 	b := &board{tasks: []tracker.Task{agentTask(43)}}
 	l := loopOn(t, b, b)
 	l.ToolsDir = toolsDir(t)
@@ -79,6 +81,7 @@ func TestRunWithNoStackLeavesNoSmithToolsHeadingInThePrompt(t *testing.T) {
 }
 
 func TestRunNotesAnEjectedPromptWithoutThePlaceholderAndStillServesTools(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	l.ToolsDir = toolsDir(t)
@@ -100,6 +103,7 @@ func TestRunNotesAnEjectedPromptWithoutThePlaceholderAndStillServesTools(t *test
 }
 
 func TestRunWithTheBuiltinPromptPrintsNoPlaceholderNotice(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	l.ToolsDir = toolsDir(t)

@@ -19,6 +19,7 @@ import (
 )
 
 func TestRunCancelledKillsTheProcessesTheCommandStarted(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	var out bytes.Buffer

@@ -59,6 +59,7 @@ func slowCall(t *testing.T, s *smithtool.Server, arg string) {
 }
 
 func TestCallStreamsOutputAndSucceeds(t *testing.T) {
+	t.Parallel()
 	echo := smithtool.Tool{Name: "echo", Summary: "echoes", Run: func(_ context.Context, args []string, out io.Writer) error {
 		_, err := io.WriteString(out, "hello "+strings.Join(args, ",")+"\n")
 		return err
@@ -74,6 +75,7 @@ func TestCallStreamsOutputAndSucceeds(t *testing.T) {
 }
 
 func TestCallOfFailingToolReturnsFailedErrorAfterItsOutput(t *testing.T) {
+	t.Parallel()
 	bad := smithtool.Tool{Name: "bad", Run: func(_ context.Context, _ []string, out io.Writer) error {
 		if _, err := io.WriteString(out, "partial\n"); err != nil {
 			return err
@@ -93,6 +95,7 @@ func TestCallOfFailingToolReturnsFailedErrorAfterItsOutput(t *testing.T) {
 }
 
 func TestCallOfRefusingToolReturnsRefusedError(t *testing.T) {
+	t.Parallel()
 	no := smithtool.Tool{Name: "no", Run: func(context.Context, []string, io.Writer) error {
 		return smithtool.Refuse("smith is not running a stack in this run")
 	}}
@@ -105,6 +108,7 @@ func TestCallOfRefusingToolReturnsRefusedError(t *testing.T) {
 }
 
 func TestCallOfUnknownToolIsRefusedNamingTheAvailableOnes(t *testing.T) {
+	t.Parallel()
 	a := smithtool.Tool{Name: "alpha", Run: func(context.Context, []string, io.Writer) error { return nil }}
 	b := smithtool.Tool{Name: "beta", Run: func(context.Context, []string, io.Writer) error { return nil }}
 	s := serve(t, nil, a, b)
@@ -120,6 +124,7 @@ func TestCallOfUnknownToolIsRefusedNamingTheAvailableOnes(t *testing.T) {
 }
 
 func TestListReturnsNameAndSummaryOfEachTool(t *testing.T) {
+	t.Parallel()
 	a := smithtool.Tool{Name: "alpha", Summary: "does a", Run: func(context.Context, []string, io.Writer) error { return nil }}
 	s := serve(t, nil, a)
 	got, err := smithtool.List(t.Context(), s.Path())
@@ -132,6 +137,7 @@ func TestListReturnsNameAndSummaryOfEachTool(t *testing.T) {
 }
 
 func TestListOfEmptyRegistryIsEmptyNotNil(t *testing.T) {
+	t.Parallel()
 	s := serve(t, nil)
 	got, err := smithtool.List(t.Context(), s.Path())
 	if err != nil {
@@ -143,6 +149,7 @@ func TestListOfEmptyRegistryIsEmptyNotNil(t *testing.T) {
 }
 
 func TestCallWithNoSocketPathIsRefused(t *testing.T) {
+	t.Parallel()
 	err := smithtool.Call(t.Context(), "", "echo", nil, io.Discard)
 	var refused *smithtool.RefusedError
 	if !errors.As(err, &refused) || !strings.Contains(refused.Reason, "SMITH_TOOLS is not set") {
@@ -151,6 +158,7 @@ func TestCallWithNoSocketPathIsRefused(t *testing.T) {
 }
 
 func TestCallOnSocketOfEndedRunIsRefused(t *testing.T) {
+	t.Parallel()
 	s := serve(t, nil)
 	path := s.Path()
 	if err := s.Close(); err != nil {
@@ -164,6 +172,7 @@ func TestCallOnSocketOfEndedRunIsRefused(t *testing.T) {
 }
 
 func TestCallsRunOneAtATime(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var events []string
 	release := make(chan struct{})
@@ -197,6 +206,7 @@ func TestCallsRunOneAtATime(t *testing.T) {
 }
 
 func TestCloseCancelsARunningCall(t *testing.T) {
+	t.Parallel()
 	started := make(chan struct{})
 	cancelled := make(chan struct{})
 	hang := smithtool.Tool{Name: "hang", Run: func(ctx context.Context, _ []string, _ io.Writer) error {
@@ -223,6 +233,7 @@ func TestCloseCancelsARunningCall(t *testing.T) {
 }
 
 func TestServerReportsEachCallToOnCall(t *testing.T) {
+	t.Parallel()
 	var got []smithtool.Served
 	var mu sync.Mutex
 	ok := smithtool.Tool{Name: "ok", Run: func(context.Context, []string, io.Writer) error { return nil }}
@@ -243,6 +254,7 @@ func TestServerReportsEachCallToOnCall(t *testing.T) {
 }
 
 func TestPrepareDirMakesDirectoryPrivate(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(shortDir(t), "tools")
 	if err := smithtool.PrepareDir(dir); err != nil {
 		t.Fatalf("PrepareDir = %v", err)
@@ -257,6 +269,7 @@ func TestPrepareDirMakesDirectoryPrivate(t *testing.T) {
 }
 
 func TestPrepareDirClearsStaleSocketsAndKeepsLiveOnes(t *testing.T) {
+	t.Parallel()
 	live := serve(t, nil)
 	dir := filepath.Dir(live.Path())
 	stale := filepath.Join(dir, "deadbeefdeadbeef.sock")
@@ -275,6 +288,7 @@ func TestPrepareDirClearsStaleSocketsAndKeepsLiveOnes(t *testing.T) {
 }
 
 func TestPrepareDirRefusesPathTooLongForSocketBeforeMakingIt(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(shortDir(t), strings.Repeat("d", 120), "tools")
 	err := smithtool.PrepareDir(dir)
 	var tooLong *smithtool.TooLongError
@@ -290,6 +304,7 @@ func TestPrepareDirRefusesPathTooLongForSocketBeforeMakingIt(t *testing.T) {
 }
 
 func TestServerReportsAnUnknownToolCallAsRefused(t *testing.T) {
+	t.Parallel()
 	var got []smithtool.Served
 	var mu sync.Mutex
 	s := serve(t, func(c smithtool.Served) { mu.Lock(); got = append(got, c); mu.Unlock() })

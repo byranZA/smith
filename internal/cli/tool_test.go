@@ -60,6 +60,7 @@ func serveTools(t *testing.T, tools ...smithtool.Tool) string {
 }
 
 func TestToolListPrintsEachToolOnOneLine(t *testing.T) {
+	t.Parallel()
 	socket := serveTools(t, smithtool.Tool{Name: "stack-up", Summary: "re-run the stack's up", Run: func(context.Context, []string, io.Writer) error { return nil }})
 
 	stdout, _, code := runTool(t, socket, "list")
@@ -70,6 +71,7 @@ func TestToolListPrintsEachToolOnOneLine(t *testing.T) {
 }
 
 func TestToolListJSONOfNoToolsIsAnEmptyList(t *testing.T) {
+	t.Parallel()
 	stdout, _, code := runTool(t, serveTools(t), "list", "--json")
 
 	if want := `{"schema_version":1,"tools":[]}` + "\n"; stdout != want || code != 0 {
@@ -78,6 +80,7 @@ func TestToolListJSONOfNoToolsIsAnEmptyList(t *testing.T) {
 }
 
 func TestToolListJSONNamesEachToolAndItsSummary(t *testing.T) {
+	t.Parallel()
 	socket := serveTools(t, smithtool.Tool{Name: "stack-up", Summary: "re-run up", Run: func(context.Context, []string, io.Writer) error { return nil }})
 
 	stdout, _, _ := runTool(t, socket, "list", "--json")
@@ -88,6 +91,7 @@ func TestToolListJSONNamesEachToolAndItsSummary(t *testing.T) {
 }
 
 func TestToolWithNoSmithToolsExitsTwoSayingNoLoopIsRunning(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{{"stack-up"}, {"list"}} {
 		_, stderr, code := runTool(t, "", args...)
 		if code != 2 || !strings.Contains(stderr, "smith is not running a loop for this shell") {
@@ -97,6 +101,7 @@ func TestToolWithNoSmithToolsExitsTwoSayingNoLoopIsRunning(t *testing.T) {
 }
 
 func TestToolOnADeadSocketExitsTwo(t *testing.T) {
+	t.Parallel()
 	_, stderr, code := runTool(t, filepath.Join(t.TempDir(), "gone.sock"), "list")
 
 	if code != 2 || !strings.Contains(stderr, "smith is not running a loop for this shell") {
@@ -105,6 +110,7 @@ func TestToolOnADeadSocketExitsTwo(t *testing.T) {
 }
 
 func TestToolUnknownExitsTwoNamingTheAvailableTools(t *testing.T) {
+	t.Parallel()
 	socket := serveTools(t, smithtool.Tool{Name: "stack-up", Run: func(context.Context, []string, io.Writer) error { return nil }})
 
 	_, stderr, code := runTool(t, socket, "frobnicate")
@@ -115,6 +121,7 @@ func TestToolUnknownExitsTwoNamingTheAvailableTools(t *testing.T) {
 }
 
 func TestToolStreamsOutputAndExitsZeroOnSuccess(t *testing.T) {
+	t.Parallel()
 	socket := serveTools(t, smithtool.Tool{Name: "say", Run: func(_ context.Context, args []string, out io.Writer) error {
 		_, err := io.WriteString(out, strings.Join(args, " ")+"\n")
 		return err
@@ -128,6 +135,7 @@ func TestToolStreamsOutputAndExitsZeroOnSuccess(t *testing.T) {
 }
 
 func TestToolThatFailsExitsOne(t *testing.T) {
+	t.Parallel()
 	socket := serveTools(t, smithtool.Tool{Name: "bad", Run: func(context.Context, []string, io.Writer) error { return errors.New("up exited 3") }})
 
 	_, stderr, code := runTool(t, socket, "bad")

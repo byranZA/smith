@@ -16,6 +16,7 @@ import (
 )
 
 func TestASuccessfulStackUpCallShowsOnTheTerminalWithItsDuration(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	l.Launcher = &callingLauncher{next: l.Launcher, name: "stack-up"}
@@ -33,6 +34,7 @@ func TestASuccessfulStackUpCallShowsOnTheTerminalWithItsDuration(t *testing.T) {
 }
 
 func TestAFailedStackUpCallShowsItsExitStatusAndThenUpsOutputTail(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	l.Stack = &stack.Stack{Command: &failSecondUp{stackCommands: stackCommands{events: &j.events}}}
@@ -97,6 +99,7 @@ func reupReport(t *testing.T, commands stack.Commander, counts ...int) []string 
 }
 
 func TestTheAttemptReportHeaderCountsTheAttemptsReupsNotTheRuns(t *testing.T) {
+	t.Parallel()
 	j := &journal{}
 	got := reupReport(t, stackCommands{events: &j.events}, 2, 0)
 
@@ -110,6 +113,7 @@ func TestTheAttemptReportHeaderCountsTheAttemptsReupsNotTheRuns(t *testing.T) {
 }
 
 func TestTheAttemptReportHeaderSaysWhenTheLastReupFailed(t *testing.T) {
+	t.Parallel()
 	j := &journal{}
 	got := reupReport(t, &failSecondUp{stackCommands: stackCommands{events: &j.events}}, 1)
 
@@ -128,6 +132,7 @@ type stackedReporter struct {
 func (s stackedReporter) Open(context.Context, int) (string, error) { return s.dir, nil }
 
 func TestAnUnknownToolCallShowsAsRefusedOnTheTerminal(t *testing.T) {
+	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
 	l, _ := stackedJournalLoop(t, j, nil)
 	l.Launcher = &callingLauncher{next: l.Launcher, name: "frobnicate"}
