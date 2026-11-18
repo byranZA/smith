@@ -79,6 +79,9 @@ func (s *Stack) Ensure(ctx context.Context, dir string, out io.Writer) error {
 	return nil
 }
 
+// Running reports whether a stack is up, so that a re-up has something to run.
+func (s *Stack) Running() bool { return s.running != nil }
+
 // Reup runs the recorded up of the stack that is running again, in the
 // worktree it came up in, streaming its output to out. It reads no repo file,
 // takes no down and leaves the record and lease as they are; with no stack

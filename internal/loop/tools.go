@@ -41,7 +41,7 @@ type toolLog struct {
 // agent's calls come to. stack-up is there only when smith runs the stack in
 // this run.
 func (l Loop) registry(log *toolLog) smithtool.Registry {
-	if l.Stack == nil {
+	if !l.stackRunning() {
 		return smithtool.NewRegistry().Withhold(stackUpTool, "smith runs no stack in this run")
 	}
 	return smithtool.NewRegistry(smithtool.Tool{
@@ -66,6 +66,10 @@ func (l Loop) registry(log *toolLog) smithtool.Registry {
 		},
 	})
 }
+
+// stackRunning reports whether smith runs a stack for the launch now: the
+// loop executes stacks and the prepared worktree's stack is up.
+func (l Loop) stackRunning() bool { return l.Stack != nil && l.Stack.Running() }
 
 // stackUpTool is the name of the tool that re-runs the stack's recorded up.
 const stackUpTool = "stack-up"
@@ -141,7 +145,7 @@ func (l Loop) toolServed(log *toolLog, call smithtool.Served) {
 // toolsSection is the prompt text listing the smith tools this run serves,
 // empty when it serves none.
 func (l Loop) toolsSection() string {
-	if l.ToolsDir == "" || l.Stack == nil {
+	if l.ToolsDir == "" || !l.stackRunning() {
 		return ""
 	}
 	return smithToolsSection
@@ -151,7 +155,7 @@ func (l Loop) toolsSection() string {
 // ejected lacks the tools placeholder, so its agent is not told of the tools
 // this run serves. The agent's calls work all the same.
 func (l Loop) noteToolsPlaceholder() error {
-	if l.toolsSection() == "" {
+	if l.ToolsDir == "" || l.Stack == nil {
 		return nil
 	}
 	var lacking []string

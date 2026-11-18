@@ -390,3 +390,24 @@ func TestAStackUpStillRunningWhenTheAgentExitsIsCancelledAndTheRunGoesOn(t *test
 		t.Errorf("events = %q, want the task landed and the stack down", j.events)
 	}
 }
+
+func TestStackUpToolIsRefusedWhenStackIsEnabledButTheWorktreeDeclaresNone(t *testing.T) {
+	b := &board{tasks: []tracker.Task{agentTask(43)}}
+	call := &callingLauncher{next: b, name: "stack-up"}
+	l := loopOn(t, b, call)
+	var events []string
+	l.Stack = &stack.Stack{Command: stackCommands{events: &events}}
+	l.ToolsDir = toolsDir(t)
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var refused *smithtool.RefusedError
+	if !errors.As(call.errs[0], &refused) || !strings.Contains(refused.Error(), "smith runs no stack in this run") {
+		t.Errorf("stack-up error = %v, want a refusal saying smith runs no stack in this run", call.errs[0])
+	}
+	if len(call.listing[0]) != 0 {
+		t.Errorf("listing = %v, want no tools", call.listing[0])
+	}
+}

@@ -81,7 +81,7 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 	}
 	defer func() { err = errors.Join(err, l.stopReviewDetached(ctx, number)) }()
 	file := l.Bench.FindingsFile(number)
-	prompt := l.Review.Prompt.WithTools(l.toolsSection()).Render(ReviewTarget{Number: number, Title: title, MergeBase: mergeBase, FindingsFile: file})
+	target := ReviewTarget{Number: number, Title: title, MergeBase: mergeBase, FindingsFile: file}
 	agentFailures := 0
 	for attempt := 1; attempt <= l.Limits.MaxAttempts; attempt++ {
 		if l.Limits.CapReached(*runs) {
@@ -89,7 +89,9 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 		}
 		var findings review.File
 		var agentFailed bool
-		if findings, result.dir, result.failure, agentFailed, err = l.reviewAttempt(ctx, number, file, tip, adapter.Unattended(prompt, l.Review.Preset.Options())); err != nil {
+		if findings, result.dir, result.failure, agentFailed, err = l.reviewAttempt(ctx, number, file, tip, func(tools string) agent.Command {
+			return adapter.Unattended(l.Review.Prompt.WithTools(tools).Render(target), l.Review.Preset.Options())
+		}); err != nil {
 			return reviewed{}, err
 		}
 		if errors.Is(result.failure, ErrNotStarted) {
@@ -121,12 +123,11 @@ var errStrayWork = errors.New("the review changed the work branch it was to leav
 // reviewAttempt runs cmd once in a fresh review worktree and reads the findings
 // file it leaves. A failed attempt is returned as failure, with agentFailed set
 // when the agent itself exited badly; err is the run failing.
-func (l Loop) reviewAttempt(ctx context.Context, number int, file, tip string, cmd agent.Command) (findings review.File, dir string, failure error, agentFailed bool, err error) {
+func (l Loop) reviewAttempt(ctx context.Context, number int, file, tip string, build func(tools string) agent.Command) (findings review.File, dir string, failure error, agentFailed bool, err error) {
 	dir, err = l.Bench.OpenReview(ctx, number)
 	if err != nil {
 		return review.File{}, "", nil, false, fmt.Errorf("open a worktree for the review of #%d: %w", number, err)
 	}
-	cmd.Dir = dir
 	if err := l.Placements.into(ctx, dir); err != nil {
 		return review.File{}, dir, nil, false, fmt.Errorf("place files into the review worktree of #%d in %s: %w", number, dir, err)
 	}
@@ -139,6 +140,8 @@ func (l Loop) reviewAttempt(ctx context.Context, number int, file, tip string, c
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return review.File{}, dir, nil, false, fmt.Errorf("make room for the findings file %s: %w", file, err)
 	}
+	cmd := build(l.toolsSection())
+	cmd.Dir = dir
 	if err := l.report("smith: handing the review of #%d to %s on %s in %s\n", number, l.Review.Preset.Agent.Value, presetPhrase(l.Review.Preset), dir); err != nil {
 		return review.File{}, dir, nil, false, err
 	}

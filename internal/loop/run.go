@@ -136,6 +136,8 @@ type Stacker interface {
 	// Ensure brings the stack the worktree at dir declares up, streaming its
 	// output to out. A worktree that declares none runs nothing.
 	Ensure(ctx context.Context, dir string, out io.Writer) error
+	// Running reports whether a stack is up now.
+	Running() bool
 	// Reup runs the recorded up of the running stack again, streaming its
 	// output to out. It is an error when no stack is up.
 	Reup(ctx context.Context, out io.Writer) error
@@ -403,7 +405,9 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		if err != nil {
 			return Outcome{}, err
 		}
-		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.WithTools(l.toolsSection()).Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
+		run, err := l.hand(ctx, next, resolved, func(tools string) agent.Command {
+			return adapter.Unattended(l.Prompt.WithTools(tools).Render(next, l.Bench.ReportFile(next.Number)), resolved.Options())
+		})
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -554,7 +558,9 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
-	run, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.WithTools(l.toolsSection()).Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
+	run, err := l.hand(ctx, next, resolved, func(tools string) agent.Command {
+		return adapter.Interactive(l.Prompt.WithTools(tools).Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options())
+	})
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
@@ -669,12 +675,11 @@ func (a attempt) agentFailure() bool { return a.failure != nil && !a.killed() }
 // task is marked or any agent runs.
 // The caller releases the mark, except on an error from an interrupted run or
 // a failed report of that failure, when hand has already removed it.
-func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resolved, cmd agent.Command) (attempt, error) {
+func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resolved, build func(tools string) agent.Command) (attempt, error) {
 	dir, err := l.Bench.Open(ctx, task.Number)
 	if err != nil {
 		return attempt{}, fmt.Errorf("open a worktree for #%d: %w", task.Number, err)
 	}
-	cmd.Dir = dir
 	if err := removeReport(l.Bench.ReportFile(task.Number)); err != nil {
 		return attempt{}, err
 	}
@@ -684,6 +689,8 @@ func (l Loop) hand(ctx context.Context, task tracker.Task, resolved preset.Resol
 	if err := l.prepare(ctx, task, dir); err != nil {
 		return attempt{}, err
 	}
+	cmd := build(l.toolsSection())
+	cmd.Dir = dir
 	if err := l.report("smith: handing #%d %s to %s on %s in %s\n", task.Number, task.Title, resolved.Agent.Value, presetPhrase(resolved), dir); err != nil {
 		return attempt{}, err
 	}
