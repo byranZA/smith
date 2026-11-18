@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,4 +127,33 @@ func (l Loop) toolServed(log *toolLog, call smithtool.Served) {
 		log.record.reups++
 		log.record.reupFailed = call.Err != nil
 	}
+}
+
+// toolsSection is the prompt text listing the smith tools this run serves,
+// empty when it serves none.
+func (l Loop) toolsSection() string {
+	if l.ToolsDir == "" || l.Stack == nil {
+		return ""
+	}
+	return smithToolsSection
+}
+
+// noteToolsPlaceholder tells the operator at run start when a prompt they
+// ejected lacks the tools placeholder, so its agent is not told of the tools
+// this run serves. The agent's calls work all the same.
+func (l Loop) noteToolsPlaceholder() error {
+	if l.toolsSection() == "" {
+		return nil
+	}
+	var lacking []string
+	if !strings.Contains(string(l.Prompt), toolsPlaceholder) {
+		lacking = append(lacking, "work")
+	}
+	if l.Review != nil && !strings.Contains(string(l.Review.Prompt), toolsPlaceholder) {
+		lacking = append(lacking, "review")
+	}
+	if len(lacking) == 0 {
+		return nil
+	}
+	return l.report("smith: the ejected %s prompt has no %s placeholder, so its agent is not told of the smith tools; calls still work\n", strings.Join(lacking, " and "), toolsPlaceholder)
 }

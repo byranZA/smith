@@ -81,7 +81,7 @@ func (l Loop) review(ctx context.Context, execution tracker.Execution, runs *int
 	}
 	defer func() { err = errors.Join(err, l.stopReviewDetached(ctx, number)) }()
 	file := l.Bench.FindingsFile(number)
-	prompt := l.Review.Prompt.Render(ReviewTarget{Number: number, Title: title, MergeBase: mergeBase, FindingsFile: file})
+	prompt := l.Review.Prompt.WithTools(l.toolsSection()).Render(ReviewTarget{Number: number, Title: title, MergeBase: mergeBase, FindingsFile: file})
 	agentFailures := 0
 	for attempt := 1; attempt <= l.Limits.MaxAttempts; attempt++ {
 		if l.Limits.CapReached(*runs) {

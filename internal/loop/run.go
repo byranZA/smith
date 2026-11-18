@@ -312,6 +312,9 @@ func (l Loop) Run(ctx context.Context, spec int) (Outcome, error) {
 	if err := l.prepareTools(); err != nil {
 		return Outcome{}, err
 	}
+	if err := l.noteToolsPlaceholder(); err != nil {
+		return Outcome{}, err
+	}
 	if err := l.recoverStack(ctx); err != nil {
 		return Outcome{}, err
 	}
@@ -403,7 +406,7 @@ func (l Loop) work(ctx context.Context, spec int, current tracker.Execution) (Ou
 		if err != nil {
 			return Outcome{}, err
 		}
-		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
+		run, err := l.hand(ctx, next, resolved, adapter.Unattended(l.Prompt.WithTools(l.toolsSection()).Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -551,7 +554,7 @@ func (l Loop) interactive(ctx context.Context, spec int) (InteractiveOutcome, er
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}
-	run, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
+	run, err := l.hand(ctx, next, resolved, adapter.Interactive(l.Prompt.WithTools(l.toolsSection()).Interactive().Render(next, l.Bench.ReportFile(next.Number)), resolved.Options()))
 	if err != nil {
 		return InteractiveOutcome{}, err
 	}

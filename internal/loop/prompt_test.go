@@ -93,7 +93,7 @@ func TestAnUnknownPlaceholderInAnEjectedPromptIsRefused(t *testing.T) {
 
 	_, err := loop.LoadPrompt(path)
 
-	want := []string{path, "{{ISSUE_URL}}", "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}\n"}
+	want := []string{path, "{{ISSUE_URL}}", "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}, {{SMITH_TOOLS}}\n"}
 	for _, w := range want {
 		if err == nil || !strings.Contains(err.Error()+"\n", w) {
 			t.Errorf("LoadPrompt() error = %v, want one naming %q", err, w)
@@ -109,7 +109,7 @@ func TestAnEjectedPromptHoldingTheSpecPlaceholderIsRefused(t *testing.T) {
 
 	_, err := loop.LoadPrompt(path)
 
-	want := path + ": unknown placeholder {{SPEC_NUMBER}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}"
+	want := path + ": unknown placeholder {{SPEC_NUMBER}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}, {{SMITH_TOOLS}}"
 	if err == nil || err.Error() != want {
 		t.Errorf("LoadPrompt() error = %v, want %q", err, want)
 	}
@@ -118,7 +118,7 @@ func TestAnEjectedPromptHoldingTheSpecPlaceholderIsRefused(t *testing.T) {
 func TestParsePromptRefusesAnUnknownPlaceholderNamingItsSource(t *testing.T) {
 	_, err := loop.ParsePrompt("main:.smith/prompt.md", []byte("Do {{TASK}}.\n"))
 
-	want := "main:.smith/prompt.md: unknown placeholder {{TASK}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}"
+	want := "main:.smith/prompt.md: unknown placeholder {{TASK}}: known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}, {{SMITH_TOOLS}}"
 	if err == nil || err.Error() != want {
 		t.Errorf("ParsePrompt() err = %v, want %q", err, want)
 	}
@@ -135,7 +135,7 @@ func TestParsePromptKeepsTheEjectedText(t *testing.T) {
 func TestParseReviewPromptRefusesAnUnknownPlaceholderNamingItsSource(t *testing.T) {
 	_, err := loop.ParseReviewPrompt("main:.smith/review.md", []byte("Review {{TASK_NUMBER}}.\n"))
 
-	want := "main:.smith/review.md: unknown placeholder {{TASK_NUMBER}}: known placeholders are {{ISSUE_NUMBER}}, {{ISSUE_TITLE}}, {{MERGE_BASE}}, {{FINDINGS_FILE}}"
+	want := "main:.smith/review.md: unknown placeholder {{TASK_NUMBER}}: known placeholders are {{ISSUE_NUMBER}}, {{ISSUE_TITLE}}, {{MERGE_BASE}}, {{FINDINGS_FILE}}, {{SMITH_TOOLS}}"
 	if err == nil || err.Error() != want {
 		t.Errorf("ParseReviewPrompt() err = %v, want %q", err, want)
 	}

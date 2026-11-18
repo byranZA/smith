@@ -717,7 +717,7 @@ func TestLoopRunRefusesAnUnknownPlaceholderBeforeAnyAgentRuns(t *testing.T) {
 
 	_, stderr, code := runLoopRun(t, w, "42")
 
-	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}\n") || idle.runs != 0 || len(gh.ran) != 0 {
+	if code == 0 || !strings.Contains(stderr, "{{ISSUE_URL}}") || !strings.Contains(stderr, "known placeholders are {{TASK_NUMBER}}, {{TASK_TITLE}}, {{REPORT_FILE}}, {{SMITH_TOOLS}}\n") || idle.runs != 0 || len(gh.ran) != 0 {
 		t.Errorf("exit %d, stderr %q, %d agent runs, gh ran %v; want non-zero naming the placeholder and the known ones, no agent and no gh", code, stderr, idle.runs, gh.ran)
 	}
 }
