@@ -9,7 +9,10 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/loop"
@@ -261,5 +264,129 @@ func TestReviewAgentCanReupTheStack(t *testing.T) {
 
 	if !reflect.DeepEqual(call.errs, []error{nil}) || countPrefix(b.events, "up "+dir) != 2 {
 		t.Errorf("stack-up errors = %v, events = %q; want success and the up run twice", call.errs, b.events)
+	}
+}
+
+// gatedUps is a stack command whose every up after the first runs through gate, and otherwise defers to stackCommands.
+type gatedUps struct {
+	stackCommands
+	ups  int
+	gate func(ctx context.Context, out io.Writer) error
+}
+
+func (g *gatedUps) Exec(ctx context.Context, dir, step, command string, out io.Writer) error {
+	if step == stack.Up {
+		g.ups++
+		if g.ups > 1 {
+			return g.gate(ctx, out)
+		}
+	}
+	return g.stackCommands.Exec(ctx, dir, step, command, out)
+}
+
+// concurrentCaller calls the smith tool name twice at once while the agent runs, then waits for both.
+type concurrentCaller struct {
+	next    loop.Launcher
+	outputs []string
+	errs    []error
+}
+
+func (c *concurrentCaller) Launch(ctx context.Context, cmd agent.Command) error {
+	for _, kv := range cmd.Env {
+		path, ok := strings.CutPrefix(kv, loop.ToolsEnv+"=")
+		if !ok {
+			continue
+		}
+		c.outputs, c.errs = make([]string, 2), make([]error, 2)
+		var wg sync.WaitGroup
+		for i := range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var out strings.Builder
+				c.errs[i] = smithtool.Call(ctx, path, "stack-up", nil, &out)
+				c.outputs[i] = out.String()
+			}()
+		}
+		wg.Wait()
+	}
+	return c.next.Launch(ctx, cmd)
+}
+
+func TestTwoConcurrentStackUpCallsRunOneAfterTheOtherEachWithItsOwnOutput(t *testing.T) {
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, _ := stackedJournalLoop(t, j, nil)
+	var running, overlapped atomic.Int32
+	l.Stack = &stack.Stack{Command: &gatedUps{stackCommands: stackCommands{events: &j.events}, gate: func(_ context.Context, out io.Writer) error {
+		if running.Add(1) > 1 {
+			overlapped.Add(1)
+		}
+		time.Sleep(100 * time.Millisecond)
+		running.Add(-1)
+		_, err := io.WriteString(out, "re-upped\n")
+		return err
+	}}}
+	call := &concurrentCaller{next: l.Launcher}
+	l.Launcher = call
+	l.ToolsDir = toolsDir(t)
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !reflect.DeepEqual(call.errs, []error{nil, nil}) || !reflect.DeepEqual(call.outputs, []string{"re-upped\n", "re-upped\n"}) {
+		t.Errorf("calls ended %v with output %q, want both to succeed with %q", call.errs, call.outputs, "re-upped\n")
+	}
+	if overlapped.Load() != 0 {
+		t.Errorf("%d re-ups overlapped, want none", overlapped.Load())
+	}
+}
+
+// leavingCaller starts a call to the smith tool name and has the agent exit while it runs.
+type leavingCaller struct {
+	next    loop.Launcher
+	started chan struct{}
+	ended   chan error
+}
+
+func (c *leavingCaller) Launch(ctx context.Context, cmd agent.Command) error {
+	for _, kv := range cmd.Env {
+		if path, ok := strings.CutPrefix(kv, loop.ToolsEnv+"="); ok {
+			go func() { c.ended <- smithtool.Call(ctx, path, "stack-up", nil, io.Discard) }()
+			<-c.started
+		}
+	}
+	return c.next.Launch(ctx, cmd)
+}
+
+func TestAStackUpStillRunningWhenTheAgentExitsIsCancelledAndTheRunGoesOn(t *testing.T) {
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, d := stackedJournalLoop(t, j, nil)
+	stopped := make(chan struct{})
+	started := make(chan struct{})
+	l.Stack = &stack.Stack{Command: &gatedUps{stackCommands: stackCommands{events: &j.events}, gate: func(ctx context.Context, _ io.Writer) error {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return ctx.Err()
+	}}}
+	call := &leavingCaller{next: l.Launcher, started: started, ended: make(chan error, 1)}
+	l.Launcher = call
+	l.ToolsDir = toolsDir(t)
+
+	if _, err := l.Run(t.Context(), 42); err != nil {
+		t.Fatalf("Run() error = %v, want the run to go on", err)
+	}
+
+	select {
+	case <-stopped:
+	default:
+		t.Error("the re-up was not cancelled when the agent exited")
+	}
+	if err := <-call.ended; err == nil {
+		t.Error("the agent's call = nil, want an error as its socket closed")
+	}
+	if !slices.Contains(j.events, "land 43") || !slices.Contains(j.events, "down "+d) {
+		t.Errorf("events = %q, want the task landed and the stack down", j.events)
 	}
 }

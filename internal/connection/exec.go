@@ -27,6 +27,9 @@ func (SystemExec) Run(ctx context.Context, name string, args []string, stdin io.
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if stdin == nil {
+		stopTogether(cmd)
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s: %w", name, err)
 	}
