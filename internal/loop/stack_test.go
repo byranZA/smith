@@ -488,3 +488,19 @@ func TestRunInteractiveRecoversAStackLeftBehindFirst(t *testing.T) {
 		t.Errorf("events = %q, want the dead run's down first", j.events)
 	}
 }
+
+func TestAStopCommentFencesUpsOutputWithALongerFenceThanAnyInIt(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, _ := stackedJournalLoop(t, j, nil)
+	l.Stack = &stack.Stack{Command: longOutput{out: "```\n## oops\n", fail: errors.New("exit 1")}}
+
+	if _, err := l.Run(t.Context(), 42); err == nil {
+		t.Fatal("Run() error = nil, want a failed run")
+	}
+
+	got := commentsOn(j.board, 42)
+	if len(got) != 1 || !strings.Contains(got[0], "\n\n````text\n") || !strings.HasSuffix(got[0], "\n````\n") {
+		t.Errorf("comments = %q, want the report in a four-backtick fence", got)
+	}
+}

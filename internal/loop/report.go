@@ -263,7 +263,7 @@ func (l Loop) Abort(ctx context.Context, issue int, failed error) error {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedStopTimeout)
 	defer cancel()
-	body := fmt.Sprintf("smith stopped its run of %s: **%s**.\n\n```text\n%s```\n", name, Failed, report)
+	body := fmt.Sprintf("smith stopped its run of %s: **%s**.\n\n%s", name, Failed, fenced(report))
 	return l.warnIf(l.Tracker.Comment(ctx, issue, body), "could not post the stop report on #%d", issue)
 }
 
@@ -293,5 +293,21 @@ func stopComment(execution tracker.Execution, ending Ending, report string) stri
 	if execution.Single {
 		kind = "task"
 	}
-	return fmt.Sprintf("smith stopped its run of this %s: **%s**.\n\n```text\n%s```\n", kind, ending, report)
+	return fmt.Sprintf("smith stopped its run of this %s: **%s**.\n\n%s", kind, ending, fenced(report))
+}
+
+// fenced wraps report, which ends in a newline, in a text code fence longer
+// than any run of backticks in it, so its own lines cannot close the fence.
+func fenced(report string) string {
+	longest, run := 0, 0
+	for _, r := range report {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	return fence + "text\n" + report + fence + "\n"
 }
