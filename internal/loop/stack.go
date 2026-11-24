@@ -26,7 +26,7 @@ func (l Loop) stackUp(ctx context.Context, task tracker.Task, dir string) error 
 			return rerr
 		}
 		wrapped := fmt.Errorf("bring up the stack of #%d in %s: %w (system packages and groups come from the blueprint, not the repo file)", task.Number, dir, err)
-		return upFailure{error: wrapped, output: reportOutput(&captured)}
+		return upError{error: wrapped, output: reportOutput(&captured)}
 	}
 	return nil
 }
@@ -35,14 +35,15 @@ func (l Loop) stackUp(ctx context.Context, task tracker.Task, dir string) error 
 // carries, well under GitHub's comment limit.
 const ReportTailLimit = 4 << 10
 
-// upFailure is a failed stack up that keeps the last of up's output for the
+// upError is a failed stack up that keeps the last of up's output for the
 // stop report, while its message stays the wrapped error alone.
-type upFailure struct {
+type upError struct {
 	error
 	output string
 }
 
-func (f upFailure) Unwrap() error { return f.error }
+// Unwrap returns the underlying stack up error.
+func (f upError) Unwrap() error { return f.error }
 
 // reportOutput renders the last ReportTailLimit bytes of b from a full line
 // (or a partial one when no full line fits), with a line saying so when earlier output was cut, or "" when b is empty.
