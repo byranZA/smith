@@ -214,6 +214,32 @@ func TestRunWhoseUpFailsWithLongOutputReportsOnlyItsTailAndSaysItWasCut(t *testi
 	}
 }
 
+func TestRunWhoseUpFailsWithOneLongLineKeepsItsTailAndSaysItWasCut(t *testing.T) {
+	t.Parallel()
+	for name, long := range map[string]string{
+		"terminated":   strings.Repeat("x", 10<<10) + "port 5432 in use\n",
+		"unterminated": strings.Repeat("x", 100<<10) + "port 5432 in use",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+			l, _ := stackedJournalLoop(t, j, nil)
+			l.Stack = &stack.Stack{Command: longOutput{out: long, fail: errors.New("the stack up step exited with status 1: make up")}}
+			r := &recorder{}
+			l.Recorder = r
+
+			if _, err := l.Run(t.Context(), 42); err == nil {
+				t.Fatal("Run() error = nil, want a failed run")
+			}
+
+			got := r.reports[0]
+			if !strings.Contains(got, "(earlier output was cut; showing the last 4 KiB)\nxxx") || !strings.Contains(got, "port 5432 in use\n") || len(got) > 5<<10 {
+				t.Errorf("report = %.300q, want a cut note and the long line's tail", got)
+			}
+		})
+	}
+}
+
 func TestRunWhoseUpFailsWithoutOutputReportsTheErrorLineAlone(t *testing.T) {
 	t.Parallel()
 	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
