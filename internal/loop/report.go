@@ -277,7 +277,12 @@ func (l Loop) stopReport(ctx context.Context, name string, outcome Outcome, fail
 	case ctx.Err() != nil:
 		return Stopped, name + " stopped: interrupted\n"
 	default:
-		return Failed, fmt.Sprintf("%s failed: %v\n", name, failed)
+		report := fmt.Sprintf("%s failed: %v\n", name, failed)
+		var up upFailure
+		if errors.As(failed, &up) {
+			report += up.output
+		}
+		return Failed, report
 	}
 }
 

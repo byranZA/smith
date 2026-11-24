@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -770,9 +771,48 @@ func (l Loop) stackUp(ctx context.Context, task tracker.Task, dir string) error 
 		if rerr := l.reportTail(&captured); rerr != nil {
 			return rerr
 		}
-		return fmt.Errorf("bring up the stack of #%d in %s: %w (system packages and groups come from the blueprint, not the repo file)", task.Number, dir, err)
+		wrapped := fmt.Errorf("bring up the stack of #%d in %s: %w (system packages and groups come from the blueprint, not the repo file)", task.Number, dir, err)
+		return upFailure{error: wrapped, output: reportOutput(&captured)}
 	}
 	return nil
+}
+
+// ReportTailLimit bounds how much of a failed up's output a stop report
+// carries, well under GitHub's comment limit.
+const ReportTailLimit = 4 << 10
+
+// upFailure is a failed stack up that keeps the last of up's output for the
+// stop report, while its message stays the wrapped error alone.
+type upFailure struct {
+	error
+	output string
+}
+
+func (f upFailure) Unwrap() error { return f.error }
+
+// reportOutput renders the last ReportTailLimit bytes of b from a full line,
+// with a line saying so when earlier output was cut, or "" when b is empty.
+func reportOutput(b *tailbuf.Buffer) string {
+	cut := b.Dropped()
+	out := b.Lines()
+	if len(out) > ReportTailLimit {
+		out = out[len(out)-ReportTailLimit:]
+		if i := bytes.IndexByte(out, '\n'); i >= 0 {
+			out = out[i+1:]
+		}
+		cut = true
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	text := string(out)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	if cut {
+		text = fmt.Sprintf("(earlier output was cut; showing the last %d KiB)\n", ReportTailLimit>>10) + text
+	}
+	return text
 }
 
 // recoverStack takes down a stack a dead run left behind, saying so. A failed
