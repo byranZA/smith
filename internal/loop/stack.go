@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
@@ -19,12 +20,13 @@ func (l Loop) stackUp(ctx context.Context, task tracker.Task, dir string) error 
 		return err
 	}
 	captured := tailbuf.Buffer{Limit: PrepareTailLimit}
-	if err := l.Stack.Ensure(ctx, dir, &captured); err != nil {
+	forReport := tailbuf.Buffer{Limit: ReportTailLimit}
+	if err := l.Stack.Ensure(ctx, dir, io.MultiWriter(&captured, &forReport)); err != nil {
 		if rerr := l.reportTail(&captured); rerr != nil {
 			return rerr
 		}
 		wrapped := fmt.Errorf("bring up the stack of #%d in %s: %w (system packages and groups come from the blueprint, not the repo file)", task.Number, dir, err)
-		return upError{error: wrapped, output: reportOutput(&captured)}
+		return upError{error: wrapped, output: reportOutput(&forReport)}
 	}
 	return nil
 }
