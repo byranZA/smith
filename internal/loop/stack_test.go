@@ -205,12 +205,12 @@ func TestRunWhoseUpFailsWithLongOutputReportsOnlyItsTailAndSaysItWasCut(t *testi
 	l.Recorder = r
 
 	if _, err := l.Run(t.Context(), 42); err == nil {
-		t.Fatal("Run() error = nil, want a failed run")
+		t.Fatal("Run(42) error = nil, want a failed run")
 	}
 
 	got := r.reports[0]
 	if !strings.Contains(got, "(earlier output was cut; showing the last 4 KiB)\nnoise line\n") || !strings.HasSuffix(got, "port 5432 in use\nwork branch: smith/42-spec\n") || len(got) > 5<<10 {
-		t.Errorf("report in %s = %q, want the error line, a cut note and only the tail of up's output", d, got)
+		t.Errorf("Run(42) in %s: report = %q, want a cut note and only the tail of up's output", d, got)
 	}
 }
 
@@ -229,12 +229,12 @@ func TestRunWhoseUpFailsWithOneLongLineKeepsItsTailAndSaysItWasCut(t *testing.T)
 			l.Recorder = r
 
 			if _, err := l.Run(t.Context(), 42); err == nil {
-				t.Fatal("Run() error = nil, want a failed run")
+				t.Fatal("Run(42) error = nil, want a failed run")
 			}
 
 			got := r.reports[0]
 			if !strings.Contains(got, "(earlier output was cut; showing the last 4 KiB)\nxxx") || !strings.Contains(got, "port 5432 in use\n") || len(got) > 5<<10 {
-				t.Errorf("report = %.300q, want a cut note and the long line's tail", got)
+				t.Errorf("Run(42) with %s long up output: report = %.300q, want a cut note and the long line's tail", name, got)
 			}
 		})
 	}
@@ -249,7 +249,7 @@ func TestRunWhoseUpFailsWithoutOutputReportsTheErrorLineAlone(t *testing.T) {
 	l.Recorder = r
 
 	if _, err := l.Run(t.Context(), 42); err == nil {
-		t.Fatal("Run() error = nil, want a failed run")
+		t.Fatal("Run(42) error = nil, want a failed run")
 	}
 
 	want := fmt.Sprintf("spec #42 failed: bring up the stack of #43 in %[1]s: bring up the stack in %[1]s: the stack up step exited with status 1: make up (system packages and groups come from the blueprint, not the repo file)\nwork branch: smith/42-spec\n", d)
@@ -496,7 +496,7 @@ func TestAStopCommentFencesUpsOutputWithALongerFenceThanAnyInIt(t *testing.T) {
 	l.Stack = &stack.Stack{Command: longOutput{out: "```\n## oops\n", fail: errors.New("exit 1")}}
 
 	if _, err := l.Run(t.Context(), 42); err == nil {
-		t.Fatal("Run() error = nil, want a failed run")
+		t.Fatal("Run(42) error = nil, want a failed run")
 	}
 
 	got := commentsOn(j.board, 42)
