@@ -1,11 +1,13 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -310,4 +312,33 @@ func fenced(report string) string {
 	}
 	fence := strings.Repeat("`", max(3, longest+1))
 	return fence + "text\n" + report + fence + "\n"
+}
+
+// reportOutput renders the last ReportTailLimit bytes of b from a full line
+// (or a partial one when no full line fits), with a line saying so when earlier output was cut, or "" when b is empty.
+func reportOutput(b *tailbuf.Buffer) string {
+	cut := b.Dropped()
+	out := b.Bytes()
+	if len(out) > ReportTailLimit {
+		out = out[len(out)-ReportTailLimit:]
+		cut = true
+	}
+	if cut {
+		// Start at the next full line, unless none is left to show: a partial
+		// line beats no output.
+		if i := bytes.IndexByte(out, '\n'); i >= 0 && i+1 < len(out) {
+			out = out[i+1:]
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	text := string(out)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	if cut {
+		text = fmt.Sprintf("(earlier output was cut; showing the last %d KiB)\n", ReportTailLimit>>10) + text
+	}
+	return text
 }

@@ -1,10 +1,8 @@
 package loop
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
@@ -44,35 +42,6 @@ type upError struct {
 
 // Unwrap returns the underlying stack up error.
 func (f upError) Unwrap() error { return f.error }
-
-// reportOutput renders the last ReportTailLimit bytes of b from a full line
-// (or a partial one when no full line fits), with a line saying so when earlier output was cut, or "" when b is empty.
-func reportOutput(b *tailbuf.Buffer) string {
-	cut := b.Dropped()
-	out := b.Bytes()
-	if len(out) > ReportTailLimit {
-		out = out[len(out)-ReportTailLimit:]
-		cut = true
-	}
-	if cut {
-		// Start at the next full line, unless none is left to show: a partial
-		// line beats no output.
-		if i := bytes.IndexByte(out, '\n'); i >= 0 && i+1 < len(out) {
-			out = out[i+1:]
-		}
-	}
-	if len(out) == 0 {
-		return ""
-	}
-	text := string(out)
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	if cut {
-		text = fmt.Sprintf("(earlier output was cut; showing the last %d KiB)\n", ReportTailLimit>>10) + text
-	}
-	return text
-}
 
 // recoverStack takes down a stack a dead run left behind, saying so. A failed
 // recovery only warns, since the run's own up fails loudly if something still
@@ -130,4 +99,40 @@ func (l Loop) reportTail(b *tailbuf.Buffer) error {
 		return fmt.Errorf("write progress: %w", err)
 	}
 	return nil
+}
+
+// PrepareTailLimit bounds how much of a preparation's output the loop keeps
+// to show if a step fails.
+const PrepareTailLimit = 64 << 10
+
+// prepare prepares task's worktree at dir with the Preparer, when there is
+// one, holding its output back and printing the last PrepareTailLimit bytes
+// only on failure. A failure is an error naming task and dir, since another
+// agent attempt cannot fix it.
+func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error {
+	if l.Preparer != nil {
+		if err := l.report("smith: preparing the worktree of #%d\n", task.Number); err != nil {
+			return err
+		}
+		captured := tailbuf.Buffer{Limit: PrepareTailLimit}
+		if err := l.Preparer.Prepare(ctx, dir, &captured); err != nil {
+			if rerr := l.reportTail(&captured); rerr != nil {
+				return rerr
+			}
+			return fmt.Errorf("prepare the worktree of #%d in %s: %w", task.Number, dir, err)
+		}
+	}
+	return l.stackUp(ctx, task, dir)
+}
+
+// finalize ends a run: it takes down the stack, then removes the recycled task
+// worktree when cleanup is set, and keeps it otherwise for a later run of the
+// execution. It returns why the stack did not stop. A failed removal loses no
+// work, so it is a warning, and only a failed progress write is an error.
+func (l Loop) finalize(ctx context.Context, cleanup bool) (stackFailure, err error) {
+	stackFailure, err = l.stackDown(ctx)
+	if err != nil || !cleanup {
+		return stackFailure, err
+	}
+	return stackFailure, l.warnIf(l.Bench.Finish(ctx), "could not remove the recycled task worktree of %s", l.Bench.WorkBranch())
 }

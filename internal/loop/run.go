@@ -12,7 +12,6 @@ import (
 	"github.com/byranZA/smith/internal/agent"
 	"github.com/byranZA/smith/internal/preset"
 	"github.com/byranZA/smith/internal/stack"
-	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -731,30 +730,6 @@ func presetPhrase(resolved preset.Resolved) string {
 	return "preset " + resolved.Name
 }
 
-// PrepareTailLimit bounds how much of a preparation's output the loop keeps
-// to show if a step fails.
-const PrepareTailLimit = 64 << 10
-
-// prepare prepares task's worktree at dir with the Preparer, when there is
-// one, holding its output back and printing the last PrepareTailLimit bytes
-// only on failure. A failure is an error naming task and dir, since another
-// agent attempt cannot fix it.
-func (l Loop) prepare(ctx context.Context, task tracker.Task, dir string) error {
-	if l.Preparer != nil {
-		if err := l.report("smith: preparing the worktree of #%d\n", task.Number); err != nil {
-			return err
-		}
-		captured := tailbuf.Buffer{Limit: PrepareTailLimit}
-		if err := l.Preparer.Prepare(ctx, dir, &captured); err != nil {
-			if rerr := l.reportTail(&captured); rerr != nil {
-				return rerr
-			}
-			return fmt.Errorf("prepare the worktree of #%d in %s: %w", task.Number, dir, err)
-		}
-	}
-	return l.stackUp(ctx, task, dir)
-}
-
 // reportFailure reports that the agent on task exited with err, naming the
 // likely cause instead when the agent was killed.
 func (l Loop) reportFailure(task tracker.Task, err error, killed bool) error {
@@ -853,18 +828,6 @@ func (l Loop) land(ctx context.Context, task tracker.Task) error {
 		return fmt.Errorf("push the work on #%d: %w", task.Number, err)
 	}
 	return l.report("smith: pushed #%d on %s to origin\n", task.Number, branch)
-}
-
-// finalize ends a run: it takes down the stack, then removes the recycled task
-// worktree when cleanup is set, and keeps it otherwise for a later run of the
-// execution. It returns why the stack did not stop. A failed removal loses no
-// work, so it is a warning, and only a failed progress write is an error.
-func (l Loop) finalize(ctx context.Context, cleanup bool) (stackFailure, err error) {
-	stackFailure, err = l.stackDown(ctx)
-	if err != nil || !cleanup {
-		return stackFailure, err
-	}
-	return stackFailure, l.warnIf(l.Bench.Finish(ctx), "could not remove the recycled task worktree of %s", l.Bench.WorkBranch())
 }
 
 // closedIn reports whether spec holds task as closed.
