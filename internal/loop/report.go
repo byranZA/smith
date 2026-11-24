@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/byranZA/smith/internal/tailbuf"
 	"github.com/byranZA/smith/internal/tracker"
 )
 
@@ -263,7 +264,7 @@ func (l Loop) Abort(ctx context.Context, issue int, failed error) error {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedStopTimeout)
 	defer cancel()
-	body := fmt.Sprintf("smith stopped its run of %s: **%s**.\n\n```text\n%s```\n", name, Failed, report)
+	body := fmt.Sprintf("smith stopped its run of %s: **%s**.\n\n%s", name, Failed, fenced(report))
 	return l.warnIf(l.Tracker.Comment(ctx, issue, body), "could not post the stop report on #%d", issue)
 }
 
@@ -277,7 +278,12 @@ func (l Loop) stopReport(ctx context.Context, name string, outcome Outcome, fail
 	case ctx.Err() != nil:
 		return Stopped, name + " stopped: interrupted\n"
 	default:
-		return Failed, fmt.Sprintf("%s failed: %v\n", name, failed)
+		report := fmt.Sprintf("%s failed: %v\n", name, failed)
+		var up upError
+		if errors.As(failed, &up) {
+			report += up.output
+		}
+		return Failed, report
 	}
 }
 
@@ -288,5 +294,43 @@ func stopComment(execution tracker.Execution, ending Ending, report string) stri
 	if execution.Single {
 		kind = "task"
 	}
-	return fmt.Sprintf("smith stopped its run of this %s: **%s**.\n\n```text\n%s```\n", kind, ending, report)
+	return fmt.Sprintf("smith stopped its run of this %s: **%s**.\n\n%s", kind, ending, fenced(report))
+}
+
+// fenced wraps report, which ends in a newline, in a text code fence longer
+// than any run of backticks in it, so its own lines cannot close the fence.
+func fenced(report string) string {
+	longest, run := 0, 0
+	for _, r := range report {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	return fence + "text\n" + report + fence + "\n"
+}
+
+// reportOutput renders b, a buffer limited to ReportTailLimit, from a full
+// line (or from its partial one when no full line fits: a partial line beats
+// no output), with a line saying so when earlier output was cut, or "" when b
+// is empty.
+func reportOutput(b *tailbuf.Buffer) string {
+	out := b.Lines()
+	if len(out) == 0 {
+		out = b.Bytes()
+	}
+	text := string(out)
+	if text == "" {
+		return ""
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	if b.Dropped() {
+		text = fmt.Sprintf("(earlier output was cut; showing the last %d KiB)\n", ReportTailLimit>>10) + text
+	}
+	return text
 }

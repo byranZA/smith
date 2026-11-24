@@ -188,11 +188,90 @@ func TestRunWhoseUpFailsStartsNoAgentTakesTheStackDownAndNamesTheTaskAndWorktree
 	outcome, err := l.Run(t.Context(), 42)
 
 	want := []string{"open 43", "up " + d, "down " + d}
-	report := fmt.Sprintf("spec #42 failed: bring up the stack of #43 in %[1]s: bring up the stack in %[1]s: the stack up step exited with status 1: make up (system packages and groups come from the blueprint, not the repo file)\nwork branch: smith/42-spec\n", d)
+	report := fmt.Sprintf("spec #42 failed: bring up the stack of #43 in %[1]s: bring up the stack in %[1]s: the stack up step exited with status 1: make up (system packages and groups come from the blueprint, not the repo file)\npulling images\nwork branch: smith/42-spec\n", d)
 	if !errors.Is(err, errUp) || !slices.Equal(j.events, want) || len(j.board.launched) != 0 ||
 		len(r.reports) != 1 || r.reports[0] != report || !strings.Contains(progress.String(), "pulling images\n") {
 		t.Errorf("Run() = %+v, %v; events %q, reports %q, progress %q; want a failed run with up's output and events %q", outcome, err, j.events, r.reports, progress.String(), want)
 	}
+}
+
+func TestRunWhoseUpFailsWithLongOutputReportsOnlyItsTailAndSaysItWasCut(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, d := stackedJournalLoop(t, j, nil)
+	long := strings.Repeat("noise line\n", 1000) + "port 5432 in use\n"
+	l.Stack = &stack.Stack{Command: longOutput{out: long, fail: errors.New("the stack up step exited with status 1: make up")}}
+	r := &recorder{}
+	l.Recorder = r
+
+	if _, err := l.Run(t.Context(), 42); err == nil {
+		t.Fatal("Run(42) error = nil, want a failed run")
+	}
+
+	got := r.reports[0]
+	if !strings.Contains(got, "(earlier output was cut; showing the last 4 KiB)\nnoise line\n") || !strings.HasSuffix(got, "port 5432 in use\nwork branch: smith/42-spec\n") || len(got) > 5<<10 {
+		t.Errorf("Run(42) in %s: report = %q, want a cut note and only the tail of up's output", d, got)
+	}
+}
+
+func TestRunWhoseUpFailsWithOneLongLineKeepsItsTailAndSaysItWasCut(t *testing.T) {
+	t.Parallel()
+	for name, long := range map[string]string{
+		"terminated":   strings.Repeat("x", 10<<10) + "port 5432 in use\n",
+		"unterminated": strings.Repeat("x", 100<<10) + "port 5432 in use",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+			l, _ := stackedJournalLoop(t, j, nil)
+			l.Stack = &stack.Stack{Command: longOutput{out: long, fail: errors.New("the stack up step exited with status 1: make up")}}
+			r := &recorder{}
+			l.Recorder = r
+
+			if _, err := l.Run(t.Context(), 42); err == nil {
+				t.Fatal("Run(42) error = nil, want a failed run")
+			}
+
+			got := r.reports[0]
+			if !strings.Contains(got, "(earlier output was cut; showing the last 4 KiB)\nxxx") || !strings.Contains(got, "port 5432 in use\n") || len(got) > 5<<10 {
+				t.Errorf("Run(42) with %s long up output: report = %.300q, want a cut note and the long line's tail", name, got)
+			}
+		})
+	}
+}
+
+func TestRunWhoseUpFailsWithoutOutputReportsTheErrorLineAlone(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, d := stackedJournalLoop(t, j, nil)
+	l.Stack = &stack.Stack{Command: longOutput{fail: errors.New("the stack up step exited with status 1: make up")}}
+	r := &recorder{}
+	l.Recorder = r
+
+	if _, err := l.Run(t.Context(), 42); err == nil {
+		t.Fatal("Run(42) error = nil, want a failed run")
+	}
+
+	want := fmt.Sprintf("spec #42 failed: bring up the stack of #43 in %[1]s: bring up the stack in %[1]s: the stack up step exited with status 1: make up (system packages and groups come from the blueprint, not the repo file)\nwork branch: smith/42-spec\n", d)
+	if len(r.reports) != 1 || r.reports[0] != want {
+		t.Errorf("reports = %q, want %q", r.reports, want)
+	}
+}
+
+// longOutput fakes a stack command that writes out and fails up with fail.
+type longOutput struct {
+	out  string
+	fail error
+}
+
+func (c longOutput) Exec(_ context.Context, _, step, _ string, w io.Writer) error {
+	if step == stack.Down {
+		return nil
+	}
+	if _, err := io.WriteString(w, c.out); err != nil {
+		return err
+	}
+	return c.fail
 }
 
 func TestRunSaysOnOneLineThatTheStackIsComingUpAndKeepsASuccessfulUpsOutputBack(t *testing.T) {
@@ -407,5 +486,21 @@ func TestRunInteractiveRecoversAStackLeftBehindFirst(t *testing.T) {
 
 	if j.events[0] != "down "+dead {
 		t.Errorf("events = %q, want the dead run's down first", j.events)
+	}
+}
+
+func TestAStopCommentFencesUpsOutputWithALongerFenceThanAnyInIt(t *testing.T) {
+	t.Parallel()
+	j := &journal{board: &board{tasks: []tracker.Task{agentTask(43)}}}
+	l, _ := stackedJournalLoop(t, j, nil)
+	l.Stack = &stack.Stack{Command: longOutput{out: "```\n## oops\n", fail: errors.New("exit 1")}}
+
+	if _, err := l.Run(t.Context(), 42); err == nil {
+		t.Fatal("Run(42) error = nil, want a failed run")
+	}
+
+	got := commentsOn(j.board, 42)
+	if len(got) != 1 || !strings.Contains(got[0], "\n\n````text\n") || !strings.HasSuffix(got[0], "\n````\n") {
+		t.Errorf("comments = %q, want the report in a four-backtick fence", got)
 	}
 }
